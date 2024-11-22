@@ -113,8 +113,6 @@ M_Base = Model('base model', [CV_weekday, CV_weather], [PV_tourists, PV_excursio
                [C_parking, C_beach, C_accommodation, C_food])
 
 # Larger park capacity model
-# TODO: if I use an integer number, the probability computation does not work (mix of integers and floats) - fix
-# I_C_parking_extended = Index('extended parking capacity', 600)
 I_C_parking_larger = Index('larger parking capacity', stats.uniform(loc=550.0, scale=100.0))
 
 M_MoreParking = M_Base.variation('larger parking model', change_capacities={I_C_parking: I_C_parking_larger})
