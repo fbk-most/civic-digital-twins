@@ -34,7 +34,10 @@ class Model:
         c_subs = {}
         for index in self.indexes:
             if index.cvs is None:
-                c_subs[index] = [index.value] * c_df.shape[0]
+                if isinstance(index.value, numbers.Number):
+                    c_subs[index] = [index.value] * c_df.shape[0]
+                else:
+                    c_subs[index] = index.value.rvs(size=c_df.shape[0])
             else:
                 args = [c_df[cv].values for cv in index.cvs]
                 c_subs[index] = index.value(args)
