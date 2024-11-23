@@ -13,11 +13,12 @@ from matplotlib.colors import Normalize
 # MODEL DEFINITION
 
 # Context variables
+days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+weather = {'molto bassa': 0.65, 'bassa': 0.2, 'media': 0.075, 'alta': 0.075}
 
-CV_weekday = ContextVariable('weekday', list(range(7)))
-CV_weather = ContextVariable('weather', [Symbol(v) for v in ['molto bassa', 'bassa', 'media', 'alta']],
-                             {Symbol('media'): 0.075, Symbol('molto bassa'): 0.65,
-                              Symbol('bassa'): 0.2, Symbol('alta'): 0.075})
+CV_weekday = ContextVariable('weekday', [Symbol(v) for v in days])
+CV_weather = ContextVariable('weather', [Symbol(v) for v in weather.keys()],
+                             {Symbol(v): weather[v] for v in weather.keys()})
 
 # Presence variables
 
