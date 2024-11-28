@@ -41,7 +41,7 @@ class Model:
             else:
                 args = [c_df[cv].values for cv in index.cvs]
                 c_subs[index] = index.value(args)
-        probability = 1
+        probability = 1.0
         for constraint in self.constraints:
             usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(
                 *[np.expand_dims(p_case[pv], axis=(2, 3)) for pv in self.pvs],
@@ -52,7 +52,7 @@ class Model:
             if isinstance(capacity.value, numbers.Number):
                 result = usage <= capacity.value
             else:
-                result = 1 - capacity.value.cdf(usage)
+                result = 1.0 - capacity.value.cdf(usage)
             probability *= result
         return probability.mean(axis=(2, 3))
 
