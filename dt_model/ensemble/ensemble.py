@@ -14,7 +14,7 @@ class Ensemble:
         for cv in model.cvs:
             if cv in scenario.keys():
                 if len(scenario[cv]) == 1:
-                    self.ensemble[cv] = [(1, scenario[cv])]
+                    self.ensemble[cv] = [(1, scenario[cv][0])]
                 else:
                     self.ensemble[cv] = cv.sample(cv_ensemble_size, subset=scenario[cv])
                     self.size *= cv_ensemble_size
