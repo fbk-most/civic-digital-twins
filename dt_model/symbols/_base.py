@@ -5,7 +5,7 @@ from sympy import Symbol
 
 class SymbolExtender(Symbol):
     """
-    Utility class to extend sympy Simbol.
+    Utility class to extend sympy Symbol.
     """
 
     def __new__(cls, name, *args, **kwargs):
