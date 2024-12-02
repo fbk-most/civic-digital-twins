@@ -30,31 +30,33 @@ class Model:
         self.constraints = constraints
 
     def evaluate(self, p_case, c_case):
-        c_df = pd.DataFrame(c_case)
+        c_weight = np.array([c[0] for c in c_case])
+        c_values = pd.DataFrame([c[1] for c in c_case])
+        c_size = c_values.shape[0]
         c_subs = {}
         for index in self.indexes:
             if index.cvs is None:
                 if isinstance(index.value, numbers.Number):
-                    c_subs[index] = [index.value] * c_df.shape[0]
+                    c_subs[index] = [index.value] * c_size
                 else:
-                    c_subs[index] = index.value.rvs(size=c_df.shape[0])
+                    c_subs[index] = index.value.rvs(size=c_size)
             else:
-                args = [c_df[cv].values for cv in index.cvs]
-                c_subs[index] = index.value(args)
+                args = [c_values[cv].values for cv in index.cvs]
+                c_subs[index] = index.value(*args)
         probability = 1.0
+        p_values = [np.expand_dims(p_case[pv], axis=2) for pv in self.pvs]
+        c_values = [np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes]
         for constraint in self.constraints:
-            usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(
-                *[np.expand_dims(p_case[pv], axis=(2, 3)) for pv in self.pvs],
-                *[np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes],
-            )
+            usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(*p_values, *c_values)
             capacity = constraint.capacity
             # TODO: model type in declaration
             if isinstance(capacity.value, numbers.Number):
-                result = usage <= capacity.value
+                unscaled_result = usage <= capacity.value
             else:
-                result = 1.0 - capacity.value.cdf(usage)
+                unscaled_result = 1.0 - capacity.value.cdf(usage)
+            result = np.dot(unscaled_result, c_weight)
             probability *= result
-        return probability.mean(axis=(2, 3))
+        return probability
 
     # TODO: to be removed in the future
     def evaluate_single_case(self, p_case, c_case):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import reduce
+
 from dt_model.model.model import Model
 
 
@@ -12,7 +14,7 @@ class Ensemble:
         for cv in model.cvs:
             if cv in scenario.keys():
                 if len(scenario[cv]) == 1:
-                    self.ensemble[cv] = scenario[cv]
+                    self.ensemble[cv] = [(1, scenario[cv])]
                 else:
                     self.ensemble[cv] = cv.sample(cv_ensemble_size, subset=scenario[cv])
                     self.size *= cv_ensemble_size
@@ -29,6 +31,9 @@ class Ensemble:
         for k in self.ensemble.keys():
             self.pos[k] += 1
             if self.pos[k] < len(self.ensemble[k]):
-                return {k: self.ensemble[k][self.pos[k]] for k in self.ensemble.keys()}
+                cv_values = {k: self.ensemble[k][self.pos[k]][1] for k in self.ensemble.keys()}
+                cv_probability = reduce(lambda x, y: x*y,
+                                        [self.ensemble[k][self.pos[k]][0] for k in self.ensemble.keys()])
+                return cv_probability, cv_values
             self.pos[k] = 0
         raise StopIteration
