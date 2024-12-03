@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import numbers
 
+from functools import reduce
+
 import numpy as np
 import pandas as pd
 from sympy import lambdify
+from scipy import interpolate
 
 from dt_model.symbols.constraint import Constraint
 from dt_model.symbols.context_variable import ContextVariable
@@ -28,54 +31,72 @@ class Model:
         self.indexes = indexes
         self.capacities = capacities
         self.constraints = constraints
+        self.grid = None
+        self.field = None
+        self.field_elements = None
 
-    def evaluate(self, p_case, c_case):
-        c_df = pd.DataFrame(c_case)
+    def reset(self):
+        self.grid = None
+        self.field = None
+        self.field_elements = None
+
+    def evaluate(self, grid, ensemble):
+        assert self.grid is None
+        c_weight = np.array([c[0] for c in ensemble])
+        c_values = pd.DataFrame([c[1] for c in ensemble])
+        c_size = c_values.shape[0]
         c_subs = {}
         for index in self.indexes:
             if index.cvs is None:
                 if isinstance(index.value, numbers.Number):
-                    c_subs[index] = [index.value] * c_df.shape[0]
+                    c_subs[index] = [index.value] * c_size
                 else:
-                    c_subs[index] = index.value.rvs(size=c_df.shape[0])
+                    c_subs[index] = index.value.rvs(size=c_size)
             else:
-                args = [c_df[cv].values for cv in index.cvs]
-                c_subs[index] = index.value(args)
-        probability = 1.0
+                args = [c_values[cv].values for cv in index.cvs]
+                c_subs[index] = index.value(*args)
+        self.grid = grid
+        self.field = 1.0
+        self.field_elements = {}
+        assert len(self.pvs) == 2  # TODO: generalize
+        grid_shape = (grid[self.pvs[0]].size, grid[self.pvs[1]].size)
+        p_values = [np.expand_dims(grid[pv], axis=(i, 2)) for i,pv in enumerate(self.pvs)]
+        c_values = [np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes]
         for constraint in self.constraints:
-            usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(
-                *[np.expand_dims(p_case[pv], axis=(2, 3)) for pv in self.pvs],
-                *[np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes],
-            )
+            usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(*p_values, *c_values)
             capacity = constraint.capacity
             # TODO: model type in declaration
             if isinstance(capacity.value, numbers.Number):
-                result = usage <= capacity.value
+                unscaled_result = usage <= capacity.value
             else:
-                result = 1.0 - capacity.value.cdf(usage)
-            probability *= result
-        return probability.mean(axis=(2, 3))
+                unscaled_result = 1.0 - capacity.value.cdf(usage)
+            result = np.broadcast_to(np.dot(unscaled_result, c_weight), grid_shape)
+            self.field_elements[constraint] = result
+            self.field *= result
+        return self.field
 
-    # TODO: to be removed in the future
-    def evaluate_single_case(self, p_case, c_case):
-        c_subs = {}
-        for index in self.indexes:
-            if index.cvs is None:
-                c_subs[index] = index.value
-            else:
-                args = [c_case[cv] for cv in index.cvs]
-                c_subs[index] = index.value(*args)[()]
-        probability = 1
-        for constraint in self.constraints:
-            usage = lambdify(self.pvs, constraint.usage.subs(c_subs), "numpy")(*[p_case[pv] for pv in self.pvs])
-            capacity = constraint.capacity
-            # TODO: model type in declaration
-            if isinstance(capacity.value, numbers.Number):
-                result = usage <= capacity.value
-            else:
-                result = 1 - capacity.value.cdf(usage)
-            probability *= result
-        return probability
+    def compute_sustainable_area(self) -> float:
+        assert self.grid is not None
+        return self.field.sum() * reduce(lambda x, y: x*y,
+                                         [axis.max() / (axis.size - 1) + 1 for axis in list(self.grid.values())])
+
+    # TODO: change API - order of presence variables
+    def compute_sustainability_index(self, presences: list) -> float:
+        assert self.grid is not None
+        # TODO: fill value
+        index = interpolate.interpn(self.grid.values(), self.field, np.array(presences),
+                                    bounds_error=False, fill_value=0.0)
+        return np.mean(index)
+
+    def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
+        assert self.grid is not None
+        # TODO: fill value
+        indexes = {}
+        for c in self.constraints:
+            index = interpolate.interpn(self.grid.values(), self.field_elements[c], np.array(presences),
+                                        bounds_error=False, fill_value=0.0)
+            indexes[c] = np.mean(index)
+        return indexes
 
     def variation(self, new_name, *, change_indexes=None, change_capacities=None):
         # TODO: check if changes are valid (ie they change elements present in the model)
