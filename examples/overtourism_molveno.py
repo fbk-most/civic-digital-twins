@@ -153,11 +153,11 @@ def plot_scenario(ax, model, situation, title):
     index = model.compute_sustainability_index(list(zip(sample_tourists, sample_excursionists)))
     indexes = model.compute_sustainability_index_per_constraint(list(zip(sample_tourists, sample_excursionists)))
     critical = min(indexes, key=indexes.get)
+    modals = model.compute_modal_line_per_constraint()
 
-    # TODO: re-enable median
-    # C_accommodation.median(cvs=scenario).plot(ax, color='red')
-    # C_parking.median(cvs=scenario).plot(ax, color='red')
     ax.pcolormesh(xx,yy, zz, cmap='coolwarm_r', vmin=0.0, vmax=1.0)
+    for modal in modals.values():
+        ax.plot(*modal, color='black', linewidth=2)
     ax.scatter(sample_excursionists, sample_tourists, color='gainsboro', edgecolors='black')
     ax.set_title(f'{title}\n'+
                  f'area = {area / 10e6:.2f} kp$^2$ - '+
