@@ -3,7 +3,7 @@ import random
 from scipy import stats
 import numpy as np
 
-from dt_model import ContextVariable, PresenceVariable, Index, Constraint, Ensemble, Model
+from dt_model import UniformCategoricalContextVariable, CategoricalContextVariable, PresenceVariable, Index, Constraint, Ensemble, Model
 from sympy import Symbol, Eq, Piecewise
 
 import matplotlib.pyplot as plt
@@ -16,9 +16,8 @@ from matplotlib.colors import Normalize
 days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 weather = {'molto bassa': 0.65, 'bassa': 0.2, 'media': 0.075, 'alta': 0.075}
 
-CV_weekday = ContextVariable('weekday', [Symbol(v) for v in days])
-CV_weather = ContextVariable('weather', [Symbol(v) for v in weather.keys()],
-                             {Symbol(v): weather[v] for v in weather.keys()})
+CV_weekday = UniformCategoricalContextVariable('weekday', [Symbol(v) for v in days])
+CV_weather = CategoricalContextVariable('weather', {Symbol(v): weather[v] for v in weather.keys()})
 
 # Presence variables
 
@@ -42,7 +41,7 @@ I_U_excursionists_parking = Index('excursionist parking usage factor',
                                   cvs=[CV_weather])
 
 I_U_tourists_beach = Index('tourist beach usage factor',
-                           Piecewise((0.15, Eq(CV_weather, Symbol('alta')) | Eq(CV_weather, Symbol('media'))),
+                           Piecewise((0.25, Eq(CV_weather, Symbol('alta')) | Eq(CV_weather, Symbol('media'))),
                                      (0.50, True)),
                            cvs=[CV_weather])
 I_U_excursionists_beach = Index('excursionist beach usage factor',
@@ -56,7 +55,7 @@ I_U_tourists_food = Index('tourist food service usage factor', 0.20)
 I_U_excursionists_food = Index('excursionist food service usage factor',
                                Piecewise((0.80, Eq(CV_weather, Symbol('alta')) | Eq(CV_weather, Symbol('media'))),
                                          (0.40, True)),
-                               cvs=[CV_weather])
+                               cvs=[CV_weather,CV_weekday])
 
 # Conversion indexes
 
@@ -131,47 +130,49 @@ S_Bad_Weather = {CV_weather: [Symbol('alta')]}
 
 # PLOTTING
 
-(x_max, y_max) = (10000, 10000)
-(x_sample, y_sample) = (100, 100)
+(t_max, e_max) = (10000, 10000)
+(t_sample, e_sample) = (100, 100)
 target_presence_samples = 200
 ensemble_size = 20  # TODO: make configurable; may it be a CV parameter?
 
 
 def plot_scenario(ax, model, situation, title):
     ensemble = Ensemble(model, situation, cv_ensemble_size=ensemble_size)
-    xx = np.linspace(0, x_max, x_sample + 1)
-    yy = np.linspace(0, y_max, y_sample + 1)
-    xx, yy = np.meshgrid(xx, yy)
-    zz = model.evaluate({PV_tourists: xx, PV_excursionists: yy}, ensemble)
-    #zz = sum([model.evaluate_single_case({PV_tourists: xx, PV_excursionists: yy}, case) for case in ensemble])/ensemble.size()
+    tt = np.linspace(0, t_max, t_sample + 1)
+    ee = np.linspace(0, e_max, e_sample + 1)
+    xx, yy = np.meshgrid(tt, ee)
+    zz = model.evaluate({PV_tourists: tt, PV_excursionists: ee}, ensemble)
 
-    case_number = ensemble.size
-    samples_per_case = math.ceil(target_presence_samples/case_number)
-
-    sample_tourists = [sample for case in ensemble for sample in PV_tourists.sample(cvs=case, nr=samples_per_case)]
-    sample_excursionists = [sample for case in ensemble for sample in PV_excursionists.sample(cvs=case, nr=samples_per_case)]
-
-    if case_number*samples_per_case > target_presence_samples:
-        sample_tourists = random.sample(sample_tourists, target_presence_samples)
-        sample_excursionists = random.sample(sample_excursionists, target_presence_samples)
+    sample_tourists = [sample for c in ensemble for sample in
+                       PV_tourists.sample(cvs=c[1], nr=max(1,round(c[0]*target_presence_samples)))]
+    sample_excursionists = [sample for c in ensemble for sample in
+                            PV_excursionists.sample(cvs=c[1], nr=max(1,round(c[0]*target_presence_samples)))]
 
     # TODO: move elsewhere, it cannot be computed this way...
-    area = zz.sum() * (x_max / x_sample / 1000) * (y_max / y_sample / 1000)
+    area = model.compute_sustainable_area()
+    index = model.compute_sustainability_index(list(zip(sample_tourists, sample_excursionists)))
+    indexes = model.compute_sustainability_index_per_constraint(list(zip(sample_tourists, sample_excursionists)))
+    critical = min(indexes, key=indexes.get)
 
     # TODO: re-enable median
     # C_accommodation.median(cvs=scenario).plot(ax, color='red')
     # C_parking.median(cvs=scenario).plot(ax, color='red')
-    ax.contourf(xx, yy, zz, levels=100, cmap='coolwarm_r')
+    ax.pcolormesh(xx,yy, zz, cmap='coolwarm_r', vmin=0.0, vmax=1.0)
     ax.scatter(sample_excursionists, sample_tourists, color='gainsboro', edgecolors='black')
-    ax.set_title(f'{title}\nArea = {area:.2f} kp$^2$', fontsize=12)
-    ax.set_xlim(left=0, right=x_max)
-    ax.set_ylim(bottom=0, top=y_max)
+    ax.set_title(f'{title}\n'+
+                 f'area = {area / 10e6:.2f} kp$^2$ - '+
+                 f'Sustainability = {index * 100:.2f}%\n'+
+                 f'Critical = {critical.capacity.name} ({indexes[critical] * 100:.2f}%)', fontsize=12)
+    ax.set_xlim(left=0, right=t_max)
+    ax.set_ylim(bottom=0, top=e_max)
+
+    model.reset()
+
 
 import time
 start_time = time.time()
 
-fig, axs = plt.subplots(2, 3, figsize=(18, 10))
-fig.subplots_adjust(hspace=0.3)
+fig, axs = plt.subplots(2, 3, figsize=(18, 10), layout='constrained')
 plot_scenario(axs[0, 0], M_Base, S_Base, 'Base')
 plot_scenario(axs[0, 1], M_Base, S_Good_Weather, 'Good weather')
 plot_scenario(axs[0, 2], M_Base, S_Bad_Weather, 'Bad weather')
@@ -179,6 +180,8 @@ plot_scenario(axs[1, 0], M_MoreParking, S_Base, 'More parking ')
 plot_scenario(axs[1, 1], M_MoreParking, S_Good_Weather, 'More parking - Good weather')
 plot_scenario(axs[1, 2], M_MoreParking, S_Bad_Weather, 'More parking - Bad weather')
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap='coolwarm_r'), ax=axs)
+fig.supxlabel('Tourists', fontsize=18)
+fig.supylabel('Excursionists', fontsize=18)
 fig.show()
 
 print("--- %s seconds ---" % (time.time() - start_time))
