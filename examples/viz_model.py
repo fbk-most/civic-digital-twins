@@ -1,6 +1,3 @@
-import plotly.express as px
-import plotly.graph_objects as go
-
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.cm import ScalarMappable
@@ -76,6 +73,7 @@ class VizModel:
             index = self.model.compute_sustainability_index(list(zip(sample_x, sample_y)))
             indexes = self.model.compute_sustainability_index_per_constraint(list(zip(sample_x, sample_y)))
             critical = min(indexes, key=indexes.get)
+            modals = self.model.compute_modal_line_per_constraint()
 
             self.kpis[ctx.name] = {
                 "Area": f"{area / 10e6:.2f} kp$^2$",
@@ -91,7 +89,8 @@ class VizModel:
                 "sample_x": sample_x,
                 "sample_y": sample_y,
                 "x_max": x_max,
-                "y_max": y_max
+                "y_max": y_max,
+                "modals": modals
             }
             self.model.reset()
         
@@ -101,8 +100,10 @@ class VizModel:
 
         fig = plt.figure()
         ax = fig.add_subplot()
-        
+
         ax.pcolormesh(calculated["xx"], calculated["yy"], calculated["zz"], cmap='coolwarm_r', vmin=0.0, vmax=1.0)
+        for modal in calculated["modals"].values():
+            ax.plot(*modal, color='black', linewidth=2)
         ax.scatter(calculated["sample_y"], calculated["sample_x"], color='gainsboro', edgecolors='black')
         ax.set_title(self.name, fontsize=10)
         ax.set_xlim(left=0, right=calculated["x_max"])
