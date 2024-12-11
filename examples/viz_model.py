@@ -156,7 +156,7 @@ class VizApp:
         # TODO
         pass
 
-    def add_model(self, model_name: str, values: dict):
+    def add_model(self, model_name: str, values: dict = {}, save: bool = True):
         change_indexes = {}
         change_capacities = {}
         for idx in self.base_model.indexes:
@@ -169,11 +169,20 @@ class VizApp:
                 var_idx = index_variation(idx, values[idx.name], model_name)
                 if var_idx:
                     change_capacities[idx] = var_idx
-        
+
+        vm = None
         if change_capacities or change_indexes:
             nu_model = self.base_model.variation(model_name, change_indexes=change_indexes, change_capacities=change_capacities)
-            self.vis_models.append(VizModel(self.x, self.y, nu_model, self.situations, list(change_indexes.values()) + list(change_capacities.values())))
+            vm = VizModel(self.x, self.y, nu_model, self.situations, list(change_indexes.values()) + list(change_capacities.values()))
+        else: 
+            nu_model = self.base_model.variation(model_name)
+            vm = VizModel(self.x, self.y, nu_model, self.situations)
 
+        if save:
+            self.vis_models.append(vm)
+        
+        return vm
+        
 def __value_to_min(v):
     if v < 0: return v * 2.0
     if v > 0: return 0.0
@@ -185,15 +194,15 @@ def __value_to_max(v):
     else: return 1000.0 
 
 
-def index_to_widget(st, idx: Index):
+def index_to_widget(st, idx: Index, on_change=None):
     if isinstance(idx, ConstIndex):
-        return st.slider(idx.name, __value_to_min(idx.v), __value_to_max(idx.v), idx.v)
+        return st.slider(idx.name, __value_to_min(idx.v), __value_to_max(idx.v), idx.v, on_change=on_change)
     if isinstance(idx, UniformDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale))
+        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change)
     if isinstance(idx, LognormDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale))
+        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change)
     if isinstance(idx, TriangDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale))
+        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change)
     return None
 
 def index_variation(idx, value, model_name):
