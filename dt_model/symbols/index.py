@@ -179,50 +179,13 @@ class SymIndex(Index):
                  group: str | None = None
                 ) -> None:
         super().__init__(name, value, cvs, group=group)
-        self._cvs = cvs
+        self.cvs = cvs
         if cvs is not None:
-            self._value = lambdify(cvs, value, "numpy")
+            self.value = lambdify(cvs, value, "numpy")
         else:
-            self._value = value
+            self.value = value
 
-        self._sym_value = value
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, new_value):
-        if self._value != new_value:
-            if self._cvs is not None:
-                self._value = lambdify(self._cvs, new_value, "numpy")
-            else:
-                self._value = new_value
-            self._sym_value = new_value
-
-    @property
-    def sym_value(self):
-        return self._sym_value
-
-    @sym_value.setter
-    def sym_value(self, new_value):
-        if self._sym_value != new_value:
-            if self._cvs is not None:
-                self._value = lambdify(self._cvs, new_value, "numpy")
-            else:
-                self._value = new_value
-            self._sym_value = new_value
-
-    @property
-    def cvs(self):
-        return self._cvs
-
-    @cvs.setter
-    def cvs(self, new_cvs):
-        if self._cvs != new_cvs:
-            self._cvs = new_cvs
-            if self._cvs is not None:
-                self._value = lambdify(self._cvs, self._sym_value, "numpy")
+        self.sym_value = value
 
     def __str__(self):
         return f"sympy_idx({self.value})"
