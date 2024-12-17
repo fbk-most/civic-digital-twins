@@ -1,11 +1,5 @@
 import streamlit as st
-import pandas as pd
-import streamlit_option_menu
 from streamlit_option_menu import option_menu
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-import json
 
 from viz_model import VizModel, VizSituation, index_to_widget
 
