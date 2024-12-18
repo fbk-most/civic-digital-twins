@@ -30,8 +30,28 @@ class UniformDistIndex(Index):
 
     def __init__(self, name: str, loc: float, scale: float, group: str | None = None) -> None:
         super().__init__(name, stats.uniform(loc=loc, scale=scale), group=group)
-        self.loc = loc
-        self.scale = scale
+        self._loc = loc
+        self._scale = scale
+
+    @property
+    def loc(self):
+        return self._loc
+
+    @loc.setter
+    def loc(self, new_loc):
+        if self._loc != new_loc:
+            self._loc = new_loc
+            self.value = stats.uniform(loc=self._loc, scale=self._scale)
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, new_scale):
+        if self._scale != new_scale:
+            self._scale = new_scale
+            self.value = stats.uniform(loc=self._loc, scale=self._scale)
 
     def __str__(self):
         return f"uniform_dist_idx({self.loc}, {self.scale})"
@@ -43,13 +63,43 @@ class LognormDistIndex(Index):
 
     def __init__(self, name: str, loc: float, scale: float, s: float, group: str | None = None) -> None:
         super().__init__(name, stats.lognorm(loc=loc, scale=scale, s=s), group=group)
-        self.loc = loc
-        self.scale = scale
-        self.s = s
+        self._loc = loc
+        self._scale = scale
+        self._s = s
+
+    @property
+    def loc(self):
+        return self._loc
+
+    @loc.setter
+    def loc(self, new_loc):
+        if self._loc != new_loc:
+            self._loc = new_loc
+            self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self.s)
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, new_scale):
+        if self._scale != new_scale:
+            self._scale = new_scale
+            self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self._s)
+
+    @property
+    def s(self):
+        return self._s
+
+    @s.setter
+    def s(self, new_s):
+        if self._s != new_s:
+            self._s = new_s
+            self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self._s)
 
     def __str__(self):
         return f"longnorm_dist_idx({self.loc}, {self.scale}, {self.s})"
-        
+
 
 class TriangDistIndex(Index):
     """
@@ -58,9 +108,39 @@ class TriangDistIndex(Index):
 
     def __init__(self, name: str, loc: float, scale: float, c: float, group: str | None = None) -> None:
         super().__init__(name, stats.triang(loc=loc, scale=scale, c=c), group=group)
-        self.loc = loc
-        self.scale = scale
-        self.c = c
+        self._loc = loc
+        self._scale = scale
+        self._c = c
+
+    @property
+    def loc(self):
+        return self._loc
+
+    @loc.setter
+    def loc(self, new_loc):
+        if self._loc != new_loc:
+            self._loc = new_loc
+            self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
+
+    @property
+    def scale(self):
+        return self._scale
+
+    @scale.setter
+    def scale(self, new_scale):
+        if self._scale != new_scale:
+            self._scale = new_scale
+            self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
+
+    @property
+    def c(self):
+        return self._c
+
+    @c.setter
+    def c(self, new_c):
+        if self._c != new_c:
+            self._c = new_c
+            self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
 
     def __str__(self):
         return f"triang_dist_idx({self.loc}, {self.scale}, {self.c})"
@@ -72,7 +152,17 @@ class ConstIndex(Index):
 
     def __init__(self, name: str, v: float, group: str | None = None) -> None:
         super().__init__(name, v, group=group)
-        self.v = v
+        self._v = v
+
+    @property
+    def v(self):
+        return self._v
+
+    @v.setter
+    def v(self, new_v):
+        if self._v != new_v:
+            self._v = new_v
+            self.value = new_v
 
     def __str__(self):
         return f"const_idx({self.v})"
@@ -81,12 +171,12 @@ class SymIndex(Index):
     """
     Class to represent an index as a symbolic value
     """
-    
-    def __init__(self, 
-                 name: str, 
-                 value: Any, 
-                 cvs: list[ContextVariable] | None = None
-                 , group: str | None = None
+
+    def __init__(self,
+                 name: str,
+                 value: Any,
+                 cvs: list[ContextVariable] | None = None,
+                 group: str | None = None
                 ) -> None:
         super().__init__(name, value, cvs, group=group)
         self.cvs = cvs
