@@ -17,7 +17,7 @@ class Index(SymbolExtender):
     def __init__(self, name: str, value: Any, cvs: list[ContextVariable] | None = None, group: str | None = None, ref_name: str | None = None) -> None:
         super().__init__(name)
         self.group = group
-        self.ref_name = ref_name
+        self.ref_name = ref_name if ref_name is not None else name
         self.cvs = cvs
         if cvs is not None:
             self.value = lambdify(cvs, value, "numpy")
