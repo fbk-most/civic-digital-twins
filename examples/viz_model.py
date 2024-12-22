@@ -33,8 +33,7 @@ class VizModel:
         x: PresenceVariable,
         y: PresenceVariable,
         model: Model,
-        situations: list[VizSituation],
-        change: list[Index] | None = None
+        situations: list[VizSituation]
     ):
         self.name = model.name
         self.x = x
@@ -42,7 +41,6 @@ class VizModel:
         self.model = model
         self.situations = situations
         self.situations_data = {} 
-        self.change = change
         self.kpis = {}
         self._build()
 
@@ -115,6 +113,71 @@ class VizModel:
 
         return fig
 
+    def rename(self, name: str):
+        old = self.name
+        self.name = name
+        self.model.name = name
+        for idx in self.model.indexes:
+            idx.name = idx.name.replace(f"({old})", f"({name})")
+        for idx in self.model.capacities:
+            idx.name = idx.name.replace(f"({old})", f"({name})")
+        
+
+
+    def clone(self, model_name: str, values: dict = {}):
+        change_indexes = {}
+        change_capacities = {}
+        
+        for idx in self.model.indexes:
+            if idx.ref_name in values:
+                var_idx = index_variation(idx, values[idx.ref_name], model_name)
+                if var_idx:
+                    change_indexes[idx] = var_idx
+        for idx in self.model.capacities:
+            if idx.ref_name in values:
+                var_idx = index_variation(idx, values[idx.ref_name], model_name)
+                if var_idx:
+                    change_capacities[idx] = var_idx
+
+        vm = None
+        if change_capacities or change_indexes:
+            nu_model = self.model.variation(model_name, change_indexes=change_indexes, change_capacities=change_capacities)
+            vm = VizModel(self.x, self.y, nu_model, self.situations, list(change_indexes.values()) + list(change_capacities.values()))
+        else: 
+            nu_model = self.model.variation(model_name)
+            vm = VizModel(self.x, self.y, nu_model, self.situations)
+
+        return vm
+
+    def update(self, values: dict = {}):
+        change_indexes = {}
+        change_capacities = {}
+
+        for idx in self.model.indexes:
+            if idx.ref_name in values:
+                var_idx = index_variation(idx, values[idx.ref_name], self.name, True)
+                if var_idx:
+                    change_indexes[idx] = var_idx
+        for idx in self.model.capacities:
+            if idx.ref_name in values:
+                var_idx = index_variation(idx, values[idx.ref_name], self.name, True)
+                if var_idx:
+                    change_capacities[idx] = var_idx
+
+        if change_capacities or change_indexes:
+            self.situations_data = {} 
+            self.model = self.model.variation(self.name, change_indexes=change_indexes, change_capacities=change_capacities)
+            self.kpis = {}
+            self._build()
+
+    def diff(self, other):
+        res = []
+        a = {idx.ref_name: idx for idx in self.model.indexes + self.model.capacities}
+        b = {idx.ref_name: idx for idx in other.model.indexes + other.model.capacities}
+        for k in a:
+            if not is_equal_index(a[k], b[k]): res.append(a[k])
+        return res
+
 class VizApp:
     """
     Class implementing the whole modelling application with models, situations, and variables
@@ -153,35 +216,10 @@ class VizApp:
 
     def remove_model(self, model_name: str):
         self.vis_models = [m for m in self.vis_models if m.name != model_name]
-        # TODO
-        pass
 
-    def add_model(self, model_name: str, values: dict = {}, save: bool = True):
-        change_indexes = {}
-        change_capacities = {}
-        for idx in self.base_model.indexes:
-            if idx.name in values:
-                var_idx = index_variation(idx, values[idx.name], model_name)
-                if var_idx:
-                    change_indexes[idx] = var_idx
-        for idx in self.base_model.capacities:
-            if idx.name in values:
-                var_idx = index_variation(idx, values[idx.name], model_name)
-                if var_idx:
-                    change_capacities[idx] = var_idx
-
-        vm = None
-        if change_capacities or change_indexes:
-            nu_model = self.base_model.variation(model_name, change_indexes=change_indexes, change_capacities=change_capacities)
-            vm = VizModel(self.x, self.y, nu_model, self.situations, list(change_indexes.values()) + list(change_capacities.values()))
-        else: 
-            nu_model = self.base_model.variation(model_name)
-            vm = VizModel(self.x, self.y, nu_model, self.situations)
-
-        if save:
-            self.vis_models.append(vm)
-        
-        return vm
+    def add_model(self, name: str, model: VizModel):
+        model.rename(name)
+        self.vis_models.append(model)
         
 def __value_to_min(v):
     if v < 0: return v * 2.0
@@ -196,27 +234,57 @@ def __value_to_max(v):
 
 def index_to_widget(st, idx: Index, on_change=None):
     if isinstance(idx, ConstIndex):
-        return st.slider(idx.name, __value_to_min(idx.v), __value_to_max(idx.v), idx.v, on_change=on_change)
+        return st.slider(idx.name, __value_to_min(idx.v), __value_to_max(idx.v), idx.v, on_change=on_change, key=idx.name)
     if isinstance(idx, UniformDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change)
+        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change, key=idx.name)
     if isinstance(idx, LognormDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change)
+        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change, key=idx.name)
     if isinstance(idx, TriangDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change)
+        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change, key=idx.name)
     return None
 
-def index_variation(idx, value, model_name):
-    var_name = f"{idx.name} ({model_name})"
+def index_variation(idx, value, model_name, in_place: bool = False):
+    ref_name = idx.ref_name
+    var_name = f"{ref_name} ({model_name})"
     if isinstance(idx, ConstIndex):
-        if value != idx.value: return ConstIndex(var_name, value, idx.group)
+        if value != idx.v: 
+            if in_place:
+                idx.v = value
+                return idx
+            else: return ConstIndex(var_name, value, idx.group, ref_name=ref_name)
     if isinstance(idx, UniformDistIndex):
         (f, t) = value
-        if f != idx.loc or t != idx.loc + idx.scale: return UniformDistIndex(var_name, f, t - f, idx.group)
+        if f != idx.loc or t != idx.loc + idx.scale: 
+            if in_place:
+                idx.loc = f
+                idx.scale = t - f
+                return idx
+            else: return UniformDistIndex(var_name, f, t - f, idx.group, ref_name=ref_name)
     if isinstance(idx, LognormDistIndex):
         (f, t) = value
-        if f != idx.loc or t != idx.loc + idx.scale: return LognormDistIndex(var_name, f, t - f, idx.s, idx.group)
+        if f != idx.loc or t != idx.loc + idx.scale: 
+            if in_place:
+                idx.loc = f
+                idx.scale = t - f
+                return idx
+            else: return LognormDistIndex(var_name, f, t - f, idx.s, idx.group, ref_name=ref_name)
     if isinstance(idx, TriangDistIndex):
         (f, t) = value
-        if f != idx.loc or t != idx.loc + idx.scale: return TriangDistIndex(var_name, f, t - f, idx.c, idx.group)
+        if f != idx.loc or t != idx.loc + idx.scale: 
+            if in_place:
+                idx.loc = f
+                idx.scale = t - f
+                return idx
+            else: return TriangDistIndex(var_name, f, t - f, idx.c, idx.group, ref_name=ref_name)
     return None
-    
+
+# TODO move to index
+def is_equal_index(idx1, idx2):
+    if type(idx1) != type(idx2): return False
+    if isinstance(idx1, ConstIndex):
+        if idx1.value == idx2.value: return True
+    if isinstance(idx1, UniformDistIndex) or isinstance(idx1, LognormDistIndex) or isinstance(idx1, TriangDistIndex):
+        if idx1.loc == idx2.loc and idx1.scale == idx2.scale: return True
+
+    if isinstance(idx1, SymIndex): return True
+    return False
