@@ -4,7 +4,8 @@ from scipy import stats
 import numpy as np
 from functools import reduce
 
-from dt_model import UniformCategoricalContextVariable, ContextVariable, PresenceVariable, CategoricalContextVariable, Constraint, Ensemble, Model, Index, ConstIndex, UniformDistIndex, LognormDistIndex, TriangDistIndex, SymIndex
+from dt_model import UniformCategoricalContextVariable, ContextVariable, PresenceVariable, CategoricalContextVariable, Constraint, Ensemble, Model, Index, ConstIndex,SymIndex, DistributionIndex
+#UniformDistIndex, LognormDistIndex, TriangDistIndex, 
 from sympy import Symbol, Eq, Piecewise
 
 from viz_model import VizSituation, VizApp
@@ -26,10 +27,10 @@ PV_excursionists = PresenceVariable('excursionists', [CV_weekday, CV_weather], e
 
 # Capacity indexes
 
-I_C_parking = UniformDistIndex('parking capacity', 350.0, 100.0, group="Parcheggi")
-I_C_beach = UniformDistIndex('beach capacity', 6000.0, 1000.0, group="Spiaggia")
-I_C_accommodation = LognormDistIndex('accommodation capacity', s=0.125, loc=0.0, scale=5000.0, group="Alberghi")
-I_C_food = TriangDistIndex('food service capacity', loc=3000.0, scale=1000.0, c=0.5, group="Ristoranti")
+I_C_parking = DistributionIndex('parking capacity', distribution='uniform', loc=350.0, scale=100.0, group="Parcheggi")
+I_C_beach = DistributionIndex('beach capacity', distribution='uniform', loc=6000.0, scale=1000.0, group="Spiaggia",)
+I_C_accommodation = DistributionIndex('accommodation capacity', distribution='lognorm', loc=0.0, scale=5000.0, s=0.125, group="Alberghi")
+I_C_food = DistributionIndex('food service capacity', distribution='triang', loc=3000.0, scale=1000.0, c=0.5, group="Ristoranti")
 
 # Usage indexes
 
@@ -62,7 +63,7 @@ I_Xa_excursionists_per_vehicle = ConstIndex('excursionists per vehicle allocatio
 I_Xo_tourists_parking  = ConstIndex('tourists in parking rotation factor', 1.02, group="Parcheggi")
 I_Xo_excursionists_parking = ConstIndex('excursionists in parking rotation factor', 3.5, group="Parcheggi")
 
-I_Xo_tourists_beach = UniformDistIndex('tourists on beach rotation factor', loc=1.0, scale=2.0, group="Spiaggia")
+I_Xo_tourists_beach = DistributionIndex('tourists on beach rotation factor', distribution='uniform', loc=1.0, scale=2.0, group="Spiaggia")
 I_Xo_excursionists_beach = ConstIndex('excursionists on beach rotation factor', 1.02, group="Spiaggia")
 
 I_Xa_tourists_accommodation = ConstIndex('tourists per accommodation allocation factor', 1.05, group="Alberghi")

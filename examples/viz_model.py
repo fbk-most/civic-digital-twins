@@ -8,7 +8,8 @@ import numpy as np
 import math
 import random
 
-from dt_model import ContextVariable, PresenceVariable, Constraint, Ensemble, Model, Index, ConstIndex, UniformDistIndex, LognormDistIndex, TriangDistIndex, SymIndex
+from dt_model import ContextVariable, PresenceVariable, Constraint, Ensemble, Model, Index, ConstIndex,SymIndex,DistributionIndex
+#UniformDistIndex, LognormDistIndex, TriangDistIndex, 
 
 class VizSituation:    
     """
@@ -235,56 +236,67 @@ def __value_to_max(v):
 def index_to_widget(st, idx: Index, on_change=None):
     if isinstance(idx, ConstIndex):
         return st.slider(idx.name, __value_to_min(idx.v), __value_to_max(idx.v), idx.v, on_change=on_change, key=idx.name)
-    if isinstance(idx, UniformDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change, key=idx.name)
-    if isinstance(idx, LognormDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change, key=idx.name)
-    if isinstance(idx, TriangDistIndex):
-        return st.slider(idx.name, __value_to_min(idx.loc), __value_to_max(idx.loc + idx.scale), (idx.loc, idx.loc + idx.scale), on_change=on_change, key=idx.name)
+    
+    elif isinstance(idx, DistributionIndex):
+        loc = idx.params.get("loc")
+        scale = idx.params.get("scale") 
+        return st.slider(
+            idx.name,
+            __value_to_min(loc),
+            __value_to_max(loc + scale),
+            (loc, loc + scale),
+            on_change=on_change,
+            key=idx.name
+        )
     return None
 
 def index_variation(idx, value, model_name, in_place: bool = False):
     ref_name = idx.ref_name
     var_name = f"{ref_name} ({model_name})"
+
     if isinstance(idx, ConstIndex):
         if value != idx.v: 
             if in_place:
                 idx.v = value
                 return idx
             else: return ConstIndex(var_name, value, idx.group, ref_name=ref_name)
-    if isinstance(idx, UniformDistIndex):
-        (f, t) = value
-        if f != idx.loc or t != idx.loc + idx.scale: 
+
+    elif isinstance(idx, DistributionIndex):  
+        loc, scale = idx.params.get("loc"), idx.params.get("scale")
+        c = idx.params.get("c", None)
+        s = idx.params.get("s", None)
+        f, t = value
+        f, t = value
+        if f != loc or t != loc + scale:
+            new_params = {"loc": f, "scale": t - f}
+            if s is not None:
+                new_params["s"] = s
+            if c is not None:
+                new_params["c"] = c
+            
             if in_place:
-                idx.loc = f
-                idx.scale = t - f
+                idx.params = new_params
                 return idx
-            else: return UniformDistIndex(var_name, f, t - f, idx.group, ref_name=ref_name)
-    if isinstance(idx, LognormDistIndex):
-        (f, t) = value
-        if f != idx.loc or t != idx.loc + idx.scale: 
-            if in_place:
-                idx.loc = f
-                idx.scale = t - f
-                return idx
-            else: return LognormDistIndex(var_name, f, t - f, idx.s, idx.group, ref_name=ref_name)
-    if isinstance(idx, TriangDistIndex):
-        (f, t) = value
-        if f != idx.loc or t != idx.loc + idx.scale: 
-            if in_place:
-                idx.loc = f
-                idx.scale = t - f
-                return idx
-            else: return TriangDistIndex(var_name, f, t - f, idx.c, idx.group, ref_name=ref_name)
+            else:
+                return DistributionIndex(
+                    var_name,
+                    idx.distribution,
+                    group=idx.group,
+                    ref_name=ref_name,
+                    **new_params
+                )
     return None
 
 # TODO move to index
 def is_equal_index(idx1, idx2):
     if type(idx1) != type(idx2): return False
+
     if isinstance(idx1, ConstIndex):
-        if idx1.value == idx2.value: return True
-    if isinstance(idx1, UniformDistIndex) or isinstance(idx1, LognormDistIndex) or isinstance(idx1, TriangDistIndex):
-        if idx1.loc == idx2.loc and idx1.scale == idx2.scale: return True
+        return idx1.value == idx2.value
+
+    if isinstance(idx1, DistributionIndex):
+        return idx1.params == idx2.params
 
     if isinstance(idx1, SymIndex): return True
+
     return False
