@@ -29,18 +29,14 @@ class DistributionIndex(Index):
     """
     Class to represent an index as a requested distribution
     """
-    def __init__(self, name: str, distribution: str, group: str | None = None, ref_name: str | None = None, **kwargs) -> None:
-
-        if not hasattr(stats, distribution):
-            raise ValueError(f"Unknown distribution: {distribution}")
-        dist_constructor = getattr(stats, distribution)
-        self.value = dist_constructor(**kwargs)
+    def __init__(self, name: str, distribution: any, group: str | None = None, ref_name: str | None = None, **kwargs) -> None:
+        self.value = distribution(**kwargs)
         super().__init__(name, self.value, group=group, ref_name=ref_name)
         self.distribution = distribution
         self._param = kwargs
 
 
-    @property
+    @property                       
     def params(self):
         return self._param
     
@@ -48,8 +44,7 @@ class DistributionIndex(Index):
     def params(self, new_kwargs):
         if self._param != new_kwargs:
             self._param = new_kwargs
-            dist_constructor = getattr(stats, self.distribution)
-            self.value = dist_constructor(**new_kwargs)
+            self.value = self.distribution(**new_kwargs)
     
     def __str__(self):
         return f"{self.distribution}_dist_idx({self._param})"

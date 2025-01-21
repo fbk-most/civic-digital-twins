@@ -27,10 +27,10 @@ PV_excursionists = PresenceVariable('excursionists', [CV_weekday, CV_weather], e
 
 # Capacity indexes
 
-I_C_parking = DistributionIndex('parking capacity', distribution='uniform', loc=350.0, scale=100.0, group="Parcheggi")
-I_C_beach = DistributionIndex('beach capacity', distribution='uniform', loc=6000.0, scale=1000.0, group="Spiaggia",)
-I_C_accommodation = DistributionIndex('accommodation capacity', distribution='lognorm', loc=0.0, scale=5000.0, s=0.125, group="Alberghi")
-I_C_food = DistributionIndex('food service capacity', distribution='triang', loc=3000.0, scale=1000.0, c=0.5, group="Ristoranti")
+I_C_parking = DistributionIndex('parking capacity', distribution=stats.uniform, loc=350.0, scale=100.0, group="Parcheggi")
+I_C_beach = DistributionIndex('beach capacity', distribution=stats.uniform, loc=6000.0, scale=1000.0, group="Spiaggia",)
+I_C_accommodation = DistributionIndex('accommodation capacity', distribution=stats.lognorm, loc=0.0, scale=5000.0, s=0.125, group="Alberghi")
+I_C_food = DistributionIndex('food service capacity', distribution=stats.triang, loc=3000.0, scale=1000.0, c=0.5, group="Ristoranti")
 
 # Usage indexes
 
@@ -63,7 +63,7 @@ I_Xa_excursionists_per_vehicle = ConstIndex('excursionists per vehicle allocatio
 I_Xo_tourists_parking  = ConstIndex('tourists in parking rotation factor', 1.02, group="Parcheggi")
 I_Xo_excursionists_parking = ConstIndex('excursionists in parking rotation factor', 3.5, group="Parcheggi")
 
-I_Xo_tourists_beach = DistributionIndex('tourists on beach rotation factor', distribution='uniform', loc=1.0, scale=2.0, group="Spiaggia")
+I_Xo_tourists_beach = DistributionIndex('tourists on beach rotation factor', distribution=stats.uniform, loc=1.0, scale=2.0, group="Spiaggia")
 I_Xo_excursionists_beach = ConstIndex('excursionists on beach rotation factor', 1.02, group="Spiaggia")
 
 I_Xa_tourists_accommodation = ConstIndex('tourists per accommodation allocation factor', 1.05, group="Alberghi")
