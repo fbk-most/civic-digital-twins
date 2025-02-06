@@ -118,24 +118,40 @@ class Model:
                 vertical_regr = stats.linregress(self.grid[self.pvs[1]][yi], self.grid[self.pvs[0]][xi])
             except ValueError:
                 pass
-            # TODO: find a better way to represent the lines (at the moment, we need to encode the endopoints
-            # TODO: even before we implement the previous TODO, avoid hardcoding of line length (10000)
-            if (horizontal_regr is None) and (vertical_regr is None):
-                pass  # No regression is possible (eg median not intersecting the grid)
-            elif (horizontal_regr is None) or (horizontal_regr.rvalue < vertical_regr.rvalue):
-                if vertical_regr.slope != 0.00:
-                    modal_lines[c] = ((vertical_regr.intercept, 0.0),
-                                      (0.0, -vertical_regr.intercept / vertical_regr.slope))
+
+            # TODO(pistore,bassosimone): find a better way to represent the lines (at the moment, we need to encode the endopoints
+            # TODO(pistore,bassosimone): even before we implement the previous TODO, avoid hardcoding of line length (10000)
+
+            def __vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
+                """Logic for computing the points with vertical regression"""
+                if regr.slope != 0.00:
+                    return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
                 else:
-                    modal_lines[c] = ((vertical_regr.intercept, vertical_regr.intercept),
-                                      (0.0, 10000.0))
+                    return ((regr.intercept, regr.intercept), (0.0, 10000.0))
+
+            def __horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
+                """Logic for computing the points with horizontal regression"""
+                if regr.slope != 0.0:
+                    return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
+                else:
+                    return ((0.0, 10000.0), (regr.intercept, regr.intercept))
+
+            if horizontal_regr and vertical_regr:
+                # Use regression with better fit (higher rvalue)
+                if horizontal_regr.rvalue < vertical_regr.rvalue:
+                    modal_lines[c] = __vertical(vertical_regr)
+                else:
+                    modal_lines[c] = __horizontal(horizontal_regr)
+
+            elif horizontal_regr:
+                modal_lines[c] = __horizontal(horizontal_regr)
+
+            elif vertical_regr:
+                modal_lines[c] = __vertical(vertical_regr)
+
             else:
-                if horizontal_regr.slope != 0.0:
-                    modal_lines[c] = ((0.0, -horizontal_regr.intercept / horizontal_regr.slope),
-                                      (horizontal_regr.intercept, 0.0))
-                else:
-                    modal_lines[c] = ((0.0, 10000.0),
-                                      (horizontal_regr.intercept, horizontal_regr.intercept))
+                pass  # No regression is possible (eg median not intersecting the grid)
+
         return modal_lines
 
     def variation(self, new_name, *, change_indexes=None, change_capacities=None):
