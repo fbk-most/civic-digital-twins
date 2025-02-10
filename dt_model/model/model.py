@@ -34,11 +34,13 @@ class Model:
         self.grid = None
         self.field = None
         self.field_elements = None
+        self.index_vals = None
 
     def reset(self):
         self.grid = None
         self.field = None
         self.field_elements = None
+        self.index_vals = None
 
     def evaluate(self, grid, ensemble):
         assert self.grid is None
@@ -55,6 +57,7 @@ class Model:
             else:
                 args = [c_values[cv].values for cv in index.cvs]
                 c_subs[index] = index.value(*args)
+        self.index_vals = c_subs
         self.grid = grid
         self.field = 1.0
         self.field_elements = {}
@@ -74,6 +77,13 @@ class Model:
             self.field_elements[constraint] = result
             self.field *= result
         return self.field
+    def get_index_value(self, i: Index) -> float:
+        assert self.index_vals is not None
+        return self.index_vals[i]
+
+    def get_index_mean_value(self, i: Index) -> float:
+        assert self.index_vals is not None
+        return np.average(self.index_vals[i])
 
     def compute_sustainable_area(self) -> float:
         assert self.grid is not None
