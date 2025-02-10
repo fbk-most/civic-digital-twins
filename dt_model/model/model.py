@@ -57,12 +57,12 @@ class Model:
             else:
                 args = [c_values[cv].values for cv in index.cvs]
                 c_subs[index] = index.value(*args)
+        grid_shape = (grid[self.pvs[0]].size, grid[self.pvs[1]].size)
         self.index_vals = c_subs
         self.grid = grid
-        self.field = 1.0
+        self.field = np.ones(grid_shape)
         self.field_elements = {}
         assert len(self.pvs) == 2  # TODO: generalize
-        grid_shape = (grid[self.pvs[0]].size, grid[self.pvs[1]].size)
         p_values = [np.expand_dims(grid[pv], axis=(i, 2)) for i,pv in enumerate(self.pvs)]
         c_values = [np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes]
         for constraint in self.constraints:
