@@ -189,5 +189,7 @@ class Model:
         new_constraints = []
         for constraint in self.constraints:
             new_constraints.append(Constraint(constraint.usage.subs(change_indexes),
-                                              constraint.capacity.subs(change_capacities)))
+                                              constraint.capacity.subs(change_capacities),
+                                              group=constraint.group, name=constraint.name,
+            ))
         return Model(new_name, self.cvs, self.pvs, new_indexes, new_capacities, new_constraints)
