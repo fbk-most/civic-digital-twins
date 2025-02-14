@@ -17,13 +17,13 @@ from dt_model.symbols.presence_variable import PresenceVariable
 
 class Model:
     def __init__(
-        self,
-        name,
-        cvs: list[ContextVariable],
-        pvs: list[PresenceVariable],
-        indexes: list[Index],
-        capacities: list[Index],
-        constraints: list[Constraint],
+            self,
+            name,
+            cvs: list[ContextVariable],
+            pvs: list[PresenceVariable],
+            indexes: list[Index],
+            capacities: list[Index],
+            constraints: list[Constraint],
     ) -> None:
         self.name = name
         self.cvs = cvs
@@ -58,12 +58,10 @@ class Model:
                 args = [c_values[cv].values for cv in index.cvs]
                 c_subs[index] = index.value(*args)
         grid_shape = (grid[self.pvs[0]].size, grid[self.pvs[1]].size)
-        self.index_vals = c_subs
-        self.grid = grid
-        self.field = np.ones(grid_shape)
-        self.field_elements = {}
+        field = np.ones(grid_shape)
+        field_elements = {}
         assert len(self.pvs) == 2  # TODO: generalize
-        p_values = [np.expand_dims(grid[pv], axis=(i, 2)) for i,pv in enumerate(self.pvs)]
+        p_values = [np.expand_dims(grid[pv], axis=(i, 2)) for i, pv in enumerate(self.pvs)]
         c_values = [np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes]
         for constraint in self.constraints:
             usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(*p_values, *c_values)
@@ -74,9 +72,14 @@ class Model:
             else:
                 unscaled_result = 1.0 - capacity.value.cdf(usage)
             result = np.broadcast_to(np.dot(unscaled_result, c_weight), grid_shape)
-            self.field_elements[constraint] = result
-            self.field *= result
+            field_elements[constraint] = result
+            field *= result
+        self.index_vals = c_subs
+        self.grid = grid
+        self.field = field
+        self.field_elements = field_elements
         return self.field
+
     def get_index_value(self, i: Index) -> float:
         assert self.index_vals is not None
         return self.index_vals[i]
@@ -87,45 +90,54 @@ class Model:
 
     def compute_sustainable_area(self) -> float:
         assert self.grid is not None
-        return self.field.sum() * reduce(lambda x, y: x*y,
-                                         [axis.max() / (axis.size - 1) + 1 for axis in list(self.grid.values())])
+        grid = self.grid
+        field = self.field
+
+        return field.sum() * reduce(lambda x, y: x * y,
+                                    [axis.max() / (axis.size - 1) + 1 for axis in list(grid.values())])
 
     # TODO: change API - order of presence variables
     def compute_sustainability_index(self, presences: list) -> float:
         assert self.grid is not None
+        grid = self.grid
+        field = self.field
         # TODO: fill value
-        index = interpolate.interpn(self.grid.values(), self.field, np.array(presences),
+        index = interpolate.interpn(grid.values(), field, np.array(presences),
                                     bounds_error=False, fill_value=0.0)
         return np.mean(index)
 
     def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
         assert self.grid is not None
+        grid = self.grid
+        field_elements = self.field_elements
         # TODO: fill value
         indexes = {}
         for c in self.constraints:
-            index = interpolate.interpn(self.grid.values(), self.field_elements[c], np.array(presences),
+            index = interpolate.interpn(grid.values(), field_elements[c], np.array(presences),
                                         bounds_error=False, fill_value=0.0)
             indexes[c] = np.mean(index)
         return indexes
 
     def compute_modal_line_per_constraint(self) -> dict:
         assert self.grid is not None
+        grid = self.grid
+        field_elements = self.field_elements
         modal_lines = {}
         for c in self.constraints:
-            fe = self.field_elements[c]
-            matrix = (fe <= 0.5) & ((ndimage.shift(fe, (0,1)) > 0.5) | (ndimage.shift(fe, (0,-1)) > 0.5) |
-                                    (ndimage.shift(fe, (1,0)) > 0.5) | (ndimage.shift(fe, (-1,0)) > 0.5))
+            fe = field_elements[c]
+            matrix = (fe <= 0.5) & ((ndimage.shift(fe, (0, 1)) > 0.5) | (ndimage.shift(fe, (0, -1)) > 0.5) |
+                                    (ndimage.shift(fe, (1, 0)) > 0.5) | (ndimage.shift(fe, (-1, 0)) > 0.5))
             (yi, xi) = np.nonzero(matrix)
 
             # TODO: decide whether two regressions are really necessary
             horizontal_regr = None
             vertical_regr = None
             try:
-                horizontal_regr = stats.linregress(self.grid[self.pvs[0]][xi], self.grid[self.pvs[1]][yi])
+                horizontal_regr = stats.linregress(grid[self.pvs[0]][xi], grid[self.pvs[1]][yi])
             except ValueError:
                 pass
             try:
-                vertical_regr = stats.linregress(self.grid[self.pvs[1]][yi], self.grid[self.pvs[0]][xi])
+                vertical_regr = stats.linregress(grid[self.pvs[1]][yi], grid[self.pvs[0]][xi])
             except ValueError:
                 pass
 
@@ -191,5 +203,5 @@ class Model:
             new_constraints.append(Constraint(constraint.usage.subs(change_indexes),
                                               constraint.capacity.subs(change_capacities),
                                               group=constraint.group, name=constraint.name,
-            ))
+                                              ))
         return Model(new_name, self.cvs, self.pvs, new_indexes, new_capacities, new_constraints)
