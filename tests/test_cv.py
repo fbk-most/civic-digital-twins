@@ -41,6 +41,7 @@ def continuous_cv():
 def test_cv(cv_fixture_name, sizes, values, request):
     cv = request.getfixturevalue(cv_fixture_name)
     print(f"Testing: {cv.name} (support size = {cv.support_size()})")
+    # TODO(bassosimone): turn these prints into assertions
     for s in sizes:
         print(f"    Size {s}: {cv.sample(s)}")
     for s in sizes:
