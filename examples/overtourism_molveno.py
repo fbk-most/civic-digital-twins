@@ -13,18 +13,21 @@ from matplotlib.colors import Normalize
 # MODEL DEFINITION
 
 # Context variables
-days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-weather = {'molto bassa': 0.65, 'bassa': 0.2, 'media': 0.075, 'alta': 0.075}
+weekday = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+season = {'very high': 0.25, 'high': 0.25, 'mid': 0.25, 'low': 0.25}
+weather = {'good': 0.65, 'unsettled': 0.275, 'bad': 0.075}
 
-CV_weekday = UniformCategoricalContextVariable('weekday', [Symbol(v) for v in days])
+
+CV_weekday = UniformCategoricalContextVariable('weekday', [Symbol(v) for v in weekday])
+CV_season = CategoricalContextVariable('season', {Symbol(v): season[v] for v in season.keys()})
 CV_weather = CategoricalContextVariable('weather', {Symbol(v): weather[v] for v in weather.keys()})
 
 # Presence variables
 
 from presence_stats import tourist_presences_stats, excursionist_presences_stats
 
-PV_tourists = PresenceVariable('tourists', [CV_weekday, CV_weather], tourist_presences_stats)
-PV_excursionists = PresenceVariable('excursionists', [CV_weekday, CV_weather], excursionist_presences_stats)
+PV_tourists = PresenceVariable('tourists', [CV_weekday, CV_season, CV_weather], tourist_presences_stats)
+PV_excursionists = PresenceVariable('excursionists', [CV_weekday, CV_season, CV_weather], excursionist_presences_stats)
 
 # Capacity indexes
 
@@ -72,6 +75,15 @@ I_Xa_tourists_accommodation = Index('tourists per accommodation allocation facto
 I_Xa_visitors_food = Index('visitors in food service allocation factor', 0.9)
 I_Xo_visitors_food = Index('visitors in food service rotation factor', 2.0)
 
+# Presence indexes
+
+I_P_tourists_reduction_factor = Index('tourists reduction factor', 1.0)
+I_P_excursionists_reduction_factor = Index('excursionists reduction factor', 1.0)
+
+I_P_tourists_saturation_level = Index('tourists saturation level', 10000)
+I_P_excursionists_saturation_level = Index('excursionists saturation level', 10000)
+
+
 # Constraints
 # TODO: add names to constraints?
 
@@ -99,16 +111,18 @@ C_food = Constraint(usage=(PV_tourists * I_U_tourists_food + PV_excursionists * 
                           (I_Xa_visitors_food * I_Xo_visitors_food),
                     capacity=I_C_food)
 
+
 # Models
 # TODO: what is the better process to create a model? (e.g., adding elements incrementally)
 
 # Base model
-M_Base = Model('base model', [CV_weekday, CV_weather], [PV_tourists, PV_excursionists],
+M_Base = Model('base model', [CV_weekday, CV_season, CV_weather], [PV_tourists, PV_excursionists],
                [I_U_tourists_parking, I_U_excursionists_parking, I_U_tourists_beach, I_U_excursionists_beach,
                 I_U_tourists_accommodation, I_U_tourists_food, I_U_excursionists_food,
                 I_Xa_tourists_per_vehicle, I_Xa_excursionists_per_vehicle, I_Xa_tourists_accommodation,
                 I_Xo_tourists_parking, I_Xo_excursionists_parking, I_Xo_tourists_beach, I_Xo_excursionists_beach,
-                I_Xa_visitors_food, I_Xo_visitors_food],
+                I_Xa_visitors_food, I_Xo_visitors_food, I_P_tourists_reduction_factor, I_P_excursionists_reduction_factor,
+                I_P_tourists_saturation_level, I_P_excursionists_saturation_level],
                [I_C_parking, I_C_beach, I_C_accommodation, I_C_food],
                [C_parking, C_beach, C_accommodation, C_food])
 
@@ -123,10 +137,10 @@ M_MoreParking = M_Base.variation('larger parking model', change_capacities={I_C_
 S_Base = {}
 
 # Good weather situation
-S_Good_Weather = {CV_weather: [Symbol('molto bassa'), Symbol('bassa')]}
+S_Good_Weather = {CV_weather: [Symbol('good')]}
 
 # Bad weather situation
-S_Bad_Weather = {CV_weather: [Symbol('alta')]}
+S_Bad_Weather = {CV_weather: [Symbol('bad')]}
 
 # PLOTTING
 
@@ -134,6 +148,15 @@ S_Bad_Weather = {CV_weather: [Symbol('alta')]}
 (t_sample, e_sample) = (100, 100)
 target_presence_samples = 200
 ensemble_size = 20  # TODO: make configurable; may it be a CV parameter?
+
+
+def scale(p,v):
+    return p*v
+
+
+def threshold(p,t):
+    return min(p, t) + 0.05/(1 + np.exp(-(p-t)))
+
 
 
 def plot_scenario(ax, model, situation, title):
@@ -148,16 +171,33 @@ def plot_scenario(ax, model, situation, title):
     sample_excursionists = [sample for c in ensemble for sample in
                             PV_excursionists.sample(cvs=c[1], nr=max(1,round(c[0]*target_presence_samples)))]
 
+    # Presence Transformation function
+    # TODO: manage differently!
+    def presence_transformation(presence, reduction_factor, saturation_level, sharpness=3):
+        tmp = presence * reduction_factor
+        return (tmp * saturation_level /
+                ((tmp**sharpness + saturation_level**sharpness )**(1/sharpness)))
+
+    sample_tourists = [ presence_transformation(presence,
+                                            model.get_index_mean_value(I_P_tourists_reduction_factor),
+                                            model.get_index_mean_value(I_P_tourists_saturation_level))
+                        for presence in sample_tourists ]
+    sample_excursionists = [ presence_transformation(presence,
+                                                 model.get_index_mean_value(I_P_excursionists_reduction_factor),
+                                                 model.get_index_mean_value(I_P_excursionists_saturation_level))
+                             for presence in sample_excursionists ]
+
+
     # TODO: move elsewhere, it cannot be computed this way...
     area = model.compute_sustainable_area()
     index = model.compute_sustainability_index(list(zip(sample_tourists, sample_excursionists)))
     indexes = model.compute_sustainability_index_per_constraint(list(zip(sample_tourists, sample_excursionists)))
     critical = min(indexes, key=indexes.get)
+    modals = model.compute_modal_line_per_constraint()
 
-    # TODO: re-enable median
-    # C_accommodation.median(cvs=scenario).plot(ax, color='red')
-    # C_parking.median(cvs=scenario).plot(ax, color='red')
     ax.pcolormesh(xx,yy, zz, cmap='coolwarm_r', vmin=0.0, vmax=1.0)
+    for modal in modals.values():
+        ax.plot(*modal, color='black', linewidth=2)
     ax.scatter(sample_excursionists, sample_tourists, color='gainsboro', edgecolors='black')
     ax.set_title(f'{title}\n'+
                  f'area = {area / 10e6:.2f} kp$^2$ - '+
