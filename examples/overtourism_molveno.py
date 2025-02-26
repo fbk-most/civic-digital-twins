@@ -20,9 +20,7 @@ CV_weekday = UniformCategoricalContextVariable('weekday', [Symbol(v) for v in we
 CV_season = CategoricalContextVariable('season', {Symbol(v): season[v] for v in season.keys()})
 CV_weather = CategoricalContextVariable('weather', {Symbol(v): weather[v] for v in weather.keys()})
 
-# Presence variables# SPDX-License-Identifier: Apache-2.0
-
-
+# Presence variables
 
 PV_tourists = PresenceVariable('tourists', [CV_weekday, CV_season, CV_weather], tourist_presences_stats)
 PV_excursionists = PresenceVariable('excursionists', [CV_weekday, CV_season, CV_weather], excursionist_presences_stats)
