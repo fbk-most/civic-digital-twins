@@ -10,21 +10,17 @@ import matplotlib.pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
+from presence_stats import season, weather, weekday, tourist_presences_stats, excursionist_presences_stats
+
 # MODEL DEFINITION
 
 # Context variables
-weekday = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-season = {'very high': 0.25, 'high': 0.25, 'mid': 0.25, 'low': 0.25}
-weather = {'good': 0.65, 'unsettled': 0.275, 'bad': 0.075}
-
 
 CV_weekday = UniformCategoricalContextVariable('weekday', [Symbol(v) for v in weekday])
 CV_season = CategoricalContextVariable('season', {Symbol(v): season[v] for v in season.keys()})
 CV_weather = CategoricalContextVariable('weather', {Symbol(v): weather[v] for v in weather.keys()})
 
 # Presence variables
-
-from presence_stats import tourist_presences_stats, excursionist_presences_stats
 
 PV_tourists = PresenceVariable('tourists', [CV_weekday, CV_season, CV_weather], tourist_presences_stats)
 PV_excursionists = PresenceVariable('excursionists', [CV_weekday, CV_season, CV_weather], excursionist_presences_stats)
@@ -40,15 +36,16 @@ I_C_food = Index('food service capacity', stats.triang(loc=3000.0, scale=1000.0,
 
 I_U_tourists_parking = Index('tourist parking usage factor', 0.02)
 I_U_excursionists_parking = Index('excursionist parking usage factor',
-                                  Piecewise((0.55, Eq(CV_weather, Symbol('alta'))| Eq(CV_weather, Symbol('media'))), (0.80, True)),
+                                  Piecewise((0.55, Eq(CV_weather, Symbol('bad'))),
+                                            (0.80, True)),
                                   cvs=[CV_weather])
 
 I_U_tourists_beach = Index('tourist beach usage factor',
-                           Piecewise((0.25, Eq(CV_weather, Symbol('alta')) | Eq(CV_weather, Symbol('media'))),
+                           Piecewise((0.25, Eq(CV_weather, Symbol('bad'))),
                                      (0.50, True)),
                            cvs=[CV_weather])
 I_U_excursionists_beach = Index('excursionist beach usage factor',
-                                Piecewise((0.35, Eq(CV_weather, Symbol('alta')) | Eq(CV_weather, Symbol('media'))),
+                                Piecewise((0.35, Eq(CV_weather, Symbol('bad'))),
                                           (0.80, True)),
                                 cvs=[CV_weather])
 
@@ -56,7 +53,7 @@ I_U_tourists_accommodation = Index('tourist accommodation usage factor', 0.90)
 
 I_U_tourists_food = Index('tourist food service usage factor', 0.20)
 I_U_excursionists_food = Index('excursionist food service usage factor',
-                               Piecewise((0.80, Eq(CV_weather, Symbol('alta')) | Eq(CV_weather, Symbol('media'))),
+                               Piecewise((0.80, Eq(CV_weather, Symbol('bad'))),
                                          (0.40, True)),
                                cvs=[CV_weather,CV_weekday])
 
@@ -178,14 +175,14 @@ def plot_scenario(ax, model, situation, title):
         return (tmp * saturation_level /
                 ((tmp**sharpness + saturation_level**sharpness )**(1/sharpness)))
 
-    sample_tourists = [ presence_transformation(presence,
-                                            model.get_index_mean_value(I_P_tourists_reduction_factor),
-                                            model.get_index_mean_value(I_P_tourists_saturation_level))
-                        for presence in sample_tourists ]
-    sample_excursionists = [ presence_transformation(presence,
-                                                 model.get_index_mean_value(I_P_excursionists_reduction_factor),
-                                                 model.get_index_mean_value(I_P_excursionists_saturation_level))
-                             for presence in sample_excursionists ]
+    sample_tourists = [presence_transformation(presence,
+                                               model.get_index_mean_value(I_P_tourists_reduction_factor),
+                                               model.get_index_mean_value(I_P_tourists_saturation_level))
+                       for presence in sample_tourists]
+    sample_excursionists = [presence_transformation(presence,
+                                                    model.get_index_mean_value(I_P_excursionists_reduction_factor),
+                                                    model.get_index_mean_value(I_P_excursionists_saturation_level))
+                            for presence in sample_excursionists]
 
 
     # TODO: move elsewhere, it cannot be computed this way...
