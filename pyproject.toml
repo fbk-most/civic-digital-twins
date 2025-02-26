@@ -7,10 +7,8 @@ name = "dt-model"
 version = "0.0.1"
 description = "DigitalTwins Model"
 readme = "README.md"
-authors = [
-    { name = "Fondazione Bruno Kessler", email = "dslab@fbk.eu" }
-]
-license = { file = "LICENSE.txt" }
+authors = [{ name = "Fondazione Bruno Kessler", email = "dslab@fbk.eu" }]
+license = { file = "LICENSE" }
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.9",
@@ -19,16 +17,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 keywords = []
-requires-python = ">=3.9"
-dependencies = [
-    "sympy",
-    "numpy",
-    "pandas",
-    "scipy"
-]
+requires-python = ">=3.12"
+dependencies = ["sympy", "numpy", "pandas", "scipy"]
 
 [project.urls]
-Homepage = "https://github.com/tn-aixpa/dt-model"
+Homepage = "https://github.com/fbk-most/dt-model"
 
 [tool.ruff]
 line-length = 120
@@ -39,3 +32,10 @@ line-length = 120
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
+[dependency-groups]
+dev = ["black>=24.10.0", "pytest>=7.0.0", "pytest-cov>=4.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--cov=dt_model --cov-report=xml --cov-report=term-missing"
