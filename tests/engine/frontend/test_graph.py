@@ -109,8 +109,8 @@ def test_reduction_graph():
 
     # Build mean(sum(x * y, axis=0), axis=1)
     prod = graph.multiply(x, y)
-    sum_0 = graph.reduce_sum(prod, axis=0)
-    result = graph.reduce_mean(sum_0, axis=1)
+    sum_0 = graph.project_using_sum(prod, axis=0)
+    result = graph.project_using_mean(sum_0, axis=1)
 
     # Verify structure
     assert result.node is sum_0
