@@ -343,7 +343,7 @@ class project_using_sum(AxisOp):
 
 
 reduce_sum = project_using_sum
-"""Name alias for project_sum, for compatibility with yakof, which still
+"""Name alias for project_using_sum, for compatibility with yakof, which still
 uses this name. We will remove this symbol once the merge of yakof into
 the dt-model is complete."""
 
@@ -354,7 +354,7 @@ class project_using_mean(AxisOp):
 
 
 reduce_mean = project_using_mean
-"""Name alias for project_mean, for compatibility with yakof, which
+"""Name alias for project_using_mean, for compatibility with yakof, which
 still uses this name. We will remove this symbol once the merge of
 yakof into the dt-model is complete."""
 
