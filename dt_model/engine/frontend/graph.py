@@ -21,13 +21,35 @@ to be performed. Each node implements a specific operation and stores its
 inputs as attributes. The graph can then be evaluated by traversing the nodes
 and performing their operations using NumPy, TensorFlow, etc.
 
+We anticipate using NumPy/TensorFlow to perform computation based on matrices
+of diverse shapes ("tensors"), therefore, we have included operations for shape
+manipulation including expanding the dimensions and projecting over the axes. For
+example, expand_dims allows to add new axes of size 1 to a tensor's shape, while
+project_using_sum allows to compute the sum of tensor elements along specified
+axes, thus projecting the tensor onto a lower-dimensional space.
+
+To allow for uniform manipulation, we define the following operation groups:
+
+1. BinaryOp: Operations that take two graph nodes as input
+2. UnaryOp: Operations that take one graph node as input
+3. AxisOp: Operations that take a graph node and an axis specification as input
+and either expand to a higher-dimensional space or reduce to a lower-dimensional
+space by projecting over one or more axes using a specific reduction operation.
+
 Here's an example of what you can do with this module:
 
     >>> from dt_model.engine.frontend import graph
+    >>>
     >>> a = graph.placeholder("a", 1.0)
     >>> b = graph.constant(2.0)
     >>> c = graph.add(a, b)
     >>> d = grap.multiply(c, c)
+    >>>
+    >>> # Expand to a higher-dimensional space
+    >>> e = graph.expand_dims(d, axis=(1,2))
+    >>>
+    >>> # Project to a lower-dimensional space by summing over axis 0
+    >>> f = graph.project_using_sum(e, axis=0)
 
 Like TensorFlow, we support placeholders. That is, variables with a given
 name that can be filled in at execution time with concrete values. We also
@@ -108,8 +130,6 @@ class Node:
         # Note: introducing hashing by identity in the class inheritance
         # chain to ensure that overriding the equality operator type signature
         # in derived classes does not break assigning to dicts.
-        #
-        # See also the implementation of Tensor[B].__eq__ in abstract.py.
         return id(self)
 
 
@@ -241,7 +261,7 @@ class power(BinaryOp):
 
 
 pow = power
-"""Alias for power for compatibility with NumPy naming."""
+"""Name alias for power, for compatibility with NumPy naming."""
 
 
 class log(UnaryOp):
@@ -293,6 +313,10 @@ class multi_clause_where(Node):
 class AxisOp(Node):
     """Base class for axis manipulation operations.
 
+    We use these operations to expand a tensor to a higher-dimensional
+    space or to reduce its dimensionality by projecting over one or more
+    axes using a specific reduction operation.
+
     Args:
         node: Input tensor
         axis: Axis specification
@@ -305,19 +329,34 @@ class AxisOp(Node):
 
 
 class expand_dims(AxisOp):
-    """Adds new axes of size 1 to a tensor's shape."""
+    """Adds new axes of size 1 to a tensor's shape, thus expanding the
+    tensor to a higher-dimensional space."""
 
 
 class squeeze(AxisOp):
     """Removes axes of size 1 from a tensor's shape."""
 
 
-class reduce_sum(AxisOp):
-    """Computes sum of tensor elements along specified axes."""
+class project_using_sum(AxisOp):
+    """Computes sum of tensor elements along specified axes, thus
+    projecting the tensor onto a lower-dimensional space."""
 
 
-class reduce_mean(AxisOp):
-    """Computes mean of tensor elements along specified axes."""
+reduce_sum = project_using_sum
+"""Name alias for project_using_sum, for compatibility with yakof, which still
+uses this name. We will remove this symbol once the merge of yakof into
+the dt-model is complete."""
+
+
+class project_using_mean(AxisOp):
+    """Computes mean of tensor elements along specified axes, thus
+    projecting the tensor onto a lower-dimensional space."""
+
+
+reduce_mean = project_using_mean
+"""Name alias for project_using_mean, for compatibility with yakof, which
+still uses this name. We will remove this symbol once the merge of
+yakof into the dt-model is complete."""
 
 
 # Debug operations
