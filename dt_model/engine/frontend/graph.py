@@ -89,6 +89,8 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from .. import atomic
+
 
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
@@ -102,6 +104,10 @@ NODE_FLAG_TRACE = 1 << 0
 
 NODE_FLAG_BREAK = 1 << 1
 """Inserts a breakpoint at the corresponding graph node."""
+
+
+_id_generator = atomic.Int()
+"""Atomic integer generator for unique node IDs."""
 
 
 class Node:
@@ -125,6 +131,7 @@ class Node:
     def __init__(self, name: str = "") -> None:
         self.name = name
         self.flags = 0
+        self.id = _id_generator.add(1)
 
     def __hash__(self) -> int:
         # Note: introducing hashing by identity in the class inheritance

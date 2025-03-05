@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+
 from dt_model.engine.frontend import graph
 
 
@@ -167,3 +168,50 @@ def test_where_operation():
     assert result.condition is condition
     assert result.then is then
     assert result.otherwise is otherwise
+
+
+def test_node_id_generation():
+    """Test that nodes receive unique, incrementing IDs."""
+    # Create multiple nodes of different types
+    nodes = [
+        graph.Node(),
+        graph.constant(1.0),
+        graph.placeholder("x"),
+        graph.Node(),
+    ]
+
+    # Check that IDs exist and are unique
+    ids = [node.id for node in nodes]
+    assert len(set(ids)) == len(ids)  # All IDs should be unique
+
+    # Verify IDs are increasing
+    for i in range(1, len(ids)):
+        assert ids[i] > ids[i - 1]
+
+
+def test_node_id_persistence():
+    """Test that node IDs remain stable across operations."""
+    a = graph.placeholder("a")
+    id_a = a.id
+
+    # Perform operations that use the node
+    traced_a = graph.tracepoint(a)
+
+    # Verify node identity is preserved and ID remains the same
+    assert traced_a is a
+    assert traced_a.id == id_a
+
+
+def test_binary_op_node_ids():
+    """Test that binary operation nodes get unique IDs."""
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+
+    op1 = graph.add(a, b)
+    op2 = graph.subtract(a, b)
+
+    assert hasattr(op1, "id")
+    assert hasattr(op2, "id")
+    assert op1.id != op2.id
+    assert op1.id != a.id
+    assert op1.id != b.id
