@@ -456,7 +456,7 @@ def test_comparison_operations():
 
 
 def test_state_value_access():
-    """Test the State.get method for accessing node values."""
+    """Test the State.get_node_value method for accessing node values."""
     # Create a node and a state
     x = graph.placeholder("x")
     y = graph.constant(2.0)
@@ -634,9 +634,10 @@ def test_axis_operations():
     # Test invalid axis value
     with pytest.raises(ValueError):  # NumPy raises ValueError for invalid axes
         # Create a valid node type but with invalid axis
+        # Note: x is only 2D, so axis=5 is invalid
         invalid_axis_node = graph.reduce_sum(
             x, axis=5
-        )  # x is only 2D, so axis=5 is invalid
+        )
         invalid_plan = linearize.forest(invalid_axis_node)
         invalid_state = executor.State({x: x_val})
 
