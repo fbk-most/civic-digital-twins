@@ -7,7 +7,7 @@ topological order. Unlike recursive evaluators, this executor requires
 pre-linearized graphs where nodes are sorted such that all dependencies
 of a node appear before the node itself in the evaluation sequence.
 
-This approach offers several advantages:
+This approach offers several advantages over walking the AST:
 - Clearer debugging: execution follows a predictable linear sequence
 - Better tracing: provides a coherent view of computation flow
 - Explicit error handling: clearly identifies missing dependency errors
