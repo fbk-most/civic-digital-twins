@@ -16,8 +16,11 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
-from dataclasses import dataclass, field
-from typing import Callable, cast
+from dataclasses import dataclass
+from typing import (
+    Callable,
+    cast,
+)
 
 import numpy as np
 
