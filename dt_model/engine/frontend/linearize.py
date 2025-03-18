@@ -33,7 +33,7 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
     Linearize a computation forest (multiple output nodes) into an execution plan.
 
     The nodes passed to this function are called "leaves" because (1) they
-    represents the nodes you'd like to evaluate and (2) these nodes are
+    represent the nodes you'd like to evaluate and (2) these nodes are
     typically the final results of the computation, which should not depend
     on any other nodes. We start linearization from such leaf nodes and
     work backwards to schedule all dependencies in order. That said, it's
@@ -65,7 +65,7 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
     # plan contains the linearized output
     plan: list[graph.Node] = []
 
-    # visting allows to detect cycles when visiting nodes
+    # visiting allows to detect cycles when visiting nodes
     visiting: set[graph.Node] = set()
 
     # visited caches the nodes we've already visited
@@ -94,7 +94,7 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
         for dep in deps:
             _visit(dep)
 
-        # We are not visting this node anymore
+        # We are not visiting this node anymore
         visiting.remove(node)
 
         # We have visited this node
