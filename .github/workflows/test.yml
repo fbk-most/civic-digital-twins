@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version:
+        python_version:
           - "3.11"
           - "3.12"
           - "3.13"
 
-    name: Test with Python ${{ matrix.python-version }}
+    name: Test with Python ${{ matrix.python_version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -25,22 +25,22 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }} --dev
+        run: uv sync --python ${{ matrix.python_version }} --dev
 
       - name: Check formatting with black
-        if: matrix.python-version == '3.11''
-        run: uv run --python ${{ matrix.python-version }} black --check . || true
+        if: matrix.python_version == "3.11""
+        run: uv run --python ${{ matrix.python_version }} black --check . || true
 
       - name: Check types with pyright
-        if: matrix.python-version == '3.11'
-        run: uv run --python ${{ matrix.python-version }} pyright || true
+        if: matrix.python_version == "3.11"
+        run: uv run --python ${{ matrix.python_version }} pyright || true
 
       - name: Run tests with pytest
-        run: uv run --python ${{ matrix.python-version }} pytest
+        run: uv run --python ${{ matrix.python_version }} pytest
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
-        if: matrix.python-version == '3.11'
+        if: matrix.python_version == "3.11"
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: ./coverage.xml
