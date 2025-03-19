@@ -28,11 +28,11 @@ jobs:
         run: uv sync --python ${{ matrix.python_version }} --dev
 
       - name: Check formatting with black
-        if: matrix["python_version"] == "3.11"
+        if: matrix['python_version'] == '3.11'
         run: uv run --python ${{ matrix.python_version }} black --check . || true
 
       - name: Check types with pyright
-        if: matrix["python_version"] == "3.11"
+        if: matrix['python_version'] == '3.11'
         run: uv run --python ${{ matrix.python_version }} pyright || true
 
       - name: Run tests with pytest
@@ -40,7 +40,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
-        if: matrix["python_version"] == "3.11"
+        if: matrix['python_version'] == '3.11'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: ./coverage.xml
