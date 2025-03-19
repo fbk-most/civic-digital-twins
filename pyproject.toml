@@ -17,11 +17,29 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 keywords = []
-requires-python = "==3.11.11"
-dependencies = ["sympy", "numpy", "pandas", "scipy"]
+requires-python = ">=3.11.0"
+dependencies = [
+    "sympy>=1.13.0",
+    "numpy>=2.2.0",
+    "pandas>=2.2.0",
+    "scipy>=1.15.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=24.10.0",
+    "pyright>=1.1.397",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/fbk-most/dt-model"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--cov=dt_model --cov-report=xml --cov-report=term-missing"
 
 [tool.ruff]
 line-length = 120
@@ -31,11 +49,3 @@ line-length = 120
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
-
-[dependency-groups]
-dev = ["black>=24.10.0", "pytest>=7.0.0", "pytest-cov>=4.0.0"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "--cov=dt_model --cov-report=xml --cov-report=term-missing"
