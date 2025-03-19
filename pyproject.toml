@@ -36,11 +36,6 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/fbk-most/dt-model"
 
-[tool.pyright]
-pythonVersion = "3.11"
-typeCheckingMode = "strict"
-useLibraryCodeForTypes = true
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
