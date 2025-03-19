@@ -28,7 +28,7 @@ jobs:
         run: uv sync --python ${{ matrix.python_version }} --dev
 
       - name: Check formatting with black
-        if: matrix.python_version == "3.11""
+        if: matrix.python_version == "3.11"
         run: uv run --python ${{ matrix.python_version }} black --check . || true
 
       - name: Check types with pyright
