@@ -28,9 +28,14 @@ jobs:
         run: uv sync --python ${{ matrix.python_version }} --dev
 
       # TODO(bassosimone): we're not ready for enforcing formatting yet
-      - name: Check formatting with black
+      - name: Check formatting with ruff
         if: matrix['python_version'] == '3.11'
-        run: uv run --python ${{ matrix.python_version }} black --check . || true
+        run: uv run --python ${{ matrix.python_version }} ruff format --check . || true
+
+      # TODO(bassosimone): we're not ready for enforcing linting yet
+      - name: Lint with ruff
+        if: matrix['python_version'] == '3.11'
+        run: uv run --python ${{ matrix.python_version }} ruff check . || true
 
       # TODO(bassosimone): we're not ready for enforcing type checking yet
       - name: Check types with pyright
