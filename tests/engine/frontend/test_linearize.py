@@ -7,6 +7,19 @@ import pytest
 from dt_model.engine.frontend import graph, linearize
 
 
+def find_node(plan, target_node):
+    """Find the index of a node in the plan using identity comparison.
+
+    We MUST use this method for finding the nodes because nodes override
+    their __eq__ method to implement lazy comparison."""
+
+    for idx, node in enumerate(plan):
+        if target_node is node:
+            return idx
+
+    raise ValueError(f"Node {target_node.id} not found in plan")
+
+
 def test_simple_chain():
     """Test linearization of a simple linear chain of nodes."""
     a = graph.placeholder("a")
@@ -19,11 +32,11 @@ def test_simple_chain():
     assert len(plan) == 5
 
     # Check node order - dependencies should come before dependents
-    assert plan.index(a) < plan.index(b)
-    assert plan.index(b) < plan.index(c)
+    assert find_node(plan, a) < find_node(plan, b)
+    assert find_node(plan, b) < find_node(plan, c)
 
     # All nodes should be in the plan
-    assert set(plan) == {a, b, c, b.right, c.right}
+    assert set(n.id for n in plan) == set(n.id for n in {a, b, c, b.right, c.right})
 
 
 def test_diamond_graph():
@@ -39,12 +52,12 @@ def test_diamond_graph():
     assert len(plan) == 6
 
     # x should come before both branches
-    assert plan.index(x) < plan.index(left_branch)
-    assert plan.index(x) < plan.index(right_branch)
+    assert find_node(plan, x) < find_node(plan, left_branch)
+    assert find_node(plan, x) < find_node(plan, right_branch)
 
     # Both branches should come before output
-    assert plan.index(left_branch) < plan.index(output)
-    assert plan.index(right_branch) < plan.index(output)
+    assert find_node(plan, left_branch) < find_node(plan, output)
+    assert find_node(plan, right_branch) < find_node(plan, output)
 
 
 def test_multi_output():
@@ -59,8 +72,8 @@ def test_multi_output():
     assert len(plan) == 5
 
     # Dependencies should come before dependents
-    assert plan.index(a) < plan.index(b)
-    assert plan.index(a) < plan.index(c)
+    assert find_node(plan, a) < find_node(plan, b)
+    assert find_node(plan, a) < find_node(plan, c)
 
 
 def test_shared_subgraph():
@@ -81,10 +94,10 @@ def test_shared_subgraph():
     assert len([n for n in plan if n is common]) == 1
 
     # Check dependencies
-    assert plan.index(a) < plan.index(common)
-    assert plan.index(b) < plan.index(common)
-    assert plan.index(common) < plan.index(out1)
-    assert plan.index(common) < plan.index(out2)
+    assert find_node(plan, a) < find_node(plan, common)
+    assert find_node(plan, b) < find_node(plan, common)
+    assert find_node(plan, common) < find_node(plan, out1)
+    assert find_node(plan, common) < find_node(plan, out2)
 
 
 def test_cycle_detection():
@@ -112,9 +125,9 @@ def test_conditional_nodes():
     plan = linearize.forest(where_result)
 
     # Check dependencies
-    assert plan.index(cond) < plan.index(where_result)
-    assert plan.index(x) < plan.index(where_result)
-    assert plan.index(y) < plan.index(where_result)
+    assert find_node(plan, cond) < find_node(plan, where_result)
+    assert find_node(plan, x) < find_node(plan, where_result)
+    assert find_node(plan, y) < find_node(plan, where_result)
 
     # Multi-clause where
     clauses = [(cond, x), (graph.less(x, y), graph.constant(1.0))]
@@ -123,9 +136,9 @@ def test_conditional_nodes():
     plan = linearize.forest(multi_where)
 
     # Check dependencies
-    assert plan.index(cond) < plan.index(multi_where)
-    assert plan.index(x) < plan.index(multi_where)
-    assert plan.index(y) < plan.index(multi_where)
+    assert find_node(plan, cond) < find_node(plan, multi_where)
+    assert find_node(plan, x) < find_node(plan, multi_where)
+    assert find_node(plan, y) < find_node(plan, multi_where)
 
 
 def test_complex_graph():
@@ -150,17 +163,17 @@ def test_complex_graph():
     plan = linearize.forest(h)
 
     # Check dependencies
-    assert plan.index(x) < plan.index(a)
-    assert plan.index(y) < plan.index(b)
-    assert plan.index(a) < plan.index(c)
-    assert plan.index(b) < plan.index(c)
-    assert plan.index(y) < plan.index(d)
-    assert plan.index(x) < plan.index(e)
-    assert plan.index(e) < plan.index(f)
-    assert plan.index(d) < plan.index(g)
-    assert plan.index(f) < plan.index(g)
-    assert plan.index(c) < plan.index(h)
-    assert plan.index(g) < plan.index(h)
+    assert find_node(plan, x) < find_node(plan, a)
+    assert find_node(plan, y) < find_node(plan, b)
+    assert find_node(plan, a) < find_node(plan, c)
+    assert find_node(plan, b) < find_node(plan, c)
+    assert find_node(plan, y) < find_node(plan, d)
+    assert find_node(plan, x) < find_node(plan, e)
+    assert find_node(plan, e) < find_node(plan, f)
+    assert find_node(plan, d) < find_node(plan, g)
+    assert find_node(plan, f) < find_node(plan, g)
+    assert find_node(plan, c) < find_node(plan, h)
+    assert find_node(plan, g) < find_node(plan, h)
 
 
 def test_axes_operations():
@@ -174,8 +187,8 @@ def test_axes_operations():
     plan = linearize.forest(reduced)
 
     # Check node ordering
-    assert plan.index(x) < plan.index(expanded)
-    assert plan.index(expanded) < plan.index(reduced)
+    assert find_node(plan, x) < find_node(plan, expanded)
+    assert find_node(plan, expanded) < find_node(plan, reduced)
 
 
 def test_multiple_independent_graphs():
@@ -191,8 +204,8 @@ def test_multiple_independent_graphs():
     # Check plan - independent graphs can be linearized in any order
     # but dependencies should still be respected
     assert len(plan) == 4
-    assert plan.index(a) < plan.index(a_result)
-    assert plan.index(b) < plan.index(b_result)
+    assert find_node(plan, a) < find_node(plan, a_result)
+    assert find_node(plan, b) < find_node(plan, b_result)
 
 
 def test_deterministic_ordering():

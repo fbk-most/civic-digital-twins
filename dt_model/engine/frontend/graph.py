@@ -4,7 +4,7 @@ Computation Graph Building
 
 This module allows to build an abstract computation graph using TensorFlow-like
 computation primitives and concepts. These primitives and concepts are also similar
-to NumPy primitives, with minor naming differences.
+to NumPy primitives, albeit with minor naming differences.
 
 This module provides:
 
@@ -15,6 +15,8 @@ This module provides:
 5. Mathematical operations (exp, power, log)
 6. Shape manipulation operations (expand_dims, squeeze)
 7. Reduction operations (sum, mean)
+8. Built-in debug operations (tracepoint, breakpoint)
+9. Support for infix and unary operators (e.g., `a + b`, `~a`)
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -42,8 +44,8 @@ Here's an example of what you can do with this module:
     >>>
     >>> a = graph.placeholder("a", 1.0)
     >>> b = graph.constant(2.0)
-    >>> c = graph.add(a, b)
-    >>> d = grap.multiply(c, c)
+    >>> c = a + b
+    >>> d = c * c + 1
     >>>
     >>> # Expand to a higher-dimensional space
     >>> e = graph.expand_dims(d, axis=(1,2))
@@ -81,6 +83,29 @@ Design Decisions
 3. Node Identity:
    - Nodes are identified by their instance identity
    - Enables graph traversal and transformation
+
+Node Identity and Equality
+--------------------------
+
+Nodes in this module override Python's standard equality operators (`==`, `!=`, etc.)
+to create new graph operations rather than test for object equality.
+
+For example:
+    x == y   # Creates a graph.equal operation node
+    x < y    # Creates a graph.less operation node
+
+When you need to check if two nodes are the same object (identity comparison),
+use Python's `is` operator instead:
+
+    x is y   # Tests if x and y are the same object
+
+This behavior impacts code that needs to find nodes in collections like lists:
+
+    # Won't work as expected:
+    nodes.index(my_node)  # Uses `==` internally
+
+    # Correct approach:
+    next(i for i, n in enumerate(nodes) if n is my_node)
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -110,6 +135,11 @@ _id_generator = atomic.Int()
 """Atomic integer generator for unique node IDs."""
 
 
+def ensure_node(value: Node | Scalar) -> Node:
+    """Converts a scalar value to a constant node if necessary."""
+    return value if isinstance(value, Node) else constant(value)
+
+
 class Node:
     """
     Base class for all computation graph nodes.
@@ -134,10 +164,77 @@ class Node:
         self.id = _id_generator.add(1)
 
     def __hash__(self) -> int:
-        # Note: introducing hashing by identity in the class inheritance
-        # chain to ensure that overriding the equality operator type signature
-        # in derived classes does not break assigning to dicts.
+        # Note: we need to implement identity based hashing because we
+        # override the `__eq__` method to support lazy equality.
         return id(self)
+
+    # Arithmetic operators
+    def __add__(self, other: Node | Scalar) -> Node:
+        return add(self, ensure_node(other))
+
+    def __radd__(self, other: Node | Scalar) -> Node:
+        return add(ensure_node(other), self)
+
+    def __sub__(self, other: Node | Scalar) -> Node:
+        return subtract(self, ensure_node(other))
+
+    def __rsub__(self, other: Node | Scalar) -> Node:
+        return subtract(ensure_node(other), self)
+
+    def __mul__(self, other: Node | Scalar) -> Node:
+        return multiply(self, ensure_node(other))
+
+    def __rmul__(self, other: Node | Scalar) -> Node:
+        return multiply(ensure_node(other), self)
+
+    def __truediv__(self, other: Node | Scalar) -> Node:
+        return divide(self, ensure_node(other))
+
+    def __rtruediv__(self, other: Node | Scalar) -> Node:
+        return divide(ensure_node(other), self)
+
+    # Comparison operators
+    #
+    # See the companion `__hash__` comment.
+    def __eq__(self, other: Node | Scalar) -> Node:  # type: ignore
+        return equal(self, ensure_node(other))
+
+    def __ne__(self, other: Node | Scalar) -> Node:  # type: ignore
+        return not_equal(self, ensure_node(other))
+
+    def __lt__(self, other: Node | Scalar) -> Node:
+        return less(self, ensure_node(other))
+
+    def __le__(self, other: Node | Scalar) -> Node:
+        return less_equal(self, ensure_node(other))
+
+    def __gt__(self, other: Node | Scalar) -> Node:
+        return greater(self, ensure_node(other))
+
+    def __ge__(self, other: Node | Scalar) -> Node:
+        return greater_equal(self, ensure_node(other))
+
+    # Logical operators
+    def __and__(self, other: Node | Scalar) -> Node:
+        return logical_and(self, ensure_node(other))
+
+    def __rand__(self, other: Node | Scalar) -> Node:
+        return logical_and(ensure_node(other), self)
+
+    def __or__(self, other: Node | Scalar) -> Node:
+        return logical_or(self, ensure_node(other))
+
+    def __ror__(self, other: Node | Scalar) -> Node:
+        return logical_or(ensure_node(other), self)
+
+    def __xor__(self, other: Node | Scalar) -> Node:
+        return logical_xor(self, ensure_node(other))
+
+    def __rxor__(self, other: Node | Scalar) -> Node:
+        return logical_xor(ensure_node(other), self)
+
+    def __invert__(self) -> Node:
+        return logical_not(self)
 
 
 class constant(Node):
