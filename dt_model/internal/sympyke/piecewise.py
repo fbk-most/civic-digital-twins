@@ -3,7 +3,7 @@ Piecewise Emulation
 ===================
 
 This module emulates sympy.Piecewise using the tensor language frontend, by mapping
-a Piecewise invocation to a graph.multi_clause_where tensor in the XYZ space.
+a Piecewise invocation to a graph.multi_clause_where tensor.
 """
 
 from ...engine.frontend import graph
