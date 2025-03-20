@@ -2,8 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
-
 from dt_model.engine.frontend import graph
 
 
@@ -215,3 +213,201 @@ def test_binary_op_node_ids():
     assert op1.id != op2.id
     assert op1.id != a.id
     assert op1.id != b.id
+
+
+def test_infix_arithmetic_operations():
+    """Test infix arithmetic operations between nodes."""
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+
+    # Test operator overloading
+    add1 = a + b
+    assert isinstance(add1, graph.add)
+    assert add1.left is a
+    assert add1.right is b
+
+    # Test scalar operations
+    add2 = a + 2.0
+    assert isinstance(add2, graph.add)
+    assert add2.left is a
+    assert isinstance(add2.right, graph.constant)
+    assert add2.right.value == 2.0
+
+    # Test reverse operations
+    add3 = 2.0 + a
+    assert isinstance(add3, graph.add)
+    assert isinstance(add3.left, graph.constant)
+    assert add3.left.value == 2.0
+    assert add3.right is a
+
+    # Test other arithmetic operations
+    sub = a - b
+    assert isinstance(sub, graph.subtract)
+    assert sub.left is a
+    assert sub.right is b
+
+    mul = a * b
+    assert isinstance(mul, graph.multiply)
+    assert mul.left is a
+    assert mul.right is b
+
+    div = a / b
+    assert isinstance(div, graph.divide)
+    assert div.left is a
+    assert div.right is b
+
+
+def test_infix_comparison_operations():
+    """Test infix comparison operations between nodes."""
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+
+    # Test all comparison operators
+    eq = a == b
+    assert isinstance(eq, graph.equal)
+    assert eq.left is a
+    assert eq.right is b
+
+    ne = a != b
+    assert isinstance(ne, graph.not_equal)
+    assert ne.left is a
+    assert ne.right is b
+
+    lt = a < b
+    assert isinstance(lt, graph.less)
+    assert lt.left is a
+    assert lt.right is b
+
+    le = a <= b
+    assert isinstance(le, graph.less_equal)
+    assert le.left is a
+    assert le.right is b
+
+    gt = a > b
+    assert isinstance(gt, graph.greater)
+    assert gt.left is a
+    assert gt.right is b
+
+    ge = a >= b
+    assert isinstance(ge, graph.greater_equal)
+    assert ge.left is a
+    assert ge.right is b
+
+
+def test_infix_logical_operations():
+    """Test infix logical operations between nodes."""
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+
+    # Test logical operators
+    and_op = a & b
+    assert isinstance(and_op, graph.logical_and)
+    assert and_op.left is a
+    assert and_op.right is b
+
+    or_op = a | b
+    assert isinstance(or_op, graph.logical_or)
+    assert or_op.left is a
+    assert or_op.right is b
+
+    xor_op = a ^ b
+    assert isinstance(xor_op, graph.logical_xor)
+    assert xor_op.left is a
+    assert xor_op.right is b
+
+    not_op = ~a
+    assert isinstance(not_op, graph.logical_not)
+    assert not_op.node is a
+
+
+def test_infix_reverse_operations():
+    """Test reverse infix operations with scalar values."""
+    a = graph.placeholder("a")
+
+    # Test reverse operations with scalars
+    rsub = 2.0 - a
+    assert isinstance(rsub, graph.subtract)
+    assert isinstance(rsub.left, graph.constant)
+    assert rsub.left.value == 2.0
+    assert rsub.right is a
+
+    rmul = 2.0 * a
+    assert isinstance(rmul, graph.multiply)
+    assert isinstance(rmul.left, graph.constant)
+    assert rmul.left.value == 2.0
+    assert rmul.right is a
+
+    rdiv = 2.0 / a
+    assert isinstance(rdiv, graph.divide)
+    assert isinstance(rdiv.left, graph.constant)
+    assert rdiv.left.value == 2.0
+    assert rdiv.right is a
+
+    # Test reverse logical operations
+    rand = True & a
+    assert isinstance(rand, graph.logical_and)
+    assert isinstance(rand.left, graph.constant)
+    assert rand.left.value is True
+    assert rand.right is a
+
+    ror = True | a
+    assert isinstance(ror, graph.logical_or)
+    assert isinstance(ror.left, graph.constant)
+    assert ror.left.value is True
+    assert ror.right is a
+
+    rxor = True ^ a
+    assert isinstance(rxor, graph.logical_xor)
+    assert isinstance(rxor.left, graph.constant)
+    assert rxor.left.value is True
+    assert rxor.right is a
+
+
+def test_complex_infix_expressions():
+    """Test complex expressions using infix operations."""
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = graph.placeholder("c")
+
+    # Test complex expression: (a + b) * (c - 2.0)
+    expr = (a + b) * (c - 2.0)
+
+    assert isinstance(expr, graph.multiply)
+    assert isinstance(expr.left, graph.add)
+    assert expr.left.left is a
+    assert expr.left.right is b
+    assert isinstance(expr.right, graph.subtract)
+    assert expr.right.left is c
+    assert isinstance(expr.right.right, graph.constant)
+    assert expr.right.right.value == 2.0
+
+    # Test complex logical expression: (a & b) | (~c)
+    logical_expr = (a & b) | (~c)
+
+    assert isinstance(logical_expr, graph.logical_or)
+    assert isinstance(logical_expr.left, graph.logical_and)
+    assert logical_expr.left.left is a
+    assert logical_expr.left.right is b
+    assert isinstance(logical_expr.right, graph.logical_not)
+    assert logical_expr.right.node is c
+
+
+def test_ensure_node_function():
+    """Test the ensure_node function that converts scalars to constants."""
+    # Test with node input
+    node = graph.placeholder("test")
+    result = graph.ensure_node(node)
+    assert result is node  # Should return the same node
+
+    # Test with scalar inputs
+    result_float = graph.ensure_node(3.14)
+    assert isinstance(result_float, graph.constant)
+    assert result_float.value == 3.14
+
+    result_int = graph.ensure_node(42)
+    assert isinstance(result_int, graph.constant)
+    assert result_int.value == 42
+
+    result_bool = graph.ensure_node(True)
+    assert isinstance(result_bool, graph.constant)
+    assert result_bool.value is True
