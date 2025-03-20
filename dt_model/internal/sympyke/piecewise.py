@@ -21,7 +21,7 @@ Clause = tuple[Expr, Cond]
 
 def Piecewise(*clauses: Clause) -> graph.Node:
     """Converts the provided clauses arranged according to the sympy.Piecewise
-    convention into a graph.multi_clause_where computation tensor in XYZ.
+    convention into a graph.multi_clause_where computation tensor.
 
     Args:
         *clauses: The clauses to be converted.
