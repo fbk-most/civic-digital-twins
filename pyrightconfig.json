@@ -2,5 +2,10 @@
   "typeCheckingMode": "standard",
   "useLibraryCodeForTypes": true,
   "pythonVersion": "3.11",
-  "include": ["dt_model", "tests"]
+  "include": ["dt_model", "tests"],
+  "exclude": [
+    "dt_model/model/model.py",
+    "dt_model/symbols/context_variable.py",
+    "dt_model/symbols/presence_variable.py"
+  ]
 }

@@ -25,7 +25,7 @@ class PresenceVariable(SymbolExtender):
         self.cvs = cvs
         self.distribution = distribution
 
-    def sample(self, cvs: dict | None = None, nr: int = 1) -> np.array:
+    def sample(self, cvs: dict | None = None, nr: int = 1) -> np.ndarray:
         """
         Returns a list of values sampled from the presence variable or provided
         subset.
@@ -52,5 +52,6 @@ class PresenceVariable(SymbolExtender):
             all_cvs = [cvs[cv] for cv in self.cvs if cv in cvs.keys()]
             # TODO: solve this issue of symbols vs names
             all_cvs = list(map(lambda v: v.name if isinstance(v, Symbol) else v, all_cvs))
+        assert self.distribution is not None
         distr: dict = self.distribution(*all_cvs)
         return stats.truncnorm.rvs(-distr["mean"] / distr["std"], 10, loc=distr["mean"], scale=distr["std"], size=nr)

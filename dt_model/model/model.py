@@ -89,6 +89,7 @@ class Model:
 
     def compute_sustainable_area(self) -> float:
         assert self.grid is not None
+        assert self.field is not None
         grid = self.grid
         field = self.field
 
@@ -107,6 +108,7 @@ class Model:
 
     def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
         assert self.grid is not None
+        assert self.field_elements is not None
         grid = self.grid
         field_elements = self.field_elements
         # TODO: fill value
@@ -120,6 +122,7 @@ class Model:
 
     def compute_modal_line_per_constraint(self) -> dict:
         assert self.grid is not None
+        assert self.field_elements is not None
         grid = self.grid
         field_elements = self.field_elements
         modal_lines = {}
@@ -150,14 +153,14 @@ class Model:
             # TODO(pistore,bassosimone): even before we implement the
             # previous TODO, avoid hardcoding of line length (10000)
 
-            def __vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
+            def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
                 """Logic for computing the points with vertical regression"""
                 if regr.slope != 0.00:
                     return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
                 else:
                     return ((regr.intercept, regr.intercept), (0.0, 10000.0))
 
-            def __horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
+            def _horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
                 """Logic for computing the points with horizontal regression"""
                 if regr.slope != 0.0:
                     return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
@@ -167,15 +170,15 @@ class Model:
             if horizontal_regr and vertical_regr:
                 # Use regression with better fit (higher rvalue)
                 if horizontal_regr.rvalue < vertical_regr.rvalue:
-                    modal_lines[c] = __vertical(vertical_regr)
+                    modal_lines[c] = _vertical(vertical_regr)
                 else:
-                    modal_lines[c] = __horizontal(horizontal_regr)
+                    modal_lines[c] = _horizontal(horizontal_regr)
 
             elif horizontal_regr:
-                modal_lines[c] = __horizontal(horizontal_regr)
+                modal_lines[c] = _horizontal(horizontal_regr)
 
             elif vertical_regr:
-                modal_lines[c] = __vertical(vertical_regr)
+                modal_lines[c] = _vertical(vertical_regr)
 
             else:
                 pass  # No regression is possible (eg median not intersecting the grid)
