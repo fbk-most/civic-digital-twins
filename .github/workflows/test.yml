@@ -27,10 +27,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python_version }} --dev
 
-      # TODO(bassosimone): we're not ready for enforcing formatting yet
       - name: Check formatting with ruff
         if: matrix['python_version'] == '3.11'
-        run: uv run --python ${{ matrix.python_version }} ruff format --check . || true
+        run: uv run --python ${{ matrix.python_version }} ruff format --check .
 
       # TODO(bassosimone): we're not ready for enforcing linting yet
       - name: Lint with ruff
