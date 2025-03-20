@@ -1,24 +1,22 @@
-import math
-import random
-from scipy import stats
-import numpy as np
-
-from dt_model import (
-    UniformCategoricalContextVariable,
-    CategoricalContextVariable,
-    PresenceVariable,
-    Index,
-    Constraint,
-    Ensemble,
-    Model,
-)
-from sympy import Symbol, Eq, Piecewise
+import time
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+from presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
+from scipy import stats
+from sympy import Eq, Piecewise, Symbol
 
-from presence_stats import season, weather, weekday, tourist_presences_stats, excursionist_presences_stats
+from dt_model import (
+    CategoricalContextVariable,
+    Constraint,
+    Ensemble,
+    Index,
+    Model,
+    PresenceVariable,
+    UniformCategoricalContextVariable,
+)
 
 # MODEL DEFINITION
 
@@ -253,8 +251,6 @@ def plot_scenario(ax, model, situation, title):
 
     model.reset()
 
-
-import time
 
 start_time = time.time()
 
