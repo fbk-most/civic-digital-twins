@@ -3,7 +3,7 @@ Piecewise Emulation
 ===================
 
 This module emulates sympy.Piecewise using the tensor language frontend, by mapping
-a Piecewise invocation to a graph.multi_clause_where tensor in the XYZ space.
+a Piecewise invocation to a graph.multi_clause_where tensor.
 """
 
 from ...engine.frontend import graph
@@ -20,7 +20,7 @@ Clause = tuple[Expr, Cond]
 
 def Piecewise(*clauses: Clause) -> graph.Node:
     """Converts the provided clauses arranged according to the sympy.Piecewise
-    convention into a graph.multi_clause_where computation tensor in XYZ.
+    convention into a graph.multi_clause_where computation tensor.
 
     Args:
         *clauses: The clauses to be converted.
