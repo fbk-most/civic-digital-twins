@@ -1,5 +1,7 @@
 """Executable script that runs the Molveno model."""
 
+# SPDX-License-Identifier: Apache-2.0
+
 import time
 
 import matplotlib.pyplot as plt
