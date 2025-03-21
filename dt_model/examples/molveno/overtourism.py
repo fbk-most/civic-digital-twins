@@ -13,7 +13,6 @@ from ... import (
     PresenceVariable,
     UniformCategoricalContextVariable,
 )
-
 from .presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
 
 # Context variables

@@ -9,7 +9,6 @@ from matplotlib.colors import Normalize
 from sympy import Symbol
 
 from dt_model import Ensemble
-
 from dt_model.examples.molveno.overtourism import (
     CV_weather,
     I_P_excursionists_reduction_factor,
