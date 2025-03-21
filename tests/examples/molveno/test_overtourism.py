@@ -6,18 +6,19 @@ import numpy as np
 
 from dt_model.examples.molveno.overtourism import (
     C_accommodation,
+    C_beach,
     C_food,
-    M_Base,
-    CV_weekday,
-    Symbol,
+    C_parking,
+    Constraint,
     CV_season,
     CV_weather,
-    PV_tourists,
+    CV_weekday,
+    M_Base,
     PV_excursionists,
-    Constraint,
-    C_beach,
-    C_parking,
+    PV_tourists,
+    Symbol,
 )
+
 
 def test_fixed_ensemble():
     """Evaluate the model using a fixed ensemble."""
