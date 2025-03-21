@@ -37,6 +37,11 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/fbk-most/dt-model"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dt_model*"]
+exclude = ["dt_model.examples*", "tests*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
