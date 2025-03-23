@@ -13,9 +13,7 @@ class Constraint:
     This class is used to define constraints for the model.
     """
 
-    def __init__(
-        self, usage: Symbol, capacity: Symbol, group: str | None = None, name: str = ""
-    ) -> None:
+    def __init__(self, usage: Symbol, capacity: Symbol, group: str | None = None, name: str = "") -> None:
         self.usage = usage
         self.capacity = capacity
         self.name = name

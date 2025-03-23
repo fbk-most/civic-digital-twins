@@ -66,9 +66,9 @@ class UniformCategoricalContextVariable(ContextVariable):
 
         if force_sample or nr < size:
             assert nr > 0
-            return [(1/nr, r) for r in random.choices(values, k=nr)]
+            return [(1 / nr, r) for r in random.choices(values, k=nr)]
 
-        return [(1/size, v) for v in values]
+        return [(1 / size, v) for v in values]
 
 
 class CategoricalContextVariable(ContextVariable):
@@ -91,14 +91,15 @@ class CategoricalContextVariable(ContextVariable):
 
         if force_sample or nr < size:
             assert nr > 0
-            return [(1/nr, r) for r in random.choices(values, k=nr, weights=[self.distribution[v] for v in values])]
+            return [(1 / nr, r) for r in random.choices(values, k=nr, weights=[self.distribution[v] for v in values])]
 
         if subset is None:
             return [(self.distribution[v], v) for v in values]
 
         subset_probability = [self.distribution[v] for v in values]
         subset_probability_sum = sum(subset_probability)
-        return [(p/subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
+        return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
+
 
 class ContinuousContextVariable(ContextVariable):
     """

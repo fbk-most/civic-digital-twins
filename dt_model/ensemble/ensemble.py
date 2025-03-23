@@ -32,8 +32,9 @@ class Ensemble:
             self.pos[k] += 1
             if self.pos[k] < len(self.ensemble[k]):
                 cv_values = {k: self.ensemble[k][self.pos[k]][1] for k in self.ensemble.keys()}
-                cv_probability = reduce(lambda x, y: x*y,
-                                        [self.ensemble[k][self.pos[k]][0] for k in self.ensemble.keys()])
+                cv_probability = reduce(
+                    lambda x, y: x * y, [self.ensemble[k][self.pos[k]][0] for k in self.ensemble.keys()]
+                )
                 return cv_probability, cv_values
             self.pos[k] = 0
         raise StopIteration

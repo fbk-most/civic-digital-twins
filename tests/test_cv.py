@@ -2,7 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-
 from dt_model import (
     UniformCategoricalContextVariable,
     CategoricalContextVariable,
@@ -20,9 +19,7 @@ def uniform_cv():
 
 @pytest.fixture
 def categorical_cv():
-    return CategoricalContextVariable(
-        "Categorical", {"a": 0.1, "b": 0.2, "c": 0.3, "d": 0.4}
-    )
+    return CategoricalContextVariable("Categorical", {"a": 0.1, "b": 0.2, "c": 0.3, "d": 0.4})
 
 
 @pytest.fixture
@@ -49,6 +46,4 @@ def test_cv(cv_fixture_name, sizes, values, request):
     for s in sizes:
         print(f"    Size {s} - subset {values}: {cv.sample(s, subset=values)}")
     for s in sizes:
-        print(
-            f"    Size {s} - subset {values} - force_sample: {cv.sample(s, subset=values, force_sample=True)}"
-        )
+        print(f"    Size {s} - subset {values} - force_sample: {cv.sample(s, subset=values, force_sample=True)}")

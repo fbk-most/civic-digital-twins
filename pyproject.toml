@@ -26,12 +26,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
-    "black>=24.10.0",
-    "pyright>=1.1.397",
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-]
+dev = ["pyright>=1.1.397", "pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.11.0"]
 
 [project.urls]
 Homepage = "https://github.com/fbk-most/dt-model"
@@ -42,10 +37,19 @@ python_files = ["test_*.py"]
 addopts = "--cov=dt_model --cov-report=xml --cov-report=term-missing"
 
 [tool.ruff]
+target-version = "py311"
 line-length = 120
+indent-width = 4
 
-[tool.ruff.lint.extend-per-file-ignores]
-"__init__.py" = ["F401"]
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+extend-select = ["W", "Q"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

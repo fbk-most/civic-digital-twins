@@ -403,9 +403,7 @@ class multi_clause_where(Node):
         default_value: Value to use when no condition is met
     """
 
-    def __init__(
-        self, clauses: Sequence[tuple[Node, Node]], default_value: Node
-    ) -> None:
+    def __init__(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> None:
         super().__init__()
         self.clauses = clauses
         self.default_value = default_value
