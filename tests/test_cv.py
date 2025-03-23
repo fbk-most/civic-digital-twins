@@ -2,6 +2,12 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+from dt_model import (
+    UniformCategoricalContextVariable,
+    CategoricalContextVariable,
+    ContinuousContextVariable,
+)
+
 import pytest
 import scipy
 

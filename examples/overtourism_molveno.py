@@ -1,4 +1,18 @@
-import time
+import math
+import random
+from scipy import stats
+import numpy as np
+
+from dt_model import (
+    UniformCategoricalContextVariable,
+    CategoricalContextVariable,
+    PresenceVariable,
+    Index,
+    Constraint,
+    Ensemble,
+    Model,
+)
+from sympy import Symbol, Eq, Piecewise
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -251,6 +265,8 @@ def plot_scenario(ax, model, situation, title):
 
     model.reset()
 
+
+import time
 
 start_time = time.time()
 
