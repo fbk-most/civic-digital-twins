@@ -252,7 +252,6 @@ def plot_scenario(ax, model, situation, title):
     model.reset()
 
 
-
 start_time = time.time()
 
 fig, axs = plt.subplots(2, 3, figsize=(18, 10), layout="constrained")
