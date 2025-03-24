@@ -8,16 +8,15 @@ from dt_model.symbols.context_variable import ContextVariable
 from dt_model.symbols.index import Index
 from dt_model.symbols.presence_variable import PresenceVariable
 
-
 class Model:
     def __init__(
-        self,
-        name,
-        cvs: list[ContextVariable],
-        pvs: list[PresenceVariable],
-        indexes: list[Index],
-        capacities: list[Index],
-        constraints: list[Constraint],
+            self,
+            name,
+            cvs: list[ContextVariable],
+            pvs: list[PresenceVariable],
+            indexes: list[Index],
+            capacities: list[Index],
+            constraints: list[Constraint],
     ) -> None:
         self.abs = AbstractModel(name, cvs, pvs, indexes, capacities, constraints)
         self.evaluation = None
@@ -81,20 +80,20 @@ class Model:
         return self.evaluation.get_index_mean_value(i)
 
     def compute_sustainable_area(self) -> float:
-        assert self.evaluation is not None
+        assert(self.evaluation is not None)
         return self.evaluation.compute_sustainable_area()
 
     # TODO: change API - order of presence variables
     def compute_sustainability_index(self, presences: list) -> float:
-        assert self.evaluation is not None
+        assert(self.evaluation is not None)
         return self.evaluation.compute_sustainability_index(presences)
 
     def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
-        assert self.evaluation is not None
+        assert(self.evaluation is not None)
         return self.evaluation.compute_sustainability_index_per_constraint(presences)
 
     def compute_modal_line_per_constraint(self) -> dict:
-        assert self.evaluation is not None
+        assert (self.evaluation is not None)
         return self.evaluation.compute_modal_line_per_constraint()
 
     def variation(self, new_name, *, change_indexes=None, change_capacities=None):
@@ -121,12 +120,8 @@ class Model:
                     new_capacities.append(capacity)
         new_constraints = []
         for constraint in self.constraints:
-            new_constraints.append(
-                Constraint(
-                    constraint.usage.subs(change_indexes),
-                    constraint.capacity.subs(change_capacities),
-                    group=constraint.group,
-                    name=constraint.name,
-                )
-            )
+            new_constraints.append(Constraint(constraint.usage.subs(change_indexes),
+                                              constraint.capacity.subs(change_capacities),
+                                              group=constraint.group, name=constraint.name,
+                                              ))
         return Model(new_name, self.cvs, self.pvs, new_indexes, new_capacities, new_constraints)
