@@ -8,13 +8,13 @@ from dt_model.symbols.constraint import Constraint
 
 class AbstractModel:
     def __init__(
-            self,
-            name,
-            cvs: list[ContextVariable],
-            pvs: list[PresenceVariable],
-            indexes: list[Index],
-            capacities: list[Index],
-            constraints: list[Constraint],
+        self,
+        name,
+        cvs: list[ContextVariable],
+        pvs: list[PresenceVariable],
+        indexes: list[Index],
+        capacities: list[Index],
+        constraints: list[Constraint],
     ) -> None:
         self.name = name
         self.cvs = cvs
@@ -22,5 +22,3 @@ class AbstractModel:
         self.indexes = indexes
         self.capacities = capacities
         self.constraints = constraints
-
-
