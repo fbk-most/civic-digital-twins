@@ -1,4 +1,4 @@
-from dt_model.ensemble.ensemble import Ensemble
+from dt_model.simulation.ensemble import Ensemble
 from dt_model.model.model import Model
 from dt_model.symbols.constraint import Constraint
 from dt_model.symbols.context_variable import (
