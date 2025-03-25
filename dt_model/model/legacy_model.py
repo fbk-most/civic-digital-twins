@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import numbers
-
 from functools import reduce
 
 import numpy as np
 import pandas as pd
-from sympy import lambdify
 from scipy import interpolate, ndimage, stats
+from sympy import lambdify
 
 from dt_model.symbols.constraint import Constraint
 from dt_model.symbols.context_variable import ContextVariable
@@ -146,8 +145,10 @@ class LegacyModel:
             except ValueError:
                 pass
 
-            # TODO(pistore,bassosimone): find a better way to represent the lines (at the moment, we need to encode the endopoints
-            # TODO(pistore,bassosimone): even before we implement the previous TODO, avoid hardcoding of line length (10000)
+            # TODO(pistore,bassosimone): find a better way to represent the lines (at the
+            # moment, we need to encode the endpoints
+            # TODO(pistore,bassosimone): even before we implement the previous TODO,
+            # avoid hardcoding of the length (10000)
 
             def __vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
                 """Logic for computing the points with vertical regression"""
