@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "civic-digital-twins"
-version = "0.1.0"
-description = "DigitalTwins Model"
+version = "0.2.0"
+description = "Civic-Digital-Twins Modeling Framework"
 readme = "README.md"
 authors = [
     { name = "Fondazione Bruno Kessler", email = "most@fbk.eu" },
