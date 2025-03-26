@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sympy import lambdify
 from scipy import stats
+from sympy import lambdify
 
 from dt_model.symbols._base import SymbolExtender
 from dt_model.symbols.context_variable import ContextVariable

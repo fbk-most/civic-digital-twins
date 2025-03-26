@@ -2,13 +2,12 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from dt_model.internal.sympyke import Piecewise, Symbol
+import numpy as np
+import pytest
+
 from dt_model.engine.frontend import linearize
 from dt_model.engine.numpybackend import executor
-
-import numpy as np
-
-import pytest
+from dt_model.internal.sympyke import Piecewise, Symbol
 
 
 def test_piecewise_basics():

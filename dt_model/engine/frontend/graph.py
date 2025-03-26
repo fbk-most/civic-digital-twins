@@ -116,7 +116,6 @@ from typing import Sequence
 
 from .. import atomic
 
-
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
 

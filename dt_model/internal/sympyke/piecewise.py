@@ -8,7 +8,6 @@ a Piecewise invocation to a graph.multi_clause_where tensor.
 
 from ...engine.frontend import graph
 
-
 Cond = graph.Node | graph.Scalar
 """Condition for a piecewise clause."""
 

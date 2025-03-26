@@ -2,11 +2,11 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from dt_model.internal.sympyke import Symbol
+import numpy as np
+
 from dt_model.engine.frontend import linearize
 from dt_model.engine.numpybackend import executor
-
-import numpy as np
+from dt_model.internal.sympyke import Symbol
 
 
 def test_symbol_basics():
@@ -97,9 +97,9 @@ def test_symbol_table_values():
 
     try:
         # Create some symbols
-        a = Symbol("a")
-        b = Symbol("b")
-        c = Symbol("c")
+        Symbol("a")
+        Symbol("b")
+        Symbol("c")
 
         # Get all symbols from the table
         all_symbols = symbol_mod.symbol_table.values()

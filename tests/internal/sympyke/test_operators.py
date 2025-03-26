@@ -2,11 +2,11 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from dt_model.internal.sympyke import Eq, Symbol
+import numpy as np
+
 from dt_model.engine.frontend import graph, linearize
 from dt_model.engine.numpybackend import executor
-
-import numpy as np
+from dt_model.internal.sympyke import Eq, Symbol
 
 
 def test_eq_basics():
