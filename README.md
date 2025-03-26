@@ -1,3 +1,3 @@
-# dt-model
+# Civic-Digital-Twins Modeling Framework
 
-[![Build Status](https://github.com/fbk-most/dt-model/actions/workflows/test.yml/badge.svg)](https://github.com/fbk-most/dt-model/actions) [![codecov](https://codecov.io/gh/fbk-most/dt-model/branch/main/graph/badge.svg)](https://codecov.io/gh/fbk-most/dt-model)
+[![Build Status](https://github.com/fbk-most/dt-model/actions/workflows/test.yml/badge.svg)](https://github.com/fbk-most/dt-model/actions) [![codecov](https://codecov.io/gh/fbk-most/dt-model/branch/main/graph/badge.svg)](https://codecov.io/gh/fbk-most/dt-model) [![PyPI version](https://img.shields.io/pypi/v/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![Python Versions](https://img.shields.io/pypi/pyversions/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![License](https://img.shields.io/pypi/l/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/)
