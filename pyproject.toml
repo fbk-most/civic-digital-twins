@@ -29,7 +29,13 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pyright>=1.1.397", "pytest>=7.0.0", "pytest-cov>=4.0.0", "ruff>=0.11.0"]
+dev = [
+    "matplotlib>=3.10.1",
+    "pyright>=1.1.397",
+ "pytest>=7.0.0",
+ "pytest-cov>=4.0.0",
+ "ruff>=0.11.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/fbk-most/dt-model"
