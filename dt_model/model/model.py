@@ -62,7 +62,6 @@ class Model:
         return self.evaluation.field_elements
 
     def reset(self):
-        assert self.evaluation is not None
         self.evaluation = None
 
     def evaluate(self, grid, ensemble):
