@@ -1,3 +1,7 @@
+"""Presence stats required by the overtourism model."""
+
+# SPDX-License-Identifier: Apache-2.0
+
 import pandas as pd
 
 season_stats = pd.DataFrame(
