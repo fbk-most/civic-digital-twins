@@ -1,5 +1,5 @@
 """
-This package contains a definition of the Molveno overourism model, which
+This package contains a definition of the Molveno overtourism model, which
 is mainly used for exploration and testing purposes.
 
 See https://github.com/tn-aixpa/overtourism/ for the actual model used

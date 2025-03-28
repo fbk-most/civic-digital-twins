@@ -1,4 +1,5 @@
-"""Executable script that runs the Molveno model."""
+"""This example allows to interactively explore the frozen Molveno model
+included into the source tree as an illustrative example."""
 
 # SPDX-License-Identifier: Apache-2.0
 
