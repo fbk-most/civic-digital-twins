@@ -3,20 +3,20 @@
 import random
 
 import numpy as np
+from sympy import Symbol
 
+from dt_model import Constraint
 from dt_model.examples.molveno.overtourism import (
     C_accommodation,
     C_beach,
     C_food,
     C_parking,
-    Constraint,
     CV_season,
     CV_weather,
     CV_weekday,
     M_Base,
     PV_excursionists,
     PV_tourists,
-    Symbol,
 )
 
 
@@ -98,9 +98,6 @@ def test_fixed_ensemble():
             ]
         ),
     }
-
-    for key, value in got.items():
-        print(key, value)
 
     # Ensure that we have the expected constraints
     assert len(got) == len(expect)
