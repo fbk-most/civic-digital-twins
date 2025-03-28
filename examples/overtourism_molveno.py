@@ -264,7 +264,6 @@ plot_scenario(axs[1, 2], M_MoreParking, S_Bad_Weather, "More parking - Bad weath
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
 fig.supxlabel("Tourists", fontsize=18)
 fig.supylabel("Excursionists", fontsize=18)
-fig.show()
 
 print("--- %s seconds ---" % (time.time() - start_time))
 
