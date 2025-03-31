@@ -3,7 +3,6 @@
 import random
 
 import numpy as np
-from sympy import Symbol
 
 from dt_model import Constraint
 from dt_model.examples.molveno.overtourism import (
@@ -18,6 +17,7 @@ from dt_model.examples.molveno.overtourism import (
     PV_excursionists,
     PV_tourists,
 )
+from dt_model.internal.sympyke import Symbol
 
 
 def test_fixed_ensemble():
@@ -117,29 +117,19 @@ def test_fixed_ensemble():
 
         # Check if values are close enough
         if not np.allclose(expect_c, got_c, rtol=1e-5, atol=1e-8):
-            # Calculate differences for diagnosis
-            abs_diff = np.abs(expect_c - got_c)
-            rel_diff = abs_diff / (np.abs(expect_c) + 1e-10)  # Avoid division by zero
+            diff_info = f"\n--- expected/{key}\n+++ got/{key}\n"
 
-            # Find the worst offenders (highest absolute difference)
-            max_diff_idx = np.unravel_index(np.argmax(abs_diff), abs_diff.shape)
+            # Convert arrays to formatted strings for comparison line by line
+            for i in range(expect_c.shape[0]):
+                row_expect = [f"{x:.8f}" for x in expect_c[i]]
+                row_got = [f"{x:.8f}" for x in got_c[i]]
 
-            diff_info = (
-                f"Constraint {key} has differences:\n"
-                f"  Max absolute diff: {np.max(abs_diff):.6e} at index {max_diff_idx}\n"
-                f"  Mean absolute diff: {np.mean(abs_diff):.6e}\n"
-                f"  Max relative diff: {np.max(rel_diff):.6f}\n"
-                f"  Values at max diff: orig={expect_c[max_diff_idx]:.6f}, yak={got_c[max_diff_idx]:.6f}\n"
-                f"  First few pairs of values (orig, yak):\n"
-            )
-
-            # Sample some value pairs for comparison
-            flat_expect = expect_c.flatten()
-            flat_got = got_c.flatten()
-            sample_size = min(5, len(flat_expect))
-
-            for i in range(sample_size):
-                diff_info += f"    [{i}]: {flat_expect[i]:.6f}, {flat_got[i]:.6f} (diff: {abs_diff.flatten()[i]:.6e})\n"
+                # If this row has differences
+                if not np.allclose(expect_c[i], got_c[i], rtol=1e-5, atol=1e-8):
+                    diff_info += f"-{row_expect}\n"
+                    diff_info += f"+{row_got}\n"
+                else:
+                    diff_info += f" {row_expect}\n"
 
             failures.append(diff_info)
 

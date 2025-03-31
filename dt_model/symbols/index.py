@@ -1,15 +1,33 @@
+"""
+This module contains the classes to represent index variables. An index variable is
+a variable that is used to represent a conversion factor or a parameter that is used
+to calculate the value of a symbol. The index variable can be a constant, a distribution,
+or a symbolic expression.
+"""
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol, cast, runtime_checkable
 
+import numpy as np
 from scipy import stats
-from sympy import lambdify
 
-from dt_model.symbols._base import SymbolExtender
-from dt_model.symbols.context_variable import ContextVariable
+from ..engine.frontend import graph
+from .context_variable import ContextVariable
 
 
-class Index(SymbolExtender):
+@runtime_checkable
+class Sampleable(Protocol):
+    """Protocol for classes allowing random variates sampling."""
+
+    def rvs(
+        self,
+        size: int | tuple[int, ...] | None = None,
+        **kwargs,
+    ) -> float | np.ndarray: ...
+
+
+class Index:
     """
     Class to represent an index variable.
     """
@@ -17,19 +35,41 @@ class Index(SymbolExtender):
     def __init__(
         self,
         name: str,
-        value: Any,
+        value: graph.Scalar | Sampleable | graph.Node | None,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,
     ) -> None:
-        super().__init__(name)
+        self.name = name
         self.group = group
         self.ref_name = ref_name if ref_name is not None else name
         self.cvs = cvs
-        if cvs is not None:
-            self.value = lambdify(cvs, value, "numpy")
-        else:
+
+        # We model a sampleable index as a distribution to invoke when
+        # scheduling the model and a placeholder to fill with the result
+        # of sampling from the index's distribution.'
+        if isinstance(value, Sampleable):
             self.value = value
+            self.node = graph.placeholder(name)
+
+        # We model a constant-value index as a constant value and a
+        # corresponding constant node. An alternative modeling could
+        # be to use a placeholder and fill it when scheduling.
+        elif isinstance(value, graph.Scalar):
+            self.value = value
+            self.node = graph.constant(value, name)
+
+        # Otherwise, it's just a reference to an existing node (which
+        # typically is the result of defining a formula).
+        elif value is not None:
+            self.value = value
+            self.node = value
+
+        # The last remaining case is when the value is None, in which
+        # case we just create a value-less placeholder.
+        else:
+            self.value = None
+            self.node = graph.placeholder(name)
 
 
 class UniformDistIndex(Index):
@@ -40,7 +80,15 @@ class UniformDistIndex(Index):
     def __init__(
         self, name: str, loc: float, scale: float, group: str | None = None, ref_name: str | None = None
     ) -> None:
-        super().__init__(name, stats.uniform(loc=loc, scale=scale), group=group, ref_name=ref_name)
+        super().__init__(
+            name,
+            cast(
+                Sampleable,
+                stats.uniform(loc=loc, scale=scale),
+            ),
+            group=group,
+            ref_name=ref_name,
+        )
         self._loc = loc
         self._scale = scale
 
@@ -70,13 +118,21 @@ class UniformDistIndex(Index):
 
 class LognormDistIndex(Index):
     """
-    Class to represent an index as a longnorm distribution
+    Class to represent an index as a lognorm distribution
     """
 
     def __init__(
         self, name: str, loc: float, scale: float, s: float, group: str | None = None, ref_name: str | None = None
     ) -> None:
-        super().__init__(name, stats.lognorm(loc=loc, scale=scale, s=s), group=group, ref_name=ref_name)
+        super().__init__(
+            name,
+            cast(
+                Sampleable,
+                stats.lognorm(loc=loc, scale=scale, s=s),
+            ),
+            group=group,
+            ref_name=ref_name,
+        )
         self._loc = loc
         self._scale = scale
         self._s = s
@@ -117,13 +173,21 @@ class LognormDistIndex(Index):
 
 class TriangDistIndex(Index):
     """
-    Class to represent an index as a longnorm distribution
+    Class to represent an index as a triangular distribution
     """
 
     def __init__(
         self, name: str, loc: float, scale: float, c: float, group: str | None = None, ref_name: str | None = None
     ) -> None:
-        super().__init__(name, stats.triang(loc=loc, scale=scale, c=c), group=group, ref_name=ref_name)
+        super().__init__(
+            name,
+            cast(
+                Sampleable,
+                stats.triang(loc=loc, scale=scale, c=c),
+            ),
+            group=group,
+            ref_name=ref_name,
+        )
         self._loc = loc
         self._scale = scale
         self._c = c
@@ -164,7 +228,7 @@ class TriangDistIndex(Index):
 
 class ConstIndex(Index):
     """
-    Class to represent an index as a longnorm distribution
+    Class to represent an index as a constant
     """
 
     def __init__(self, name: str, v: float, group: str | None = None, ref_name: str | None = None) -> None:
@@ -180,6 +244,7 @@ class ConstIndex(Index):
         if self._v != new_v:
             self._v = new_v
             self.value = new_v
+            self.node = graph.constant(new_v, self.name)
 
     def __str__(self):
         return f"const_idx({self.v})"
@@ -193,18 +258,12 @@ class SymIndex(Index):
     def __init__(
         self,
         name: str,
-        value: Any,
+        value: graph.Node,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,
     ) -> None:
         super().__init__(name, value, cvs, group=group, ref_name=ref_name)
-        self.cvs = cvs
-        if cvs is not None:
-            self.value = lambdify(cvs, value, "numpy")
-        else:
-            self.value = value
-
         self.sym_value = value
 
     def __str__(self):

@@ -1,16 +1,21 @@
+"""
+This module defines presence variables. A presence variable is a model variable that
+represents the presence of a certain entity in the modeled system.
+"""
+
 from __future__ import annotations
 
 from typing import Callable
 
 import numpy as np
 from scipy import stats
-from sympy import Symbol
 
-from dt_model.symbols._base import SymbolExtender
-from dt_model.symbols.context_variable import ContextVariable
+from ..engine.frontend import graph
+from ..internal.sympyke.symbol import SymbolValue
+from .context_variable import ContextVariable
 
 
-class PresenceVariable(SymbolExtender):
+class PresenceVariable:
     """
     Class to represent a presence variable.
     """
@@ -21,7 +26,8 @@ class PresenceVariable(SymbolExtender):
         cvs: list[ContextVariable],
         distribution: Callable | None = None,
     ) -> None:
-        super().__init__(name)
+        self.name = name
+        self.node = graph.placeholder(name)
         self.cvs = cvs
         self.distribution = distribution
 
@@ -45,13 +51,16 @@ class PresenceVariable(SymbolExtender):
             List of sampled values.
         """
         assert nr > 0
+        assert self.distribution is not None
 
         all_cvs = []
         # TODO: check this functionality
         if cvs is not None:
             all_cvs = [cvs[cv] for cv in self.cvs if cv in cvs.keys()]
             # TODO: solve this issue of symbols vs names
-            all_cvs = list(map(lambda v: v.name if isinstance(v, Symbol) else v, all_cvs))
+            all_cvs = list(map(lambda v: v.name if isinstance(v, SymbolValue) else v, all_cvs))
         assert self.distribution is not None
         distr: dict = self.distribution(*all_cvs)
-        return stats.truncnorm.rvs(-distr["mean"] / distr["std"], 10, loc=distr["mean"], scale=distr["std"], size=nr)
+        return np.asarray(
+            stats.truncnorm.rvs(-distr["mean"] / distr["std"], 10, loc=distr["mean"], scale=distr["std"], size=nr)
+        )
