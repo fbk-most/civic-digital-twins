@@ -101,10 +101,6 @@ class Model:
         # however it was meant as a workaround for sympy having a single global
         # namespace, therefore, it should be possible to remove it.
 
-        # TODO(bassosimone,pistore): it's unclear why the variation method
-        # is duplicated here and in the legacy model. Perhaps, it should only
-        # be implemented in the legacy model only?
-
         # TODO: check if changes are valid (ie they change elements present in the model)
         if change_indexes is None:
             new_indexes = self.indexes
