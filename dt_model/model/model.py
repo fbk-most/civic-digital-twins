@@ -108,6 +108,7 @@ class Model:
                     new_indexes.append(change_indexes[index])
                 else:
                     new_indexes.append(index)
+
         if change_capacities is None:
             new_capacities = self.capacities
             change_capacities = {}
@@ -118,6 +119,7 @@ class Model:
                     new_capacities.append(change_capacities[capacity])
                 else:
                     new_capacities.append(capacity)
+
         new_constraints = []
         for constraint in self.constraints:
             new_constraints.append(
@@ -128,4 +130,5 @@ class Model:
                     name=constraint.name,
                 )
             )
+
         return Model(new_name, self.cvs, self.pvs, new_indexes, new_capacities, new_constraints)

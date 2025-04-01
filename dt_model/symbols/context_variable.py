@@ -1,6 +1,14 @@
+"""
+This module defines context variables. A context variable models a model variable
+that is not directly controlled by the model, but that can influence the model
+behavior. In general, context variables are sampled from a distribution, either
+categorical or continuous.
+"""
+
 from __future__ import annotations
 
 import random
+from abc import abstractmethod
 
 from scipy.stats import rv_continuous
 
@@ -15,9 +23,10 @@ class ContextVariable(SymbolExtender):
     def __init__(self, name: str) -> None:
         super().__init__(name)
 
-    def support_size(self) -> int:
-        pass
+    @abstractmethod
+    def support_size(self) -> int: ...
 
+    @abstractmethod
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
         """
         Returns a list of tuples (probability, value)  from the support variable or provided
@@ -41,7 +50,7 @@ class ContextVariable(SymbolExtender):
         list
             List of sampled values.
         """
-        pass
+        ...
 
 
 class UniformCategoricalContextVariable(ContextVariable):

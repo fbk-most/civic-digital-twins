@@ -2,16 +2,18 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from scipy import stats
 from sympy import Eq, Piecewise, Symbol
 
 from ... import (
     CategoricalContextVariable,
     Constraint,
     Index,
+    LognormDistIndex,
     Model,
     PresenceVariable,
+    TriangDistIndex,
     UniformCategoricalContextVariable,
+    UniformDistIndex,
 )
 from .presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
 
@@ -28,10 +30,10 @@ PV_excursionists = PresenceVariable("excursionists", [CV_weekday, CV_season, CV_
 
 # Capacity indexes
 
-I_C_parking = Index("parking capacity", stats.uniform(loc=350.0, scale=100.0))
-I_C_beach = Index("beach capacity", stats.uniform(loc=6000.0, scale=1000.0))
-I_C_accommodation = Index("accommodation capacity", stats.lognorm(s=0.125, loc=0.0, scale=5000.0))
-I_C_food = Index("food service capacity", stats.triang(loc=3000.0, scale=1000.0, c=0.5))
+I_C_parking = UniformDistIndex("parking capacity", loc=350.0, scale=100.0)
+I_C_beach = UniformDistIndex("beach capacity", loc=6000.0, scale=1000.0)
+I_C_accommodation = LognormDistIndex("accommodation capacity", s=0.125, loc=0.0, scale=5000.0)
+I_C_food = TriangDistIndex("food service capacity", loc=3000.0, scale=1000.0, c=0.5)
 
 # Usage indexes
 
@@ -65,7 +67,7 @@ I_Xa_excursionists_per_vehicle = Index("excursionists per vehicle allocation fac
 I_Xo_tourists_parking = Index("tourists in parking rotation factor", 1.02)
 I_Xo_excursionists_parking = Index("excursionists in parking rotation factor", 3.5)
 
-I_Xo_tourists_beach = Index("tourists on beach rotation factor", stats.uniform(loc=1.0, scale=2.0))
+I_Xo_tourists_beach = UniformDistIndex("tourists on beach rotation factor", loc=1.0, scale=2.0)
 I_Xo_excursionists_beach = Index("excursionists on beach rotation factor", 1.02)
 
 I_Xa_tourists_accommodation = Index("tourists per accommodation allocation factor", 1.05)
@@ -155,6 +157,6 @@ M_Base = Model(
 )
 
 # Larger park capacity model
-I_C_parking_larger = Index("larger parking capacity", stats.uniform(loc=550.0, scale=100.0))
+I_C_parking_larger = UniformDistIndex("larger parking capacity", loc=550.0, scale=100.0)
 
 M_MoreParking = M_Base.variation("larger parking model", change_capacities={I_C_parking: I_C_parking_larger})

@@ -1,3 +1,10 @@
+"""
+This module contains the classes to represent index variables. An index variable is
+a variable that is used to represent a conversion factor or a parameter that is used
+to calculate the value of a symbol. The index variable can be a constant, a distribution,
+or a symbolic expression.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -70,7 +77,7 @@ class UniformDistIndex(Index):
 
 class LognormDistIndex(Index):
     """
-    Class to represent an index as a longnorm distribution
+    Class to represent an index as a lognorm distribution
     """
 
     def __init__(
@@ -117,7 +124,7 @@ class LognormDistIndex(Index):
 
 class TriangDistIndex(Index):
     """
-    Class to represent an index as a longnorm distribution
+    Class to represent an index as a triangular distribution
     """
 
     def __init__(
@@ -164,7 +171,7 @@ class TriangDistIndex(Index):
 
 class ConstIndex(Index):
     """
-    Class to represent an index as a longnorm distribution
+    Class to represent an index as a constant
     """
 
     def __init__(self, name: str, v: float, group: str | None = None, ref_name: str | None = None) -> None:
@@ -199,12 +206,6 @@ class SymIndex(Index):
         ref_name: str | None = None,
     ) -> None:
         super().__init__(name, value, cvs, group=group, ref_name=ref_name)
-        self.cvs = cvs
-        if cvs is not None:
-            self.value = lambdify(cvs, value, "numpy")
-        else:
-            self.value = value
-
         self.sym_value = value
 
     def __str__(self):
