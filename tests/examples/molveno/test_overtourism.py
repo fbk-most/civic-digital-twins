@@ -154,6 +154,9 @@ def test_fixed_ensemble():
         failure_message = "Model comparison failed:\n" + "\n".join(failures)
         assert False, failure_message
 
+    # Verify the model name was correctly set
+    assert model.name == "base model"
+
 
 def test_more_parking_model():
     """Test the more parking model."""
