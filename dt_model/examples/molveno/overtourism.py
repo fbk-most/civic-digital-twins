@@ -4,12 +4,12 @@
 
 from ... import (
     CategoricalContextVariable,
-    DeterministicConstraint,
+    Constraint,
     Index,
     LognormDistIndex,
     Model,
     PresenceVariable,
-    ProbabilisticConstraint,
+    SymIndex,
     TriangDistIndex,
     UniformCategoricalContextVariable,
     UniformDistIndex,
@@ -88,19 +88,29 @@ I_P_excursionists_saturation_level = Index("excursionists saturation level", 100
 
 # Constraints
 
-C_parking = DeterministicConstraint(
-    usage=PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
-    + PV_excursionists.node
-    * I_U_excursionists_parking.node
-    / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node),
-    capacity=I_C_parking.node,
+C_parking = Constraint(
+    usage=SymIndex(
+        name="",
+        value=(
+            PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
+            + PV_excursionists.node
+            * I_U_excursionists_parking.node
+            / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node)
+        ),
+    ),
+    capacity=I_C_parking,
     name="parking",
 )
 
-C_beach = DeterministicConstraint(
-    usage=PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
-    + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node,
-    capacity=I_C_beach.node,
+C_beach = Constraint(
+    usage=SymIndex(
+        name="",
+        value=(
+            PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
+            + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node
+        ),
+    ),
+    capacity=I_C_beach,
     name="beach",
 )
 
@@ -108,9 +118,11 @@ C_beach = DeterministicConstraint(
 # C_accommodation = Constraint(usage=PV_tourists * I_U_tourists_accommodation,
 #                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
-C_accommodation = ProbabilisticConstraint(
-    usage=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node,
-    capacity=I_C_accommodation.value,
+C_accommodation = Constraint(
+    usage=SymIndex(
+        name="", value=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node
+    ),
+    capacity=I_C_accommodation,
     name="accommodation",
 )
 
@@ -118,13 +130,15 @@ C_accommodation = ProbabilisticConstraint(
 # C_food = Constraint(usage=PV_tourists * I_U_tourists_food +
 #                              PV_excursionists * I_U_excursionists_food,
 #                     capacity=I_C_food * I_Xa_visitors_food * I_Xo_visitors_food)
-C_food = ProbabilisticConstraint(
-    usage=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
-    / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
-    capacity=I_C_food.value,
+C_food = Constraint(
+    usage=SymIndex(
+        name="",
+        value=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
+        / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
+    ),
+    capacity=I_C_food,
     name="food",
 )
-
 
 # Models
 # TODO: what is the better process to create a model? (e.g., adding elements incrementally)

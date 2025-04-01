@@ -11,18 +11,7 @@ resource and the usage of that resource. We model two types of constraints:
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
-
-import numpy as np
-
-from ..engine.frontend import graph
-
-
-@runtime_checkable
-class CumulativeDistribution(Protocol):
-    """Protocol for classes allowing to sample from a cumulative distribution."""
-
-    def cdf(self, x: float | np.ndarray, *args, **kwds) -> float | np.ndarray: ...
+from .index import Index
 
 
 class Constraint:
@@ -34,8 +23,8 @@ class Constraint:
 
     def __init__(
         self,
-        usage: graph.Node,
-        capacity: graph.Node | CumulativeDistribution,
+        usage: Index,
+        capacity: Index,
         group: str | None = None,
         name: str = "",
     ) -> None:
@@ -49,47 +38,3 @@ class Constraint:
         # we would probably reduce the churn and coupling between the computational
         # model and the related view.
         self.group = group
-
-
-class ProbabilisticConstraint(Constraint):
-    """
-    ProbabilisticConstraint class.
-
-    This class is used to define probabilistic constraints for the model.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        usage: graph.Node,
-        capacity: CumulativeDistribution,
-        group: str | None = None,
-    ) -> None:
-        # TODO(bassosimone): consider passing maybe directly the index here? I am a bit
-        # suprised the type checker likes this code since the .value of an Index could
-        # be many things and I am not sure any of them is a cumulative distribution. In
-        # other words, I am missing something here but don't know what it is.
-        super().__init__(usage, capacity, group, name)
-
-    def __repr__(self) -> str:
-        return f"ProbabilisticConstraint({self.name})"
-
-
-class DeterministicConstraint(Constraint):
-    """
-    DeterministicConstraint class.
-
-    This class is used to define deterministic constraints for the model.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        usage: graph.Node,
-        capacity: graph.Node,
-        group: str | None = None,
-    ) -> None:
-        super().__init__(usage, capacity, group, name)
-
-    def __repr__(self) -> str:
-        return f"DeterministicConstraint({self.name})"

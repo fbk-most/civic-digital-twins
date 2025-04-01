@@ -8,9 +8,9 @@ from scipy import interpolate, ndimage, stats
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..internal.sympyke import symbol
-from ..symbols.constraint import Constraint, CumulativeDistribution
+from ..symbols.constraint import Constraint
 from ..symbols.context_variable import ContextVariable
-from ..symbols.index import Index, Distribution
+from ..symbols.index import Distribution, Index
 from ..symbols.presence_variable import PresenceVariable
 
 
@@ -82,9 +82,9 @@ class LegacyModel:
         # [eval] collect all the nodes to evaluate
         all_nodes: list[graph.Node] = []
         for constraint in self.constraints:
-            all_nodes.append(constraint.usage)
-            if not isinstance(constraint.capacity, CumulativeDistribution):
-                all_nodes.append(constraint.capacity)
+            all_nodes.append(constraint.usage.node)
+            if not isinstance(constraint.capacity.value, Distribution):
+                all_nodes.append(constraint.capacity.node)
         for index in self.indexes + self.capacities:
             all_nodes.append(index.node)
 
@@ -99,15 +99,15 @@ class LegacyModel:
         field_elements = {}
         for constraint in self.constraints:
             # Get usage
-            usage = c_subs[constraint.usage]
+            usage = c_subs[constraint.usage.node]
 
             # Get capacity
             capacity = constraint.capacity
 
-            if not isinstance(capacity, CumulativeDistribution):
-                unscaled_result = usage <= c_subs[capacity]
+            if not isinstance(capacity.value, Distribution):
+                unscaled_result = usage <= c_subs[capacity.node]
             else:
-                unscaled_result = 1.0 - capacity.cdf(usage)
+                unscaled_result = 1.0 - capacity.value.cdf(usage)
 
             # Apply weights and store the result
             result = np.broadcast_to(np.dot(unscaled_result, c_weight), grid_shape)
