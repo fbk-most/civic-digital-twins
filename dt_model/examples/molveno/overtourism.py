@@ -160,11 +160,7 @@ M_Base = Model(
     [C_parking, C_beach, C_accommodation, C_food],
 )
 
-# TODO(bassosimone): the lack of .subs is going to cause a boo boo here. We should fix this
-# by allowing for cloning the model much more gracefully. The question is how. For now, I have
-# disabled the M_MoreParking model.
-
 # Larger park capacity model
 I_C_parking_larger = UniformDistIndex("larger parking capacity", loc=550.0, scale=100.0)
 
-# M_MoreParking = M_Base.variation("larger parking model", change_capacities={I_C_parking: I_C_parking_larger})
+M_MoreParking = M_Base.variation("larger parking model", change_capacities={I_C_parking: I_C_parking_larger})
