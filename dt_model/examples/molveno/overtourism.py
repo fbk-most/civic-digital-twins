@@ -2,7 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from scipy import stats
 from sympy import Eq, Piecewise, Symbol
 
 from ... import (
@@ -13,8 +12,8 @@ from ... import (
     Model,
     PresenceVariable,
     TriangDistIndex,
-    UniformDistIndex,
     UniformCategoricalContextVariable,
+    UniformDistIndex,
 )
 from .presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
 

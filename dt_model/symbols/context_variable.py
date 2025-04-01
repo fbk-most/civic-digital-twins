@@ -24,8 +24,7 @@ class ContextVariable(SymbolExtender):
         super().__init__(name)
 
     @abstractmethod
-    def support_size(self) -> int:
-        ...
+    def support_size(self) -> int: ...
 
     @abstractmethod
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
