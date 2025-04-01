@@ -7,13 +7,33 @@ or a symbolic expression.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol, cast, runtime_checkable
 
+import numpy as np
 from scipy import stats
-from sympy import lambdify
+from sympy import Symbol, lambdify
 
-from dt_model.symbols._base import SymbolExtender
-from dt_model.symbols.context_variable import ContextVariable
+from ..engine.frontend import graph
+from ._base import SymbolExtender
+from .context_variable import ContextVariable
+
+
+@runtime_checkable
+class Distribution(Protocol):
+    """Protocol for scipy compatible distributions."""
+
+    def cdf(
+        self,
+        x: float | np.ndarray,
+        *args,
+        **kwds,
+    ) -> float | np.ndarray: ...
+
+    def rvs(
+        self,
+        size: int | tuple[int, ...] | None = None,
+        **kwargs,
+    ) -> float | np.ndarray: ...
 
 
 class Index(SymbolExtender):
@@ -24,7 +44,7 @@ class Index(SymbolExtender):
     def __init__(
         self,
         name: str,
-        value: Any,
+        value: Symbol | Distribution | graph.Scalar,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,
@@ -45,9 +65,22 @@ class UniformDistIndex(Index):
     """
 
     def __init__(
-        self, name: str, loc: float, scale: float, group: str | None = None, ref_name: str | None = None
+        self,
+        name: str,
+        loc: float,
+        scale: float,
+        group: str | None = None,
+        ref_name: str | None = None,
     ) -> None:
-        super().__init__(name, stats.uniform(loc=loc, scale=scale), group=group, ref_name=ref_name)
+        super().__init__(
+            name,
+            cast(
+                Distribution,
+                stats.uniform(loc=loc, scale=scale),
+            ),
+            group=group,
+            ref_name=ref_name,
+        )
         self._loc = loc
         self._scale = scale
 
@@ -81,9 +114,23 @@ class LognormDistIndex(Index):
     """
 
     def __init__(
-        self, name: str, loc: float, scale: float, s: float, group: str | None = None, ref_name: str | None = None
+        self,
+        name: str,
+        loc: float,
+        scale: float,
+        s: float,
+        group: str | None = None,
+        ref_name: str | None = None,
     ) -> None:
-        super().__init__(name, stats.lognorm(loc=loc, scale=scale, s=s), group=group, ref_name=ref_name)
+        super().__init__(
+            name,
+            cast(
+                Distribution,
+                stats.lognorm(loc=loc, scale=scale, s=s),
+            ),
+            group=group,
+            ref_name=ref_name,
+        )
         self._loc = loc
         self._scale = scale
         self._s = s
@@ -128,9 +175,23 @@ class TriangDistIndex(Index):
     """
 
     def __init__(
-        self, name: str, loc: float, scale: float, c: float, group: str | None = None, ref_name: str | None = None
+        self,
+        name: str,
+        loc: float,
+        scale: float,
+        c: float,
+        group: str | None = None,
+        ref_name: str | None = None,
     ) -> None:
-        super().__init__(name, stats.triang(loc=loc, scale=scale, c=c), group=group, ref_name=ref_name)
+        super().__init__(
+            name,
+            cast(
+                Distribution,
+                stats.triang(loc=loc, scale=scale, c=c),
+            ),
+            group=group,
+            ref_name=ref_name,
+        )
         self._loc = loc
         self._scale = scale
         self._c = c
@@ -174,7 +235,13 @@ class ConstIndex(Index):
     Class to represent an index as a constant
     """
 
-    def __init__(self, name: str, v: float, group: str | None = None, ref_name: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        v: float,
+        group: str | None = None,
+        ref_name: str | None = None,
+    ) -> None:
         super().__init__(name, v, group=group, ref_name=ref_name)
         self._v = v
 
@@ -200,7 +267,7 @@ class SymIndex(Index):
     def __init__(
         self,
         name: str,
-        value: Any,
+        value: Symbol,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,
