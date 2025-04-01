@@ -192,9 +192,9 @@ def test_more_parking_model():
     expect = {
         0: np.array(
             [
-                [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],           # Now allows all excursionist values at 1000 tourists
-                [1.0, 1.0, 1.0, 1.0, 1.0, 0.74985994],    # Now allows more excursionists at 2000 tourists
-                [1.0, 1.0, 1.0, 1.0, 0.35994398, 0.0],    # Now allows more excursionists at 5000 tourists
+                [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0, 1.0, 1.0, 0.74985994],
+                [1.0, 1.0, 1.0, 1.0, 0.35994398, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
