@@ -83,18 +83,19 @@ I_P_excursionists_saturation_level = Index("excursionists saturation level", 100
 
 
 # Constraints
-# TODO: add names to constraints?
 
 C_parking = Constraint(
     usage=PV_tourists * I_U_tourists_parking / (I_Xa_tourists_per_vehicle * I_Xo_tourists_parking)
     + PV_excursionists * I_U_excursionists_parking / (I_Xa_excursionists_per_vehicle * I_Xo_excursionists_parking),
     capacity=I_C_parking,
+    name="parking",
 )
 
 C_beach = Constraint(
     usage=PV_tourists * I_U_tourists_beach / I_Xo_tourists_beach
     + PV_excursionists * I_U_excursionists_beach / I_Xo_excursionists_beach,
     capacity=I_C_beach,
+    name="beach",
 )
 
 # TODO: also capacity should be a formula
@@ -102,7 +103,9 @@ C_beach = Constraint(
 #                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
 C_accommodation = Constraint(
-    usage=PV_tourists * I_U_tourists_accommodation / I_Xa_tourists_accommodation, capacity=I_C_accommodation
+    usage=PV_tourists * I_U_tourists_accommodation / I_Xa_tourists_accommodation,
+    capacity=I_C_accommodation,
+    name="accommodation",
 )
 
 # TODO: also capacity should be a formula
@@ -113,6 +116,7 @@ C_food = Constraint(
     usage=(PV_tourists * I_U_tourists_food + PV_excursionists * I_U_excursionists_food)
     / (I_Xa_visitors_food * I_Xo_visitors_food),
     capacity=I_C_food,
+    name="food",
 )
 
 
