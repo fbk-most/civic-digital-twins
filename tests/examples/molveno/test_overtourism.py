@@ -5,7 +5,7 @@ import random
 import numpy as np
 from sympy import Symbol
 
-from dt_model import Constraint
+from dt_model import Constraint, ContextVariable
 from dt_model.examples.molveno.overtourism import (
     C_accommodation,
     C_beach,
@@ -21,14 +21,17 @@ from dt_model.examples.molveno.overtourism import (
 )
 
 
-def compare_constraint_results(got, expect):
+def compare_constraint_results(
+    got: dict[Constraint, np.ndarray],
+    expect: dict[str, np.ndarray]
+) -> list[str]:
     """Helper function to compare constraint results and return any failures."""
     # Ensure that we have the expected constraints
     if len(got) != len(expect):
         return [f"Constraint count mismatch: expected {len(expect)}, got {len(got)}"]
 
     # Collect all differences for reporting
-    failures = []
+    failures: list[str] = []
 
     # Match constraints by name
     got_by_name = {constraint.name: result for constraint, result in got.items()}
@@ -80,7 +83,7 @@ def test_fixed_ensemble():
     model.reset()
 
     # Manually create a specific ensemble to use
-    fixed_orig_situation = {
+    fixed_orig_situation: dict[ContextVariable, Symbol] = {
         CV_weekday: Symbol("monday"),
         CV_season: Symbol("high"),
         CV_weather: Symbol("good"),
@@ -107,7 +110,7 @@ def test_fixed_ensemble():
     assert got is not None
 
     # Define the expected constraints evaluation result
-    expect = {
+    expect: dict[str, np.ndarray] = {
         "parking": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
@@ -171,7 +174,7 @@ def test_more_parking_model():
     model.reset()
 
     # Manually create a specific ensemble to use
-    fixed_orig_situation = {
+    fixed_orig_situation: dict[ContextVariable, Symbol] = {
         CV_weekday: Symbol("monday"),
         CV_season: Symbol("high"),
         CV_weather: Symbol("good"),
@@ -196,7 +199,7 @@ def test_more_parking_model():
     assert got is not None
 
     # Define the expected constraints evaluation result for the more parking model
-    expect = {
+    expect: dict[str, np.ndarray] = {
         "parking": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
