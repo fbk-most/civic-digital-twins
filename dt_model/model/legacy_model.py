@@ -10,7 +10,7 @@ from ..engine.numpybackend import executor
 from ..internal.sympyke import symbol
 from ..symbols.constraint import Constraint, CumulativeDistribution
 from ..symbols.context_variable import ContextVariable
-from ..symbols.index import Index, Sampleable
+from ..symbols.index import Index, Distribution
 from ..symbols.presence_variable import PresenceVariable
 
 
@@ -67,7 +67,7 @@ class LegacyModel:
         #
         # TODO(bassosimone): the size used here is too small
         for index in self.indexes + self.capacities:
-            if isinstance(index.value, Sampleable):
+            if isinstance(index.value, Distribution):
                 c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
 
         # [eval] expand dimensions for all values computed thus far

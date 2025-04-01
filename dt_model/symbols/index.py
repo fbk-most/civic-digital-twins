@@ -17,8 +17,15 @@ from .context_variable import ContextVariable
 
 
 @runtime_checkable
-class Sampleable(Protocol):
-    """Protocol for classes allowing random variates sampling."""
+class Distribution(Protocol):
+    """Protocol for scipy compatible distributions."""
+
+    def cdf(
+        self,
+        x: float | np.ndarray,
+        *args,
+        **kwds,
+    ) -> float | np.ndarray: ...
 
     def rvs(
         self,
@@ -35,7 +42,7 @@ class Index:
     def __init__(
         self,
         name: str,
-        value: graph.Scalar | Sampleable | graph.Node | None,
+        value: graph.Scalar | Distribution | graph.Node | None,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,
@@ -45,10 +52,10 @@ class Index:
         self.ref_name = ref_name if ref_name is not None else name
         self.cvs = cvs
 
-        # We model a sampleable index as a distribution to invoke when
+        # We model a distribution index as a distribution to invoke when
         # scheduling the model and a placeholder to fill with the result
         # of sampling from the index's distribution.
-        if isinstance(value, Sampleable):
+        if isinstance(value, Distribution):
             self.value = value
             self.node = graph.placeholder(name)
 
@@ -78,12 +85,17 @@ class UniformDistIndex(Index):
     """
 
     def __init__(
-        self, name: str, loc: float, scale: float, group: str | None = None, ref_name: str | None = None
+        self,
+        name: str,
+        loc: float,
+        scale: float,
+        group: str | None = None,
+        ref_name: str | None = None,
     ) -> None:
         super().__init__(
             name,
             cast(
-                Sampleable,
+                Distribution,
                 stats.uniform(loc=loc, scale=scale),
             ),
             group=group,
@@ -122,12 +134,18 @@ class LognormDistIndex(Index):
     """
 
     def __init__(
-        self, name: str, loc: float, scale: float, s: float, group: str | None = None, ref_name: str | None = None
+        self,
+        name: str,
+        loc: float,
+        scale: float,
+        s: float,
+        group: str | None = None,
+        ref_name: str | None = None,
     ) -> None:
         super().__init__(
             name,
             cast(
-                Sampleable,
+                Distribution,
                 stats.lognorm(loc=loc, scale=scale, s=s),
             ),
             group=group,
@@ -177,12 +195,18 @@ class TriangDistIndex(Index):
     """
 
     def __init__(
-        self, name: str, loc: float, scale: float, c: float, group: str | None = None, ref_name: str | None = None
+        self,
+        name: str,
+        loc: float,
+        scale: float,
+        c: float,
+        group: str | None = None,
+        ref_name: str | None = None,
     ) -> None:
         super().__init__(
             name,
             cast(
-                Sampleable,
+                Distribution,
                 stats.triang(loc=loc, scale=scale, c=c),
             ),
             group=group,
@@ -231,7 +255,13 @@ class ConstIndex(Index):
     Class to represent an index as a constant
     """
 
-    def __init__(self, name: str, v: float, group: str | None = None, ref_name: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        v: float,
+        group: str | None = None,
+        ref_name: str | None = None,
+    ) -> None:
         super().__init__(name, v, group=group, ref_name=ref_name)
         self._v = v
 
