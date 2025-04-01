@@ -97,14 +97,6 @@ class Model:
         return self.evaluation.compute_modal_line_per_constraint()
 
     def variation(self, new_name, *, change_indexes=None, change_capacities=None):
-        # TODO(bassosimone): the .subs functionality is not available anymore
-        # however it was meant as a workaround for sympy having a single global
-        # namespace, therefore, it should be possible to remove it.
-
-        # TODO(bassosimone,pistore): it's unclear why the variation method
-        # is duplicated here and in the legacy model. Perhaps, it should only
-        # be implemented in the legacy model only?
-
         # TODO: check if changes are valid (ie they change elements present in the model)
         if change_indexes is None:
             new_indexes = self.indexes
@@ -116,7 +108,6 @@ class Model:
                     new_indexes.append(change_indexes[index])
                 else:
                     new_indexes.append(index)
-
         if change_capacities is None:
             new_capacities = self.capacities
             change_capacities = {}
@@ -128,7 +119,6 @@ class Model:
                 else:
                     new_capacities.append(capacity)
         new_constraints = []
-
         for constraint in self.constraints:
             new_constraints.append(
                 Constraint(

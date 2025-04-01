@@ -1,34 +1,23 @@
-"""
-This module defines context variables. A context variable models a model variable
-that is not directly controlled by the model, but that can influence the model
-behavior. In general, context variables are sampled from a distribution, either
-categorical or continuous.
-"""
-
 from __future__ import annotations
 
 import random
-from abc import ABC, abstractmethod
 
 from scipy.stats import rv_continuous
 
-from ..engine.frontend import graph
-from ..internal.sympyke.symbol import SymbolValue
+from dt_model.symbols._base import SymbolExtender
 
 
-class ContextVariable(ABC):
+class ContextVariable(SymbolExtender):
     """
     Class to represent a context variable.
     """
 
     def __init__(self, name: str) -> None:
-        self.name = name
-        self.node = graph.placeholder(name)
+        super().__init__(name)
 
-    @abstractmethod
-    def support_size(self) -> int: ...
+    def support_size(self) -> int:
+        pass
 
-    @abstractmethod
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
         """
         Returns a list of tuples (probability, value)  from the support variable or provided
@@ -52,7 +41,7 @@ class ContextVariable(ABC):
         list
             List of sampled values.
         """
-        ...
+        pass
 
 
 class UniformCategoricalContextVariable(ContextVariable):
@@ -64,7 +53,7 @@ class UniformCategoricalContextVariable(ContextVariable):
 
     def __init__(self, name: str, values: list) -> None:
         super().__init__(name)
-        self.values = [value.name if isinstance(value, SymbolValue) else value for value in values]
+        self.values = values
         self.size = len(self.values)
 
     def support_size(self) -> int:
@@ -89,7 +78,7 @@ class CategoricalContextVariable(ContextVariable):
 
     def __init__(self, name: str, distribution: dict) -> None:
         super().__init__(name)
-        self.distribution = {k.name if isinstance(k, SymbolValue) else k: v for k, v in distribution.items()}
+        self.distribution = distribution
         self.values = list(self.distribution.keys())
         self.size = len(self.values)
         # TODO: check if distribution is, indeed, a distribution (sum = 1)
