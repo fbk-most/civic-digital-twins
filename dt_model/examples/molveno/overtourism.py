@@ -87,22 +87,21 @@ I_P_excursionists_saturation_level = Index("excursionists saturation level", 100
 
 
 # Constraints
-# TODO: add names to constraints?
 
 C_parking = DeterministicConstraint(
-    name="parking",
     usage=PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
     + PV_excursionists.node
     * I_U_excursionists_parking.node
     / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node),
     capacity=I_C_parking.node,
+    name="parking",
 )
 
 C_beach = DeterministicConstraint(
-    name="beach",
     usage=PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
     + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node,
     capacity=I_C_beach.node,
+    name="beach",
 )
 
 # TODO: also capacity should be a formula
@@ -110,9 +109,9 @@ C_beach = DeterministicConstraint(
 #                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
 C_accommodation = ProbabilisticConstraint(
-    name="accommodation",
     usage=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node,
     capacity=I_C_accommodation.value,
+    name="accommodation",
 )
 
 # TODO: also capacity should be a formula
@@ -120,10 +119,10 @@ C_accommodation = ProbabilisticConstraint(
 #                              PV_excursionists * I_U_excursionists_food,
 #                     capacity=I_C_food * I_Xa_visitors_food * I_Xo_visitors_food)
 C_food = ProbabilisticConstraint(
-    name="food",
     usage=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
     / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
     capacity=I_C_food.value,
+    name="food",
 )
 
 
