@@ -103,7 +103,8 @@ C_beach = Constraint(
 #                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
 C_accommodation = Constraint(
-    usage=PV_tourists * I_U_tourists_accommodation / I_Xa_tourists_accommodation, capacity=I_C_accommodation,
+    usage=PV_tourists * I_U_tourists_accommodation / I_Xa_tourists_accommodation,
+    capacity=I_C_accommodation,
     name="accommodation",
 )
 
