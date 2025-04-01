@@ -231,39 +231,3 @@ class LegacyModel:
                 pass  # No regression is possible (eg median not intersecting the grid)
 
         return modal_lines
-
-    def variation(self, new_name, *, change_indexes=None, change_capacities=None):
-        # TODO(bassoimone): see comments in the corresponding method in model.py
-
-        # TODO: check if changes are valid (ie they change elements present in the model)
-        if change_indexes is None:
-            new_indexes = self.indexes
-            change_indexes = {}
-        else:
-            new_indexes = []
-            for index in self.indexes:
-                if index in change_indexes:
-                    new_indexes.append(change_indexes[index])
-                else:
-                    new_indexes.append(index)
-        if change_capacities is None:
-            new_capacities = self.capacities
-            change_capacities = {}
-        else:
-            new_capacities = []
-            for capacity in self.capacities:
-                if capacity in change_capacities:
-                    new_capacities.append(change_capacities[capacity])
-                else:
-                    new_capacities.append(capacity)
-        new_constraints = []
-        for constraint in self.constraints:
-            new_constraints.append(
-                Constraint(
-                    constraint.usage.subs(change_indexes),
-                    constraint.capacity.subs(change_capacities),
-                    group=constraint.group,
-                    name=constraint.name,
-                )
-            )
-        return LegacyModel(new_name, self.cvs, self.pvs, new_indexes, new_capacities, new_constraints)

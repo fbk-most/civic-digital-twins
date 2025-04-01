@@ -62,5 +62,5 @@ class PresenceVariable:
         assert self.distribution is not None
         distr: dict = self.distribution(*all_cvs)
         return np.asarray(
-            stats.truncnorm.rvs(-distr["mean"] / distr["std"], 10, loc=distr["mean"], scale=distr["std"], size=nr)
+            stats.truncnorm.rvs(-distr["mean"] / distr["std"], 10, loc=distr["mean"], scale=distr["std"], size=nr),
         )
