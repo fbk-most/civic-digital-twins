@@ -30,39 +30,43 @@ def compare_constraint_results(got, expect):
     # Collect all differences for reporting
     failures = []
 
-    # Match constraints by index since we can't match by identity
-    got_keys = list(got.keys())
-    expect_keys = list(expect.keys())
+    # Match constraints by name
+    got_by_name = {constraint.name: result for constraint, result in got.items()}
 
-    for i in range(len(got_keys)):
-        got_key = got_keys[i]
-        expect_key = expect_keys[i]
+    for name, expected_result in expect.items():
+        if name not in got_by_name:
+            failures.append(f"Constraint '{name}' not found in results")
+            continue
 
-        expect_c = expect[expect_key]
-        got_c = got[got_key]
+        actual_result = got_by_name[name]
 
         # Basic shape check
-        if expect_c.shape != got_c.shape:
-            failures.append(f"Shape mismatch for constraint {i}: {expect_c.shape} vs {got_c.shape}")
+        if expected_result.shape != actual_result.shape:
+            failures.append(f"Shape mismatch for constraint '{name}': {expected_result.shape} vs {actual_result.shape}")
             continue
 
         # Check if values are close enough
-        if not np.allclose(expect_c, got_c, rtol=1e-5, atol=1e-8):
-            diff_info = f"\n--- expected/constraint {i}\n+++ got/constraint {i}\n"
+        if not np.allclose(expected_result, actual_result, rtol=1e-5, atol=1e-8):
+            diff_info = f"\n--- expected/{name}\n+++ got/{name}\n"
 
             # Convert arrays to formatted strings for comparison line by line
-            for j in range(expect_c.shape[0]):
-                row_expect = [f"{x:.8f}" for x in expect_c[j]]
-                row_got = [f"{x:.8f}" for x in got_c[j]]
+            for j in range(expected_result.shape[0]):
+                row_expect = [f"{x:.8f}" for x in expected_result[j]]
+                row_got = [f"{x:.8f}" for x in actual_result[j]]
 
                 # If this row has differences
-                if not np.allclose(expect_c[j], got_c[j], rtol=1e-5, atol=1e-8):
+                if not np.allclose(expected_result[j], actual_result[j], rtol=1e-5, atol=1e-8):
                     diff_info += f"-{row_expect}\n"
                     diff_info += f"+{row_got}\n"
                 else:
                     diff_info += f" {row_expect}\n"
 
             failures.append(diff_info)
+
+    # Check for unexpected constraints
+    for name in got_by_name:
+        if name not in expect:
+            failures.append(f"Unexpected constraint found: '{name}'")
 
     return failures
 
@@ -103,8 +107,8 @@ def test_fixed_ensemble():
     assert got is not None
 
     # Define the expected constraints evaluation result
-    expect: dict[Constraint, np.ndarray] = {
-        C_parking: np.array(
+    expect = {
+        "parking": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
@@ -114,7 +118,7 @@ def test_fixed_ensemble():
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ]
         ),
-        C_beach: np.array(
+        "beach": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
@@ -124,7 +128,7 @@ def test_fixed_ensemble():
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ]
         ),
-        C_accommodation: np.array(
+        "accommodation": np.array(
             [
                 [1.0, 1.0, 8.91250437e-01, 8.09024620e-06, 0.0, 0.0],
                 [1.0, 1.0, 8.91250437e-01, 8.09024620e-06, 0.0, 0.0],
@@ -134,7 +138,7 @@ def test_fixed_ensemble():
                 [1.0, 1.0, 8.91250437e-01, 8.09024620e-06, 0.0, 0.0],
             ]
         ),
-        C_food: np.array(
+        "food": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
@@ -193,7 +197,7 @@ def test_more_parking_model():
 
     # Define the expected constraints evaluation result for the more parking model
     expect = {
-        0: np.array(
+        "parking": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.74985994],
@@ -203,7 +207,7 @@ def test_more_parking_model():
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ]
         ),
-        1: np.array(
+        "beach": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
@@ -213,7 +217,7 @@ def test_more_parking_model():
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ]
         ),
-        2: np.array(
+        "accommodation": np.array(
             [
                 [1.0, 1.0, 8.91250437e-01, 8.09024620e-06, 0.0, 0.0],
                 [1.0, 1.0, 8.91250437e-01, 8.09024620e-06, 0.0, 0.0],
@@ -223,7 +227,7 @@ def test_more_parking_model():
                 [1.0, 1.0, 8.91250437e-01, 8.09024620e-06, 0.0, 0.0],
             ]
         ),
-        3: np.array(
+        "food": np.array(
             [
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
                 [1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
