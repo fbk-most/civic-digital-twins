@@ -50,7 +50,6 @@ class PresenceVariable(SymbolExtender):
             List of sampled values.
         """
         assert nr > 0
-        assert self.distribution is not None
 
         all_cvs = []
         # TODO: check this functionality
