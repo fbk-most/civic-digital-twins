@@ -1,3 +1,14 @@
+"""
+This module defines the Constraint symbol.
+
+A constraint represents the relationship between the capacity of a given
+resource and the usage of that resource. We model two types of constraints:
+
+1. deterministic constraints where the capacity is a graph node
+
+2. probabilistic constraints where the capacity is a random variable
+"""
+
 from __future__ import annotations
 
 import typing
