@@ -188,8 +188,6 @@ class LegacyModel:
         return modal_lines
 
     def variation(self, new_name, *, change_indexes=None, change_capacities=None):
-        # TODO(bassoimone): see comments in the corresponding method in model.py
-
         # TODO: check if changes are valid (ie they change elements present in the model)
         if change_indexes is None:
             new_indexes = self.indexes
