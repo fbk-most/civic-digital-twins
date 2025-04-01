@@ -15,18 +15,20 @@ from dt_model.symbols.index import ConstIndex, Index, LognormDistIndex, SymIndex
 from dt_model.symbols.presence_variable import PresenceVariable
 
 __all__ = [
-    "Ensemble",
-    "Model",
-    "Constraint",
-    "ContextVariable",
     "CategoricalContextVariable",
-    "ContinuousContextVariable",
-    "UniformCategoricalContextVariable",
+    "Constraint",
     "ConstIndex",
+    "ContextVariable",
+    "ContinuousContextVariable",
+    "DeterministicConstraint",
+    "Ensemble",
     "Index",
     "LognormDistIndex",
+    "Model",
+    "PresenceVariable",
+    "ProbabilisticConstraint",
     "SymIndex",
     "TriangDistIndex",
+    "UniformCategoricalContextVariable",
     "UniformDistIndex",
-    "PresenceVariable",
 ]
