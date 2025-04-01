@@ -47,7 +47,7 @@ class Index:
 
         # We model a sampleable index as a distribution to invoke when
         # scheduling the model and a placeholder to fill with the result
-        # of sampling from the index's distribution.'
+        # of sampling from the index's distribution.
         if isinstance(value, Sampleable):
             self.value = value
             self.node = graph.placeholder(name)
