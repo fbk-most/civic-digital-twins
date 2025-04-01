@@ -7,10 +7,6 @@ from sympy import Symbol
 
 from dt_model import Constraint, ContextVariable
 from dt_model.examples.molveno.overtourism import (
-    C_accommodation,
-    C_beach,
-    C_food,
-    C_parking,
     CV_season,
     CV_weather,
     CV_weekday,
@@ -21,10 +17,7 @@ from dt_model.examples.molveno.overtourism import (
 )
 
 
-def compare_constraint_results(
-    got: dict[Constraint, np.ndarray],
-    expect: dict[str, np.ndarray]
-) -> list[str]:
+def compare_constraint_results(got: dict[Constraint, np.ndarray], expect: dict[str, np.ndarray]) -> list[str]:
     """Helper function to compare constraint results and return any failures."""
     # Ensure that we have the expected constraints
     if len(got) != len(expect):
