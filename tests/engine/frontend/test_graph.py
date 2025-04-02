@@ -102,8 +102,9 @@ def test_binary_op_copy():
     assert new_add.name == "add_operation"
     assert new_add.flags == graph.NODE_FLAG_TRACE
 
-    # Verify it's a new object
+    # Verify it's a new object with a new ID
     assert new_add is not add_op
+    assert new_add.id != add_op.id
 
     # Test more binary operations
     sub_op = graph.subtract(a, b)
@@ -111,10 +112,12 @@ def test_binary_op_copy():
     new_sub = sub_op.copy(left=c, right=d)
     assert isinstance(new_sub, graph.subtract)
     assert new_sub.name == "subtract_operation"
+    assert new_sub.id != sub_op.id
 
     mul_op = graph.multiply(a, b)
     new_mul = mul_op.copy(left=c, right=d)
     assert isinstance(new_mul, graph.multiply)
+    assert new_mul.id != mul_op.id
 
 
 def test_complex_conditional_graph():
@@ -169,8 +172,9 @@ def test_where_op_copy():
     assert new_where.name == "where_operation"
     assert new_where.flags == graph.NODE_FLAG_TRACE
 
-    # Verify it's a new object
+    # Verify it's a new object with a new ID
     assert new_where is not where_op
+    assert new_where.id != where_op.id
 
 
 def test_multi_clause_where_op_copy():
@@ -212,8 +216,9 @@ def test_multi_clause_where_op_copy():
     assert new_mcw.name == "mcw_operation"
     assert new_mcw.flags == graph.NODE_FLAG_TRACE
 
-    # Verify it's a new object
+    # Verify it's a new object with a new ID
     assert new_mcw is not mcw_op
+    assert new_mcw.id != mcw_op.id
 
 
 def test_reduction_graph():
@@ -257,8 +262,9 @@ def test_unary_op_copy():
     assert new_exp.name == "exp_operation"
     assert new_exp.flags == graph.NODE_FLAG_BREAK
 
-    # Verify it's a new object
+    # Verify it's a new object with a new ID
     assert new_exp is not exp_op
+    assert new_exp.id != exp_op.id
 
     # Test logical not
     not_op = graph.logical_not(a)
@@ -267,6 +273,7 @@ def test_unary_op_copy():
     assert isinstance(new_not, graph.logical_not)
     assert new_not.name == "not_operation"
     assert new_not.node is b
+    assert new_not.id != not_op.id
 
 
 def test_axis_op_copy():
@@ -292,19 +299,22 @@ def test_axis_op_copy():
     assert new_sum.name == "sum_operation"
     assert new_sum.flags == graph.NODE_FLAG_TRACE
 
-    # Verify it's a new object
+    # Verify it's a new object with a new ID
     assert new_sum is not sum_op
+    assert new_sum.id != sum_op.id
 
     # Test other axis operations
     mean_op = graph.reduce_mean(a, axis=1)
     new_mean = mean_op.copy(node=b)
     assert isinstance(new_mean, graph.reduce_mean)
     assert new_mean.axis == 1
+    assert new_mean.id != mean_op.id
 
     expand_op = graph.expand_dims(a, axis=2)
     new_expand = expand_op.copy(node=b)
     assert isinstance(new_expand, graph.expand_dims)
     assert new_expand.axis == 2
+    assert new_expand.id != expand_op.id
 
 
 def test_name_propagation():
