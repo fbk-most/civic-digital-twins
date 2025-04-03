@@ -15,6 +15,7 @@ should be replaced, then recursively processes its children.
 
 from . import graph
 
+
 def nodes(
     target: graph.Node,
     replacements: dict[graph.Node, graph.Node],
@@ -107,9 +108,7 @@ def nodes(
         rotherwise = nodes(target.otherwise, replacements)
 
         # Handle the no-replacement case
-        if (rcondition is target.condition and
-            rthen is target.then and
-            rotherwise is target.otherwise):
+        if rcondition is target.condition and rthen is target.then and rotherwise is target.otherwise:
             return target
 
         # Use copy method to create a new node with the replaced children

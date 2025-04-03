@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from dt_model.engine.frontend import graph, replace, linearize
+from dt_model.engine.frontend import graph, linearize, replace
 from dt_model.engine.numpybackend import executor
 
 
@@ -188,7 +188,6 @@ def test_identity_cases():
     assert replace.nodes(sum_a, {d: e}) is sum_a
 
 
-
 def test_replace_nodes_functional_evaluation():
     """Test that replacements produce functionally equivalent graphs."""
     # Create original graph: (a * 2) + (b * 3)
@@ -233,6 +232,7 @@ def test_replace_nodes_functional_evaluation():
 
 def test_replace_nodes_unsupported_type():
     """Test that an error is raised for unsupported node types."""
+
     # Create a custom node type not handled by the replace function
     class CustomNode(graph.Node):
         pass
