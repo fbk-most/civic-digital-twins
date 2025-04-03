@@ -77,7 +77,7 @@ def test_complex_arithmetic_graph():
     assert add_ab.right is b
 
 
-def test_binary_op_copy():
+def test_binary_op_copy_with():
     """Test that binary operations can be correctly copied with new children."""
     # Create some nodes
     a = graph.placeholder("a")
@@ -91,7 +91,7 @@ def test_binary_op_copy():
     add_op.flags = graph.NODE_FLAG_TRACE
 
     # Copy the operation with new children
-    new_add = add_op.copy(left=c, right=d)
+    new_add = add_op.copy_with(left=c, right=d)
 
     # Verify the copy has correct structure
     assert isinstance(new_add, graph.add)
@@ -109,13 +109,13 @@ def test_binary_op_copy():
     # Test more binary operations
     sub_op = graph.subtract(a, b)
     sub_op.name = "subtract_operation"
-    new_sub = sub_op.copy(left=c, right=d)
+    new_sub = sub_op.copy_with(left=c, right=d)
     assert isinstance(new_sub, graph.subtract)
     assert new_sub.name == "subtract_operation"
     assert new_sub.id != sub_op.id
 
     mul_op = graph.multiply(a, b)
-    new_mul = mul_op.copy(left=c, right=d)
+    new_mul = mul_op.copy_with(left=c, right=d)
     assert isinstance(new_mul, graph.multiply)
     assert new_mul.id != mul_op.id
 
@@ -144,7 +144,7 @@ def test_complex_conditional_graph():
     assert result.default_value is default
 
 
-def test_where_op_copy():
+def test_where_op_copy_with():
     """Test that where operations can be correctly copied with new children."""
     # Create some nodes
     a = graph.placeholder("a")
@@ -160,7 +160,7 @@ def test_where_op_copy():
     where_op.flags = graph.NODE_FLAG_TRACE
 
     # Copy the operation with new children
-    new_where = where_op.copy(condition=d, then=e, otherwise=f)
+    new_where = where_op.copy_with(condition=d, then=e, otherwise=f)
 
     # Verify the copy has correct structure
     assert isinstance(new_where, graph.where)
@@ -177,7 +177,7 @@ def test_where_op_copy():
     assert new_where.id != where_op.id
 
 
-def test_multi_clause_where_op_copy():
+def test_multi_clause_where_op_copy_with():
     """Test that multi-clause where operations can be correctly copied with new children."""
     # Create some nodes
     a = graph.placeholder("a")
@@ -201,7 +201,7 @@ def test_multi_clause_where_op_copy():
     new_clauses = [(e, f), (g, h)]
 
     # Copy the operation with new children
-    new_mcw = mcw_op.copy(clauses=new_clauses, default_value=new_default)
+    new_mcw = mcw_op.copy_with(clauses=new_clauses, default_value=new_default)
 
     # Verify the copy has correct structure
     assert isinstance(new_mcw, graph.multi_clause_where)
@@ -240,7 +240,7 @@ def test_reduction_graph():
     assert prod.right is y
 
 
-def test_unary_op_copy():
+def test_unary_op_copy_with():
     """Test that unary operations can be correctly copied with new children."""
     # Create some nodes
     a = graph.placeholder("a")
@@ -252,7 +252,7 @@ def test_unary_op_copy():
     exp_op.flags = graph.NODE_FLAG_BREAK
 
     # Copy the operation with a new child
-    new_exp = exp_op.copy(node=b)
+    new_exp = exp_op.copy_with(node=b)
 
     # Verify the copy has correct structure
     assert isinstance(new_exp, graph.exp)
@@ -269,14 +269,14 @@ def test_unary_op_copy():
     # Test logical not
     not_op = graph.logical_not(a)
     not_op.name = "not_operation"
-    new_not = not_op.copy(node=b)
+    new_not = not_op.copy_with(node=b)
     assert isinstance(new_not, graph.logical_not)
     assert new_not.name == "not_operation"
     assert new_not.node is b
     assert new_not.id != not_op.id
 
 
-def test_axis_op_copy():
+def test_axis_op_copy_with():
     """Test that axis operations can be correctly copied with new children."""
     # Create some nodes
     a = graph.placeholder("a")
@@ -288,7 +288,7 @@ def test_axis_op_copy():
     sum_op.flags = graph.NODE_FLAG_TRACE
 
     # Copy the operation with a new child
-    new_sum = sum_op.copy(node=b)
+    new_sum = sum_op.copy_with(node=b)
 
     # Verify the copy has correct structure
     assert isinstance(new_sum, graph.reduce_sum)
@@ -305,13 +305,13 @@ def test_axis_op_copy():
 
     # Test other axis operations
     mean_op = graph.reduce_mean(a, axis=1)
-    new_mean = mean_op.copy(node=b)
+    new_mean = mean_op.copy_with(node=b)
     assert isinstance(new_mean, graph.reduce_mean)
     assert new_mean.axis == 1
     assert new_mean.id != mean_op.id
 
     expand_op = graph.expand_dims(a, axis=2)
-    new_expand = expand_op.copy(node=b)
+    new_expand = expand_op.copy_with(node=b)
     assert isinstance(new_expand, graph.expand_dims)
     assert new_expand.axis == 2
     assert new_expand.id != expand_op.id

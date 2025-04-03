@@ -73,8 +73,8 @@ def nodes(
         if rleft is target.left and rright is target.right:
             return target
 
-        # Use copy method to create a new node with the replaced children
-        return target.copy(rleft, rright)
+        # Use copy_with method to create a new node with the replaced children
+        return target.copy_with(rleft, rright)
 
     # Replacement for unary operators
     if isinstance(target, graph.UnaryOp):
@@ -85,8 +85,8 @@ def nodes(
         if rnode is target.node:
             return target
 
-        # Use copy method to create a new node with the replaced child
-        return target.copy(rnode)
+        # Use copy_with method to create a new node with the replaced child
+        return target.copy_with(rnode)
 
     # Replacement for axis operators
     if isinstance(target, graph.AxisOp):
@@ -97,8 +97,8 @@ def nodes(
         if rnode is target.node:
             return target
 
-        # Use copy method to create a new node with the replaced child
-        return target.copy(rnode)
+        # Use copy_with method to create a new node with the replaced child
+        return target.copy_with(rnode)
 
     # Replacement for where operations
     if isinstance(target, graph.where):
@@ -111,8 +111,8 @@ def nodes(
         if rcondition is target.condition and rthen is target.then and rotherwise is target.otherwise:
             return target
 
-        # Use copy method to create a new node with the replaced children
-        return target.copy(rcondition, rthen, rotherwise)
+        # Use copy_with method to create a new node with the replaced children
+        return target.copy_with(rcondition, rthen, rotherwise)
 
     # Replacement for multi_clause_where operations
     if isinstance(target, graph.multi_clause_where):
@@ -134,8 +134,8 @@ def nodes(
         if not clauses_changed and rdefault is target.default_value:
             return target
 
-        # Use copy method to create a new node with the replaced children
-        return target.copy(new_clauses, rdefault)
+        # Use copy_with method to create a new node with the replaced children
+        return target.copy_with(new_clauses, rdefault)
 
     # Handle the case of an unsupported node type
     raise TypeError(f"Unsupported node type for replacement: {type(target)}")

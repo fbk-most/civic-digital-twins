@@ -17,7 +17,7 @@ This module provides:
 7. Reduction operations (sum, mean)
 8. Built-in debug operations (tracepoint, breakpoint)
 9. Support for infix and unary operators (e.g., `a + b`, `~a`)
-10. Node copying to support graph transformations (e.g., copy with new children)
+10. Node copying to support graph transformations (e.g., copy_with with new children)
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -71,13 +71,13 @@ capturing the arguments it has been provided on construction.
 
 Node Copying
 -----------
-Several node types implement a `copy` method that creates a new node with the
+Several node types implement a `copy_with` method that creates a new node with the
 same type and attributes but with different children. This is useful for
 graph transformations that need to replace nodes while preserving the overall
 structure of the computation graph. For example:
 
     >>> original = a + b
-    >>> replacement = original.copy(left=c, right=d)  # Creates a new add node with c and d
+    >>> replacement = original.copy_with(left=c, right=d)  # Creates a new add node with c and d
 
 Design Decisions
 ----------------
@@ -285,7 +285,7 @@ class BinaryOp(Node):
         self.left = left
         self.right = right
 
-    def copy(self, left: Node, right: Node) -> BinaryOp:
+    def copy_with(self, left: Node, right: Node) -> BinaryOp:
         """Create a copy of this binary operation with new children.
 
         This method creates a new node of the same type with the provided
@@ -376,7 +376,7 @@ class UnaryOp(Node):
         super().__init__()
         self.node = node
 
-    def copy(self, node: Node) -> UnaryOp:
+    def copy_with(self, node: Node) -> UnaryOp:
         """Create a copy of this unary operation with a new child.
 
         This method creates a new node of the same type with the provided
@@ -439,7 +439,7 @@ class where(Node):
         self.then = then
         self.otherwise = otherwise
 
-    def copy(self, condition: Node, then: Node, otherwise: Node) -> where:
+    def copy_with(self, condition: Node, then: Node, otherwise: Node) -> where:
         """Create a copy of this where operation with new children.
 
         This method creates a new node with the provided children,
@@ -472,7 +472,7 @@ class multi_clause_where(Node):
         self.clauses = clauses
         self.default_value = default_value
 
-    def copy(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> multi_clause_where:
+    def copy_with(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> multi_clause_where:
         """Create a copy of this multi-clause where operation with new children.
 
         This method creates a new node with the provided clauses and default value,
@@ -511,7 +511,7 @@ class AxisOp(Node):
         self.node = node
         self.axis = axis
 
-    def copy(self, node: Node) -> AxisOp:
+    def copy_with(self, node: Node) -> AxisOp:
         """Create a copy of this axis operation with a new child.
 
         This method creates a new node of the same type with the provided
