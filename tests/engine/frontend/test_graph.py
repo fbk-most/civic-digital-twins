@@ -77,6 +77,49 @@ def test_complex_arithmetic_graph():
     assert add_ab.right is b
 
 
+def test_binary_op_copy():
+    """Test that binary operations can be correctly copied with new children."""
+    # Create some nodes
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = graph.placeholder("c")
+    d = graph.placeholder("d")
+
+    # Create a binary operation
+    add_op = graph.add(a, b)
+    add_op.name = "add_operation"
+    add_op.flags = graph.NODE_FLAG_TRACE
+
+    # Copy the operation with new children
+    new_add = add_op.copy(left=c, right=d)
+
+    # Verify the copy has correct structure
+    assert isinstance(new_add, graph.add)
+    assert new_add.left is c
+    assert new_add.right is d
+
+    # Verify attributes were preserved
+    assert new_add.name == "add_operation"
+    assert new_add.flags == graph.NODE_FLAG_TRACE
+
+    # Verify it's a new object with a new ID
+    assert new_add is not add_op
+    assert new_add.id != add_op.id
+
+    # Test more binary operations
+    sub_op = graph.subtract(a, b)
+    sub_op.name = "subtract_operation"
+    new_sub = sub_op.copy(left=c, right=d)
+    assert isinstance(new_sub, graph.subtract)
+    assert new_sub.name == "subtract_operation"
+    assert new_sub.id != sub_op.id
+
+    mul_op = graph.multiply(a, b)
+    new_mul = mul_op.copy(left=c, right=d)
+    assert isinstance(new_mul, graph.multiply)
+    assert new_mul.id != mul_op.id
+
+
 def test_complex_conditional_graph():
     """Test building a complex conditional computation graph."""
     # Build a multi-clause conditional expression
@@ -101,6 +144,83 @@ def test_complex_conditional_graph():
     assert result.default_value is default
 
 
+def test_where_op_copy():
+    """Test that where operations can be correctly copied with new children."""
+    # Create some nodes
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = graph.placeholder("c")
+    d = graph.placeholder("d")
+    e = graph.placeholder("e")
+    f = graph.placeholder("f")
+
+    # Create a where operation
+    where_op = graph.where(a, b, c)
+    where_op.name = "where_operation"
+    where_op.flags = graph.NODE_FLAG_TRACE
+
+    # Copy the operation with new children
+    new_where = where_op.copy(condition=d, then=e, otherwise=f)
+
+    # Verify the copy has correct structure
+    assert isinstance(new_where, graph.where)
+    assert new_where.condition is d
+    assert new_where.then is e
+    assert new_where.otherwise is f
+
+    # Verify attributes were preserved
+    assert new_where.name == "where_operation"
+    assert new_where.flags == graph.NODE_FLAG_TRACE
+
+    # Verify it's a new object with a new ID
+    assert new_where is not where_op
+    assert new_where.id != where_op.id
+
+
+def test_multi_clause_where_op_copy():
+    """Test that multi-clause where operations can be correctly copied with new children."""
+    # Create some nodes
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = graph.placeholder("c")
+    d = graph.placeholder("d")
+
+    # Create a multi-clause where operation
+    clauses = [(a, b), (c, d)]
+    default = graph.constant(0.0)
+    mcw_op = graph.multi_clause_where(clauses, default)
+    mcw_op.name = "mcw_operation"
+    mcw_op.flags = graph.NODE_FLAG_TRACE
+
+    # Create new nodes for the copy
+    e = graph.placeholder("e")
+    f = graph.placeholder("f")
+    g = graph.placeholder("g")
+    h = graph.placeholder("h")
+    new_default = graph.constant(1.0)
+    new_clauses = [(e, f), (g, h)]
+
+    # Copy the operation with new children
+    new_mcw = mcw_op.copy(clauses=new_clauses, default_value=new_default)
+
+    # Verify the copy has correct structure
+    assert isinstance(new_mcw, graph.multi_clause_where)
+    assert len(new_mcw.clauses) == 2
+    assert new_mcw.clauses[0][0] is e
+    assert new_mcw.clauses[0][1] is f
+    assert new_mcw.clauses[1][0] is g
+    assert new_mcw.clauses[1][1] is h
+    assert new_mcw.default_value is new_default
+
+    # Verify attributes were preserved
+    assert new_mcw.name == "mcw_operation"
+    assert new_mcw.flags == graph.NODE_FLAG_TRACE
+
+    # Verify it's a new object with a new ID
+    assert new_mcw is not mcw_op
+    assert new_mcw.id != mcw_op.id
+
+
 def test_reduction_graph():
     """Test building a graph with reduction operations."""
     x = graph.placeholder("x")
@@ -118,6 +238,83 @@ def test_reduction_graph():
     assert sum_0.axis == 0
     assert prod.left is x
     assert prod.right is y
+
+
+def test_unary_op_copy():
+    """Test that unary operations can be correctly copied with new children."""
+    # Create some nodes
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+
+    # Create a unary operation
+    exp_op = graph.exp(a)
+    exp_op.name = "exp_operation"
+    exp_op.flags = graph.NODE_FLAG_BREAK
+
+    # Copy the operation with a new child
+    new_exp = exp_op.copy(node=b)
+
+    # Verify the copy has correct structure
+    assert isinstance(new_exp, graph.exp)
+    assert new_exp.node is b
+
+    # Verify attributes were preserved
+    assert new_exp.name == "exp_operation"
+    assert new_exp.flags == graph.NODE_FLAG_BREAK
+
+    # Verify it's a new object with a new ID
+    assert new_exp is not exp_op
+    assert new_exp.id != exp_op.id
+
+    # Test logical not
+    not_op = graph.logical_not(a)
+    not_op.name = "not_operation"
+    new_not = not_op.copy(node=b)
+    assert isinstance(new_not, graph.logical_not)
+    assert new_not.name == "not_operation"
+    assert new_not.node is b
+    assert new_not.id != not_op.id
+
+
+def test_axis_op_copy():
+    """Test that axis operations can be correctly copied with new children."""
+    # Create some nodes
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+
+    # Create an axis operation
+    sum_op = graph.reduce_sum(a, axis=0)
+    sum_op.name = "sum_operation"
+    sum_op.flags = graph.NODE_FLAG_TRACE
+
+    # Copy the operation with a new child
+    new_sum = sum_op.copy(node=b)
+
+    # Verify the copy has correct structure
+    assert isinstance(new_sum, graph.reduce_sum)
+    assert new_sum.node is b
+    assert new_sum.axis == 0  # Axis should be preserved
+
+    # Verify attributes were preserved
+    assert new_sum.name == "sum_operation"
+    assert new_sum.flags == graph.NODE_FLAG_TRACE
+
+    # Verify it's a new object with a new ID
+    assert new_sum is not sum_op
+    assert new_sum.id != sum_op.id
+
+    # Test other axis operations
+    mean_op = graph.reduce_mean(a, axis=1)
+    new_mean = mean_op.copy(node=b)
+    assert isinstance(new_mean, graph.reduce_mean)
+    assert new_mean.axis == 1
+    assert new_mean.id != mean_op.id
+
+    expand_op = graph.expand_dims(a, axis=2)
+    new_expand = expand_op.copy(node=b)
+    assert isinstance(new_expand, graph.expand_dims)
+    assert new_expand.axis == 2
+    assert new_expand.id != expand_op.id
 
 
 def test_name_propagation():
