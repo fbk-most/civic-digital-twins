@@ -66,7 +66,6 @@ class State:
     def __post_init__(self):
         if self.flags & graph.NODE_FLAG_TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
-            # TODO(bassosimone): make it clear that those nodes are cached
             for node in nodes:
                 debug.print_graph_node(node)
                 debug.print_evaluated_node(self.values[node], cached=True)
