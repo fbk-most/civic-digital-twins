@@ -12,7 +12,7 @@ from typing import Protocol, cast, runtime_checkable
 import numpy as np
 from scipy import stats
 
-from ..engine.frontend import graph
+from ..engine.frontend import graph, replace
 from .context_variable import ContextVariable
 
 
@@ -68,8 +68,8 @@ class Index:
 
         # Otherwise, it's just a reference to an existing node (which
         # typically is the result of defining a formula).
-        elif value is not None:
-            self.value = value
+        elif isinstance(value, graph.Node):
+            self.value = None
             self.node = value
 
         # The last remaining case is when the value is None, in which
@@ -78,6 +78,11 @@ class Index:
             self.value = None
             self.node = graph.placeholder(name)
 
+    def subs(self, replacements: dict[graph.Node, graph.Node]) -> Index:
+        idx = Index(self.name, None, self.cvs, self.group, self.ref_name)
+        idx.value = self.value
+        idx.node = replace.nodes(self.node, replacements)
+        return idx
 
 class UniformDistIndex(Index):
     """

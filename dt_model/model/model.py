@@ -8,6 +8,8 @@ from dt_model.symbols.context_variable import ContextVariable
 from dt_model.symbols.index import Index
 from dt_model.symbols.presence_variable import PresenceVariable
 
+from ..engine.frontend import graph, replace
+
 
 class Model:
     def __init__(
@@ -97,11 +99,9 @@ class Model:
         return self.evaluation.compute_modal_line_per_constraint()
 
     def variation(self, new_name, *, change_indexes=None, change_capacities=None):
-        # TODO(bassosimone): the .subs functionality is not available anymore
-        # however it was meant as a workaround for sympy having a single global
-        # namespace, therefore, it should be possible to remove it.
-
         # TODO: check if changes are valid (ie they change elements present in the model)
+
+        # Create the new indexes
         if change_indexes is None:
             new_indexes = self.indexes
             change_indexes = {}
@@ -113,6 +113,7 @@ class Model:
                 else:
                     new_indexes.append(index)
 
+        # Create the new capacities
         if change_capacities is None:
             new_capacities = self.capacities
             change_capacities = {}
@@ -124,15 +125,24 @@ class Model:
                 else:
                     new_capacities.append(capacity)
 
-        new_constraints = []
+        # Build a node replacement dictionary
+        node_replacements: dict[graph.Node, graph.Node] = {}
+        for old_idx, new_idx in change_indexes.items():
+            node_replacements[old_idx.node] = new_idx.node
+        for old_cap, new_cap in change_capacities.items():
+            node_replacements[old_cap.node] = new_cap.node
 
+        # Create new constraints with replaced nodes
+        new_constraints = []
         for constraint in self.constraints:
+            usage = constraint.usage.subs(node_replacements)
+            capacity = constraint.capacity.subs(node_replacements)
             new_constraints.append(
                 Constraint(
-                    constraint.usage.subs(change_indexes),
-                    constraint.capacity.subs(change_capacities),
+                    usage=usage,
+                    capacity=capacity,
                     group=constraint.group,
-                    name=constraint.name,
+                    name=constraint.name
                 )
             )
 
