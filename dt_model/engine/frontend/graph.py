@@ -17,7 +17,6 @@ This module provides:
 7. Reduction operations (sum, mean)
 8. Built-in debug operations (tracepoint, breakpoint)
 9. Support for infix and unary operators (e.g., `a + b`, `~a`)
-10. Node copying to support graph transformations (e.g., copy with new children)
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -68,16 +67,6 @@ choice: violating PEP8 to produce code that reads like TensorFlow.
 The main type in this module is the `Node`, representing a node in the
 computation graph. Each operation (e.g., `add`) is a subclass of the `Node`
 capturing the arguments it has been provided on construction.
-
-Node Copying
------------
-Several node types implement a `copy` method that creates a new node with the
-same type and attributes but with different children. This is useful for
-graph transformations that need to replace nodes while preserving the overall
-structure of the computation graph. For example:
-
-    >>> original = a + b
-    >>> replacement = original.copy(left=c, right=d)  # Creates a new add node with c and d
 
 Design Decisions
 ----------------
@@ -285,24 +274,6 @@ class BinaryOp(Node):
         self.left = left
         self.right = right
 
-    def copy(self, left: Node, right: Node) -> BinaryOp:
-        """Create a copy of this binary operation with new children.
-
-        This method creates a new node of the same type with the provided
-        children, preserving the original node's attributes like name and flags.
-
-        Args:
-            left: New left child node
-            right: New right child node
-
-        Returns:
-            A new node of the same type with copied attributes
-        """
-        new_node = type(self)(left, right)
-        new_node.name = self.name
-        new_node.flags = self.flags
-        return new_node
-
 
 # Arithmetic operations
 
@@ -376,23 +347,6 @@ class UnaryOp(Node):
         super().__init__()
         self.node = node
 
-    def copy(self, node: Node) -> UnaryOp:
-        """Create a copy of this unary operation with a new child.
-
-        This method creates a new node of the same type with the provided
-        child, preserving the original node's attributes like name and flags.
-
-        Args:
-            node: New child node
-
-        Returns:
-            A new node of the same type with copied attributes
-        """
-        new_node = type(self)(node)
-        new_node.name = self.name
-        new_node.flags = self.flags
-        return new_node
-
 
 class logical_not(UnaryOp):
     """Element-wise logical NOT of a boolean tensor."""
@@ -439,25 +393,6 @@ class where(Node):
         self.then = then
         self.otherwise = otherwise
 
-    def copy(self, condition: Node, then: Node, otherwise: Node) -> where:
-        """Create a copy of this where operation with new children.
-
-        This method creates a new node with the provided children,
-        preserving the original node's attributes like name and flags.
-
-        Args:
-            condition: New condition node
-            then: New then node
-            otherwise: New otherwise node
-
-        Returns:
-            A new where node with copied attributes
-        """
-        new_node = where(condition, then, otherwise)
-        new_node.name = self.name
-        new_node.flags = self.flags
-        return new_node
-
 
 class multi_clause_where(Node):
     """Selects elements from tensors based on multiple conditions.
@@ -471,24 +406,6 @@ class multi_clause_where(Node):
         super().__init__()
         self.clauses = clauses
         self.default_value = default_value
-
-    def copy(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> multi_clause_where:
-        """Create a copy of this multi-clause where operation with new children.
-
-        This method creates a new node with the provided clauses and default value,
-        preserving the original node's attributes like name and flags.
-
-        Args:
-            clauses: New sequence of (condition, value) pairs
-            default_value: New default value node
-
-        Returns:
-            A new multi_clause_where node with copied attributes
-        """
-        new_node = multi_clause_where(clauses, default_value)
-        new_node.name = self.name
-        new_node.flags = self.flags
-        return new_node
 
 
 # Shape-changing operations
@@ -510,24 +427,6 @@ class AxisOp(Node):
         super().__init__()
         self.node = node
         self.axis = axis
-
-    def copy(self, node: Node) -> AxisOp:
-        """Create a copy of this axis operation with a new child.
-
-        This method creates a new node of the same type with the provided
-        child and the same axis, preserving the original node's attributes
-        like name and flags.
-
-        Args:
-            node: New child node
-
-        Returns:
-            A new node of the same type with copied attributes
-        """
-        new_node = type(self)(node, self.axis)
-        new_node.name = self.name
-        new_node.flags = self.flags
-        return new_node
 
 
 class expand_dims(AxisOp):
