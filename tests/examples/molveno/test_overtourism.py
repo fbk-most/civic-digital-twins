@@ -155,3 +155,32 @@ def test_fixed_ensemble():
 
     # Verify the model name was correctly set
     assert model.name == "base model"
+
+
+def test_multiple_ensemble_members():
+    """Test with multiple ensemble members to catch shape issues."""
+    model = M_Base
+    model.reset()
+
+    # Create an ensemble with multiple members
+    multi_situation = []
+    for i in range(10):  # Use 10 ensemble members
+        situation = {
+            CV_weekday: Symbol("monday"),
+            CV_season: Symbol("high"),
+            CV_weather: Symbol("good" if i % 2 == 0 else "bad"),
+        }
+        multi_situation.append((0.1, situation))  # Equal weights summing to 1
+
+    tourists = np.array([1000, 5000, 10000])
+    excursionists = np.array([1000, 5000, 10000])
+
+    # This would have failed before your fix
+    result = model.evaluate(
+        {PV_tourists: tourists, PV_excursionists: excursionists},
+        multi_situation,
+    )
+
+    # Just check that it runs without error and returns a result
+    assert result is not None
+    assert model.field_elements is not None
