@@ -2,8 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from sympy import Eq, Piecewise, Symbol
-
 from ... import (
     CategoricalContextVariable,
     Constraint,
@@ -11,10 +9,12 @@ from ... import (
     LognormDistIndex,
     Model,
     PresenceVariable,
+    SymIndex,
     TriangDistIndex,
     UniformCategoricalContextVariable,
     UniformDistIndex,
 )
+from ...internal.sympyke import Eq, Piecewise, Symbol
 from .presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
 
 # Context variables
@@ -40,15 +40,17 @@ I_C_food = TriangDistIndex("food service capacity", loc=3000.0, scale=1000.0, c=
 I_U_tourists_parking = Index("tourist parking usage factor", 0.02)
 I_U_excursionists_parking = Index(
     "excursionist parking usage factor",
-    Piecewise((0.55, Eq(CV_weather, Symbol("bad"))), (0.80, True)),
+    Piecewise((0.55, Eq(CV_weather.node, Symbol("bad"))), (0.80, True)),
     cvs=[CV_weather],
 )
 
 I_U_tourists_beach = Index(
-    "tourist beach usage factor", Piecewise((0.25, Eq(CV_weather, Symbol("bad"))), (0.50, True)), cvs=[CV_weather]
+    "tourist beach usage factor", Piecewise((0.25, Eq(CV_weather.node, Symbol("bad"))), (0.50, True)), cvs=[CV_weather]
 )
 I_U_excursionists_beach = Index(
-    "excursionist beach usage factor", Piecewise((0.35, Eq(CV_weather, Symbol("bad"))), (0.80, True)), cvs=[CV_weather]
+    "excursionist beach usage factor",
+    Piecewise((0.35, Eq(CV_weather.node, Symbol("bad"))), (0.80, True)),
+    cvs=[CV_weather],
 )
 
 I_U_tourists_accommodation = Index("tourist accommodation usage factor", 0.90)
@@ -56,7 +58,7 @@ I_U_tourists_accommodation = Index("tourist accommodation usage factor", 0.90)
 I_U_tourists_food = Index("tourist food service usage factor", 0.20)
 I_U_excursionists_food = Index(
     "excursionist food service usage factor",
-    Piecewise((0.80, Eq(CV_weather, Symbol("bad"))), (0.40, True)),
+    Piecewise((0.80, Eq(CV_weather.node, Symbol("bad"))), (0.40, True)),
     cvs=[CV_weather, CV_weekday],
 )
 
@@ -87,15 +89,27 @@ I_P_excursionists_saturation_level = Index("excursionists saturation level", 100
 # Constraints
 
 C_parking = Constraint(
-    usage=PV_tourists * I_U_tourists_parking / (I_Xa_tourists_per_vehicle * I_Xo_tourists_parking)
-    + PV_excursionists * I_U_excursionists_parking / (I_Xa_excursionists_per_vehicle * I_Xo_excursionists_parking),
+    usage=SymIndex(
+        name="",
+        value=(
+            PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
+            + PV_excursionists.node
+            * I_U_excursionists_parking.node
+            / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node)
+        ),
+    ),
     capacity=I_C_parking,
     name="parking",
 )
 
 C_beach = Constraint(
-    usage=PV_tourists * I_U_tourists_beach / I_Xo_tourists_beach
-    + PV_excursionists * I_U_excursionists_beach / I_Xo_excursionists_beach,
+    usage=SymIndex(
+        name="",
+        value=(
+            PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
+            + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node
+        ),
+    ),
     capacity=I_C_beach,
     name="beach",
 )
@@ -105,7 +119,9 @@ C_beach = Constraint(
 #                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
 C_accommodation = Constraint(
-    usage=PV_tourists * I_U_tourists_accommodation / I_Xa_tourists_accommodation,
+    usage=SymIndex(
+        name="", value=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node
+    ),
     capacity=I_C_accommodation,
     name="accommodation",
 )
@@ -115,12 +131,14 @@ C_accommodation = Constraint(
 #                              PV_excursionists * I_U_excursionists_food,
 #                     capacity=I_C_food * I_Xa_visitors_food * I_Xo_visitors_food)
 C_food = Constraint(
-    usage=(PV_tourists * I_U_tourists_food + PV_excursionists * I_U_excursionists_food)
-    / (I_Xa_visitors_food * I_Xo_visitors_food),
+    usage=SymIndex(
+        name="",
+        value=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
+        / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
+    ),
     capacity=I_C_food,
     name="food",
 )
-
 
 # Models
 # TODO: what is the better process to create a model? (e.g., adding elements incrementally)
@@ -155,8 +173,3 @@ M_Base = Model(
     [I_C_parking, I_C_beach, I_C_accommodation, I_C_food],
     [C_parking, C_beach, C_accommodation, C_food],
 )
-
-# Larger park capacity model
-I_C_parking_larger = UniformDistIndex("larger parking capacity", loc=550.0, scale=100.0)
-
-M_MoreParking = M_Base.variation("larger parking model", change_capacities={I_C_parking: I_C_parking_larger})

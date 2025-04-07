@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import numbers
 from functools import reduce
 
 import numpy as np
-import pandas as pd
 from scipy import interpolate, ndimage, stats
-from sympy import lambdify
 
-from dt_model.symbols.constraint import Constraint
-from dt_model.symbols.context_variable import ContextVariable
-from dt_model.symbols.index import Index
-from dt_model.symbols.presence_variable import PresenceVariable
+from ..engine.frontend import graph, linearize
+from ..engine.numpybackend import executor
+from ..internal.sympyke import symbol
+from ..symbols.constraint import Constraint
+from ..symbols.context_variable import ContextVariable
+from ..symbols.index import Distribution, Index
+from ..symbols.presence_variable import PresenceVariable
 
 
 class LegacyModel:
@@ -43,36 +43,84 @@ class LegacyModel:
 
     def evaluate(self, grid, ensemble):
         assert self.grid is None
+
+        # [pre] extract the weights and the size of the ensemble
         c_weight = np.array([c[0] for c in ensemble])
-        c_values = pd.DataFrame([c[1] for c in ensemble])
-        c_size = c_values.shape[0]
-        c_subs = {}
-        for index in self.indexes:
-            if index.cvs is None:
-                if isinstance(index.value, numbers.Number):
-                    c_subs[index] = [index.value] * c_size
-                else:
-                    c_subs[index] = index.value.rvs(size=c_size)
-            else:
-                args = [c_values[cv].values for cv in index.cvs]
-                c_subs[index] = index.value(*args)
+        c_size = c_weight.shape[0]
+
+        # [pre] create empty placeholders
+        c_subs: dict[graph.Node, np.ndarray] = {}
+
+        # [pre] add global unique symbols
+        for entry in symbol.symbol_table.values():
+            c_subs[entry.node] = np.array(entry.name)
+
+        # [pre] add context variables
+        collector: dict[ContextVariable, list[float]] = {}
+        for _, entry in ensemble:
+            for cv, value in entry.items():
+                collector.setdefault(cv, []).append(value)
+        for key, values in collector.items():
+            c_subs[key.node] = np.asarray(values)
+
+        # [pre] evaluate the indexes depending on distributions
+        #
+        # TODO(bassosimone): the size used here is too small
+        for index in self.indexes + self.capacities:
+            if isinstance(index.value, Distribution):
+                c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
+
+        # [eval] expand dimensions for all values computed thus far
+        for key in c_subs:
+            c_subs[key] = np.expand_dims(c_subs[key], axis=(0, 1))
+
+        # [eval] add presence variables and expand dimensions
+        assert len(self.pvs) == 2  # TODO: generalize
+        for i, pv in enumerate(self.pvs):
+            c_subs[pv.node] = np.expand_dims(grid[pv], axis=(i, 2))
+
+        # [eval] collect all the nodes to evaluate
+        all_nodes: list[graph.Node] = []
+        for constraint in self.constraints:
+            all_nodes.append(constraint.usage.node)
+            if not isinstance(constraint.capacity.value, Distribution):
+                all_nodes.append(constraint.capacity.node)
+        for index in self.indexes + self.capacities:
+            all_nodes.append(index.node)
+
+        # [eval] actually evaluate all the nodes
+        state = executor.State(c_subs, graph.NODE_FLAG_TRACE)
+        for node in linearize.forest(*all_nodes):
+            executor.evaluate(state, node)
+
+        # [fix] Ensure that we have the correct shape for operands
+        def _fix_shapes(value: np.ndarray) -> np.ndarray:
+            if value.ndim == 3 and value.shape[2] == 1:
+                return np.broadcast_to(value, value.shape[:2] + (c_size,))
+            return value
+
+        # [post] compute the sustainability field
         grid_shape = (grid[self.pvs[0]].size, grid[self.pvs[1]].size)
         field = np.ones(grid_shape)
         field_elements = {}
-        assert len(self.pvs) == 2  # TODO: generalize
-        p_values = [np.expand_dims(grid[pv], axis=(i, 2)) for i, pv in enumerate(self.pvs)]
-        c_values = [np.expand_dims(c_subs[index], axis=(0, 1)) for index in self.indexes]
         for constraint in self.constraints:
-            usage = lambdify(self.pvs + self.indexes, constraint.usage, "numpy")(*p_values, *c_values)
+            # Get usage
+            usage = _fix_shapes(np.asarray(c_subs[constraint.usage.node]))
+
+            # Get capacity
             capacity = constraint.capacity
-            # TODO: model type in declaration
-            if isinstance(capacity.value, numbers.Number):
-                unscaled_result = usage <= capacity.value
+
+            if not isinstance(capacity.value, Distribution):
+                unscaled_result = usage <= _fix_shapes(np.asarray(c_subs[capacity.node]))
             else:
                 unscaled_result = 1.0 - capacity.value.cdf(usage)
+
+            # Apply weights and store the result
             result = np.broadcast_to(np.dot(unscaled_result, c_weight), grid_shape)
             field_elements[constraint] = result
             field *= result
+
+        # [post] store the results
         self.index_vals = c_subs
         self.grid = grid
         self.field = field
@@ -81,15 +129,16 @@ class LegacyModel:
 
     def get_index_value(self, i: Index) -> float:
         assert self.index_vals is not None
-        return self.index_vals[i]
+        return self.index_vals[i.node]
 
     def get_index_mean_value(self, i: Index) -> float:
         assert self.index_vals is not None
-        return np.average(self.index_vals[i])
+        return np.average(self.index_vals[i.node])
 
     def compute_sustainable_area(self) -> float:
         assert self.grid is not None
         assert self.field is not None
+
         grid = self.grid
         field = self.field
 

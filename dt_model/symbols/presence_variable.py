@@ -9,13 +9,13 @@ from typing import Callable
 
 import numpy as np
 from scipy import stats
-from sympy import Symbol
 
-from dt_model.symbols._base import SymbolExtender
-from dt_model.symbols.context_variable import ContextVariable
+from ..engine.frontend import graph
+from ..internal.sympyke.symbol import SymbolValue
+from .context_variable import ContextVariable
 
 
-class PresenceVariable(SymbolExtender):
+class PresenceVariable:
     """
     Class to represent a presence variable.
     """
@@ -26,7 +26,8 @@ class PresenceVariable(SymbolExtender):
         cvs: list[ContextVariable],
         distribution: Callable | None = None,
     ) -> None:
-        super().__init__(name)
+        self.name = name
+        self.node = graph.placeholder(name)
         self.cvs = cvs
         self.distribution = distribution
 
@@ -56,7 +57,7 @@ class PresenceVariable(SymbolExtender):
         if cvs is not None:
             all_cvs = [cvs[cv] for cv in self.cvs if cv in cvs.keys()]
             # TODO: solve this issue of symbols vs names
-            all_cvs = list(map(lambda v: v.name if isinstance(v, Symbol) else v, all_cvs))
+            all_cvs = list(map(lambda v: v.name if isinstance(v, SymbolValue) else v, all_cvs))
         assert self.distribution is not None
         distr: dict = self.distribution(*all_cvs)
         return np.asarray(

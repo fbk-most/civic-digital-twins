@@ -11,10 +11,8 @@ from typing import Protocol, cast, runtime_checkable
 
 import numpy as np
 from scipy import stats
-from sympy import Symbol, lambdify
 
 from ..engine.frontend import graph
-from ._base import SymbolExtender
 from .context_variable import ContextVariable
 
 
@@ -36,7 +34,7 @@ class Distribution(Protocol):
     ) -> float | np.ndarray: ...
 
 
-class Index(SymbolExtender):
+class Index:
     """
     Class to represent an index variable.
     """
@@ -44,19 +42,41 @@ class Index(SymbolExtender):
     def __init__(
         self,
         name: str,
-        value: Symbol | Distribution | graph.Scalar,
+        value: graph.Scalar | Distribution | graph.Node | None,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,
     ) -> None:
-        super().__init__(name)
+        self.name = name
         self.group = group
         self.ref_name = ref_name if ref_name is not None else name
         self.cvs = cvs
-        if cvs is not None:
-            self.value = lambdify(cvs, value, "numpy")
-        else:
+
+        # We model a distribution index as a distribution to invoke when
+        # scheduling the model and a placeholder to fill with the result
+        # of sampling from the index's distribution.
+        if isinstance(value, Distribution):
             self.value = value
+            self.node = graph.placeholder(name)
+
+        # We model a constant-value index as a constant value and a
+        # corresponding constant node. An alternative modeling could
+        # be to use a placeholder and fill it when scheduling.
+        elif isinstance(value, graph.Scalar):
+            self.value = value
+            self.node = graph.constant(value, name)
+
+        # Otherwise, it's just a reference to an existing node (which
+        # typically is the result of defining a formula).
+        elif value is not None:
+            self.value = value
+            self.node = value
+
+        # The last remaining case is when the value is None, in which
+        # case we just create a value-less placeholder.
+        else:
+            self.value = None
+            self.node = graph.placeholder(name)
 
 
 class UniformDistIndex(Index):
@@ -254,6 +274,7 @@ class ConstIndex(Index):
         if self._v != new_v:
             self._v = new_v
             self.value = new_v
+            self.node = graph.constant(new_v, self.name)
 
     def __str__(self):
         return f"const_idx({self.v})"
@@ -267,7 +288,7 @@ class SymIndex(Index):
     def __init__(
         self,
         name: str,
-        value: Symbol,
+        value: graph.Node,
         cvs: list[ContextVariable] | None = None,
         group: str | None = None,
         ref_name: str | None = None,

@@ -11,7 +11,7 @@ resource and the usage of that resource. We model two types of constraints:
 
 from __future__ import annotations
 
-from sympy import Symbol
+from .index import Index
 
 
 class Constraint:
@@ -23,8 +23,8 @@ class Constraint:
 
     def __init__(
         self,
-        usage: Symbol,
-        capacity: Symbol,
+        usage: Index,
+        capacity: Index,
         group: str | None = None,
         name: str = "",
     ) -> None:
