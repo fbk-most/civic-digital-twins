@@ -93,19 +93,25 @@ class LegacyModel:
         for node in linearize.forest(*all_nodes):
             executor.evaluate(state, node)
 
+        # [fix] Ensure that we have the correct shape for operands
+        def _fix_shapes(value: np.ndarray) -> np.ndarray:
+            if value.ndim == 3 and value.shape[2] == 1:
+                return np.broadcast_to(value, value.shape[:2] + (c_size,))
+            return value
+
         # [post] compute the sustainability field
         grid_shape = (grid[self.pvs[0]].size, grid[self.pvs[1]].size)
         field = np.ones(grid_shape)
         field_elements = {}
         for constraint in self.constraints:
             # Get usage
-            usage = c_subs[constraint.usage.node]
+            usage = _fix_shapes(np.asarray(c_subs[constraint.usage.node]))
 
             # Get capacity
             capacity = constraint.capacity
 
             if not isinstance(capacity.value, Distribution):
-                unscaled_result = usage <= c_subs[capacity.node]
+                unscaled_result = usage <= _fix_shapes(np.asarray(c_subs[capacity.node]))
             else:
                 unscaled_result = 1.0 - capacity.value.cdf(usage)
 
