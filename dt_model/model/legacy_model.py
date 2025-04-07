@@ -127,8 +127,6 @@ class LegacyModel:
         self.field_elements = field_elements
         return self.field
 
-    # TODO(bassosimone): there are a bunch of type errors to deal with
-
     def get_index_value(self, i: Index) -> float:
         assert self.index_vals is not None
         return self.index_vals[i.node]
