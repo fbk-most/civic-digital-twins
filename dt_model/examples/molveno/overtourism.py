@@ -173,8 +173,3 @@ M_Base = Model(
     [I_C_parking, I_C_beach, I_C_accommodation, I_C_food],
     [C_parking, C_beach, C_accommodation, C_food],
 )
-
-# Larger park capacity model
-I_C_parking_larger = UniformDistIndex("larger parking capacity", loc=550.0, scale=100.0)
-
-M_MoreParking = M_Base.variation("larger parking model", change_capacities={I_C_parking: I_C_parking_larger})

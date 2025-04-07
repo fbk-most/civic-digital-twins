@@ -18,7 +18,6 @@ from dt_model.examples.molveno.overtourism import (
     I_P_tourists_reduction_factor,
     I_P_tourists_saturation_level,
     M_Base,
-    M_MoreParking,
     PV_excursionists,
     PV_tourists,
 )
@@ -116,13 +115,10 @@ def plot_scenario(ax, model, situation, title):
 
 start_time = time.time()
 
-fig, axs = plt.subplots(2, 3, figsize=(18, 10), layout="constrained")
-plot_scenario(axs[0, 0], M_Base, S_Base, "Base")
-plot_scenario(axs[0, 1], M_Base, S_Good_Weather, "Good weather")
-plot_scenario(axs[0, 2], M_Base, S_Bad_Weather, "Bad weather")
-plot_scenario(axs[1, 0], M_MoreParking, S_Base, "More parking ")
-plot_scenario(axs[1, 1], M_MoreParking, S_Good_Weather, "More parking - Good weather")
-plot_scenario(axs[1, 2], M_MoreParking, S_Bad_Weather, "More parking - Bad weather")
+fig, axs = plt.subplots(1, 3, figsize=(18, 10), layout="constrained")
+plot_scenario(axs[0], M_Base, S_Base, "Base")
+plot_scenario(axs[1], M_Base, S_Good_Weather, "Good weather")
+plot_scenario(axs[2], M_Base, S_Bad_Weather, "Bad weather")
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
 fig.supxlabel("Tourists", fontsize=18)
 fig.supylabel("Excursionists", fontsize=18)
