@@ -73,6 +73,22 @@ pytest
 Each pull request is automatically tested using GitHub Actions. The workflow
 is defined in [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
+## Releasing
+
+1. Make sure the version number in `pyproject.toml` is correct.
+
+2. Make sure you are outside the virtual environment.
+
+3. Make sure `python3-hatchling` is installed (`sudo apt install python3-hatchling`).
+
+4. Make sure `twine` is installed (`sudo apt install twine`).
+
+5. Build the package using `python3 -m hatchling build`.
+
+6. Check whether the package is okay using `twine check dist/*`.
+
+7. Upload the package to PyPI using `twine upload dist/*`.
+
 ## License
 
 ```
