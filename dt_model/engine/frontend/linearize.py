@@ -16,6 +16,12 @@ This is useful for:
 - Creating efficient execution plans for evaluators
 - Visualizing the computation flow in order
 - Debugging models by inspecting operations in a logical sequence
+
+Note on Node Identity
+---------------------
+Because nodes override equality operators to build computation graphs,
+finding nodes within the execution plan must use object identity (`is`),
+not equality comparison (`==`).
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -60,6 +66,13 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
         >>>
         >>> # List of outputs
         >>> plan = linearize.forest(*output_list)
+
+    Note on equality
+    ----------------
+
+    Because nodes override their equality operators to build computation
+    graphs, finding nodes within the execution plan must use object identity, as
+    documented more extensively in the `graph` and in this module's docstring.
     """
     # plan contains the linearized output
     plan: list[graph.Node] = []
