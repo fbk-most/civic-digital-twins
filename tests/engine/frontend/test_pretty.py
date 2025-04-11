@@ -312,19 +312,13 @@ def test_nested_logical_precedence():
 
     # Test case 3: (x & y) | (z & w)
     # No parentheses needed due to operator precedence
-    expr3 = graph.logical_or(
-        graph.logical_and(x, y),
-        graph.logical_and(z, w)
-    )
+    expr3 = graph.logical_or(graph.logical_and(x, y), graph.logical_and(z, w))
     result3 = pretty.format(expr3)
     assert result3 == "x & y | z & w"
 
     # Test case 4: Complex nested case with mixed precedence
     # ((x | y) & z) | (w & y)
-    expr4 = graph.logical_or(
-        graph.logical_and(graph.logical_or(x, y), z),
-        graph.logical_and(w, y)
-    )
+    expr4 = graph.logical_or(graph.logical_and(graph.logical_or(x, y), z), graph.logical_and(w, y))
     result4 = pretty.format(expr4)
     assert result4 == "(x | y) & z | w & y"
 
@@ -335,10 +329,7 @@ def test_nested_logical_precedence():
     result5 = pretty.format(expr5)
     assert result5 == "~(x | y) & z"
 
-    # Test case 6: Test with reversed precedence: (x | y) & (z | w)
-    expr6 = graph.logical_and(
-        graph.logical_or(x, y),
-        graph.logical_or(z, w)
-    )
+    # Test case 6: Test 3 with reversed precedence: (x | y) & (z | w)
+    expr6 = graph.logical_and(graph.logical_or(x, y), graph.logical_or(z, w))
     result6 = pretty.format(expr6)
     assert result6 == "(x | y) & (z | w)"
