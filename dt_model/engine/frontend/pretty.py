@@ -31,7 +31,7 @@ The formatter follows standard mathematical precedence:
 6. Comparisons (<, <=, >, >=, ==, !=)
 7. Logical AND (&)
 8. Logical XOR (^)
-8. Logical OR (|)
+9. Logical OR (|)
 
 Parentheses are automatically added when needed to preserve
 the correct evaluation order:
