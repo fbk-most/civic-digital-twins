@@ -19,7 +19,7 @@ The main entry point is the format() function:
     x * 2 + 1
 
 Precedence Rules
----------------
+----------------
 
 The formatter follows standard mathematical precedence:
 
@@ -41,7 +41,8 @@ the correct evaluation order:
     >>> ~x & y | z     # "(~x & y) | z"
 
 Design Decisions
----------------
+----------------
+
 1. Precedence-based Formatting:
    - Uses numeric precedence levels to determine parenthesization
    - Follows standard mathematical conventions
@@ -58,7 +59,8 @@ Design Decisions
    - Placeholders use angle bracket notation for visibility
 
 Implementation Notes
-------------------
+--------------------
+
 The formatter uses a visitor-like pattern without explicitly implementing the
 visitor pattern, which keeps the code simple and maintains extensibility.
 """
