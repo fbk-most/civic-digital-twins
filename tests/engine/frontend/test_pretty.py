@@ -321,7 +321,6 @@ def test_nested_logical_precedence():
 
     # Test case 4: Complex nested case with mixed precedence
     # ((x | y) & z) | (w & y)
-    # The bug would likely produce incorrect parentheses
     expr4 = graph.logical_or(
         graph.logical_and(graph.logical_or(x, y), z),
         graph.logical_and(w, y)
