@@ -292,7 +292,7 @@ def test_named_subexpressions_not_expanded():
 
 
 def test_nested_logical_precedence():
-    """Test precedence handling with nested logical operations that would expose the closure bug."""
+    """Test precedence handling with nested logical operations."""
     x = graph.placeholder("x")
     y = graph.placeholder("y")
     z = graph.placeholder("z")
