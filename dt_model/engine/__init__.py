@@ -1,9 +1,4 @@
-"""
-Execution Engine
-================
-
-The execution engine is responsible for allowing other code to
-create and evaluate models as computation graphs.
+"""The execution engine allows creating and evaluating computation graphs models.
 
 Modules:
     frontend: Graph construction and manipulation frontend.

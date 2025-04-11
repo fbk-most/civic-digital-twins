@@ -71,6 +71,7 @@ weekday = weekday_stats.index
 
 
 def tourist_presences_stats(weekday, season, weather):
+    """Calculate the statistics for tourist presences."""
     # Season
     mean = season_stats.loc[season, "mean_tourists"]
     std2 = season_stats.loc[season, "std_tourists"] ** 2
@@ -85,6 +86,7 @@ def tourist_presences_stats(weekday, season, weather):
 
 
 def excursionist_presences_stats(weekday, season, weather):
+    """Calculate the statistics for excursionist presences."""
     # Season
     mean = season_stats.loc[season, "mean_excursionists"]
     std2 = season_stats.loc[season, "std_excursionists"] ** 2

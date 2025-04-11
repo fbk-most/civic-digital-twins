@@ -387,7 +387,7 @@ def test_execute_plan_helper():
     # to simplify the common pattern of executing a linearized plan
 
     def execute_plan(plan, initial_state):
-        """Helper to execute a full plan with the given initial state."""
+        """Execute a full plan with the given initial state."""
         state = initial_state
         for node in plan:
             executor.evaluate(state, node)

@@ -55,7 +55,7 @@ line-ending = "lf"
 skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "D"]
 extend-select = ["W", "Q"]
 
 [tool.ruff.lint.pydocstyle]

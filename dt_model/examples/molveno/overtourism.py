@@ -1,4 +1,4 @@
-"""This module contains the (mostly-immutable) model definition."""
+"""Mostly-immutable model definition."""
 
 # SPDX-License-Identifier: Apache-2.0
 

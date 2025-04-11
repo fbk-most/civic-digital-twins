@@ -1,6 +1,4 @@
-"""
-Piecewise Emulation
-===================
+"""Piecewise Emulation.
 
 This module emulates sympy.Piecewise using the tensor language frontend, by mapping
 a Piecewise invocation to a graph.multi_clause_where tensor.
@@ -19,29 +17,33 @@ Clause = tuple[Expr, Cond]
 
 
 def Piecewise(*clauses: Clause) -> graph.Node:
-    """Converts the provided clauses arranged according to the sympy.Piecewise
+    """Sympy's piecewise compatibility layer.
+
+    Converts the provided clauses arranged according to the sympy.Piecewise
     convention into a graph.multi_clause_where computation tensor.
 
     Args:
         *clauses: The clauses to be converted.
 
-    Returns:
+    Returns
+    -------
         The computation tensor representing the piecewise function.
 
-    Raises:
+    Raises
+    ------
         ValueError: If no clauses are provided.
     """
     return _to_tensor(_filter_clauses(clauses))
 
 
 def _filter_clauses(clauses: tuple[Clause, ...]) -> list[Clause]:
-    """This function removes the clauses after the first true clause, to
-    correctly emulate the sumpy.Piecewise behaviour.
+    """Remove the clauses after the first true clause.
 
     Args:
         clauses: The clauses to be filtered.
 
-    Returns:
+    Returns
+    -------
         The filtered clauses.
     """
     filtered: list[Clause] = []

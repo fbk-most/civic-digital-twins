@@ -17,7 +17,7 @@ from dt_model.internal.sympyke.symbol import Symbol, SymbolValue
 
 
 def compare_constraint_results(got: dict[Constraint, np.ndarray], expect: dict[str, np.ndarray]) -> list[str]:
-    """Helper function to compare constraint results and return any failures."""
+    """Compare constraint results and return any failures."""
     # Ensure that we have the expected constraints
     if len(got) != len(expect):
         return [f"Constraint count mismatch: expected {len(expect)}, got {len(got)}"]

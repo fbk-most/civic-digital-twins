@@ -14,16 +14,19 @@ from dt_model import (
 
 @pytest.fixture
 def uniform_cv():
+    """Create a UniformCategoricalContextVariable."""
     return UniformCategoricalContextVariable("Uniform", ["a", "b", "c", "d"])
 
 
 @pytest.fixture
 def categorical_cv():
+    """Create a CategoricalContextVariable."""
     return CategoricalContextVariable("Categorical", {"a": 0.1, "b": 0.2, "c": 0.3, "d": 0.4})
 
 
 @pytest.fixture
 def continuous_cv():
+    """Create a ContinuousContextVariable."""
     return ContinuousContextVariable("Continuous", scipy.stats.norm(3, 1))
 
 
@@ -36,6 +39,7 @@ def continuous_cv():
     ],
 )
 def test_cv(cv_fixture_name, sizes, values, request):
+    """Test ContextVariable classes."""
     cv = request.getfixturevalue(cv_fixture_name)
     print(f"Testing: {cv.name} (support size = {cv.support_size()})")
     # TODO(bassosimone): turn these prints into assertions

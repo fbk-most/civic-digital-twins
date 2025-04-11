@@ -1,6 +1,4 @@
-"""
-Minimal support for symbols
-===========================
+"""Minimal support for symbols.
 
 This module implements minimal support for sympy-like symbols
 so that we can write dt_model models.
@@ -42,7 +40,7 @@ symbol_table = _SymbolTable()
 
 
 def Symbol(name: str) -> SymbolValue:
-    """Constructor to create a new SymbolValue by name.
+    """Create a new SymbolValue by name.
 
     Subsequent invocations with the same name return the same SymbolValue.
     """

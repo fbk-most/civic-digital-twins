@@ -1,9 +1,4 @@
-"""
-Debugging Code
-==============
-
-This module contains debugging code.
-"""
+"""The debug module contains debugging code."""
 
 import numpy as np
 

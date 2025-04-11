@@ -1,8 +1,5 @@
-"""
-Atomic Operations
-=================
+"""The atomic module provides thread-safe atomic operations for integer values.
 
-This module provides thread-safe atomic operations for integer values.
 It implements an atomic integer counter class similar to Go's atomic.Int64.
 """
 
@@ -19,9 +16,7 @@ class Int:
     """
 
     def __init__(self):
-        """
-        Initialize an atomic integer with a value of 0.
-        """
+        """Initialize an atomic integer with a value of 0."""
         self.__value = 0
         self.__lock = threading.Lock()
 
@@ -32,7 +27,8 @@ class Int:
         Args:
             value (int): The value to add.
 
-        Returns:
+        Returns
+        -------
             int: The new value after addition.
         """
         with self.__lock:
@@ -43,7 +39,8 @@ class Int:
         """
         Atomically load and return the current value.
 
-        Returns:
+        Returns
+        -------
             int: The current value.
         """
         with self.__lock:

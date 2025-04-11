@@ -11,8 +11,8 @@ def find_node(plan, target_node):
     """Find the index of a node in the plan using identity comparison.
 
     We MUST use this method for finding the nodes because nodes override
-    their __eq__ method to implement lazy comparison."""
-
+    their __eq__ method to implement lazy comparison.
+    """
     for idx, node in enumerate(plan):
         if target_node is node:
             return idx

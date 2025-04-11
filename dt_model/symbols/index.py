@@ -1,8 +1,9 @@
 """
-This module contains the classes to represent index variables. An index variable is
-a variable that is used to represent a conversion factor or a parameter that is used
-to calculate the value of a symbol. The index variable can be a constant, a distribution,
-or a symbolic expression.
+Classes representing index variables.
+
+An index variable is a variable that is used to represent a conversion factor or a
+parameter that is used to calculate the value of a symbol. The index variable can
+be a constant, a distribution, or a symbolic expression.
 """
 
 from __future__ import annotations
@@ -25,19 +26,21 @@ class Distribution(Protocol):
         x: float | np.ndarray,
         *args,
         **kwds,
-    ) -> float | np.ndarray: ...
+    ) -> float | np.ndarray:
+        """Cumulative distribution function."""
+        ...
 
     def rvs(
         self,
         size: int | tuple[int, ...] | None = None,
         **kwargs,
-    ) -> float | np.ndarray: ...
+    ) -> float | np.ndarray:
+        """Random variable sampling."""
+        ...
 
 
 class Index:
-    """
-    Class to represent an index variable.
-    """
+    """Class to represent an index variable."""
 
     def __init__(
         self,
@@ -80,9 +83,7 @@ class Index:
 
 
 class UniformDistIndex(Index):
-    """
-    Class to represent an index as a uniform distribution
-    """
+    """Class to represent an index as a uniform distribution."""
 
     def __init__(
         self,
@@ -106,32 +107,35 @@ class UniformDistIndex(Index):
 
     @property
     def loc(self):
+        """Location parameter."""
         return self._loc
 
     @loc.setter
     def loc(self, new_loc):
+        """Location parameter setter."""
         if self._loc != new_loc:
             self._loc = new_loc
             self.value = stats.uniform(loc=self._loc, scale=self._scale)
 
     @property
     def scale(self):
+        """Scale parameter."""
         return self._scale
 
     @scale.setter
     def scale(self, new_scale):
+        """Scale parameter setter."""
         if self._scale != new_scale:
             self._scale = new_scale
             self.value = stats.uniform(loc=self._loc, scale=self._scale)
 
     def __str__(self):
+        """Represent the index using a string."""
         return f"uniform_dist_idx({self.loc}, {self.scale})"
 
 
 class LognormDistIndex(Index):
-    """
-    Class to represent an index as a lognorm distribution
-    """
+    """Class to represent an index as a lognorm distribution."""
 
     def __init__(
         self,
@@ -157,42 +161,47 @@ class LognormDistIndex(Index):
 
     @property
     def loc(self):
+        """Location parameter of the lognorm distribution."""
         return self._loc
 
     @loc.setter
     def loc(self, new_loc):
+        """Set the location parameter of the lognorm distribution."""
         if self._loc != new_loc:
             self._loc = new_loc
             self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self.s)
 
     @property
     def scale(self):
+        """Scale parameter of the lognorm distribution."""
         return self._scale
 
     @scale.setter
     def scale(self, new_scale):
+        """Set the scale parameter of the lognorm distribution."""
         if self._scale != new_scale:
             self._scale = new_scale
             self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self._s)
 
     @property
     def s(self):
+        """Shape parameter of the lognorm distribution."""
         return self._s
 
     @s.setter
     def s(self, new_s):
+        """Set the shape parameter of the lognorm distribution."""
         if self._s != new_s:
             self._s = new_s
             self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self._s)
 
     def __str__(self):
+        """Represent the index using a string."""
         return f"longnorm_dist_idx({self.loc}, {self.scale}, {self.s})"
 
 
 class TriangDistIndex(Index):
-    """
-    Class to represent an index as a triangular distribution
-    """
+    """Class to represent an index as a triangular distribution."""
 
     def __init__(
         self,
@@ -218,42 +227,47 @@ class TriangDistIndex(Index):
 
     @property
     def loc(self):
+        """Location parameter of the triangular distribution."""
         return self._loc
 
     @loc.setter
     def loc(self, new_loc):
+        """Set the location parameter of the triangular distribution."""
         if self._loc != new_loc:
             self._loc = new_loc
             self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
 
     @property
     def scale(self):
+        """Scale parameter of the triangular distribution."""
         return self._scale
 
     @scale.setter
     def scale(self, new_scale):
+        """Set the scale parameter of the triangular distribution."""
         if self._scale != new_scale:
             self._scale = new_scale
             self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
 
     @property
     def c(self):
+        """Shape parameter of the triangular distribution."""
         return self._c
 
     @c.setter
     def c(self, new_c):
+        """Set the shape parameter of the triangular distribution."""
         if self._c != new_c:
             self._c = new_c
             self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
 
     def __str__(self):
+        """Return a string representation of the triangular distribution index."""
         return f"triang_dist_idx({self.loc}, {self.scale}, {self.c})"
 
 
 class ConstIndex(Index):
-    """
-    Class to represent an index as a constant
-    """
+    """Class to represent an index as a constant."""
 
     def __init__(
         self,
@@ -267,23 +281,24 @@ class ConstIndex(Index):
 
     @property
     def v(self):
+        """Value of the constant index."""
         return self._v
 
     @v.setter
     def v(self, new_v):
+        """Set the value of the constant index."""
         if self._v != new_v:
             self._v = new_v
             self.value = new_v
             self.node = graph.constant(new_v, self.name)
 
     def __str__(self):
+        """Return a string representation of the constant index."""
         return f"const_idx({self.v})"
 
 
 class SymIndex(Index):
-    """
-    Class to represent an index as a symbolic value
-    """
+    """Class to represent an index as a symbolic value."""
 
     def __init__(
         self,
@@ -297,4 +312,5 @@ class SymIndex(Index):
         self.sym_value = value
 
     def __str__(self):
+        """Return a string representation of the symbolic index."""
         return f"sympy_idx({self.value})"

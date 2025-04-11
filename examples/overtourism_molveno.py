@@ -1,5 +1,7 @@
-"""This example allows to interactively explore the frozen Molveno model
-included into the source tree as an illustrative example."""
+"""Example to interactively explore the frozen Molveno model.
+
+We include this model into the source tree as an illustrative example.
+"""
 
 # SPDX-License-Identifier: Apache-2.0
 
@@ -41,14 +43,17 @@ ensemble_size = 20  # TODO: make configurable; may it be a CV parameter?
 
 
 def scale(p, v):
+    """Scale a probability by a value."""
     return p * v
 
 
 def threshold(p, t):
+    """Threshold a probability by a value."""
     return min(p, t) + 0.05 / (1 + np.exp(-(p - t)))
 
 
 def plot_scenario(ax, model, situation, title):
+    """Plot a scenario."""
     ensemble = Ensemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
