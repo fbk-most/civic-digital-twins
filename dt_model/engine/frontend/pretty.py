@@ -216,8 +216,7 @@ def _format(node: graph.Node, toplevel: bool, parent_precedence: int) -> str:
 
     if isinstance(node, graph.multi_clause_where):
         clauses_str = ", ".join(
-            f"({_format(cond, toplevel, 0)}, {_format(val, toplevel, 0)})"
-            for cond, val in node.clauses
+            f"({_format(cond, toplevel, 0)}, {_format(val, toplevel, 0)})" for cond, val in node.clauses
         )
         default_str = _format(node.default_value, toplevel, 0)
         return f"multi_clause_where([{clauses_str}], {default_str})"
@@ -225,9 +224,7 @@ def _format(node: graph.Node, toplevel: bool, parent_precedence: int) -> str:
     # Shape operations
     if isinstance(node, graph.AxisOp):
         inner = _format(node.node, toplevel, 0)
-        axis_str = (
-            str(node.axis) if isinstance(node.axis, int) else str(tuple(node.axis))
-        )
+        axis_str = str(node.axis) if isinstance(node.axis, int) else str(tuple(node.axis))
 
         if isinstance(node, graph.expand_dims):
             return f"expand_dims({inner}, {axis_str})"

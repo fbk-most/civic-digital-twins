@@ -2,7 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from dt_model.engine.frontend import graph, pretty
 
 
@@ -273,9 +272,7 @@ def test_named_subexpressions_not_expanded():
 
     # The pretty-printed result should use the name rather than expanding
     result = pretty.format(z)
-    assert (
-        result == "y * 2.0"
-    )  # Should use y's name, not expand it to "(x + 1.0) * 2.0"
+    assert result == "y * 2.0"  # Should use y's name, not expand it to "(x + 1.0) * 2.0"
 
     # Verify with more complex nested expressions
     a = graph.exp(y)
