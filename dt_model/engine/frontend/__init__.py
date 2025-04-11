@@ -1,8 +1,4 @@
-"""
-Engine Frontend
-===============
-
-The engine frontend allows expressing models as computation graphs.
+"""The engine frontend allows expressing models as computation graphs.
 
 Modules:
     graph: Graph construction and manipulation.

@@ -1,10 +1,7 @@
-"""
-Linearization of Computation Graphs
-===================================
+"""Provide functions to linearize computation graphs into execution plans.
 
-This module provides functions to linearize computation graphs into execution
-plans. It performs topological sorting of graph nodes, ensuring dependencies are
-evaluated before the nodes that depend on them.
+This module performs topological sorting of graph nodes, ensuring dependencies
+are evaluated before the nodes that depend on them.
 
 While we could directly rely on the node's creation ID to perform sorting on
 the graph, relying on topological sorting makes the code slightly more robust
@@ -44,14 +41,17 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
         *leaves: the nodes to start the linearization process from. Use the
             unpacking operator `*` to pass a list of nodes.
 
-    Returns:
+    Returns
+    -------
         Topologically sorted list of nodes forming an execution plan
 
-    Raises:
+    Raises
+    ------
         ValueError: If a cycle is detected in the graph
         TypeError: If an unknown node type is encountered
 
-    Examples:
+    Examples
+    --------
         >>> # Single output
         >>> plan = linearize.forest(output_node)
         >>>
@@ -61,7 +61,6 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
         >>> # List of outputs
         >>> plan = linearize.forest(*output_list)
     """
-
     # plan contains the linearized output
     plan: list[graph.Node] = []
 
@@ -72,8 +71,6 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
     visited: set[graph.Node] = set()
 
     def _visit(node: graph.Node) -> None:
-        """Internal function that visits a given node."""
-
         # Ensure we only visit a node at most once
         if node in visited:
             return
@@ -118,13 +115,14 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
     Args:
         node: The node to get dependencies for
 
-    Returns:
+    Returns
+    -------
         List of nodes that are direct dependencies
 
-    Raises:
+    Raises
+    ------
         TypeError: If the node type is unknown
     """
-
     if isinstance(node, graph.BinaryOp):
         return [node.left, node.right]
 

@@ -12,7 +12,6 @@ from dt_model.internal.sympyke import Piecewise, Symbol
 
 def test_piecewise_basics():
     """Make sure that Piecewise works as intended with Symbol."""
-
     # Create the placeholders as symbols
     x = Symbol("x")
     y = Symbol("y")

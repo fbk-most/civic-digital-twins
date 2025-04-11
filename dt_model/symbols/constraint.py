@@ -1,5 +1,4 @@
-"""
-This module defines the Constraint symbol.
+"""Constraint symbol definition.
 
 A constraint represents the relationship between the capacity of a given
 resource and the usage of that resource. We model two types of constraints:

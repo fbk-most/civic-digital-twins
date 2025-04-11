@@ -1,6 +1,8 @@
 """
-This module defines presence variables. A presence variable is a model variable that
-represents the presence of a certain entity in the modeled system.
+Define presence variables.
+
+A presence variable is a model variable that represents the
+presence of a certain entity in the modeled system.
 """
 
 from __future__ import annotations
@@ -16,9 +18,7 @@ from .context_variable import ContextVariable
 
 
 class PresenceVariable:
-    """
-    Class to represent a presence variable.
-    """
+    """Class to represent a presence variable."""
 
     def __init__(
         self,
@@ -32,9 +32,8 @@ class PresenceVariable:
         self.distribution = distribution
 
     def sample(self, cvs: dict | None = None, nr: int = 1) -> np.ndarray:
-        """
-        Returns a list of values sampled from the presence variable or provided
-        subset.
+        """Return values sampled from the presence variable or provided subset.
+
         If a distribution is provided in the constructor, the values will be
         sampled according to that distribution.
 

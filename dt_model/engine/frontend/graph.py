@@ -1,6 +1,4 @@
-"""
-Computation Graph Building
-==========================
+"""Computation Graph Building.
 
 This module allows to build an abstract computation graph using TensorFlow-like
 computation primitives and concepts. These primitives and concepts are also similar
@@ -135,7 +133,7 @@ _id_generator = atomic.Int()
 
 
 def ensure_node(value: Node | Scalar) -> Node:
-    """Converts a scalar value to a constant node if necessary."""
+    """Convert a scalar value to a constant node if necessary."""
     return value if isinstance(value, Node) else constant(value)
 
 
@@ -163,76 +161,99 @@ class Node:
         self.id = _id_generator.add(1)
 
     def __hash__(self) -> int:
-        # Note: we need to implement identity based hashing because we
-        # override the `__eq__` method to support lazy equality.
+        """Override hash to use identity-based hashing.
+
+        We need to do this because we override the `__eq__` method to support lazy equality.
+        """
         return id(self)
 
     # Arithmetic operators
     def __add__(self, other: Node | Scalar) -> Node:
+        """Add two nodes or a node and a scalar."""
         return add(self, ensure_node(other))
 
     def __radd__(self, other: Node | Scalar) -> Node:
+        """Add two nodes or a node and a scalar."""
         return add(ensure_node(other), self)
 
     def __sub__(self, other: Node | Scalar) -> Node:
+        """Subtract two nodes or a node and a scalar."""
         return subtract(self, ensure_node(other))
 
     def __rsub__(self, other: Node | Scalar) -> Node:
+        """Subtract two nodes or a node and a scalar."""
         return subtract(ensure_node(other), self)
 
     def __mul__(self, other: Node | Scalar) -> Node:
+        """Multiply two nodes or a node and a scalar."""
         return multiply(self, ensure_node(other))
 
     def __rmul__(self, other: Node | Scalar) -> Node:
+        """Multiply two nodes or a node and a scalar."""
         return multiply(ensure_node(other), self)
 
     def __truediv__(self, other: Node | Scalar) -> Node:
+        """Divide two nodes or a node and a scalar."""
         return divide(self, ensure_node(other))
 
     def __rtruediv__(self, other: Node | Scalar) -> Node:
+        """Divide two nodes or a node and a scalar."""
         return divide(ensure_node(other), self)
 
     # Comparison operators
     #
     # See the companion `__hash__` comment.
     def __eq__(self, other: Node | Scalar) -> Node:  # type: ignore
+        """Lazily check whether two nodes are equal."""
         return equal(self, ensure_node(other))
 
     def __ne__(self, other: Node | Scalar) -> Node:  # type: ignore
+        """Lazily check whether two nodes are not equal."""
         return not_equal(self, ensure_node(other))
 
     def __lt__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is less than another."""
         return less(self, ensure_node(other))
 
     def __le__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is less than or equal to another."""
         return less_equal(self, ensure_node(other))
 
     def __gt__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is greater than another."""
         return greater(self, ensure_node(other))
 
     def __ge__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is greater than or equal to another."""
         return greater_equal(self, ensure_node(other))
 
     # Logical operators
     def __and__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is logically and with another."""
         return logical_and(self, ensure_node(other))
 
     def __rand__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is logically and with another."""
         return logical_and(ensure_node(other), self)
 
     def __or__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is logically or with another."""
         return logical_or(self, ensure_node(other))
 
     def __ror__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is logically or with another."""
         return logical_or(ensure_node(other), self)
 
     def __xor__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is logically xor with another."""
         return logical_xor(self, ensure_node(other))
 
     def __rxor__(self, other: Node | Scalar) -> Node:
+        """Lazily check whether one node is logically xor with another."""
         return logical_xor(ensure_node(other), self)
 
     def __invert__(self) -> Node:
+        """Lazily check whether one node is logically not."""
         return logical_not(self)
 
 
@@ -430,8 +451,10 @@ class AxisOp(Node):
 
 
 class expand_dims(AxisOp):
-    """Adds new axes of size 1 to a tensor's shape, thus expanding the
-    tensor to a higher-dimensional space."""
+    """Adds new axes of size 1 to a tensor's shape.
+
+    This expands the tensor to a higher-dimensional space.
+    """
 
 
 class squeeze(AxisOp):
@@ -439,8 +462,10 @@ class squeeze(AxisOp):
 
 
 class project_using_sum(AxisOp):
-    """Computes sum of tensor elements along specified axes, thus
-    projecting the tensor onto a lower-dimensional space."""
+    """Computes sum of tensor elements along specified axes.
+
+    This projects the tensor to a lower-dimensional space.
+    """
 
 
 reduce_sum = project_using_sum
@@ -450,8 +475,10 @@ the dt-model is complete."""
 
 
 class project_using_mean(AxisOp):
-    """Computes mean of tensor elements along specified axes, thus
-    projecting the tensor onto a lower-dimensional space."""
+    """Computes mean of tensor elements along specified axes.
+
+    This projects the tensor to a lower-dimensional space.
+    """
 
 
 reduce_mean = project_using_mean
@@ -465,9 +492,11 @@ yakof into the dt-model is complete."""
 
 def tracepoint(node: Node) -> Node:
     """
-    Marks the node as a tracepoint and returns it. The tracepoint
-    will take effect while evaluating the node. We will print information
-    before evaluating the node, evaluate it, then print the result.
+    Mark the node as a tracepoint and returns it.
+
+    The tracepoint will take effect while evaluating the node. We will
+    print information before evaluating the node, evaluate it, then
+    print the result.
 
     This function acts like the unit in the category with semantic side
     effects depending on the debug operation that is requested.
@@ -478,8 +507,10 @@ def tracepoint(node: Node) -> Node:
 
 def breakpoint(node: Node) -> Node:
     """
-    Marks the node as a breakpoint and returns it. The breakpoint will
-    cause the interpreter to stop before evaluating the node.
+    Mark the node as a breakpoint and returns it.
+
+    The breakpoint will cause the interpreter to stop before
+    evaluating the node.
 
     This function acts like the unit in the category with semantic side
     effects depending on the debug operation that is requested.

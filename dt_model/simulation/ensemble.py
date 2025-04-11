@@ -1,3 +1,5 @@
+"""Implementation of the ensemble."""
+
 from __future__ import annotations
 
 from functools import reduce
@@ -6,7 +8,10 @@ from dt_model.model.model import Model
 
 
 class Ensemble:
+    """Iterator generating ensemble conditions."""
+
     def __init__(self, model: Model, scenario, cv_ensemble_size=20):
+        """Initialize the ensemble."""
         # TODO: what if cvs is empty?
         self.model = model
         self.ensemble = {}
@@ -23,11 +28,13 @@ class Ensemble:
                 self.size *= cv_ensemble_size
 
     def __iter__(self):
+        """Return an iterator over the ensemble."""
         self.pos = {k: 0 for k in self.ensemble.keys()}
         self.pos[list(self.ensemble.keys())[0]] = -1
         return self
 
     def __next__(self):
+        """Return the next ensemble condition."""
         for k in self.ensemble.keys():
             self.pos[k] += 1
             if self.pos[k] < len(self.ensemble[k]):

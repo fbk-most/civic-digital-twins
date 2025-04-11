@@ -1,3 +1,5 @@
+"""Abstract model definition."""
+
 from __future__ import annotations
 
 from dt_model.symbols.constraint import Constraint
@@ -7,6 +9,8 @@ from dt_model.symbols.presence_variable import PresenceVariable
 
 
 class AbstractModel:
+    """Abstract model definition."""
+
     def __init__(
         self,
         name,

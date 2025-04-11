@@ -1,8 +1,9 @@
 """
-This module defines context variables. A context variable models a model variable
-that is not directly controlled by the model, but that can influence the model
-behavior. In general, context variables are sampled from a distribution, either
-categorical or continuous.
+Context variables definition.
+
+A context variable models a model variable that is not directly controlled
+by the model, but that can influence the model behavior. In general, context
+variables are sampled from a distribution, either categorical or continuous.
 """
 
 from __future__ import annotations
@@ -17,22 +18,21 @@ from ..internal.sympyke.symbol import SymbolValue
 
 
 class ContextVariable(ABC):
-    """
-    Class to represent a context variable.
-    """
+    """Class to represent a context variable."""
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.node = graph.placeholder(name)
 
     @abstractmethod
-    def support_size(self) -> int: ...
+    def support_size(self) -> int:
+        """Return the size of the support of the context variable."""
+        ...
 
     @abstractmethod
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
         """
-        Returns a list of tuples (probability, value)  from the support variable or provided
-        subset.
+        Return a list of tuples (probability, value)  from the support variable or provided subset.
 
         If the distribution discrete, or if a subset is provided, it may return the whole support/subset,
         if its size is not larger that the requested number of sample values.
@@ -68,9 +68,11 @@ class UniformCategoricalContextVariable(ContextVariable):
         self.size = len(self.values)
 
     def support_size(self) -> int:
+        """Return the size of the support."""
         return self.size
 
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+        """Sample values from the support."""
         # TODO: subset (if defined) should be a subset of the support (also: with repetitions?)
 
         (values, size) = (self.values, self.size) if subset is None else (subset, len(subset))
@@ -83,9 +85,7 @@ class UniformCategoricalContextVariable(ContextVariable):
 
 
 class CategoricalContextVariable(ContextVariable):
-    """
-    Class to represent a categorical context variable.
-    """
+    """Class to represent a categorical context variable."""
 
     def __init__(self, name: str, distribution: dict) -> None:
         super().__init__(name)
@@ -95,9 +95,11 @@ class CategoricalContextVariable(ContextVariable):
         # TODO: check if distribution is, indeed, a distribution (sum = 1)
 
     def support_size(self) -> int:
+        """Return the size of the support of the categorical context variable."""
         return self.size
 
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+        """Return a sample from the categorical context variable."""
         (values, size) = (self.values, self.size) if subset is None else (subset, len(subset))
 
         if force_sample or nr < size:
@@ -113,9 +115,9 @@ class CategoricalContextVariable(ContextVariable):
 
 
 class ContinuousContextVariable(ContextVariable):
-    """
-    Class to represent a continuous context variable;
-    the distribution is any scipy.stats continuous random variable.
+    """Class to represent a continuous context variable.
+
+    The distribution is any scipy.stats continuous random variable.
     """
 
     def __init__(self, name: str, rvc: rv_continuous) -> None:
@@ -124,9 +126,11 @@ class ContinuousContextVariable(ContextVariable):
         # TODO: check if distribution is, indeed, a distribution (sum = 1)
 
     def support_size(self) -> int:
+        """Return the size of the support of the continuous context variable."""
         return -1  # TODO: do better
 
     def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+        """Sample from the continuous context variable."""
         if force_sample or subset is None or nr < len(subset):
             assert nr > 0
             return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]

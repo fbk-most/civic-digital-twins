@@ -1,6 +1,4 @@
-"""
-Topologically-Sorted-Graph Executor
-===================================
+"""Topologically-Sorted-Graph Executor.
 
 An evaluator for computation graphs that processes nodes sorted in
 topological order. Unlike recursive evaluators, this executor requires
@@ -55,7 +53,8 @@ class State:
     Note that, if graph.NODE_FLAG_TRACE is set, the State will print the
     nodes provided to the constructor in its __post_init__ method.
 
-    Attributes:
+    Attributes
+    ----------
         values: A dictionary caching the result of the computation.
         flags: Bitmask containing debug flags (e.g., graph.NODE_FLAG_BREAK).
     """
@@ -64,6 +63,7 @@ class State:
     flags: int = 0
 
     def __post_init__(self):
+        """Print the placeholder values provided to the constructor."""
         if self.flags & graph.NODE_FLAG_TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
@@ -71,15 +71,17 @@ class State:
                 debug.print_evaluated_node(self.values[node], cached=True)
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
-        """Helper function to access the value associated with a node.
+        """Access the value associated with a node.
 
         Args:
             node: The node whose value to retrieve.
 
-        Returns:
+        Returns
+        -------
             The value associated with the node.
 
-        Raises:
+        Raises
+        ------
             NodeValueNotFound: If the node has not been evaluated.
         """
         try:
@@ -89,10 +91,9 @@ class State:
 
 
 def evaluate(state: State, node: graph.Node) -> np.ndarray:
-    """
-    Evaluates a node assuming that all dependent nodes have already
-    been evaluated and cached in the state. In other words, this
-    function assumes you have already linearized the graph. If this
+    """Evaluate a node given the current state.
+
+    This function assumes you have already linearized the graph. If this
     is not the case, evaluation will fail. Use the `frontend.linearize`
     module to ensure the graph is topologically sorted.
 
@@ -100,7 +101,8 @@ def evaluate(state: State, node: graph.Node) -> np.ndarray:
         state: The current executor state.
         node: The node to evaluate.
 
-    Raises:
+    Raises
+    ------
         NodeValueNotFound: If a dependent node has not been evaluated
             and therefore its value cannot be found in the state.
         UnsupportedNodeType: If the executor does not support the given node type.
@@ -108,7 +110,6 @@ def evaluate(state: State, node: graph.Node) -> np.ndarray:
         PlaceholderValueNotProvided: If a placeholder node has no value provided
             and no default value.
     """
-
     # 1. check whether node has been already evaluated (note that this
     # covers the case of placeholders provided via the state)
     if node in state.values:

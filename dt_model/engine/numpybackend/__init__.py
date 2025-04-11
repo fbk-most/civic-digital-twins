@@ -1,9 +1,6 @@
-"""
-NumPy Backend
-=============
+"""Provide a NumPy Backend for evaluating computation graphs.
 
-This package provides a NumPy-based execution backend for the computation graph
-defined in the frontend. It transforms the symbolic operations defined in the graph
+This package transforms the symbolic operations defined in the graph
 into concrete numerical computations using NumPy, thus evaluating the model
 represented by the computation graph.
 

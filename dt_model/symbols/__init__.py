@@ -1,1 +1,1 @@
-"""This package contains the symbols used by the civic digital twins model."""
+"""Symbols used by the civic digital twins model."""

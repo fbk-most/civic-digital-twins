@@ -1,3 +1,5 @@
+"""Legacy implementation of model evaluation."""
+
 from __future__ import annotations
 
 from functools import reduce
@@ -15,6 +17,8 @@ from ..symbols.presence_variable import PresenceVariable
 
 
 class LegacyModel:
+    """Legacy model evaluator."""
+
     def __init__(
         self,
         name,
@@ -36,12 +40,14 @@ class LegacyModel:
         self.index_vals = None
 
     def reset(self):
+        """Reset the model state."""
         self.grid = None
         self.field = None
         self.field_elements = None
         self.index_vals = None
 
     def evaluate(self, grid, ensemble):
+        """Evaluate the model using the given grid and ensemble."""
         assert self.grid is None
 
         # [pre] extract the weights and the size of the ensemble
@@ -128,14 +134,17 @@ class LegacyModel:
         return self.field
 
     def get_index_value(self, i: Index) -> float:
+        """Get the value of the given index."""
         assert self.index_vals is not None
         return self.index_vals[i.node]
 
     def get_index_mean_value(self, i: Index) -> float:
+        """Get the mean value of the given index."""
         assert self.index_vals is not None
         return np.average(self.index_vals[i.node])
 
     def compute_sustainable_area(self) -> float:
+        """Compute the sustainable area."""
         assert self.grid is not None
         assert self.field is not None
 
@@ -148,6 +157,7 @@ class LegacyModel:
 
     # TODO: change API - order of presence variables
     def compute_sustainability_index(self, presences: list) -> float:
+        """Compute the sustainability index."""
         assert self.grid is not None
         grid = self.grid
         field = self.field
@@ -156,6 +166,7 @@ class LegacyModel:
         return np.mean(index)
 
     def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
+        """Compute the sustainability index per constraint."""
         assert self.grid is not None
         assert self.field_elements is not None
 
@@ -171,6 +182,7 @@ class LegacyModel:
         return indexes
 
     def compute_modal_line_per_constraint(self) -> dict:
+        """Compute the modal line per constraint."""
         assert self.grid is not None
         assert self.field_elements is not None
 
@@ -205,14 +217,14 @@ class LegacyModel:
             # avoid hardcoding of the length (10000)
 
             def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-                """Logic for computing the points with vertical regression"""
+                """Logic for computing the points with vertical regression."""
                 if regr.slope != 0.00:
                     return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
                 else:
                     return ((regr.intercept, regr.intercept), (0.0, 10000.0))
 
             def _horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-                """Logic for computing the points with horizontal regression"""
+                """Logic for computing the points with horizontal regression."""
                 if regr.slope != 0.0:
                     return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
                 else:
