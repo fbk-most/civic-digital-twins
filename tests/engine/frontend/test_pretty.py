@@ -289,3 +289,57 @@ def test_named_subexpressions_not_expanded():
 
     result = pretty.format(d)
     assert result == "c - 5.0"  # Should use c's name, not expand further
+
+
+def test_nested_logical_precedence():
+    """Test precedence handling with nested logical operations that would expose the closure bug."""
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+    z = graph.placeholder("z")
+    w = graph.placeholder("w")
+
+    # Test case 1: (x | y) & z
+    # The OR has lower precedence than AND, so parentheses are required
+    expr1 = graph.logical_and(graph.logical_or(x, y), z)
+    result1 = pretty.format(expr1)
+    assert result1 == "(x | y) & z"
+
+    # Test case 2: x & (y | z)
+    # No parentheses needed around the x & part, but needed for y | z
+    expr2 = graph.logical_and(x, graph.logical_or(y, z))
+    result2 = pretty.format(expr2)
+    assert result2 == "x & (y | z)"
+
+    # Test case 3: (x & y) | (z & w)
+    # No parentheses needed due to operator precedence
+    expr3 = graph.logical_or(
+        graph.logical_and(x, y),
+        graph.logical_and(z, w)
+    )
+    result3 = pretty.format(expr3)
+    assert result3 == "x & y | z & w"
+
+    # Test case 4: Complex nested case with mixed precedence
+    # ((x | y) & z) | (w & y)
+    # The bug would likely produce incorrect parentheses
+    expr4 = graph.logical_or(
+        graph.logical_and(graph.logical_or(x, y), z),
+        graph.logical_and(w, y)
+    )
+    result4 = pretty.format(expr4)
+    assert result4 == "(x | y) & z | w & y"
+
+    # Test case 5: Test with three levels of different precedence
+    # ~(x | y) & z
+    # This should add parentheses around x | y, but not around the NOT operation
+    expr5 = graph.logical_and(graph.logical_not(graph.logical_or(x, y)), z)
+    result5 = pretty.format(expr5)
+    assert result5 == "~(x | y) & z"
+
+    # Test case 6: Test with reversed precedence: (x | y) & (z | w)
+    expr6 = graph.logical_and(
+        graph.logical_or(x, y),
+        graph.logical_or(z, w)
+    )
+    result6 = pretty.format(expr6)
+    assert result6 == "(x | y) & (z | w)"

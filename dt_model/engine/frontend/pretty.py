@@ -141,13 +141,13 @@ def _format(node: graph.Node, toplevel: bool, parent_precedence: int) -> str:
         graph.logical_or: 3,  # x | y
     }
 
-    def needs_parens(node: graph.Node) -> bool:
+    def needs_parens(expr_node: graph.Node) -> bool:
         """Determine if expression needs parentheses."""
-        return PRECEDENCE.get(type(node), 0) < parent_precedence
+        return PRECEDENCE.get(type(expr_node), 0) < parent_precedence
 
-    def wrap(expr: str) -> str:
+    def wrap(expr_node: graph.Node, expr: str) -> str:
         """Wrap expression in parentheses if needed."""
-        return f"({expr})" if needs_parens(node) else expr
+        return f"({expr})" if needs_parens(expr_node) else expr
 
     # Base cases
     if isinstance(node, graph.constant):
@@ -163,37 +163,37 @@ def _format(node: graph.Node, toplevel: bool, parent_precedence: int) -> str:
 
         # Arithmetic operators
         if isinstance(node, graph.add):
-            return wrap(f"{left} + {right}")
+            return wrap(node, f"{left} + {right}")
         if isinstance(node, graph.subtract):
-            return wrap(f"{left} - {right}")
+            return wrap(node, f"{left} - {right}")
         if isinstance(node, graph.multiply):
-            return wrap(f"{left} * {right}")
+            return wrap(node, f"{left} * {right}")
         if isinstance(node, graph.divide):
-            return wrap(f"{left} / {right}")
+            return wrap(node, f"{left} / {right}")
         if isinstance(node, graph.power):
-            return wrap(f"{left} ** {right}")
+            return wrap(node, f"{left} ** {right}")
         if isinstance(node, graph.maximum):
             return f"maximum({left}, {right})"
         if isinstance(node, graph.logical_and):
-            return wrap(f"{left} & {right}")
+            return wrap(node, f"{left} & {right}")
         if isinstance(node, graph.logical_or):
-            return wrap(f"{left} | {right}")
+            return wrap(node, f"{left} | {right}")
         if isinstance(node, graph.logical_xor):
-            return wrap(f"{left} ^ {right}")
+            return wrap(node, f"{left} ^ {right}")
 
         # Comparison operators
         if isinstance(node, graph.less):
-            return wrap(f"{left} < {right}")
+            return wrap(node, f"{left} < {right}")
         if isinstance(node, graph.less_equal):
-            return wrap(f"{left} <= {right}")
+            return wrap(node, f"{left} <= {right}")
         if isinstance(node, graph.greater):
-            return wrap(f"{left} > {right}")
+            return wrap(node, f"{left} > {right}")
         if isinstance(node, graph.greater_equal):
-            return wrap(f"{left} >= {right}")
+            return wrap(node, f"{left} >= {right}")
         if isinstance(node, graph.equal):
-            return wrap(f"{left} == {right}")
+            return wrap(node, f"{left} == {right}")
         if isinstance(node, graph.not_equal):
-            return wrap(f"{left} != {right}")
+            return wrap(node, f"{left} != {right}")
 
     # Unary operations
     if isinstance(node, graph.UnaryOp):
@@ -201,7 +201,7 @@ def _format(node: graph.Node, toplevel: bool, parent_precedence: int) -> str:
         inner = _format(node.node, toplevel, op_precedence)
 
         if isinstance(node, graph.logical_not):
-            return wrap(f"~{inner}")
+            return wrap(node, f"~{inner}")
         if isinstance(node, graph.exp):
             return f"exp({inner})"
         if isinstance(node, graph.log):
