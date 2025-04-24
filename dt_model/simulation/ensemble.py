@@ -5,12 +5,19 @@ from __future__ import annotations
 from functools import reduce
 
 from dt_model.model.model import Model
+from dt_model.symbols.context_variable import ContextVariable
+from dt_model.internal.sympyke.symbol import SymbolValue
 
 
 class Ensemble:
     """Iterator generating ensemble conditions."""
 
-    def __init__(self, model: Model, scenario, cv_ensemble_size=20):
+    def __init__(
+        self,
+        model: Model,
+        scenario: dict[ContextVariable, list[SymbolValue]],
+        cv_ensemble_size: int = 20,
+    ):
         """Initialize the ensemble."""
         # TODO: what if cvs is empty?
         self.model = model

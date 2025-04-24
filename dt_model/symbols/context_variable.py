@@ -30,7 +30,13 @@ class ContextVariable(ABC):
         ...
 
     @abstractmethod
-    def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+    def sample(
+        self,
+        nr: int = 1,
+        *,
+        subset: list | None = None,
+        force_sample: bool = False,
+    ) -> list:
         """
         Return a list of tuples (probability, value)  from the support variable or provided subset.
 
@@ -62,16 +68,22 @@ class UniformCategoricalContextVariable(ContextVariable):
     All values returned in sample have the same probability value, even if all the support is returned.
     """
 
-    def __init__(self, name: str, values: list) -> None:
+    def __init__(self, name: str, values: list[SymbolValue]) -> None:
         super().__init__(name)
-        self.values = [value.name if isinstance(value, SymbolValue) else value for value in values]
+        self.values = values
         self.size = len(self.values)
 
     def support_size(self) -> int:
         """Return the size of the support."""
         return self.size
 
-    def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+    def sample(
+        self,
+        nr: int = 1,
+        *,
+        subset: list[SymbolValue] | None = None,
+        force_sample: bool = False,
+    ) -> list[tuple[float, SymbolValue]]:
         """Sample values from the support."""
         # TODO: subset (if defined) should be a subset of the support (also: with repetitions?)
 
@@ -87,9 +99,9 @@ class UniformCategoricalContextVariable(ContextVariable):
 class CategoricalContextVariable(ContextVariable):
     """Class to represent a categorical context variable."""
 
-    def __init__(self, name: str, distribution: dict) -> None:
+    def __init__(self, name: str, distribution: dict[SymbolValue, float]) -> None:
         super().__init__(name)
-        self.distribution = {k.name if isinstance(k, SymbolValue) else k: v for k, v in distribution.items()}
+        self.distribution = distribution
         self.values = list(self.distribution.keys())
         self.size = len(self.values)
         # TODO: check if distribution is, indeed, a distribution (sum = 1)
@@ -98,7 +110,13 @@ class CategoricalContextVariable(ContextVariable):
         """Return the size of the support of the categorical context variable."""
         return self.size
 
-    def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+    def sample(
+        self,
+        nr: int = 1,
+        *,
+        subset: list[SymbolValue] | None = None,
+        force_sample: bool = False,
+    ) -> list[tuple[float, SymbolValue]]:
         """Return a sample from the categorical context variable."""
         (values, size) = (self.values, self.size) if subset is None else (subset, len(subset))
 
