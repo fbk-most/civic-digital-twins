@@ -50,8 +50,8 @@ def continuous_cv():
 @pytest.mark.parametrize(
     "cv_fixture_name,sizes,values",
     [
-        ("uniform_cv", [1, 2, 4, 8], ["a", "b", "c"]),
-        ("categorical_cv", [1, 2, 4, 8], ["a", "b", "c"]),
+        ("uniform_cv", [1, 2, 4, 8], [Symbol("a"), Symbol("b"), Symbol("c")]),
+        ("categorical_cv", [1, 2, 4, 8], [Symbol("a"), Symbol("b"), Symbol("c")]),
         ("continuous_cv", [1, 2, 4, 8], [2.1, 3.0, 3.9]),
     ],
 )
