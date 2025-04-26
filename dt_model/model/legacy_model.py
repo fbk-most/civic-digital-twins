@@ -46,9 +46,12 @@ class LegacyModel:
         self.field_elements = None
         self.index_vals = None
 
-    def evaluate(self, grid, ensemble):
-        """Evaluate the model using the given grid and ensemble."""
+    def evaluate(self, grid, ensemble, assignments=None):
+        """Evaluate the model using the given grid and ensemble. Optional assignments to indexes that overwrite default values."""
         assert self.grid is None
+
+        if assignments is None:
+            assignments = {}
 
         # [pre] extract the weights and the size of the ensemble
         c_weight = np.array([c[0] for c in ensemble])
@@ -72,9 +75,19 @@ class LegacyModel:
         # [pre] evaluate the indexes depending on distributions
         #
         # TODO(bassosimone): the size used here is too small
+        # TODO(pistore): if index is in self.capacities AND type is Distribution,
+        #  there is no need to compute the sample, as the cdf of the distribution is directly
+        #  used in the constraint calculation below (unless index_vals is used)
         for index in self.indexes + self.capacities:
-            if isinstance(index.value, Distribution):
-                c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
+            if index.name in assignments:
+                value = assignments[index.name]
+                if isinstance(value, Distribution):
+                    c_subs[index.node] = np.asarray(value.rvs(size=c_size))
+                else:
+                    c_subs[index.node] = np.full(c_size, value)
+            else:
+                if isinstance(index.value, Distribution):
+                    c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
 
         # [eval] expand dimensions for all values computed thus far
         for key in c_subs:
@@ -95,7 +108,7 @@ class LegacyModel:
             all_nodes.append(index.node)
 
         # [eval] actually evaluate all the nodes
-        state = executor.State(c_subs, graph.NODE_FLAG_TRACE)
+        state = executor.State(c_subs)
         for node in linearize.forest(*all_nodes):
             executor.evaluate(state, node)
 
@@ -115,11 +128,15 @@ class LegacyModel:
 
             # Get capacity
             capacity = constraint.capacity
+            if capacity.name in assignments:
+                capacity_value = assignments[capacity.name]
+            else:
+                capacity_value = capacity.value
 
-            if not isinstance(capacity.value, Distribution):
+            if not isinstance(capacity_value, Distribution):
                 unscaled_result = usage <= _fix_shapes(np.asarray(c_subs[capacity.node]))
             else:
-                unscaled_result = 1.0 - capacity.value.cdf(usage)
+                unscaled_result = 1.0 - capacity_value.cdf(usage)
 
             # Apply weights and store the result
             result = np.broadcast_to(np.dot(unscaled_result, c_weight), grid_shape)
