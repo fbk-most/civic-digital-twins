@@ -7,12 +7,14 @@ from dt_model.symbols.index import Index
 class Evaluation:
     """Evaluate a model in specific conditions."""
 
-    def __init__(self, inst: InstantiatedModel):
+    def __init__(self, inst: InstantiatedModel, grid, ensemble):
         self.inst = inst
+        self.inst.legacy.reset()
+        self.evaluate_result = self.inst.legacy.evaluate(grid, ensemble, self.inst.values)
 
-    def evaluate(self, grid, ensemble):
+    def evaluate(self):
         """Evaluate the model in the given grid and ensemble conditions."""
-        return self.inst.legacy.evaluate(grid, ensemble)
+        return self.evaluate_result
 
     @property
     def index_vals(self):
