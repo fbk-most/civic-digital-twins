@@ -81,8 +81,8 @@ class Model:
     def evaluate(self, grid, ensemble):
         """Evaluate the model on the given grid and ensemble."""
         assert self.evaluation is None
-        evaluation = Evaluation(InstantiatedModel(self.abs))
-        result = evaluation.evaluate(grid, ensemble)
+        evaluation = Evaluation(InstantiatedModel(self.abs), grid, ensemble)
+        result = evaluation.evaluate()
         self.evaluation = evaluation
         return result
 
