@@ -46,7 +46,7 @@ class LegacyModel:
         self.field_elements = None
         self.index_vals = None
 
-    def evaluate(self, grid, ensemble, assignments=None):
+    def evaluate_grid(self, grid, ensemble, assignments=None):
         """Evaluate the model using the given grid and ensemble. Optional assignments to indexes that overwrite default values."""
         assert self.grid is None
 
@@ -88,6 +88,7 @@ class LegacyModel:
             else:
                 if isinstance(index.value, Distribution):
                     c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
+                # else: not needed, covered by default placeholder behavior
 
         # [eval] expand dimensions for all values computed thus far
         for key in c_subs:
@@ -149,6 +150,82 @@ class LegacyModel:
         self.field = field
         self.field_elements = field_elements
         return self.field
+
+    def evaluate_usage(self, presences, ensemble, assignments=None):
+        """Evaluate the model using the given presences and ensemble. Optional assignments to indexes that overwrite default values."""
+        if assignments is None:
+            assignments = {}
+
+        # [pre] extract the weights and the size of the ensemble
+        c_weight = np.array([c[0] for c in ensemble])
+        c_size = c_weight.shape[0]
+
+        # [pre] create empty placeholders
+        c_subs: dict[graph.Node, np.ndarray] = {}
+
+        # [pre] add global unique symbols
+        for entry in symbol.symbol_table.values():
+            c_subs[entry.node] = np.array(entry.name)
+
+        # [pre] add context variables
+        collector: dict[ContextVariable, list[float]] = {}
+        for _, entry in ensemble:
+            for cv, value in entry.items():
+                collector.setdefault(cv, []).append(value)
+        for key, values in collector.items():
+            c_subs[key.node] = np.asarray(values)
+
+        # [pre] evaluate the indexes depending on distributions
+        #
+        # TODO(bassosimone): the size used here is too small
+        # TODO(pistore): if index is in self.capacities AND type is Distribution,
+        #  there is no need to compute the sample, as the cdf of the distribution is directly
+        #  used in the constraint calculation below (unless index_vals is used)
+        for index in self.indexes + self.capacities:
+            if index.name in assignments:
+                value = assignments[index.name]
+                if isinstance(value, Distribution):
+                    c_subs[index.node] = np.asarray(value.rvs(size=c_size))
+                else:
+                    c_subs[index.node] = np.full(c_size, value)
+            else:
+                if isinstance(index.value, Distribution):
+                    c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
+                # else: not needed, covered by default placeholder behavior
+
+        # [eval] expand dimensions for all values computed thus far
+        for key in c_subs:
+            c_subs[key] = np.expand_dims(c_subs[key], axis=0)  # CHANGED
+
+        # [eval] add presence variables and expand dimensions
+        assert len(self.pvs) == 2  # TODO: generalize
+        for i, pv in enumerate(self.pvs):
+            c_subs[pv.node] = np.expand_dims(presences[i], axis=1)  # CHANGED
+
+        # [eval] collect all the nodes to evaluate
+        all_nodes: list[graph.Node] = []
+        for constraint in self.constraints:
+            all_nodes.append(constraint.usage.node)
+            if not isinstance(constraint.capacity.value, Distribution):
+                all_nodes.append(constraint.capacity.node)
+        for index in self.indexes + self.capacities:
+            all_nodes.append(index.node)
+
+        # [eval] actually evaluate all the nodes
+        state = executor.State(c_subs)
+        for node in linearize.forest(*all_nodes):
+            executor.evaluate(state, node)
+
+        # CHANGED FROM HERE
+        # [post] compute the usage map
+        usage_elements = {}
+        for constraint in self.constraints:
+            # Compute and store constraint usage
+            usage = np.asarray(c_subs[constraint.usage.node]).mean(axis=1)
+            usage_elements[constraint] = usage
+
+        # [post] return the results
+        return usage_elements
 
     def get_index_value(self, i: Index) -> float:
         """Get the value of the given index."""
