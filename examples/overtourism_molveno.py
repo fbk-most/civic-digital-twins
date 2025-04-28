@@ -29,7 +29,7 @@ from dt_model.internal.sympyke import Symbol
 S_Base = {}
 
 # Good weather situation
-S_Good_Weather = {CV_weather: [Symbol("good")]}
+S_Good_Weather = {CV_weather: [Symbol("good"), Symbol("unsettled")]}
 
 # Bad weather situation
 S_Bad_Weather = {CV_weather: [Symbol("bad")]}
