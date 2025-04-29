@@ -14,6 +14,7 @@ from dt_model.examples.molveno.overtourism import (
     PV_tourists,
 )
 from dt_model.internal.sympyke.symbol import Symbol, SymbolValue
+from dt_model.model.instantiated_model import InstantiatedModel
 
 
 def compare_constraint_results(got: dict[Constraint, np.ndarray], expect: dict[str, np.ndarray]) -> list[str]:
@@ -197,7 +198,7 @@ def test_bug_37():
     situation: dict[ContextVariable, list[SymbolValue]] = {
         CV_weather: [Symbol("good"), Symbol("unsettled"), Symbol("bad")]
     }
-    ensemble = Ensemble(model, situation, cv_ensemble_size=20)
+    ensemble = Ensemble(InstantiatedModel(model.abs), situation, cv_ensemble_size=20)
 
     # This would have failed before https://github.com/fbk-most/dt-model/pull/38.
     tourists = np.array([1000, 5000, 10000])
