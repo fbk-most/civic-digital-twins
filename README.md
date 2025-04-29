@@ -73,6 +73,12 @@ pytest
 Each pull request is automatically tested using GitHub Actions. The workflow
 is defined in [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
+## Updating Dependencies
+
+```bash
+uv sync --upgrade
+```
+
 ## Releasing
 
 1. Make sure the version number in `pyproject.toml` is correct.
