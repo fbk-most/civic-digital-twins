@@ -194,7 +194,9 @@ def test_bug_37():
     # Create a situation containing multiple weather symbols
     #
     # See https://github.com/fbk-most/dt-model/issues/37.
-    situation = {CV_weather: [Symbol("good"), Symbol("unsettled"), Symbol("bad")]}
+    situation: dict[ContextVariable, list[SymbolValue]] = {
+        CV_weather: [Symbol("good"), Symbol("unsettled"), Symbol("bad")]
+    }
     ensemble = Ensemble(model, situation, cv_ensemble_size=20)
 
     # This would have failed before https://github.com/fbk-most/dt-model/pull/38.
