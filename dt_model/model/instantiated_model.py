@@ -1,6 +1,5 @@
 """Allow instantiation of AbstractModel."""
 
-from dt_model.symbols.index import Index, ConstIndex, UniformDistIndex, LognormDistIndex, TriangDistIndex, SymIndex
 from dt_model.model.abstract_model import AbstractModel
 from dt_model.model.legacy_model import LegacyModel
 
