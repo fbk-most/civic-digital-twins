@@ -47,7 +47,10 @@ class LegacyModel:
         self.index_vals = None
 
     def evaluate_grid(self, grid, ensemble, assignments=None):
-        """Evaluate the model using the given grid and ensemble. Optional assignments to indexes that overwrite default values."""
+        """Evaluate the model using the given grid and ensemble.
+
+        Optional assignments define values for indexes that overwrite default values.
+        """
         assert self.grid is None
 
         if assignments is None:
@@ -152,7 +155,10 @@ class LegacyModel:
         return self.field
 
     def evaluate_usage(self, presences, ensemble, assignments=None):
-        """Evaluate the model using the given presences and ensemble. Optional assignments to indexes that overwrite default values."""
+        """Evaluate the model using the given presences and ensemble.
+
+        Optional assignments define values for indexes that overwrite default values.
+        """
         if assignments is None:
             assignments = {}
 

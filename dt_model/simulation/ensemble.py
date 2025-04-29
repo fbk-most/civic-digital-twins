@@ -5,8 +5,8 @@ from __future__ import annotations
 from functools import reduce
 
 from dt_model.internal.sympyke.symbol import SymbolValue
-from dt_model.symbols.context_variable import ContextVariable
 from dt_model.model.instantiated_model import InstantiatedModel
+from dt_model.symbols.context_variable import ContextVariable
 
 
 class Ensemble:
