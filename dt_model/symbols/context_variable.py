@@ -118,7 +118,7 @@ class CategoricalContextVariable(ContextVariable):
         force_sample: bool = False,
     ) -> list[tuple[float, SymbolValue]]:
         """Return a sample from the categorical context variable."""
-        (values, size) = (self.values, self.size) if subset is None else ([s.name for s in subset], len(subset))
+        (values, size) = (self.values, self.size) if subset is None else (subset, len(subset))
 
         if force_sample or nr < size:
             assert nr > 0
@@ -129,7 +129,7 @@ class CategoricalContextVariable(ContextVariable):
 
         subset_probability = [self.distribution[v] for v in values]
         subset_probability_sum = sum(subset_probability)
-        return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, [s.name for s in subset])]
+        return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
 
 
 class ContinuousContextVariable(ContextVariable):
