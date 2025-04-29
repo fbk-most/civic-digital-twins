@@ -4,7 +4,7 @@ import random
 
 import numpy as np
 
-from dt_model import Constraint, ContextVariable
+from dt_model import Constraint, ContextVariable, Ensemble
 from dt_model.examples.molveno.overtourism import (
     CV_season,
     CV_weather,
@@ -163,22 +163,48 @@ def test_multiple_ensemble_members():
     model.reset()
 
     # Create an ensemble with multiple members
-    multi_situation = []
+    ensemble = []
     for i in range(10):  # Use 10 ensemble members
         situation = {
             CV_weekday: Symbol("monday"),
             CV_season: Symbol("high"),
             CV_weather: Symbol("good" if i % 2 == 0 else "bad"),
         }
-        multi_situation.append((0.1, situation))  # Equal weights summing to 1
+        ensemble.append((0.1, situation))  # Equal weights summing to 1
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
-    # This would have failed before your fix
+    # Evaluate the model with multiple ensemble members
     result = model.evaluate(
         {PV_tourists: tourists, PV_excursionists: excursionists},
-        multi_situation,
+        ensemble,
+    )
+
+    # Just check that it runs without error and returns a result
+    assert result is not None
+    assert model.field_elements is not None
+
+
+def test_bug_37():
+    """Test ensuring that we handle https://github.com/fbk-most/dt-model/issues/37."""
+    model = M_Base
+    model.reset()
+
+    # Create a situation containing multiple weather symbols
+    #
+    # See https://github.com/fbk-most/dt-model/issues/37.
+    situation: dict[ContextVariable, list[SymbolValue]] = {
+        CV_weather: [Symbol("good"), Symbol("unsettled"), Symbol("bad")]
+    }
+    ensemble = Ensemble(model, situation, cv_ensemble_size=20)
+
+    # This would have failed before https://github.com/fbk-most/dt-model/pull/38.
+    tourists = np.array([1000, 5000, 10000])
+    excursionists = np.array([1000, 5000, 10000])
+    result = model.evaluate(
+        {PV_tourists: tourists, PV_excursionists: excursionists},
+        ensemble,
     )
 
     # Just check that it runs without error and returns a result
