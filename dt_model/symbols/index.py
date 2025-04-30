@@ -38,6 +38,14 @@ class Distribution(Protocol):
         """Random variable sampling."""
         ...
 
+    def mean(self, *args, **kwds) -> float | np.ndarray:
+        """Random variable mean."""
+        ...
+
+    def std(self, *args, **kwds) -> float | np.ndarray:
+        """Random variable standard deviation."""
+        ...
+
 
 class Index:
     """Class to represent an index variable."""

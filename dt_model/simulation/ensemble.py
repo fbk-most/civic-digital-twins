@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import reduce
 
 from dt_model.internal.sympyke.symbol import SymbolValue
-from dt_model.model.model import Model
+from dt_model.model.instantiated_model import InstantiatedModel
 from dt_model.symbols.context_variable import ContextVariable
 
 
@@ -14,7 +14,7 @@ class Ensemble:
 
     def __init__(
         self,
-        model: Model,
+        model: InstantiatedModel,
         scenario: dict[ContextVariable, list[SymbolValue]],
         cv_ensemble_size: int = 20,
     ):
@@ -23,7 +23,7 @@ class Ensemble:
         self.model = model
         self.ensemble = {}
         self.size = 1
-        for cv in model.cvs:
+        for cv in model.abs.cvs:
             if cv in scenario.keys():
                 if len(scenario[cv]) == 1:
                     self.ensemble[cv] = [(1, scenario[cv][0])]
