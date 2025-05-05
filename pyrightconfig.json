@@ -4,11 +4,11 @@
   "pythonVersion": "3.11",
   "include": ["dt_model", "tests"],
   "exclude": [
-    "dt_model/examples/molveno/overtourism.py",
-    "dt_model/examples/molveno/presence_stats.py",
-    "dt_model/model/legacy_model.py",
-    "dt_model/model/model.py",
-    "dt_model/symbols/context_variable.py",
-    "dt_model/symbols/presence_variable.py"
+    "civic_digital_twins/dt_model/examples/molveno/overtourism.py",
+    "civic_digital_twins/dt_model/examples/molveno/presence_stats.py",
+    "civic_digital_twins/dt_model/model/legacy_model.py",
+    "civic_digital_twins/dt_model/model/model.py",
+    "civic_digital_twins/dt_model/symbols/context_variable.py",
+    "civic_digital_twins/dt_model/symbols/presence_variable.py"
   ]
 }

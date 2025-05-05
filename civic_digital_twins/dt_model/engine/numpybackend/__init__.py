@@ -20,8 +20,8 @@ Key Components
 Usage Example:
 -------------
 ```python
-from dt_model.engine.frontend import graph, linearize
-from dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
+from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 import numpy as np
 

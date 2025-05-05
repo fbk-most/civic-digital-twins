@@ -1,7 +1,7 @@
 """Allow instantiation of AbstractModel."""
 
-from dt_model.model.abstract_model import AbstractModel
-from dt_model.model.legacy_model import LegacyModel
+from ..model.abstract_model import AbstractModel
+from ..model.legacy_model import LegacyModel
 
 
 class InstantiatedModel:

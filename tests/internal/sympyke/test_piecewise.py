@@ -5,9 +5,9 @@
 import numpy as np
 import pytest
 
-from dt_model.engine.frontend import linearize
-from dt_model.engine.numpybackend import executor
-from dt_model.internal.sympyke import Piecewise, Symbol
+from civic_digital_twins.dt_model.engine.frontend import linearize
+from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model.internal.sympyke import Piecewise, Symbol
 
 
 def test_piecewise_basics():
@@ -74,7 +74,7 @@ def test_piecewise_empty():
 
 def test_piecewise_filtering():
     """Test the internal _filter_clauses function."""
-    from dt_model.internal.sympyke.piecewise import _filter_clauses
+    from civic_digital_twins.dt_model.internal.sympyke.piecewise import _filter_clauses
 
     clauses = (
         (1, False),

@@ -38,7 +38,7 @@ space by projecting over one or more axes using a specific reduction operation.
 
 Here's an example of what you can do with this module:
 
-    >>> from dt_model.engine.frontend import graph
+    >>> from civic_digital_twins.dt_model.engine.frontend import graph
     >>>
     >>> a = graph.placeholder("a", 1.0)
     >>> b = graph.constant(2.0)

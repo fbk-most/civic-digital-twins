@@ -2,7 +2,7 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from dt_model.engine.frontend import graph
+from civic_digital_twins.dt_model.engine.frontend import graph
 
 
 def test_basic_node_creation():

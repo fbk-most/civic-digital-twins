@@ -5,12 +5,12 @@
 import pytest
 import scipy
 
-from dt_model import (
+from civic_digital_twins.dt_model import (
     CategoricalContextVariable,
     ContinuousContextVariable,
     UniformCategoricalContextVariable,
 )
-from dt_model.internal.sympyke import Symbol
+from civic_digital_twins.dt_model.internal.sympyke import Symbol
 
 
 @pytest.fixture
