@@ -4,7 +4,7 @@
 
 import pytest
 
-from dt_model.engine.frontend import graph, linearize
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 
 
 def find_node(plan, target_node):

@@ -4,7 +4,7 @@
 
 import threading
 
-from dt_model.engine.atomic import Int
+from civic_digital_twins.dt_model.engine.atomic import Int
 
 
 def test_atomic_int_basic():

@@ -1,7 +1,7 @@
 """Code to evaluate a model in specific conditions."""
 
-from dt_model.model.instantiated_model import InstantiatedModel
-from dt_model.symbols.index import Index
+from ..model.instantiated_model import InstantiatedModel
+from ..symbols.index import Index
 
 
 class Evaluation:

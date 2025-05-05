@@ -9,7 +9,7 @@ This module handles:
 
 The main entry point is the format() function:
 
-    >>> from dt_model.engine.frontend import graph, pretty
+    >>> from civic_digital_twins.dt_model.engine.frontend import graph, pretty
     >>> x = graph.placeholder("x")
     >>> y = graph.add(graph.multiply(x, 2), 1)
     >>> print(pretty.format(y))

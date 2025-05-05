@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dt_model.model.abstract_model import AbstractModel
-from dt_model.model.instantiated_model import InstantiatedModel
-from dt_model.simulation.evaluation import Evaluation
-from dt_model.symbols.constraint import Constraint
-from dt_model.symbols.context_variable import ContextVariable
-from dt_model.symbols.index import Index
-from dt_model.symbols.presence_variable import PresenceVariable
+from ..model.abstract_model import AbstractModel
+from ..model.instantiated_model import InstantiatedModel
+from ..simulation.evaluation import Evaluation
+from ..symbols.constraint import Constraint
+from ..symbols.context_variable import ContextVariable
+from ..symbols.index import Index
+from ..symbols.presence_variable import PresenceVariable
 
 
 class Model:

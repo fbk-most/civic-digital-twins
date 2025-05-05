@@ -4,9 +4,9 @@
 
 import numpy as np
 
-from dt_model.engine.frontend import linearize
-from dt_model.engine.numpybackend import executor
-from dt_model.internal.sympyke import Symbol
+from civic_digital_twins.dt_model.engine.frontend import linearize
+from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model.internal.sympyke import Symbol
 
 
 def test_symbol_basics():
@@ -90,7 +90,7 @@ def test_symbol_multiple_operations():
 def test_symbol_table_values():
     """Test accessing all symbols from the symbol table."""
     # Clear any existing symbols by recreating the table
-    import dt_model.internal.sympyke.symbol as symbol_mod
+    import civic_digital_twins.dt_model.internal.sympyke.symbol as symbol_mod
 
     original_table = symbol_mod.symbol_table
     symbol_mod.symbol_table = symbol_mod._SymbolTable()

@@ -2,7 +2,7 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from dt_model.engine.frontend import graph, pretty
+from civic_digital_twins.dt_model.engine.frontend import graph, pretty
 
 
 def test_basic_pretty_printing():

@@ -27,19 +27,16 @@ or, using `uv`:
 uv add civic-digital-twins
 ```
 
-The installed package name is currently named `dt_model` because
-that was the package name used ahead of releasing. We will eventually
-transition onto a more consistent package name, and deprecate the
-old package name. In the meanwhile, use as follows:
+The main package name is `civic_digital_twins`:
 
 ```Python
-import dt_model
+import civic_digital_twins
 ```
 
 or
 
 ```Python
-from dt_model import Model  # and other classes...
+from civic_digital_twins import dt_model
 ```
 
 ## API Stability Guarantees

@@ -12,8 +12,8 @@ import numpy as np
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
-from dt_model import Ensemble
-from dt_model.examples.molveno.overtourism import (
+from civic_digital_twins.dt_model import Ensemble
+from civic_digital_twins.dt_model.examples.molveno.overtourism import (
     CV_weather,
     I_P_excursionists_reduction_factor,
     I_P_excursionists_saturation_level,
@@ -23,7 +23,7 @@ from dt_model.examples.molveno.overtourism import (
     PV_excursionists,
     PV_tourists,
 )
-from dt_model.internal.sympyke import Symbol
+from civic_digital_twins.dt_model.internal.sympyke import Symbol
 
 # Base situation
 S_Base = {}
