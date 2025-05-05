@@ -1,11 +1,11 @@
-"""Tests for the dt_model.examples.molveno.overtourism module."""
+"""Tests for the dt_model.reference_models.molveno.overtourism module."""
 
 import random
 
 import numpy as np
 
 from civic_digital_twins.dt_model import Constraint, ContextVariable, Ensemble
-from civic_digital_twins.dt_model.examples.molveno.overtourism import (
+from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     CV_season,
     CV_weather,
     CV_weekday,

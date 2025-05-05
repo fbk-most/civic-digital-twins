@@ -13,7 +13,7 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
 from civic_digital_twins.dt_model import Ensemble
-from civic_digital_twins.dt_model.examples.molveno.overtourism import (
+from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     CV_weather,
     I_P_excursionists_reduction_factor,
     I_P_excursionists_saturation_level,
