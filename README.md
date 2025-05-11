@@ -53,8 +53,8 @@ We use [uv](https://astral.sh/uv) for managing the development environment.
 To get started, run:
 
 ```bash
-git clone https://github.com/fbk-most/dt-model
-cd dt-model
+git clone https://github.com/fbk-most/civic-digital-twins
+cd civic-digital-twins
 uv venv
 source .venv/bin/activate
 uv sync --dev
