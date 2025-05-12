@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import cast
+
 from scipy import stats
+
 from civic_digital_twins.dt_model import Index
 from civic_digital_twins.dt_model.model.abstract_model import AbstractModel
 from civic_digital_twins.dt_model.model.instantiated_model import InstantiatedModel
@@ -16,6 +18,7 @@ abstract_model = AbstractModel("M", [], [], [Index("a", 1), Index("b", 2), Index
 
 
 def test_base_instantiated_model():
+    """Test on values of an unmodified instantiated model."""
     inst = InstantiatedModel(abstract_model)
     modified_values = inst.get_values(all=False)
     all_values = inst.get_values(all=True)
@@ -24,6 +27,7 @@ def test_base_instantiated_model():
 
 
 def test_modified_instantiated_model():
+    """Test on values of a modified instantiated model."""
     inst = InstantiatedModel(abstract_model, values={"a": -1, "c": c2})
     modified_values = inst.get_values(all=False)
     all_values = inst.get_values(all=True)
