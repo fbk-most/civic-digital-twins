@@ -1,7 +1,6 @@
 """Allow instantiation of AbstractModel."""
 
 from ..model.abstract_model import AbstractModel
-from ..model.legacy_model import LegacyModel
 
 
 class InstantiatedModel:
@@ -11,7 +10,6 @@ class InstantiatedModel:
         self.abs = abs
         self.name = name if name is not None else abs.name
         self.values = values
-        self.legacy = LegacyModel(name, abs.cvs, abs.pvs, abs.indexes, abs.capacities, abs.constraints)
 
     def get_values(self, all: bool = False) -> dict:
         """
