@@ -4,7 +4,7 @@ import random
 
 import numpy as np
 
-from civic_digital_twins.dt_model import Constraint, ContextVariable, Ensemble
+from civic_digital_twins.dt_model import Constraint, ContextVariable, Ensemble, Evaluation
 from civic_digital_twins.dt_model.internal.sympyke.symbol import Symbol, SymbolValue
 from civic_digital_twins.dt_model.model.instantiated_model import InstantiatedModel
 from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
@@ -72,8 +72,8 @@ def test_fixed_ensemble():
     # Reference the base model
     model = M_Base
 
-    # Reset the model to ensure we can re-evaluate it
-    model.reset()
+    # Instantiate the model
+    instantiated_model = InstantiatedModel(model)
 
     # Manually create a specific ensemble to use
     fixed_orig_situation: dict[ContextVariable, SymbolValue] = {
@@ -93,13 +93,11 @@ def test_fixed_ensemble():
     random.seed(4)
 
     # Evaluate model with fixed inputs and a single ensemble member
-    model.evaluate(
-        {PV_tourists: tourists, PV_excursionists: excursionists},
-        [(1.0, fixed_orig_situation)],
-    )
+    evaluation = Evaluation(instantiated_model, [(1.0, fixed_orig_situation)])
+    evaluation.evaluate_grid({PV_tourists: tourists, PV_excursionists: excursionists})
 
     # Obtain the constraints evaluation results
-    got = model.field_elements
+    got = evaluation.field_elements
     assert got is not None
 
     # Define the expected constraints evaluation result
@@ -156,12 +154,12 @@ def test_fixed_ensemble():
 
     # Verify the model name was correctly set
     assert model.name == "base model"
+    assert instantiated_model.name == "base model"
 
 
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
-    model = M_Base
-    model.reset()
+    instantiated_model = InstantiatedModel(M_Base)
 
     # Create an ensemble with multiple members
     ensemble = []
@@ -177,20 +175,17 @@ def test_multiple_ensemble_members():
     excursionists = np.array([1000, 5000, 10000])
 
     # Evaluate the model with multiple ensemble members
-    result = model.evaluate(
-        {PV_tourists: tourists, PV_excursionists: excursionists},
-        ensemble,
-    )
+    evaluation = Evaluation(instantiated_model, ensemble)
+    result = evaluation.evaluate_grid({PV_tourists: tourists, PV_excursionists: excursionists})
 
     # Just check that it runs without error and returns a result
     assert result is not None
-    assert model.field_elements is not None
+    assert evaluation.field_elements is not None
 
 
 def test_bug_37():
     """Test ensuring that we handle https://github.com/fbk-most/dt-model/issues/37."""
-    model = M_Base
-    model.reset()
+    instantiated_model = InstantiatedModel(M_Base)
 
     # Create a situation containing multiple weather symbols
     #
@@ -198,16 +193,14 @@ def test_bug_37():
     situation: dict[ContextVariable, list[SymbolValue]] = {
         CV_weather: [Symbol("good"), Symbol("unsettled"), Symbol("bad")]
     }
-    ensemble = Ensemble(InstantiatedModel(model.abs), situation, cv_ensemble_size=20)
+    ensemble = Ensemble(instantiated_model, situation, cv_ensemble_size=20)
 
     # This would have failed before https://github.com/fbk-most/dt-model/pull/38.
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
-    result = model.evaluate(
-        {PV_tourists: tourists, PV_excursionists: excursionists},
-        ensemble,
-    )
+    evaluation = Evaluation(instantiated_model, ensemble)
+    result = evaluation.evaluate_grid({PV_tourists: tourists, PV_excursionists: excursionists})
 
     # Just check that it runs without error and returns a result
     assert result is not None
-    assert model.field_elements is not None
+    assert evaluation.field_elements is not None
