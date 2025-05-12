@@ -7,7 +7,7 @@ from ... import (
     Constraint,
     Index,
     LognormDistIndex,
-    Model,
+    AbstractModel,
     PresenceVariable,
     SymIndex,
     TriangDistIndex,
@@ -144,7 +144,7 @@ C_food = Constraint(
 # TODO: what is the better process to create a model? (e.g., adding elements incrementally)
 
 # Base model
-M_Base = Model(
+M_Base = AbstractModel(
     "base model",
     [CV_weekday, CV_season, CV_weather],
     [PV_tourists, PV_excursionists],
