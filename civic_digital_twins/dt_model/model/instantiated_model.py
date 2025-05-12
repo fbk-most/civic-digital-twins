@@ -17,6 +17,6 @@ class InstantiatedModel:
         values = self.values.copy() if self.values is not None else {}
         if all:
             for i in self.abs.indexes + self.abs.capacities:
-               if i.name not in values:
-                   values[i.name] = i.value
+                if i.name not in values:
+                    values[i.name] = i.value
         return values

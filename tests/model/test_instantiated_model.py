@@ -12,10 +12,7 @@ c1 = cast(Distribution, stats.norm(loc=2.0, scale=1.0))
 c2 = cast(Distribution, stats.norm(loc=4.0, scale=1.0))
 d1 = cast(Distribution, stats.uniform(loc=10.0, scale=5.0))
 
-abstract_model = AbstractModel("M", [], [],
-                               [Index("a", 1), Index("b", 2),
-                                Index("c", c1), Index("d", d1)],
-                                [], [])
+abstract_model = AbstractModel("M", [], [], [Index("a", 1), Index("b", 2), Index("c", c1), Index("d", d1)], [], [])
 
 
 def test_base_instantiated_model():
