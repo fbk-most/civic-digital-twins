@@ -1,14 +1,13 @@
 """Code to evaluate a model in specific conditions."""
-import numpy as np
-
 from functools import reduce
 
+import numpy as np
 from scipy import interpolate, ndimage, stats
 
-from ..model.instantiated_model import InstantiatedModel
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..internal.sympyke import symbol
+from ..model.instantiated_model import InstantiatedModel
 from ..symbols.context_variable import ContextVariable
 from ..symbols.index import Distribution, Index
 
@@ -25,6 +24,7 @@ class Evaluation:
         self.field_elements = None
 
     def evaluate_grid(self, grid):
+        """Evaluate the model according to the grid."""
         if self.inst.values is None:
             assignments = {}
         else:

@@ -12,7 +12,7 @@ import numpy as np
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
-from civic_digital_twins.dt_model import InstantiatedModel, Ensemble, Evaluation
+from civic_digital_twins.dt_model import Ensemble, Evaluation, InstantiatedModel
 from civic_digital_twins.dt_model.internal.sympyke import Symbol
 from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     CV_weather,
