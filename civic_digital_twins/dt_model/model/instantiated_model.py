@@ -12,3 +12,11 @@ class InstantiatedModel:
         self.name = name if name is not None else abs.name
         self.values = values
         self.legacy = LegacyModel(name, abs.cvs, abs.pvs, abs.indexes, abs.capacities, abs.constraints)
+
+    def get_values(self, all: bool = False) -> dict:
+        values = self.values.copy() if self.values is not None else {}
+        if all:
+            for i in self.abs.indexes + self.abs.capacities:
+               if i.name not in values:
+                   values[i.name] = i.value
+        return values
