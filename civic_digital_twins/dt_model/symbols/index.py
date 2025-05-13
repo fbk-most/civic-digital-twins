@@ -55,12 +55,8 @@ class Index:
         name: str,
         value: graph.Scalar | Distribution | graph.Node | None,
         cvs: list[ContextVariable] | None = None,
-        group: str | None = None,
-        ref_name: str | None = None,
     ) -> None:
         self.name = name
-        self.group = group
-        self.ref_name = ref_name if ref_name is not None else name
         self.cvs = cvs
 
         # We model a distribution index as a distribution to invoke when
@@ -98,8 +94,6 @@ class UniformDistIndex(Index):
         name: str,
         loc: float,
         scale: float,
-        group: str | None = None,
-        ref_name: str | None = None,
     ) -> None:
         super().__init__(
             name,
@@ -107,8 +101,6 @@ class UniformDistIndex(Index):
                 Distribution,
                 stats.uniform(loc=loc, scale=scale),
             ),
-            group=group,
-            ref_name=ref_name,
         )
         self._loc = loc
         self._scale = scale
@@ -151,8 +143,6 @@ class LognormDistIndex(Index):
         loc: float,
         scale: float,
         s: float,
-        group: str | None = None,
-        ref_name: str | None = None,
     ) -> None:
         super().__init__(
             name,
@@ -160,8 +150,6 @@ class LognormDistIndex(Index):
                 Distribution,
                 stats.lognorm(loc=loc, scale=scale, s=s),
             ),
-            group=group,
-            ref_name=ref_name,
         )
         self._loc = loc
         self._scale = scale
@@ -217,8 +205,6 @@ class TriangDistIndex(Index):
         loc: float,
         scale: float,
         c: float,
-        group: str | None = None,
-        ref_name: str | None = None,
     ) -> None:
         super().__init__(
             name,
@@ -226,8 +212,6 @@ class TriangDistIndex(Index):
                 Distribution,
                 stats.triang(loc=loc, scale=scale, c=c),
             ),
-            group=group,
-            ref_name=ref_name,
         )
         self._loc = loc
         self._scale = scale
@@ -281,10 +265,8 @@ class ConstIndex(Index):
         self,
         name: str,
         v: float,
-        group: str | None = None,
-        ref_name: str | None = None,
     ) -> None:
-        super().__init__(name, v, group=group, ref_name=ref_name)
+        super().__init__(name, v)
         self._v = v
 
     @property
@@ -313,10 +295,8 @@ class SymIndex(Index):
         name: str,
         value: graph.Node,
         cvs: list[ContextVariable] | None = None,
-        group: str | None = None,
-        ref_name: str | None = None,
     ) -> None:
-        super().__init__(name, value, cvs, group=group, ref_name=ref_name)
+        super().__init__(name, value, cvs)
         self.sym_value = value
 
     def __str__(self):
