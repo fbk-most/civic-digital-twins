@@ -12,7 +12,7 @@ import numpy as np
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
-from civic_digital_twins.dt_model import Ensemble
+from civic_digital_twins.dt_model import Ensemble, Evaluation, InstantiatedModel
 from civic_digital_twins.dt_model.internal.sympyke import Symbol
 from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     CV_weather,
@@ -24,6 +24,9 @@ from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     PV_excursionists,
     PV_tourists,
 )
+
+# Instantiate the model
+IM_Base = InstantiatedModel(M_Base)
 
 # Base situation
 S_Base = {}
@@ -58,7 +61,8 @@ def plot_scenario(ax, model, situation, title):
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
     xx, yy = np.meshgrid(tt, ee)
-    zz = model.evaluate({PV_tourists: tt, PV_excursionists: ee}, ensemble)
+    evaluation = Evaluation(model, ensemble)
+    zz = evaluation.evaluate_grid({PV_tourists: tt, PV_excursionists: ee})
 
     sample_tourists = [
         sample
@@ -80,26 +84,26 @@ def plot_scenario(ax, model, situation, title):
     sample_tourists = [
         presence_transformation(
             presence,
-            model.get_index_mean_value(I_P_tourists_reduction_factor),
-            model.get_index_mean_value(I_P_tourists_saturation_level),
+            evaluation.get_index_mean_value(I_P_tourists_reduction_factor),
+            evaluation.get_index_mean_value(I_P_tourists_saturation_level),
         )
         for presence in sample_tourists
     ]
     sample_excursionists = [
         presence_transformation(
             presence,
-            model.get_index_mean_value(I_P_excursionists_reduction_factor),
-            model.get_index_mean_value(I_P_excursionists_saturation_level),
+            evaluation.get_index_mean_value(I_P_excursionists_reduction_factor),
+            evaluation.get_index_mean_value(I_P_excursionists_saturation_level),
         )
         for presence in sample_excursionists
     ]
 
     # TODO: move elsewhere, it cannot be computed this way...
-    area = model.compute_sustainable_area()
-    index = model.compute_sustainability_index(list(zip(sample_tourists, sample_excursionists)))
-    indexes = model.compute_sustainability_index_per_constraint(list(zip(sample_tourists, sample_excursionists)))
+    area = evaluation.compute_sustainable_area()
+    index = evaluation.compute_sustainability_index(list(zip(sample_tourists, sample_excursionists)))
+    indexes = evaluation.compute_sustainability_index_per_constraint(list(zip(sample_tourists, sample_excursionists)))
     critical = min(indexes, key=indexes.get)
-    modals = model.compute_modal_line_per_constraint()
+    modals = evaluation.compute_modal_line_per_constraint()
 
     ax.pcolormesh(xx, yy, zz, cmap="coolwarm_r", vmin=0.0, vmax=1.0)
     for modal in modals.values():
@@ -115,15 +119,13 @@ def plot_scenario(ax, model, situation, title):
     ax.set_xlim(left=0, right=t_max)
     ax.set_ylim(bottom=0, top=e_max)
 
-    model.reset()
-
 
 start_time = time.time()
 
 fig, axs = plt.subplots(1, 3, figsize=(18, 10), layout="constrained")
-plot_scenario(axs[0], M_Base, S_Base, "Base")
-plot_scenario(axs[1], M_Base, S_Good_Weather, "Good weather")
-plot_scenario(axs[2], M_Base, S_Bad_Weather, "Bad weather")
+plot_scenario(axs[0], IM_Base, S_Base, "Base")
+plot_scenario(axs[1], IM_Base, S_Good_Weather, "Good weather")
+plot_scenario(axs[2], IM_Base, S_Bad_Weather, "Bad weather")
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
 fig.supxlabel("Tourists", fontsize=18)
 fig.supylabel("Excursionists", fontsize=18)

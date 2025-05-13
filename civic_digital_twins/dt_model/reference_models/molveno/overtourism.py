@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from ... import (
+    AbstractModel,
     CategoricalContextVariable,
     Constraint,
     Index,
     LognormDistIndex,
-    Model,
     PresenceVariable,
     SymIndex,
     TriangDistIndex,
@@ -144,7 +144,7 @@ C_food = Constraint(
 # TODO: what is the better process to create a model? (e.g., adding elements incrementally)
 
 # Base model
-M_Base = Model(
+M_Base = AbstractModel(
     "base model",
     [CV_weekday, CV_season, CV_weather],
     [PV_tourists, PV_excursionists],
