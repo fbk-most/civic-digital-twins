@@ -1,4 +1,5 @@
 """Code to evaluate a model in specific conditions."""
+
 from functools import reduce
 
 import numpy as np
@@ -128,7 +129,6 @@ class Evaluation:
         self.field_elements = field_elements
         return self.field
 
-
     def evaluate_usage(self, presences):
         """Evaluate the model according to the presence argument."""
         if self.inst.values is None:
@@ -211,7 +211,6 @@ class Evaluation:
         """Get the value of the given index."""
         assert self.index_vals is not None
         return self.index_vals[i.node]
-
 
     def get_index_mean_value(self, i: Index) -> float:
         """Get the mean value of the given index."""
