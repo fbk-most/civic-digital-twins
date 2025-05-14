@@ -1,3 +1,3 @@
-"""Tests for the civic-digital-twins package."""
+"""Tests for the civic_digital_twins package."""
 
 # SPDX-License-Identifier: Apache-2.0
