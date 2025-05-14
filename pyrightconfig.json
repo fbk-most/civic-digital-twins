@@ -11,5 +11,7 @@
     "civic_digital_twins/dt_model/simulation/evaluation.py",
     "civic_digital_twins/dt_model/symbols/context_variable.py",
     "civic_digital_twins/dt_model/symbols/presence_variable.py"
-  ]
+  ],
+  "venvPath": ".",
+  "venv": ".venv"
 }
