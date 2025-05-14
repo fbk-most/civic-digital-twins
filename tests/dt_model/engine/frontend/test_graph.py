@@ -1,4 +1,4 @@
-"""Tests for the dt_model.engine.frontend.graph module."""
+"""Tests for the civic_digital_twins.dt_model.engine.frontend.graph module."""
 
 # SPDX-License-Identifier: Apache-2.0
 

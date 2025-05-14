@@ -1,4 +1,4 @@
-"""Tests for InstantiatedModel class."""
+"""Tests for civic_digital_twins.dt_model.model.InstantiatedModel class."""
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import cast

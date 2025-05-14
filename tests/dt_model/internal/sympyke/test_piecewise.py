@@ -1,4 +1,4 @@
-"""Tests for the dt_model.internal.sympyke.piecewise package."""
+"""Tests for the civic_digital_twins.dt_model.internal.sympyke.piecewise package."""
 
 # SPDX-License-Identifier: Apache-2.0
 

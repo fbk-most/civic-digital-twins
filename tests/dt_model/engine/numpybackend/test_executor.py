@@ -1,4 +1,4 @@
-"""Tests for the dt_model.engine.numpybackend.executor module."""
+"""Tests for the civic_digital_twins.dt_model.engine.numpybackend.executor module."""
 
 # SPDX-License-Identifier: Apache-2.0
 

@@ -1,4 +1,4 @@
-"""Tests for ContextVariable classes."""
+"""Tests for civic_digital_twins.dt_model.symbols.ContextVariable classes."""
 
 # SPDX-License-Identifier: Apache-2.0
 

@@ -1,4 +1,4 @@
-"""Tests for the dt_model.internal.sympyke.operators module."""
+"""Tests for the civic_digital_twins.dt_model.internal.sympyke.operators module."""
 
 # SPDX-License-Identifier: Apache-2.0
 

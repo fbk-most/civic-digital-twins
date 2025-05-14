@@ -1,4 +1,4 @@
-"""Tests for the dt_model.reference_models.molveno.overtourism module."""
+"""Tests for the civic_digital_twins.dt_model.reference_models.molveno.overtourism module."""
 
 import random
 

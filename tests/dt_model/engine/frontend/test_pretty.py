@@ -1,4 +1,4 @@
-"""Tests for the yakof.frontend.pretty module."""
+"""Tests for the civic_digital_twins.dt_model.engine.frontend.pretty module."""
 
 # SPDX-License-Identifier: Apache-2.0
 

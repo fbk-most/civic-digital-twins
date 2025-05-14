@@ -1,4 +1,4 @@
-"""Tests for the dt_model.engine.atomic.Int type."""
+"""Tests for the civic_digital_twins.dt_model.engine.atomic.Int type."""
 
 # SPDX-License-Identifier: Apache-2.0
 
