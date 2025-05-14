@@ -9,7 +9,6 @@ from ... import (
     Index,
     LognormDistIndex,
     PresenceVariable,
-    SymIndex,
     TriangDistIndex,
     UniformCategoricalContextVariable,
     UniformDistIndex,
@@ -85,31 +84,20 @@ I_P_excursionists_reduction_factor = Index("excursionists reduction factor", 1.0
 I_P_tourists_saturation_level = Index("tourists saturation level", 10000)
 I_P_excursionists_saturation_level = Index("excursionists saturation level", 10000)
 
-
 # Constraints
 
 C_parking = Constraint(
-    usage=SymIndex(
-        name="",
-        value=(
-            PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
-            + PV_excursionists.node
-            * I_U_excursionists_parking.node
-            / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node)
-        ),
-    ),
+    usage=PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
+    + PV_excursionists.node
+    * I_U_excursionists_parking.node
+    / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node),
     capacity=I_C_parking,
     name="parking",
 )
 
 C_beach = Constraint(
-    usage=SymIndex(
-        name="",
-        value=(
-            PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
-            + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node
-        ),
-    ),
+    usage=PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
+    + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node,
     capacity=I_C_beach,
     name="beach",
 )
@@ -119,9 +107,7 @@ C_beach = Constraint(
 #                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
 C_accommodation = Constraint(
-    usage=SymIndex(
-        name="", value=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node
-    ),
+    usage=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node,
     capacity=I_C_accommodation,
     name="accommodation",
 )
@@ -131,11 +117,8 @@ C_accommodation = Constraint(
 #                              PV_excursionists * I_U_excursionists_food,
 #                     capacity=I_C_food * I_Xa_visitors_food * I_Xo_visitors_food)
 C_food = Constraint(
-    usage=SymIndex(
-        name="",
-        value=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
-        / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
-    ),
+    usage=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
+    / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
     capacity=I_C_food,
     name="food",
 )
