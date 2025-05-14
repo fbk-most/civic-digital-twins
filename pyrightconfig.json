@@ -2,12 +2,13 @@
   "typeCheckingMode": "standard",
   "useLibraryCodeForTypes": true,
   "pythonVersion": "3.11",
-  "include": ["dt_model", "tests"],
+  "include": ["civic_digital_twins", "tests"],
   "exclude": [
     "civic_digital_twins/dt_model/reference_models/molveno/overtourism.py",
     "civic_digital_twins/dt_model/reference_models/molveno/presence_stats.py",
     "civic_digital_twins/dt_model/model/legacy_model.py",
     "civic_digital_twins/dt_model/model/model.py",
+    "civic_digital_twins/dt_model/simulation/evaluation.py",
     "civic_digital_twins/dt_model/symbols/context_variable.py",
     "civic_digital_twins/dt_model/symbols/presence_variable.py"
   ]
