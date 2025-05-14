@@ -10,7 +10,8 @@ resource and the usage of that resource. We model two types of constraints:
 
 from __future__ import annotations
 
-from .index import Index
+from ..engine.frontend import graph
+from .index import Index, SymIndex
 
 
 class Constraint:
@@ -22,18 +23,10 @@ class Constraint:
 
     def __init__(
         self,
-        usage: Index,
+        usage: graph.Node,
         capacity: Index,
-        group: str | None = None,
         name: str = "",
     ) -> None:
-        self.usage = usage
+        self.usage = SymIndex(name="", value=usage)
         self.capacity = capacity
         self.name = name
-
-        # TODO(bassosimone): this field is only used by the view. We could consider
-        # deprecating it and moving the view mapping logic inside the view itself, which
-        # would work as intended as long as we have a working __hash__. By doing this,
-        # we would probably reduce the churn and coupling between the computational
-        # model and the related view.
-        self.group = group
