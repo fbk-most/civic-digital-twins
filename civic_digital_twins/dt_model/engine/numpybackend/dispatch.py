@@ -5,6 +5,12 @@ to their concrete NumPy implementations. To extend the system with new operation
 simply add entries to the appropriate dispatch table.
 """
 
+# SPDX-License-Identifier: Apache-2.0
+
+# TODO(bassosimone): consider merging with executor.py. We originally
+# needed this file in yakof to support multiple evaluators. Yet, we did
+# not land such code in this repository.
+
 from typing import Callable, TypeAlias
 
 import numpy as np

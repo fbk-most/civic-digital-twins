@@ -31,7 +31,7 @@ from __future__ import annotations
 from . import graph
 
 
-def forest(*leaves: graph.Node) -> list[graph.Node]:
+def forest(*leaves: graph.Node, stopat: set[graph.Node] | None = None) -> list[graph.Node]:
     """
     Linearize a computation forest (multiple output nodes) into an execution plan.
 
@@ -46,6 +46,9 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
     Args:
         *leaves: the nodes to start the linearization process from. Use the
             unpacking operator `*` to pass a list of nodes.
+
+        stopat: visit, but do not recurse into, the nodes in this set, if
+            any, to enable limiting the depth of the overall visit.
 
     Returns
     -------
@@ -97,12 +100,14 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
         # Register that we're visiting this node
         visiting.add(node)
 
-        # Get dependent nodes based on this node's type
-        deps = _get_dependencies(node)
+        # Check whether we need to recurse into the node
+        if stopat is None or node not in stopat:
+            # Get dependent nodes based on this node's type
+            deps = _get_dependencies(node)
 
-        # Visit all dependencies first
-        for dep in deps:
-            _visit(dep)
+            # Visit all dependencies first
+            for dep in deps:
+                _visit(dep)
 
         # We are not visiting this node anymore
         visiting.remove(node)
