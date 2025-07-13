@@ -82,6 +82,39 @@ Design Decisions
    - Nodes are identified by their instance identity
    - Enables graph traversal and transformation
 
+4. Gradual Typing:
+    - Produce error squiggles for explicitly typed nodes
+    - No error squiggles otherwise
+
+Gradual Typing
+--------------
+
+The `Node` class is actually `Node[T]`. If you explicitly
+assign types using `placeholder` and `constant`, the
+type checker will produce squiggles for mismatched operations.
+
+If at least a node is untyped, then operations are always
+possible without error squiggles.
+
+For example:
+
+    class TimeDimension:
+        '''Represents the time dimension.'''
+
+    class EnsembleDimension:
+        '''Represents the ensemble dimension.'''
+
+    a = graph.constant[TimeDimension](14)
+    b = graph.constant[EnsembleDimension](117)
+    c = a + b  # This line produces a squiggle due to incompatible types
+
+    d = graph.constant[TimeDimension](14)
+    e = graph.constant(117)
+    f = d + e  # No squiggles, untyped nodes default to Unknown
+
+This module's code contains comments explaining how to upgrade
+to a stricted version of type checking with Python>=3.13.
+
 Node Identity and Equality
 --------------------------
 
@@ -110,7 +143,7 @@ This behavior impacts code that needs to find nodes in collections like lists:
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Generic, Sequence, TypeVar
 
 from .. import atomic
 
@@ -131,13 +164,56 @@ NODE_FLAG_BREAK = 1 << 1
 _id_generator = atomic.Int()
 """Atomic integer generator for unique node IDs."""
 
+# Evolving the Typing Strategy
+# ----------------------------
+#
+# Node(Generic[T]) enables static type checking: if all participating nodes
+# are explicitly typed, Pyright will issue squiggles on mismatched operations.
+# Otherwise, it behaves like pre-typed code — fully flexible but unchecked.
+#
+# This behavior is documented in the module docstring. Here, we outline how
+# to migrate to stricter type checking once @scc-digitalhub permits it.
+#
+# Currently, we target Python <= 3.11. When the runtime environment (e.g.,
+# @scc-digitalhub) upgrades to Python >= 3.13 and `pyrightconfig.json` is
+# updated accordingly, we could rewrite the following code like so:
+#
+#   class Erased:
+#       """Represents a type-erased dimension."""
+#
+#   T = TypeVar("T", default=Erased)  # requires Python >= 3.13
+#   C = TypeVar("C", default=Erased)  # ditto
+#
+#   def erase(node: Node[T]) -> Node[Erased]:
+#       """Explicitly erase the type of a node."""
+#       return cast(Node[Erased], node)
+#
+# With this setup, untyped nodes default to `Node[Erased]` instead of
+# `Node[Unknown]`, and type operations like `a + b` are only allowed if
+# both operands have the exact same type — including `Erased`.
+#
+# This allows us to enforce strict typing discipline, while still permitting
+# intentional erasure (via `erase(...)`) at evaluation time.
+#
+# In that world, downstream modules (e.g., `linearize.py`) could be typed to
+# accept only `Node[Erased]`, effectively forcing the compiler (which lives
+# outside the frontend) to apply type erasure explicitly before evaluation.
+#
+# TODO(bassosimone): Revisit this migration path once Python >= 3.13 is supported.
 
-def ensure_node(value: Node | Scalar) -> Node:
+T = TypeVar("T")
+"""Type associated with a Node."""
+
+C = TypeVar("C")
+"""Type associated with boolean conditions."""
+
+
+def ensure_node(value: Node[T] | Scalar) -> Node[T]:
     """Convert a scalar value to a constant node if necessary."""
     return value if isinstance(value, Node) else constant(value)
 
 
-class Node:
+class Node(Generic[T]):
     """
     Base class for all computation graph nodes.
 
@@ -168,96 +244,96 @@ class Node:
         return id(self)
 
     # Arithmetic operators
-    def __add__(self, other: Node | Scalar) -> Node:
+    def __add__(self, other: Node[T] | Scalar) -> Node[T]:
         """Add two nodes or a node and a scalar."""
         return add(self, ensure_node(other))
 
-    def __radd__(self, other: Node | Scalar) -> Node:
+    def __radd__(self, other: Node[T] | Scalar) -> Node[T]:
         """Add two nodes or a node and a scalar."""
         return add(ensure_node(other), self)
 
-    def __sub__(self, other: Node | Scalar) -> Node:
+    def __sub__(self, other: Node[T] | Scalar) -> Node[T]:
         """Subtract two nodes or a node and a scalar."""
         return subtract(self, ensure_node(other))
 
-    def __rsub__(self, other: Node | Scalar) -> Node:
+    def __rsub__(self, other: Node[T] | Scalar) -> Node[T]:
         """Subtract two nodes or a node and a scalar."""
         return subtract(ensure_node(other), self)
 
-    def __mul__(self, other: Node | Scalar) -> Node:
+    def __mul__(self, other: Node[T] | Scalar) -> Node[T]:
         """Multiply two nodes or a node and a scalar."""
         return multiply(self, ensure_node(other))
 
-    def __rmul__(self, other: Node | Scalar) -> Node:
+    def __rmul__(self, other: Node[T] | Scalar) -> Node[T]:
         """Multiply two nodes or a node and a scalar."""
         return multiply(ensure_node(other), self)
 
-    def __truediv__(self, other: Node | Scalar) -> Node:
+    def __truediv__(self, other: Node[T] | Scalar) -> Node[T]:
         """Divide two nodes or a node and a scalar."""
         return divide(self, ensure_node(other))
 
-    def __rtruediv__(self, other: Node | Scalar) -> Node:
+    def __rtruediv__(self, other: Node[T] | Scalar) -> Node[T]:
         """Divide two nodes or a node and a scalar."""
         return divide(ensure_node(other), self)
 
     # Comparison operators
     #
     # See the companion `__hash__` comment.
-    def __eq__(self, other: Node | Scalar) -> Node:  # type: ignore
+    def __eq__(self, other: Node[T] | Scalar) -> Node[T]:  # type: ignore
         """Lazily check whether two nodes are equal."""
         return equal(self, ensure_node(other))
 
-    def __ne__(self, other: Node | Scalar) -> Node:  # type: ignore
+    def __ne__(self, other: Node[T] | Scalar) -> Node[T]:  # type: ignore
         """Lazily check whether two nodes are not equal."""
         return not_equal(self, ensure_node(other))
 
-    def __lt__(self, other: Node | Scalar) -> Node:
+    def __lt__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is less than another."""
         return less(self, ensure_node(other))
 
-    def __le__(self, other: Node | Scalar) -> Node:
+    def __le__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is less than or equal to another."""
         return less_equal(self, ensure_node(other))
 
-    def __gt__(self, other: Node | Scalar) -> Node:
+    def __gt__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is greater than another."""
         return greater(self, ensure_node(other))
 
-    def __ge__(self, other: Node | Scalar) -> Node:
+    def __ge__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is greater than or equal to another."""
         return greater_equal(self, ensure_node(other))
 
     # Logical operators
-    def __and__(self, other: Node | Scalar) -> Node:
+    def __and__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically and with another."""
         return logical_and(self, ensure_node(other))
 
-    def __rand__(self, other: Node | Scalar) -> Node:
+    def __rand__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically and with another."""
         return logical_and(ensure_node(other), self)
 
-    def __or__(self, other: Node | Scalar) -> Node:
+    def __or__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically or with another."""
         return logical_or(self, ensure_node(other))
 
-    def __ror__(self, other: Node | Scalar) -> Node:
+    def __ror__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically or with another."""
         return logical_or(ensure_node(other), self)
 
-    def __xor__(self, other: Node | Scalar) -> Node:
+    def __xor__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically xor with another."""
         return logical_xor(self, ensure_node(other))
 
-    def __rxor__(self, other: Node | Scalar) -> Node:
+    def __rxor__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically xor with another."""
         return logical_xor(ensure_node(other), self)
 
-    def __invert__(self) -> Node:
+    def __invert__(self) -> Node[T]:
         """Lazily check whether one node is logically not."""
         return logical_not(self)
 
 
-class constant(Node):
+class constant(Generic[T], Node[T]):
     """A constant scalar value in the computation graph.
 
     Args:
@@ -269,7 +345,7 @@ class constant(Node):
         self.value = value
 
 
-class placeholder(Node):
+class placeholder(Generic[T], Node[T]):
     """Named placeholder for a value to be provided during evaluation.
 
     Args:
@@ -282,7 +358,7 @@ class placeholder(Node):
         self.default_value = default_value
 
 
-class BinaryOp(Node):
+class BinaryOp(Generic[T], Node[T]):
     """Base class for binary operations.
 
     Args:
@@ -290,7 +366,7 @@ class BinaryOp(Node):
         right: Second input node
     """
 
-    def __init__(self, left: Node, right: Node) -> None:
+    def __init__(self, left: Node[T], right: Node[T]) -> None:
         super().__init__()
         self.left = left
         self.right = right
@@ -299,88 +375,88 @@ class BinaryOp(Node):
 # Arithmetic operations
 
 
-class add(BinaryOp):
+class add(Generic[T], BinaryOp[T]):
     """Element-wise addition of two tensors."""
 
 
-class subtract(BinaryOp):
+class subtract(Generic[T], BinaryOp[T]):
     """Element-wise subtraction of two tensors."""
 
 
-class multiply(BinaryOp):
+class multiply(Generic[T], BinaryOp[T]):
     """Element-wise multiplication of two tensors."""
 
 
-class divide(BinaryOp):
+class divide(Generic[T], BinaryOp[T]):
     """Element-wise division of two tensors."""
 
 
 # Comparison operations
 
 
-class equal(BinaryOp):
+class equal(Generic[T], BinaryOp[T]):
     """Element-wise equality comparison of two tensors."""
 
 
-class not_equal(BinaryOp):
+class not_equal(Generic[T], BinaryOp[T]):
     """Element-wise inequality comparison of two tensors."""
 
 
-class less(BinaryOp):
+class less(Generic[T], BinaryOp[T]):
     """Element-wise less-than comparison of two tensors."""
 
 
-class less_equal(BinaryOp):
+class less_equal(Generic[T], BinaryOp[T]):
     """Element-wise less-than-or-equal comparison of two tensors."""
 
 
-class greater(BinaryOp):
+class greater(Generic[T], BinaryOp[T]):
     """Element-wise greater-than comparison of two tensors."""
 
 
-class greater_equal(BinaryOp):
+class greater_equal(Generic[T], BinaryOp[T]):
     """Element-wise greater-than-or-equal comparison of two tensors."""
 
 
 # Logical operations
 
 
-class logical_and(BinaryOp):
+class logical_and(Generic[T], BinaryOp[T]):
     """Element-wise logical AND of two boolean tensors."""
 
 
-class logical_or(BinaryOp):
+class logical_or(Generic[T], BinaryOp[T]):
     """Element-wise logical OR of two boolean tensors."""
 
 
-class logical_xor(BinaryOp):
+class logical_xor(Generic[T], BinaryOp[T]):
     """Element-wise logical XOR of two boolean tensors."""
 
 
-class UnaryOp(Node):
+class UnaryOp(Generic[T], Node[T]):
     """Base class for unary operations.
 
     Args:
         node: Input node
     """
 
-    def __init__(self, node: Node) -> None:
+    def __init__(self, node: Node[T]) -> None:
         super().__init__()
         self.node = node
 
 
-class logical_not(UnaryOp):
+class logical_not(Generic[T], UnaryOp[T]):
     """Element-wise logical NOT of a boolean tensor."""
 
 
 # Math operations
 
 
-class exp(UnaryOp):
+class exp(Generic[T], UnaryOp[T]):
     """Element-wise exponential of a tensor."""
 
 
-class power(BinaryOp):
+class power(Generic[T], BinaryOp[T]):
     """Element-wise power operation (first tensor raised to power of second)."""
 
 
@@ -388,18 +464,18 @@ pow = power
 """Name alias for power, for compatibility with NumPy naming."""
 
 
-class log(UnaryOp):
+class log(Generic[T], UnaryOp[T]):
     """Element-wise natural logarithm of a tensor."""
 
 
-class maximum(BinaryOp):
+class maximum(Generic[T], BinaryOp[T]):
     """Element-wise maximum of two tensors."""
 
 
 # Conditional operations
 
 
-class where(Node):
+class where(Generic[C, T], Node[T]):
     """Selects elements from tensors based on a condition.
 
     Args:
@@ -408,14 +484,14 @@ class where(Node):
         otherwise: Values to use where condition is False
     """
 
-    def __init__(self, condition: Node, then: Node, otherwise: Node) -> None:
+    def __init__(self, condition: Node[C], then: Node[T], otherwise: Node[T]) -> None:
         super().__init__()
         self.condition = condition
         self.then = then
         self.otherwise = otherwise
 
 
-class multi_clause_where(Node):
+class multi_clause_where(Generic[C, T], Node[T]):
     """Selects elements from tensors based on multiple conditions.
 
     Args:
@@ -423,7 +499,7 @@ class multi_clause_where(Node):
         default_value: Value to use when no condition is met
     """
 
-    def __init__(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> None:
+    def __init__(self, clauses: Sequence[tuple[Node[C], Node[T]]], default_value: Node[T]) -> None:
         super().__init__()
         self.clauses = clauses
         self.default_value = default_value
@@ -432,7 +508,7 @@ class multi_clause_where(Node):
 # Shape-changing operations
 
 
-class AxisOp(Node):
+class AxisOp(Generic[T], Node[T]):
     """Base class for axis manipulation operations.
 
     We use these operations to expand a tensor to a higher-dimensional
@@ -444,24 +520,24 @@ class AxisOp(Node):
         axis: Axis specification
     """
 
-    def __init__(self, node: Node, axis: Axis) -> None:
+    def __init__(self, node: Node[T], axis: Axis) -> None:
         super().__init__()
         self.node = node
         self.axis = axis
 
 
-class expand_dims(AxisOp):
+class expand_dims(Generic[T], AxisOp[T]):
     """Adds new axes of size 1 to a tensor's shape.
 
     This expands the tensor to a higher-dimensional space.
     """
 
 
-class squeeze(AxisOp):
+class squeeze(Generic[T], AxisOp[T]):
     """Removes axes of size 1 from a tensor's shape."""
 
 
-class project_using_sum(AxisOp):
+class project_using_sum(Generic[T], AxisOp[T]):
     """Computes sum of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
@@ -474,7 +550,7 @@ uses this name. We will remove this symbol once the merge of yakof into
 the dt-model is complete."""
 
 
-class project_using_mean(AxisOp):
+class project_using_mean(Generic[T], AxisOp[T]):
     """Computes mean of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
@@ -490,7 +566,7 @@ yakof into the dt-model is complete."""
 # Debug operations
 
 
-def tracepoint(node: Node) -> Node:
+def tracepoint(node: Node[T]) -> Node[T]:
     """
     Mark the node as a tracepoint and returns it.
 
@@ -505,7 +581,7 @@ def tracepoint(node: Node) -> Node:
     return node
 
 
-def breakpoint(node: Node) -> Node:
+def breakpoint(node: Node[T]) -> Node[T]:
     """
     Mark the node as a breakpoint and returns it.
 
