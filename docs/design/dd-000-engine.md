@@ -43,15 +43,11 @@ operations involving those nodes.
 trees. Each tree represents a computation function: it consumes input
 nodes (placeholders or outputs from other trees) and produces a
 result. This is functionally equivalent to a pure Python function. The
-programmer explicitly decides which trees to create. The input nodes
-are either input for the overall DAG (called *placeholders*) or
-nodes computed by other trees. Therefore, there is an explicit order
-in which trees must be evaluated. Nodes within a tree are
+programmer explicitly decides which trees to create. Trees are
 [topologically sorted](https://en.wikipedia.org/wiki/Topological_sorting),
-meaning that they are sorted by the order in which they should be
-evaluated. That is, if node *B* depends on node *A*, then node *A*
-is sorted before node *B*. Also trees are topologically sorted, meaning
-that they are returned in the desired evaluation order.
+that is, returned in the order in which they must be evaluated. Each
+tree contains list of nodes to evaluate to produce the tree result. Nodes
+within a tree are also topologically sorted.
 
 **Support for Multiple Backends.** The trees are abstract and
 may be evaluated by distinct backends. Currently, we only implement
