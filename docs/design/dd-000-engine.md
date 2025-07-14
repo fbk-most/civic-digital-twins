@@ -446,7 +446,6 @@ on nodes computed by other trees and models a function for
 computing the output node value given the inputs.
 
 The corresponding module is [frontend/forest.py](../../civic_digital_twins/dt_model/engine/frontend/forest.py).
-
 To perform tree partitioning, we use `forest.partition`.
 
 The general guideline is to partition the DAG using as roots the
