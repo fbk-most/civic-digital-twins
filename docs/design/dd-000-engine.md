@@ -435,7 +435,7 @@ we are basically selecting the subgraph tree rooted in `c`.
 With topological sorting, we already have a powerful way
 of transforming a DAG into an actionable sequence of operations
 for producing a value. However, we generally split the whole DAG
-into subgraphs (called trees) to isolate the computation
+into subgraph trees to isolate the computation
 required to produce each output node. This makes
 the DAG easier to understand by separating the computation
 required by each output neatly.
