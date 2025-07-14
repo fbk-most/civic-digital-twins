@@ -429,7 +429,8 @@ c = graph.exp(a) + 55 / a
 ```
 
 Also, note that when we perform a topological sorting targeting
-`c`, we only see the relevant DAG nodes.
+`c`, we only see the relevant DAG nodes. This makes sense because
+we are basically selecting the subgraph tree rooted in `c`.
 
 With topological sorting, we already have a powerful way
 of transforming a DAG into an actionable sequence of operations
