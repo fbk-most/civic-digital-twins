@@ -865,7 +865,7 @@ code upon which the research code depends. We should aim to be
 confident that each line is executed at least once and does not crash.
 Also, we SHOULD have tests in place ensuring that a graph produces the same
 numerical result of the equivalent NumPy code. (As of 2025-07-14,
-this is currently the case, we should keep up the good work!)
+this is currently the case, yay!)
 
 ## Future Work
 
