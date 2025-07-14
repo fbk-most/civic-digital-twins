@@ -840,6 +840,9 @@ To summarize:
 | Step-by-step | Easy to debug, transparent | Slower on repeated runs | Development, testing |
 | JIT (Numba) | Fast on hot paths | Opaque, recompiles on shape or dtype change | Production, repeated queries |
 
+Yet, this is the theory. In practice, we would need to
+profile and determine when we need Numba.
+
 ## Error Handling
 
 The topological sorting algorithm will detect cycles
