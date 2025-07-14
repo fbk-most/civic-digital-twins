@@ -78,7 +78,8 @@ result of evaluating the tree (a `np.ndarray`) and applies an
 algorithm to transform it to another `np.ndarray`. For example,
 we can apply [fixed-point iteration](https://en.wikipedia.org/wiki/Fixed-point_iteration)
 to modify the tree-computed results. Because these filters are
-purely numeric, they can also be JIT-compiled with Numba.
+purely numeric, they can also be JIT-compiled with Numba by
+applying the proper `@numba.njit` decorator.
 
 ## End-To-End Example
 
