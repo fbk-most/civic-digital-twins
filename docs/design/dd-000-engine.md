@@ -728,7 +728,7 @@ state = executor.State(
 # ...
 ```
 
-The presence of `executor.FLAG_JIT` instructs the `executor` to
+The presence of `compileflags.JIT` instructs the `executor` to
 JIT-compile with Numba rather than using the step-by-step interpreter
 discussed in the previous section.
 
@@ -777,7 +777,7 @@ is the internal module used to generate AST from a tree.
 
 Step-by-step evaluation is recommended for debugging. For
 example, to get a step-by-step trace of each node that
-is executed, you can use the `FLAG_TRACE` flag as follows:
+is executed, you can use the `compileflags.TRACE` flag as follows:
 
 ```Python
 # ...
@@ -797,7 +797,7 @@ state = executor.State(
 # ...
 ```
 
-You can combine this with `FLAG_BREAK` to stop the
+You can combine this with `compileflags.BREAK` to stop the
 execution *after* a node has been evaluated:
 
 ```Python
