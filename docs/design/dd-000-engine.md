@@ -523,9 +523,9 @@ graph TD
   style T12 fill:transparent,stroke:none
 ```
 
-We omit intermediate nodes and only highlight input and output
+Where we omit intermediate nodes and only highlight input and output
 nodes for each tree. (To some extent, intermediate nodes are
-abstracted away by partitioning the DAG.)
+abstracted away by partitioning the DAG and treating trees as functions.)
 
 In terms of actual implementation a minimal tree is like:
 
