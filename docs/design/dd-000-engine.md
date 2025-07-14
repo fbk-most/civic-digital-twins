@@ -869,20 +869,18 @@ this is currently the case, yay!)
 
 ## Future Work
 
-We lack a mechanism for profiling the evaluation of individual trees,
+- We lack a mechanism for profiling the evaluation of individual trees,
 which could guide decisions regarding the correct partitioning as
-well as on whether the `executor` is sufficient. Ideally, we could
-even switch at runtime, but, more realistically, we can just have
-a way of tracking the time spent in each tree evaluation.
+well as on whether to use Numba.
 
-Numeric filters (e.g., fixed-point iterations post tree evaluation)
+- Numeric filters (e.g., fixed-point iterations post tree evaluation)
 are supported in the design but not yet implemented in the codebase.
 
 ## Conclusion
 
 The compiler provides a complete pipeline: representing computations
 as DAGs, partitioning them into evaluable units, and supporting
-multiple execution strategies, including a Python-based step-by-step
+multiple execution strategies, including a step-by-step
 interpreter and JIT-compilation using Numba. This enables flexibility
 in balancing debuggability and performance, and allows the system to adapt
 to future workloads or computational backends.
