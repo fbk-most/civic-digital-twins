@@ -1,6 +1,6 @@
 # Civic-Digital-Twins Modeling Framework
 
-[![Build Status](https://github.com/fbk-most/dt-model/actions/workflows/test.yml/badge.svg)](https://github.com/fbk-most/dt-model/actions) [![codecov](https://codecov.io/gh/fbk-most/dt-model/branch/main/graph/badge.svg)](https://codecov.io/gh/fbk-most/dt-model) [![PyPI version](https://img.shields.io/pypi/v/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![Python Versions](https://img.shields.io/pypi/pyversions/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![License](https://img.shields.io/pypi/l/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/)
+[![Build Status](https://github.com/fbk-most/civic-digital-twins/actions/workflows/test.yml/badge.svg)](https://github.com/fbk-most/civic-digital-twins/actions) [![codecov](https://codecov.io/gh/fbk-most/civic-digital-twins/branch/main/graph/badge.svg)](https://codecov.io/gh/fbk-most/civic-digital-twins) [![PyPI version](https://img.shields.io/pypi/v/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![Python Versions](https://img.shields.io/pypi/pyversions/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![License](https://img.shields.io/pypi/l/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/)
 
 This repository contains a Python package implementing a Civic-Digital-Twins
 modeling framework. The framework is designed to support defining digital
@@ -39,6 +39,10 @@ or
 from civic_digital_twins import dt_model
 ```
 
+## Minimum Python Version
+
+Python 3.11.
+
 ## API Stability Guarantees
 
 The package is currently in an early development stage. We do not
@@ -73,6 +77,7 @@ is defined in [`.github/workflows/test.yml`](.github/workflows/test.yml).
 ## Updating Dependencies
 
 ```bash
+uv self update
 uv sync --upgrade
 ```
 
