@@ -495,10 +495,9 @@ def t12(n1: graph.Node, n7: graph.Node) -> graph.Node:
     return n12
 ```
 
-As I mentioned above, a tree is functionally equivalent to a Python
-function. So, it should not be surprising that the string
-representation of each tree is indeed a Python function, named
-`tN` where `N` is the ID of the root node.
+As I mentioned above, a tree is functionally equivalent to a
+function and, unsurprisingly, its string representation is
+indeed a Python function, named `tN` where `N` is the ID of the root node.
 
 The equivalent graph representation of the overlayed trees is the following:
 
