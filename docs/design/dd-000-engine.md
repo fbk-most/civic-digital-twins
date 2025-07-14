@@ -845,26 +845,25 @@ profile and determine when we need Numba.
 
 ## Error Handling
 
-The topological sorting algorithm will detect cycles
+- The topological sorting algorithm will detect cycles
 in the DAG and throw an exception in such a case.
 
-If Numba fails to compile because the code is not purely
+- If Numba fails to compile because the code is not purely
 functional and numeric, it throws an exception.
 
-We assume that shapes and dtypes match. We expect static
+- We assume that shapes and dtypes match. We expect static
 type checking to help avoiding such mistakes. Yet, in case
 of mismatches NumPy or Numba will throw at runtime.
 
-Evaluating a tree whose input nodes have not been evaluated
+- Evaluating a tree whose input nodes have not been evaluated
 yet causes an exception to be throw by the evaluator.
 
 ## Testing Strategy
 
 All the compiler code SHOULD have 100% coverage. It is foundational
 code upon which the research code depends. We should aim to be
-confident that each line is executed at least once and does not crash,
-which is even more important when using a dynamic language. Also,
-we SHOULD have tests in place ensuring that a graph produces the same
+confident that each line is executed at least once and does not crash.
+Also, we SHOULD have tests in place ensuring that a graph produces the same
 numerical result of the equivalent NumPy code. (As of 2025-07-14,
 this is currently the case, we should keep up the good work!)
 
