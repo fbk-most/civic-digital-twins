@@ -434,9 +434,9 @@ we are basically selecting the subgraph tree rooted in `c`.
 
 With topological sorting, we already have a powerful way
 of transforming a DAG into an actionable sequence of operations
-for producing a value. However, we generally split the whole DAG
-into explicit trees. This makes the DAG easier to understand by
-neatly separating the computation required by each output.
+for producing a value. However, the compile does not execute
+the DAG directly. Rather, it splits the DAG into trees and
+then evaluates each tree independently.
 
 ## frontend/forest.py: Tree Partitioning
 
