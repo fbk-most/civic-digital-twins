@@ -17,13 +17,115 @@ state and evaluates each node exactly once, storing results for later reuse.
 from dataclasses import dataclass
 from typing import (
     Callable,
+    TypeAlias,
     cast,
 )
 
 import numpy as np
 
 from ..frontend import graph
-from . import debug, dispatch
+from . import debug
+
+
+# Type aliases for operation function signatures
+_BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
+_UnaryOpFunc: TypeAlias = Callable[[np.ndarray], np.ndarray]
+_AxisOpFunc: TypeAlias = Callable[[np.ndarray, graph.Axis], np.ndarray]
+
+_binary_operations: dict[type[graph.BinaryOp], _BinaryOpFunc] = {
+    graph.add: np.add,
+    graph.subtract: np.subtract,
+    graph.multiply: np.multiply,
+    graph.divide: np.divide,
+    graph.equal: np.equal,
+    graph.not_equal: np.not_equal,
+    graph.less: np.less,
+    graph.less_equal: np.less_equal,
+    graph.greater: np.greater,
+    graph.greater_equal: np.greater_equal,
+    graph.logical_and: np.logical_and,
+    graph.logical_or: np.logical_or,
+    graph.logical_xor: np.logical_xor,
+    graph.power: np.power,
+    graph.maximum: np.maximum,
+}
+"""Maps a binary op in the graph domain to the corresponding numpy operation.
+
+These operations take two arrays as input and produce a single array output,
+following NumPy's broadcasting rules for shape compatibility.
+
+Add entries to this table to support more binary operations.
+"""
+
+
+_unary_operations: dict[type[graph.UnaryOp], _UnaryOpFunc] = {
+    graph.logical_not: np.logical_not,
+    graph.exp: np.exp,
+    graph.log: np.log,
+}
+"""Maps a unary op in the graph domain to the corresponding numpy operation.
+
+These operations take a single array as input and apply the function
+element-wise, producing an output of the same shape.
+
+Add entries to this table to support more unary operations.
+"""
+
+
+def _expand_dims(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Expand input array with a new axis at the specified position.
+
+    Args:
+        x: The input array to expand
+        axis: The position where the new axis is placed
+
+    Returns
+    -------
+        Array with the expanded dimension
+    """
+    return np.expand_dims(x, axis)
+
+
+def _reduce_sum(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Reduce an array by summing along the specified axis.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to perform the sum
+
+    Returns
+    -------
+        Array with the specified axis reduced by summation
+    """
+    return np.sum(x, axis=axis)
+
+
+def _reduce_mean(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Reduce an array by computing the mean along the specified axis.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the mean
+
+    Returns
+    -------
+        Array with the specified axis reduced by averaging
+    """
+    return np.mean(x, axis=axis)
+
+
+_axes_operations: dict[type[graph.AxisOp], _AxisOpFunc] = {
+    graph.expand_dims: _expand_dims,
+    graph.reduce_sum: _reduce_sum,
+    graph.reduce_mean: _reduce_mean,
+}
+"""Maps an axis op in the graph domain to the corresponding numpy operation.
+
+These operations take an array and an axis parameter, performing
+transformations that affect the array's dimensionality or reduce values
+along the specified axis.
+
+Add entries to this table to support more axis operations."""
 
 
 class NodeValueNotFound(Exception):
@@ -161,7 +263,7 @@ def _eval_binary_op(state: State, node: graph.Node) -> np.ndarray:
     left = state.get_node_value(node.left)
     right = state.get_node_value(node.right)
     try:
-        return dispatch.binary_operations[type(node)](left, right)
+        return _binary_operations[type(node)](left, right)
     except KeyError:
         raise UnsupportedOperation(f"executor: unsupported binary operation: {type(node)}")
 
@@ -170,7 +272,7 @@ def _eval_unary_op(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.UnaryOp, node)
     operand = state.get_node_value(node.node)
     try:
-        return dispatch.unary_operations[type(node)](operand)
+        return _unary_operations[type(node)](operand)
     except KeyError:
         raise UnsupportedOperation(f"executor: unsupported unary operation: {type(node)}")
 
@@ -199,7 +301,7 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.AxisOp, node)
     operand = state.get_node_value(node.node)
     try:
-        return dispatch.axes_operations[type(node)](operand, node.axis)
+        return _axes_operations[type(node)](operand, node.axis)
     except KeyError:
         raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
 
