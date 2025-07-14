@@ -152,13 +152,13 @@ different backends without too much refactoring.
 
 | Module | Responsibility |
 | ------ | -------------- |
-| [atomic/__init__.py](../../civic_digital_twins/dt_model/engine/atomic/__init__.py) | Atomic counters. |
-| [compileflags/__init__.py](../../civic_digital_twins/dt_model/engine/compileflags/__init__.py) | Compile flags definition. |
-| [frontend/graph.py](../../civic_digital_twins/dt_model/engine/frontend/graph.py) | Node types and gradually-typed DSL. |
-| [frontend/linearize.py](../../civic_digital_twins/dt_model/engine/frontend/linearize.py) | Topological sorting |
-| [frontend/forest.py](../../civic_digital_twins/dt_model/engine/frontend/forest.py) | Forest partitioning |
-| [numpybackend/executor.py](../../civic_digital_twins/dt_model/engine/numpybackend/executor.py) | Main executor interface |
-| [numpybackend/jit.py](../../civic_digital_twins/dt_model/engine/numpybackend/jit.py) | JIT implementation |
+| [`atomic/__init__.py`](../../civic_digital_twins/dt_model/engine/atomic/__init__.py) | Atomic counters. |
+| [`compileflags/__init__.py`](../../civic_digital_twins/dt_model/engine/compileflags/__init__.py) | Compile flags definition. |
+| [`frontend/graph.py`](../../civic_digital_twins/dt_model/engine/frontend/graph.py) | Node types and gradually-typed DSL. |
+| [`frontend/linearize.py`](../../civic_digital_twins/dt_model/engine/frontend/linearize.py) | Topological sorting |
+| [`frontend/forest.py`](../../civic_digital_twins/dt_model/engine/frontend/forest.py) | Forest partitioning |
+| [`numpybackend/executor.py`](../../civic_digital_twins/dt_model/engine/numpybackend/executor.py) | Main executor interface |
+| [`numpybackend/jit.py`](../../civic_digital_twins/dt_model/engine/numpybackend/jit.py) | JIT implementation |
 
 ## Overall Data Flow
 
