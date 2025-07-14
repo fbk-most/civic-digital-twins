@@ -77,6 +77,7 @@ is defined in [`.github/workflows/test.yml`](.github/workflows/test.yml).
 ## Updating Dependencies
 
 ```bash
+uv self update
 uv sync --upgrade
 ```
 
