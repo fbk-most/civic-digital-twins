@@ -316,6 +316,10 @@ related name and value of the node.
 
 3. Operations are nodes that refer to their operands.
 
+Note that we use lowercase names for classes (a PEP8 violation)
+because we want names compatible with NumPy (e.g., we want
+`graph.add` to correspond to `np.add`).
+
 In the next section, we will start to play around to understand
 what is the structure of this DAG that we have created.
 
