@@ -165,8 +165,8 @@ different backends without too much refactoring.
 
 ```mermaid
 flowchart TD
-    A[Gradually-Typed DAG<br/>graph.py] --> B[Trees<br/>forest.py]
-    B --> C[np.ndarray<br/>executor.py]
+    A[Gradually-Typed DAG<br/>frontend/graph.py] --> B[Trees<br/>frontend/forest.py]
+    B --> C[np.ndarray<br/>numpybackend/executor.py]
     style A fill:#f0f8ff,stroke:#333,stroke-width:1px
     style B fill:#f5fff5,stroke:#333,stroke-width:1px
     style C fill:#fffaf0,stroke:#333,stroke-width:1px
