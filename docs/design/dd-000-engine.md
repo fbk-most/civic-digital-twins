@@ -499,7 +499,7 @@ As I mentioned above, a tree is functionally equivalent to a
 function and, unsurprisingly, its string representation is
 indeed a Python function, named `tN` where `N` is the ID of the root node.
 
-The equivalent graph representation of the overlayed trees is the following:
+The equivalent representation of the trees is the following:
 
 ```mermaid
 graph TD
