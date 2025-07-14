@@ -442,9 +442,9 @@ then evaluates each tree independently.
 
 Tree partitioning allows us to construct a tree rooted into
 each output node. Each tree depends on placeholders and, possibly,
-on nodes computed by other trees. A tree functionally
-represents an abstract function that takes node values in input
-and produces the tree root node value.
+on nodes computed by other trees. A tree models an abstract
+function that takes node values in input and produces
+the tree root node value.
 
 The corresponding module is [frontend/forest.py](../../civic_digital_twins/dt_model/engine/frontend/forest.py).
 
