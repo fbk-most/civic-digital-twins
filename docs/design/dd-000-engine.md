@@ -125,7 +125,7 @@ computation through Python classes that resembles
 that evaluates the DAG using [NumPy](https://github.com/numpy/numpy).
 
 Additional backends will take the `<backend>backend` name. For example:
-`tensorflowbackend`, `jaxbackend`, `daskbackend`, `pytorchbackend`.
+`tensorflowbackend`, `jaxbackend`.
 
 ## Frontend-Backend Contract
 
