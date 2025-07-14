@@ -440,12 +440,11 @@ then evaluates each tree independently.
 
 ## frontend/forest.py: Tree Partitioning
 
-Conceptually, we overlay the DAG with a forest of trees. Each tree is rooted into
-a specific output to compute. Tree partitioning allows us to
-construct a tree rooted into each output node. Each tree depends
-on placeholders and, possibly, on nodes computed by other
-trees. In a way, a tree is functionally equivalent to a Python function
-that takes nodes in input and produces the root node.
+Tree partitioning allows us to construct a tree rooted into
+each output node. Each tree depends on placeholders and, possibly,
+on nodes computed by other trees. A tree is functionally
+equivalent to a Python function that takes node values in input
+and produces the tree root node value.
 
 The corresponding module is [frontend/forest.py](../../civic_digital_twins/dt_model/engine/frontend/forest.py).
 
