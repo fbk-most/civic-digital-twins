@@ -503,19 +503,24 @@ The equivalent graph representation of the trees is the following:
 
 ```mermaid
 graph TD
-  subgraph Tree t7
+  subgraph " "
     A --> C
+    T7["Tree t7"]
   end
-
-  subgraph Tree t9
+  subgraph "  "
     B --> D
     C --> D
+    T9["Tree t9"]
   end
-
-  subgraph Tree t12
+  subgraph "   "
     A --> E
     C --> E
+    T12["Tree t12"]
   end
+
+  style T7 fill:transparent,stroke:none
+  style T9 fill:transparent,stroke:none
+  style T12 fill:transparent,stroke:none
 ```
 
 We omit intermediate nodes and only highlight input and output
