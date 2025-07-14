@@ -42,8 +42,7 @@ operations involving those nodes.
 **DAG Forest Partitioning.** The programmer partitions the DAG into
 trees. Each tree represents a computation function: it consumes input
 nodes (placeholders or outputs from other trees) and produces a
-result. This is functionally equivalent to a pure Python function. The
-programmer explicitly decides which trees to create. Trees are
+result. The programmer explicitly decides which trees to create. Trees are
 [topologically sorted](https://en.wikipedia.org/wiki/Topological_sorting),
 that is, returned in the order in which they must be evaluated. Each
 tree contains list of nodes to evaluate to produce the tree result. Nodes
