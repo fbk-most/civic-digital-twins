@@ -69,7 +69,7 @@ State. Thus, nodes are only evaluated once. A more advanced
 evaluation strategy transforms a tree to a Python function using
 NumPy calls and uses [Numba](https://github.com/numba/numba) to
 [JIT-compile](https://en.wikipedia.org/wiki/Just-in-time_compilation)
-these functions to efficient code. Using Numba is more efficient
+these functions to efficient code. Using Numba should be more efficient
 when the same model is evaluated multiple times.
 
 **NumPy Postprocessing Filters.** It is possible to attach a NumPy
