@@ -26,7 +26,6 @@ import numpy as np
 from ..frontend import graph
 from . import debug
 
-
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
 _UnaryOpFunc: TypeAlias = Callable[[np.ndarray], np.ndarray]
