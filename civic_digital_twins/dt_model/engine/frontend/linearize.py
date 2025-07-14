@@ -12,6 +12,9 @@ The linearization process:
 2. Ensures all dependencies are scheduled before their dependents
 3. Handles common graph structures (conditionals, etc.)
 
+Note that output nodes are also called root nodes because they are seen
+as the roots of evaluation trees, while the DAG is a forest of trees.
+
 This is useful for:
 - Creating efficient execution plans for evaluators
 - Visualizing the computation flow in order
@@ -31,20 +34,20 @@ from __future__ import annotations
 from . import graph
 
 
-def forest(*leaves: graph.Node) -> list[graph.Node]:
+def forest(*roots: graph.Node) -> list[graph.Node]:
     """
     Linearize a computation forest (multiple output nodes) into an execution plan.
 
-    The nodes passed to this function are called "leaves" because (1) they
+    The nodes passed to this function are called "roots" because (1) they
     represent the nodes you'd like to evaluate and (2) these nodes are
     typically the final results of the computation, which should not depend
-    on any other nodes. We start linearization from such leaf nodes and
+    on any other nodes. We start linearization from such root nodes and
     work backwards to schedule all dependencies in order. That said, it's
     possible to apply this algorithm to any node within your graph. The
     result would be the linear scheduling from such node's point of view.
 
     Args:
-        *leaves: the nodes to start the linearization process from. Use the
+        *roots: the nodes to start the linearization process from. Use the
             unpacking operator `*` to pass a list of nodes.
 
     Returns
@@ -113,8 +116,8 @@ def forest(*leaves: graph.Node) -> list[graph.Node]:
         # We can append this node to the final plan
         plan.append(node)
 
-    # Start visiting from the leaf nodes
-    for node in leaves:
+    # Start visiting from the root nodes
+    for node in roots:
         _visit(node)
 
     # Return the linearized plan to the caller
