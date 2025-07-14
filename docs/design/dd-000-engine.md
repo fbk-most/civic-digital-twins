@@ -436,8 +436,8 @@ With topological sorting, we already have a powerful way
 of transforming a DAG into an actionable sequence of operations
 for producing a value. However, we generally split the whole DAG
 into subgraphs (called trees) to isolate the computation
-required to produce each output node. In turn, this makes
-the DAG easier to understand and separates the computation
+required to produce each output node. This makes
+the DAG easier to understand by separating the computation
 required by each output neatly.
 
 ## frontend/forest.py: Tree Partitioning
