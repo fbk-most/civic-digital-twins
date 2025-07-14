@@ -130,7 +130,7 @@ Additional backends will take the `<backend>backend` name. For example:
 ## Frontend-Backend Contract
 
 All backends must implement an `evaluate_tree(state, tree)` function
-and conform to the semantics defined by the frontend's node types:
+and conform to the semantics defined by the frontend:
 
 ```Python
 from typing import Protocol, runtime_checkable
