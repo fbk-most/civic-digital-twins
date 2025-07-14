@@ -237,7 +237,8 @@ scale = graph.constant[Orange](1024)
 
 This ensures that static type checkers, such as
 [pyright](https://github.com/microsoft/pyright), produce
-errors squiggles when mixing apples and oranges. For example,
+static type errors — rendered as squiggles by editors
+such as VSCode — when mixing apples and oranges. For example,
 the following code mixes incompatible types:
 
 ```Python
