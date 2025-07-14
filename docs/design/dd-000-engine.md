@@ -378,7 +378,7 @@ means producing a linear "plan" to compute a given node.
 
 The corresponding module is [frontend/linearize.py](../../civic_digital_twins/dt_model/engine/frontend/linearize.py).
 
-Let us use `linearize.forest` to produce a topological sorting for `c`:
+Let us use `linearize.tree` to produce a topological sorting for `c`:
 
 ```Python
 # ...
@@ -387,12 +387,15 @@ Let us use `linearize.forest` to produce a topological sorting for `c`:
 from civic_digital_twins.dt_model.engine.frontend import linearize
 
 # Let's generate the plan for producing `c`
-plan = linearize.forest(c)
+plan = linearize.tree(c)
 
 # Let's print all the related nodes in evaluation order
 for node in plan:
     print(node)
 ```
+
+(The operation is called `linearize.tree` because `c` defines
+a tree subgraph within the DAG rooted into `c` itself.)
 
 This is the output that we get:
 
@@ -557,7 +560,7 @@ computed by `t7`, `t7` comes *before* `t9` and `t12`.
 
 As a final note, `forest.py` uses `linearize.py` to
 construct topologically sorted nodes for a tree. Namely,
-it uses the `boundary=` parameter of `linearize.forest` to
+it uses the `boundary=` parameter of `linearize.tree` to
 avoid recursing into nodes belonging to other trees.
 
 To summarize, `forest.partition`:
