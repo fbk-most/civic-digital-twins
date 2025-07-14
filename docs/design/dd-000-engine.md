@@ -534,7 +534,7 @@ In terms of actual implementation a minimal tree is like:
 
 class Tree:
     inputs: set[graph.Node]  # nodes used as the tree input
-    nodes: list[graph.Node]  # topologically sorted
+    nodes: list[graph.Node]  # topologically sorted nodes in the "function" body
 
 # Also note the following invariants:
 assert len(tree.nodes) >= 1
