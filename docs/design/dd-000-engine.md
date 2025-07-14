@@ -88,7 +88,10 @@ applying the proper `@numba.njit` decorator.
 class TimeDimension:
     """Represents nodes in the time dimension."""
 
-# Define a DAG
+class EnsembleDimension:
+    """Represents nodes in the ensemble dimension."""
+
+# Define a typed DAG
 a = graph.placeholder[TimeDimension]("a")
 b = graph.placeholder[TimeDimension]("b")
 c = a + b
