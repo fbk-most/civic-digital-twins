@@ -338,7 +338,8 @@ Where:
 
 1. we are assigning to `n1` to indicate that the relevant
 node is associated with the unique ID `1` (each node is
-assigned a unique ID when it is created).
+assigned a unique ID when it is created using the `engine/atomic`
+package).
 
 2. `graph.placeholder` is the node type constructor.
 
