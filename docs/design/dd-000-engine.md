@@ -440,7 +440,7 @@ then evaluates each tree independently.
 
 ## frontend/forest.py: Tree Partitioning
 
-We see the DAG as a forest of trees. Each tree is rooted into
+Conceptually, we overlay the DAG with a forest of trees. Each tree is rooted into
 a specific output to compute. Tree partitioning allows us to
 construct a tree rooted into each output node. Each tree depends
 on placeholders and, possibly, on nodes computed by other
