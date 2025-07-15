@@ -333,7 +333,11 @@ For example, `print(a)` produces the following output:
 n1 = graph.placeholder(name='a', default_value=None)
 ```
 
-Where:
+As you can see, a node's string representation is valid Python
+code. This is done on purpose. Nodes (and trees), when formatted
+to string, produce the code they correspond to.
+
+Let us now check more in detail the meaning of the printed code:
 
 1. we are assigning to `n1` to indicate that the relevant
 node is associated with the unique ID `1` (each node is
