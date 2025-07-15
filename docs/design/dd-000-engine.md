@@ -205,9 +205,9 @@ d = c * b + scale
 e = graph.power(a, c) * 144
 ```
 
-This is it. You have successfully written a DAG that combines
-input placeholders (e.g., `a`) and operations (e.g., `+`,
-`graph.exp`) to produce specific outputs (e.g., `d`).
+This DAG that combines input placeholders (`a` and `b`) and operations (`+`,
+`*`, `/`, `graph.exp`, and `graph.power`) to produce specific outputs
+(`c`, `d`, and `e`).
 
 To enable optional static type checking of DSL graphs, you
 can annotate nodes with types using Python's generics syntax. This
