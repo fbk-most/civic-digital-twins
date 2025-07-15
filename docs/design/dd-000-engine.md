@@ -181,9 +181,7 @@ examples here are for understanding internals and testing. In production,
 DAGs are generated *indirectly* by the
 [dt_model](../../civic_digital_twins/dt_model) package.
 
-However, in this document we will write the DAG manually. The following
-example (which could easily live as `examples/model.py`) shows how one
-could write a simple DSL:
+The following example shows how one could write a simple DSL:
 
 ```Python
 # Import the `graph` module for manually writing the DAG
