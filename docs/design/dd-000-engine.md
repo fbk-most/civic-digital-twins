@@ -273,29 +273,29 @@ implementation looks like this:
 # === Extremely simplified graph implementation (illustrative only) ===
 
 
-class Node:
+class Node(Generic[T]):
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def __add__(self, other: Node) -> Node:
+    def __add__(self, other: Node[T]) -> Node[T]:
         return add(self, other)
 
     # ...
 
 
-class placeholder(Node):
+class placeholder(Generic[T], Node[T]):
     def __init__(self, name: str) -> None:
         super.__init__(name)
 
 
-class constant(Node):
+class constant(Generic[T], Node[T]):
     def __init__(self, value: int | float, name: str = "") -> None:
         super.__init__(name)
         self.value = value
 
 
-class add(Node):
-    def __init__(self, left: Node, right: Node, name: str = "") -> None:
+class add(Generic[T], Node[T]):
+    def __init__(self, left: Node[T], right: Node[T], name: str = "") -> None:
         super.__init__(name)
         self.left = left
         self.right = right
