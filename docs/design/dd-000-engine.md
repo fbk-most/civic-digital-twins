@@ -370,9 +370,13 @@ see nodes `4` and `6` just by dumping `c`. To see what it means
 to compute `c`, we need topological sorting, which is the
 topic covered by the next section.
 
-By the way, this representation of a node where we have a
-single operation between nodes that assigns to another node is called
-[Static-Single-Assignment (SSA) form](https://en.wikipedia.org/wiki/Static_single-assignment_form).
+By the way, this code-like representation of a node where we have:
+
+```
+<targetNode> = <operation>(<operandNodes>)
+```
+
+is called [Static-Single-Assignment (SSA) form](https://en.wikipedia.org/wiki/Static_single-assignment_form).
 
 ## frontend/linearize.py: Topological Sorting
 
