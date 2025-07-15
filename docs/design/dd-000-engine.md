@@ -314,7 +314,8 @@ related name and value of the node.
 
 3. Operations are nodes that refer to their operands.
 
-Note that we use lowercase names for classes (a PEP8 violation)
+Note that we use lowercase names for classes
+(a [PEP8](https://peps.python.org/pep-0008/) violation)
 because we want names compatible with NumPy (e.g., we want
 `graph.add` to correspond to `np.add`).
 
