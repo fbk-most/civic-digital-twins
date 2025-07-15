@@ -402,8 +402,8 @@ for node in plan:
 ```
 
 (The operation is called `linearize.forest` because it takes in
-input multiple tree roots, thus linearizing a forest of trees
-embedded into the DAG.)
+input multiple tree roots — e.g., `linearize.forest(a, b, c)` — thus
+linearizing a forest of trees embedded into the DAG.)
 
 This is the output that we get:
 
