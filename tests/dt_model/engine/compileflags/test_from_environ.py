@@ -14,7 +14,14 @@ def test_from_environ():
     )
     assert result == 0
 
-    # Test for the case where it has been set
+    # Test for the case where it has been set to a single value
+    result = compileflags.from_environ(
+        "antani",
+        lambda x: "break",
+    )
+    assert result == compileflags.BREAK
+
+    # Test for the case where it has been set to multiple values
     result = compileflags.from_environ(
         "antani",
         lambda x: "break,trace",
