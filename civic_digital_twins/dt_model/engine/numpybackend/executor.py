@@ -23,8 +23,8 @@ from typing import (
 
 import numpy as np
 
+from .. import compileflags
 from ..frontend import forest, graph
-from . import debug
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -127,6 +127,21 @@ along the specified axis.
 Add entries to this table to support more axis operations."""
 
 
+def _print_graph_node(node: graph.Node, context: str = "tracepoint") -> None:
+    """Print a node within the computation graph."""
+    print(f"=== begin {context} ===")
+    print(f"node: {str(node)}")
+
+
+def _print_evaluated_node(value: np.ndarray, cached: bool = False, context: str = "tracepoint") -> None:
+    """Print a node after evaluation."""
+    print(f"shape: {value.shape}")
+    print(f"cached: {cached}")
+    print(f"value:\n{value}")
+    print(f"=== end {context} ===")
+    print("")
+
+
 class NodeValueNotFound(Exception):
     """Raised when a node value is not found in the state."""
 
@@ -151,25 +166,28 @@ class State:
     Make sure to provide values for placeholder nodes ahead of the evaluation
     by initializing the `values` dictionary accordingly.
 
-    Note that, if graph.NODE_FLAG_TRACE is set, the State will print the
-    nodes provided to the constructor in its __post_init__ method.
+    Note that, if compileflags.TRACE is set, the State will print the
+    nodes provided to the constructor in its __post_init__ method using
+    the `=== begin/end placeholder ===' markers.
 
     Attributes
     ----------
         values: A dictionary caching the result of the computation.
-        flags: Bitmask containing debug flags (e.g., graph.NODE_FLAG_BREAK).
+        flags: Bitmask containing debug flags (e.g., compileflags.BREAK) set
+            by default using the `DTMODEL_ENGINE_FLAGS` environement
+            variable as documented by the `compileflags` package docs.
     """
 
     values: dict[graph.Node, np.ndarray]
-    flags: int = 0
+    flags: int = compileflags.defaults
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
-        if self.flags & graph.NODE_FLAG_TRACE != 0:
+        if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                debug.print_graph_node(node)
-                debug.print_evaluated_node(self.values[node], cached=True)
+                _print_graph_node(node, context="placeholder")
+                _print_evaluated_node(self.values[node], cached=True, context="placeholder")
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
@@ -205,9 +223,23 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
     This function is syntactic sugar for calling `evaluate_nodes`
     for each node in the tree body.
     """
+    # Ensure the invariant for the tree applies
     assert len(tree.body) > 0
-    rv = evaluate_nodes(state, *tree.body)
+
+    # Honor the dump flag if requested to dump the code
+    if state.flags & compileflags.DUMP != 0:
+        print("=== begin tree dump ===")
+        print(str(tree))
+        print("=== end tree dump ===")
+        print("")
+
+    # Evaluate the tree body
+    rv = _evaluate_nodes(state, *tree.body)
+
+    # Ensure the invariant holds for the result
     assert rv is not None
+
+    # Return result to the caller
     return rv
 
 
@@ -219,6 +251,19 @@ def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
 
     This function returns `None` if you do not supply any input node.
     """
+    # Honor the DUMP flag when requested to do so
+    if state.flags & compileflags.DUMP != 0:
+        print("=== begin nodes dump ===")
+        for node in nodes:
+            print(str(node))
+        print("=== end nodes dump ===")
+        print("")
+
+    # Defer to the internal nodes evaluator
+    return _evaluate_nodes(state, *nodes)
+
+
+def _evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     rv: np.ndarray | None = None
     for node in nodes:
         rv = evaluate_single_node(state, node)
@@ -252,19 +297,19 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
 
     # 2. check whether we need to trace this node
     flags = node.flags | state.flags
-    tracing = flags & graph.NODE_FLAG_TRACE
+    tracing = flags & compileflags.TRACE
     if tracing:
-        debug.print_graph_node(node)
+        _print_graph_node(node)
 
     # 3. evaluate the node proper
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result
     if tracing:
-        debug.print_evaluated_node(result, cached=False)
+        _print_evaluated_node(result, cached=False)
 
     # 5. check whether we need to stop after evaluating this node
-    if flags & graph.NODE_FLAG_BREAK != 0:
+    if flags & compileflags.BREAK != 0:
         input("executor: press any key to continue...")
         print("")
 

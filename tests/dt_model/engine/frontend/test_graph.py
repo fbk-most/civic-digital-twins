@@ -5,6 +5,7 @@
 import subprocess
 import textwrap
 
+from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
 
@@ -44,13 +45,13 @@ def test_debug_flags():
 
     # Test tracepoint
     traced = graph.tracepoint(a)
-    assert traced.flags & graph.NODE_FLAG_TRACE
+    assert traced.flags & compileflags.TRACE
     assert traced is a  # Should return same node
 
     # Test breakpoint
     broken = graph.breakpoint(a)
-    assert broken.flags & graph.NODE_FLAG_BREAK
-    assert broken.flags & graph.NODE_FLAG_TRACE
+    assert broken.flags & compileflags.BREAK
+    assert broken.flags & compileflags.TRACE
     assert broken is a  # Should return same node
 
 
@@ -544,3 +545,16 @@ def test_repr():
 
     y = graph.project_using_mean(a, (1, 2))
     assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
+
+
+def test_maybe_set_name():
+    """Ensure that Node.maybe_set_name works as intended."""
+    # When there is already a name
+    n1 = graph.placeholder("a")
+    n1.maybe_set_name("x")
+    assert n1.name == "a"
+
+    # When there is no name
+    n2 = graph.constant(177114)
+    n2.maybe_set_name("x")
+    assert n2.name == "x"

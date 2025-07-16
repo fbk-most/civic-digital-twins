@@ -225,6 +225,10 @@ class Node(Generic[T]):
         self.flags = 0
         self.id = _id_generator.add(1)
 
+    def maybe_set_name(self, name: str) -> None:
+        """Set the node name unless it has already been set."""
+        self.name = self.name if self.name else name
+
     def __str__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return repr(self)  # subclasses define suitable __repr__
