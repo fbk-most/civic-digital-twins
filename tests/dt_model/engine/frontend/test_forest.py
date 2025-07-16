@@ -7,7 +7,6 @@ from civic_digital_twins.dt_model.engine.frontend import forest, graph
 
 def test_forest_partition():
     """Test that we stop visiting at the boundary."""
-
     x = graph.placeholder("x")
     y = graph.placeholder("y")
 
@@ -45,8 +44,7 @@ def test_forest_partition():
     assert trees[2].root() is h
 
     # Ensure that the string representation is correct
-    expect = \
-f"""def t{g.id}(n{c.id}: graph.Node) -> graph.Node:
+    expect = f"""def t{g.id}(n{c.id}: graph.Node) -> graph.Node:
     n{y.id} = graph.placeholder(name='y', default_value=None)
     n{d.id} = graph.exp(node=n{y.id}, name='d')
     n{k1.id} = graph.constant(value=1.0, name='k1')
