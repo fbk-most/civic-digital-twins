@@ -191,6 +191,14 @@ class State:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
 
 
+def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
+    """Provide syntactic sugar for evaluating multiple trees."""
+    rv: np.ndarray | None = None
+    for tree in trees:
+        rv = evaluate_tree(state, tree)
+    return rv
+
+
 def evaluate_tree(state: State, tree: forest.Tree) -> np.ndarray:
     """Evaluate a `forest.Tree` using the current `State`.
 
@@ -213,11 +221,11 @@ def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     """
     rv: np.ndarray | None = None
     for node in nodes:
-        rv = evaluate(state, node)
+        rv = evaluate_node(state, node)
     return rv
 
 
-def evaluate(state: State, node: graph.Node) -> np.ndarray:
+def evaluate_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
@@ -265,6 +273,10 @@ def evaluate(state: State, node: graph.Node) -> np.ndarray:
 
     # 7. return the result
     return result
+
+
+evaluate = evaluate_node
+"""Backward-compatible name for evaluate_node."""
 
 
 def _eval_constant_op(state: State, node: graph.Node) -> np.ndarray:

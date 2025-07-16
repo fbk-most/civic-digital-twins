@@ -645,6 +645,12 @@ def test_forest_tree():
 
 
 def test_evaluate_nodes_empty():
-    """Ensure that evaluate_nodes returns none if passed no nodes."""
+    """Ensure that evaluate_nodes returns None if passed no nodes."""
     rv = executor.evaluate_nodes(executor.State(values={}))
+    assert rv is None
+
+
+def test_evaluate_trees_empty():
+    """Ensure that evaluate_trees returns None if passed no trees."""
+    rv = executor.evaluate_trees(executor.State(values={}))
     assert rv is None
