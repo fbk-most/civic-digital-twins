@@ -23,7 +23,7 @@ from typing import (
 
 import numpy as np
 
-from ..frontend import graph
+from ..frontend import forest, graph
 from . import debug
 
 # Type aliases for operation function signatures
@@ -189,6 +189,32 @@ class State:
             return self.values[node]
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
+
+
+def evaluate_tree(state: State, tree: forest.Tree) -> np.ndarray:
+    """Evaluate a `forest.Tree` using the current `State`.
+
+    This function is syntactic sugar for calling `evaluate_nodes`
+    for each node in the tree body.
+    """
+    assert len(tree.body) > 0
+    rv = evaluate_nodes(state, *tree.body)
+    assert rv is not None
+    return rv
+
+
+def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
+    """Evaluate a list of `graph.Node` using the current `State`.
+
+    This function is syntactic sugar for calling `evaluate` for each node in
+    the given input and then returning the final value.
+
+    This function returns `None` if you do not supply any input node.
+    """
+    rv: np.ndarray | None = None
+    for node in nodes:
+        rv = evaluate(state, node)
+    return rv
 
 
 def evaluate(state: State, node: graph.Node) -> np.ndarray:
