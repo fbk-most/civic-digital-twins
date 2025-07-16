@@ -208,9 +208,23 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
     This function is syntactic sugar for calling `evaluate_nodes`
     for each node in the tree body.
     """
+    # Ensure the invariant for the tree applies
     assert len(tree.body) > 0
-    rv = evaluate_nodes(state, *tree.body)
+
+    # Honor the dump flag if requested to dump the code
+    if state.flags & compileflags.DUMP != 0:
+        print("=== begin tree dump ===")
+        print(str(tree))
+        print("=== end tree dump ===")
+        print("")
+
+    # Evaluate the tree body
+    rv = _evaluate_nodes(state, *tree.body)
+
+    # Ensure the invariant holds for the result
     assert rv is not None
+
+    # Return result to the caller
     return rv
 
 
@@ -222,6 +236,19 @@ def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
 
     This function returns `None` if you do not supply any input node.
     """
+    # Honor the DUMP flag when requested to do so
+    if state.flags & compileflags.DUMP != 0:
+        print("=== begin nodes dump ===")
+        for node in nodes:
+            print(str(node))
+        print("=== end nodes dump ===")
+        print("")
+
+    # Defer to the internal nodes evaluator
+    return _evaluate_nodes(state, *nodes)
+
+
+def _evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     rv: np.ndarray | None = None
     for node in nodes:
         rv = evaluate_single_node(state, node)

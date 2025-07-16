@@ -14,8 +14,12 @@ TRACE = 1 << 0
 BREAK = 1 << 1
 """Indicates that we should break execution after evaluation."""
 
+DUMP = 1 << 2
+"""Dump nodes in SSA format ahead of evaluation."""
+
 _flagnames: dict[str, int] = {
     "break": BREAK,
+    "dump": DUMP,
     "trace": TRACE,
 }
 """Maps the lowercase name of the flag to its value."""

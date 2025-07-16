@@ -191,8 +191,8 @@ def test_complex_graph():
     expected_condition = x_val > y_val
     expected_result = np.where(expected_condition, expected_sum, expected_diff)
 
-    # Evaluate with executor
-    state = executor.State({x: x_val, y: y_val})
+    # Evaluate with executor setting the DUMP flag to exercise it
+    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
     executor.evaluate_nodes(state, *plan)
 
     # Check intermediate and final results
@@ -630,8 +630,8 @@ def test_evaluate_trees_nonempty():
     expected_condition = x_val > y_val
     expected_result = np.where(expected_condition, expected_sum, expected_diff)
 
-    # Evaluate with executor
-    state = executor.State({x: x_val, y: y_val})
+    # Evaluate with executor setting the DUMP flag to exercise it
+    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
     executor.evaluate_trees(state, *trees)
 
     # Check intermediate and final results
