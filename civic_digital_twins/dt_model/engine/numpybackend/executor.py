@@ -214,8 +214,8 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
 def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     """Evaluate a list of `graph.Node` using the current `State`.
 
-    This function is syntactic sugar for calling `evaluate` for each node in
-    the given input and then returning the final value.
+    This function is syntactic sugar for calling `evaluate_single_node` for each
+    node in the given input and then returning the final value.
 
     This function returns `None` if you do not supply any input node.
     """
