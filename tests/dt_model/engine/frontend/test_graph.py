@@ -4,6 +4,9 @@
 
 from civic_digital_twins.dt_model.engine.frontend import graph
 
+import subprocess
+import textwrap
+
 
 def test_basic_node_creation():
     """Test basic node creation and properties."""
@@ -411,3 +414,42 @@ def test_ensure_node_function():
     result_bool = graph.ensure_node(True)
     assert isinstance(result_bool, graph.constant)
     assert result_bool.value is True
+
+
+def test_static_type_checking_success(tmp_path):
+    """Test type-checking is okay on success."""
+    test_file = tmp_path / "success.py"
+    test_file.write_text(textwrap.dedent("""
+        from civic_digital_twins.dt_model.engine.frontend import graph
+
+        class Dim: pass
+
+        a = graph.placeholder[Dim]("a")
+        b = graph.placeholder[Dim]("b")
+        c = a + b  # should type check
+    """))
+
+    result = subprocess.run(["pyright", str(test_file)], capture_output=True, text=True)
+    print(result.stdout)  # optional, for debugging
+
+    assert result.returncode == 0, f"Unexpected pyright failure:\n{result.stdout}"
+
+
+def test_static_type_checking_failure(tmp_path):
+    """Test type-checking fails with mismatched types."""
+    test_file = tmp_path / "failure.py"
+    test_file.write_text(textwrap.dedent("""
+        from civic_digital_twins.dt_model.engine.frontend import graph
+
+        class DimA: pass
+        class DimB: pass
+
+        a = graph.placeholder[DimA]("a")
+        b = graph.placeholder[DimB]("b")
+        c = a + b  # should fail type check
+    """))
+
+    result = subprocess.run(["pyright", str(test_file)], capture_output=True, text=True)
+    print(result.stdout)  # optional, for debugging
+
+    assert result.returncode != 0, "Pyright unexpectedly passed a known type error"
