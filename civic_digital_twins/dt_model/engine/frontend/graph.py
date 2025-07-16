@@ -145,7 +145,7 @@ from __future__ import annotations
 
 from typing import Generic, Sequence, TypeVar
 
-from .. import atomic
+from .. import atomic, compileflags
 
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
@@ -154,10 +154,10 @@ Scalar = bool | float | int
 """Type alias for supported scalar value types."""
 
 
-NODE_FLAG_TRACE = 1 << 0
+NODE_FLAG_TRACE = compileflags.TRACE
 """Inserts a tracepoint at the corresponding graph node."""
 
-NODE_FLAG_BREAK = 1 << 1
+NODE_FLAG_BREAK = compileflags.BREAK
 """Inserts a breakpoint at the corresponding graph node."""
 
 
@@ -366,8 +366,8 @@ class BinaryOp(Generic[T], Node[T]):
         right: Second input node
     """
 
-    def __init__(self, left: Node[T], right: Node[T]) -> None:
-        super().__init__()
+    def __init__(self, left: Node[T], right: Node[T], name="") -> None:
+        super().__init__(name)
         self.left = left
         self.right = right
 
@@ -440,8 +440,8 @@ class UnaryOp(Generic[T], Node[T]):
         node: Input node
     """
 
-    def __init__(self, node: Node[T]) -> None:
-        super().__init__()
+    def __init__(self, node: Node[T], name="") -> None:
+        super().__init__(name)
         self.node = node
 
 
@@ -484,8 +484,8 @@ class where(Generic[C, T], Node[T]):
         otherwise: Values to use where condition is False
     """
 
-    def __init__(self, condition: Node[C], then: Node[T], otherwise: Node[T]) -> None:
-        super().__init__()
+    def __init__(self, condition: Node[C], then: Node[T], otherwise: Node[T], name="") -> None:
+        super().__init__(name)
         self.condition = condition
         self.then = then
         self.otherwise = otherwise
@@ -499,8 +499,8 @@ class multi_clause_where(Generic[C, T], Node[T]):
         default_value: Value to use when no condition is met
     """
 
-    def __init__(self, clauses: Sequence[tuple[Node[C], Node[T]]], default_value: Node[T]) -> None:
-        super().__init__()
+    def __init__(self, clauses: Sequence[tuple[Node[C], Node[T]]], default_value: Node[T], name="") -> None:
+        super().__init__(name)
         self.clauses = clauses
         self.default_value = default_value
 
@@ -520,8 +520,8 @@ class AxisOp(Generic[T], Node[T]):
         axis: Axis specification
     """
 
-    def __init__(self, node: Node[T], axis: Axis) -> None:
-        super().__init__()
+    def __init__(self, node: Node[T], axis: Axis, name="") -> None:
+        super().__init__(name)
         self.node = node
         self.axis = axis
 
