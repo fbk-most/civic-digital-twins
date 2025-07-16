@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import forest, graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
@@ -236,7 +237,7 @@ def test_debug_flags(capsys, monkeypatch):
     z = graph.add(x, graph.constant(5.0))
     plan = linearize.forest(z)
 
-    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=graph.NODE_FLAG_TRACE)
+    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=compileflags.TRACE)
     executor.evaluate_nodes(state, *plan)
 
     captured = capsys.readouterr()
@@ -247,7 +248,7 @@ def test_debug_flags(capsys, monkeypatch):
     named_node.name = "named_addition"
     plan = linearize.forest(named_node)
 
-    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=graph.NODE_FLAG_BREAK)
+    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=compileflags.BREAK)
     executor.evaluate_nodes(state, *plan)
 
     # Check that input was called (breakpoint triggered)
@@ -583,7 +584,7 @@ def test_state_post_init_tracing(capsys):
     y_val = np.array([4.0, 5.0, 6.0])
 
     # Create state with tracing flag
-    executor.State({x: x_val, y: y_val}, flags=graph.NODE_FLAG_TRACE)
+    executor.State({x: x_val, y: y_val}, flags=compileflags.TRACE)
 
     # Check that tracing output was generated during initialization
     captured = capsys.readouterr()
