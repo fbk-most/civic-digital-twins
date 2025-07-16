@@ -5,9 +5,8 @@ We centralize the definition of flags to avoid defining flags into each package
 and ending up with incompatible compiler engine flags.
 """
 
-from typing import Callable
 import os
-
+from typing import Callable
 
 TRACE = 1 << 0
 """Indicates that we should trace execution."""
@@ -24,7 +23,7 @@ _flagnames: dict[str, int] = {
 
 def from_environ(
     varname: str = "DTMODEL_ENGINE_FLAGS",
-    getenv: Callable[[str], str|None] = os.getenv,
+    getenv: Callable[[str], str | None] = os.getenv,
 ) -> int:
     """Read flags from a specific environment variable.
 
