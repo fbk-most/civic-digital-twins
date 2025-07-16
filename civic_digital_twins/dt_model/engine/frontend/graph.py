@@ -82,12 +82,12 @@ Design Decisions
    - Nodes are identified by their instance identity
    - Enables graph traversal and transformation
 
-4. Gradual Typing:
-    - Produce error squiggles for explicitly typed nodes
-    - No error squiggles otherwise
+4. Gradual, Static Typing:
+    - Produce static type errors for explicitly typed nodes
+    - No static type errors otherwise
 
-Gradual Typing
---------------
+Gradual, Static Typing
+----------------------
 
 The `Node` class is actually `Node[T]`. If you explicitly
 assign types using `placeholder` and `constant`, the
@@ -106,11 +106,11 @@ For example:
 
     a = graph.constant[TimeDimension](14)
     b = graph.constant[EnsembleDimension](117)
-    c = a + b  # This line produces a squiggle due to incompatible types
+    c = a + b  # This line produces a static type error due to incompatible types
 
     d = graph.constant[TimeDimension](14)
     e = graph.constant(117)
-    f = d + e  # No squiggles, untyped nodes default to Unknown
+    f = d + e  # No static type error: untyped nodes default to Unknown
 
 A stricter version of type checking, if desired, will become available
 when the minimum Python version becomes 3.13.
