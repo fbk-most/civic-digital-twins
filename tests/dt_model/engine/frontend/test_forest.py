@@ -5,8 +5,8 @@
 from civic_digital_twins.dt_model.engine.frontend import forest, graph
 
 
-def test_forest_partition():
-    """Test that we stop visiting at the boundary."""
+def test_partition():
+    """Test that we correctly partition the forest."""
     x = graph.placeholder("x")
     y = graph.placeholder("y")
 
