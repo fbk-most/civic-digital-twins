@@ -146,18 +146,18 @@ def test_complex_graph():
     x = graph.placeholder("x")
     y = graph.placeholder("y")
 
-    # (x + 2) * (y - 1)
+    # c = (x + 2) * (y - 1)
     a = graph.add(x, graph.constant(2.0))
     b = graph.subtract(y, graph.constant(1.0))
     c = graph.multiply(a, b)
 
-    # exp(y) / log(x + 1)
+    # g = exp(y) / log(x + 1)
     d = graph.exp(y)
     e = graph.add(x, graph.constant(1.0))
     f = graph.log(e)
     g = graph.divide(d, f)
 
-    # max(c, g)
+    # h = max(c, g)
     h = graph.maximum(c, g)
 
     plan = linearize.forest(h)
