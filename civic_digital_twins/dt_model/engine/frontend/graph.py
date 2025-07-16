@@ -82,6 +82,32 @@ Design Decisions
    - Nodes are identified by their instance identity
    - Enables graph traversal and transformation
 
+4. Node Representation:
+    - The __repr__ of a node emits the Python code that would generate the node
+    - Therefore, the __repr__ representation is round-trippable
+
+Node Representation
+-------------------
+
+Given this code:
+
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = a + b
+
+If you print each node, you obtain:
+
+    n1 = graph.placeholder(name="a", default_value=None)
+    n2 = graph.placeholder(name="b", default_value=None)
+    n3 = graph.add(left=n1, right=n2, name="")
+
+That is, the `__repr__` (and `__str__`) of each node is an SSA representation
+where you see the node IDs (the format is `nX` where `X` is the ID) and the
+arguments with which they were constructed.
+
+Crucially, if you execute the `__repr__` of each node, you get back the
+same graph that you have constructred with the original code.
+
 Node Identity and Equality
 --------------------------
 
@@ -159,6 +185,9 @@ class Node:
         self.name = name
         self.flags = 0
         self.id = _id_generator.add(1)
+
+    def __str__(self) -> str:
+        return repr(self)  # subclasses define suitable __repr__
 
     def __hash__(self) -> int:
         """Override hash to use identity-based hashing.
@@ -268,6 +297,9 @@ class constant(Node):
         super().__init__(name)
         self.value = value
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.constant(value={self.value}, name='{self.name}')"
+
 
 class placeholder(Node):
     """Named placeholder for a value to be provided during evaluation.
@@ -280,6 +312,9 @@ class placeholder(Node):
     def __init__(self, name: str, default_value: Scalar | None = None) -> None:
         super().__init__(name)
         self.default_value = default_value
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.placeholder(name='{self.name}', default_value={self.default_value})"
 
 
 class BinaryOp(Node):
@@ -302,17 +337,29 @@ class BinaryOp(Node):
 class add(BinaryOp):
     """Element-wise addition of two tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.add(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class subtract(BinaryOp):
     """Element-wise subtraction of two tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.subtract(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 class multiply(BinaryOp):
     """Element-wise multiplication of two tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.multiply(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class divide(BinaryOp):
     """Element-wise division of two tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.divide(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 # Comparison operations
@@ -321,25 +368,43 @@ class divide(BinaryOp):
 class equal(BinaryOp):
     """Element-wise equality comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class not_equal(BinaryOp):
     """Element-wise inequality comparison of two tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.not_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 class less(BinaryOp):
     """Element-wise less-than comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.less(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class less_equal(BinaryOp):
     """Element-wise less-than-or-equal comparison of two tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.less_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 class greater(BinaryOp):
     """Element-wise greater-than comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.greater(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class greater_equal(BinaryOp):
     """Element-wise greater-than-or-equal comparison of two tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.greater_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 # Logical operations
@@ -348,13 +413,22 @@ class greater_equal(BinaryOp):
 class logical_and(BinaryOp):
     """Element-wise logical AND of two boolean tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.logical_and(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class logical_or(BinaryOp):
     """Element-wise logical OR of two boolean tensors."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.logical_or(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
 
 class logical_xor(BinaryOp):
     """Element-wise logical XOR of two boolean tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.logical_xor(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 class UnaryOp(Node):
@@ -372,6 +446,9 @@ class UnaryOp(Node):
 class logical_not(UnaryOp):
     """Element-wise logical NOT of a boolean tensor."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.logical_not(node=n{self.node.id}, name='{self.name}')"
+
 
 # Math operations
 
@@ -379,9 +456,15 @@ class logical_not(UnaryOp):
 class exp(UnaryOp):
     """Element-wise exponential of a tensor."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.exp(node=n{self.node.id}, name='{self.name}')"
+
 
 class power(BinaryOp):
     """Element-wise power operation (first tensor raised to power of second)."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.power(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 pow = power
@@ -391,9 +474,15 @@ pow = power
 class log(UnaryOp):
     """Element-wise natural logarithm of a tensor."""
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.log(node=n{self.node.id}, name='{self.name}')"
+
 
 class maximum(BinaryOp):
     """Element-wise maximum of two tensors."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.maximum(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 # Conditional operations
@@ -414,6 +503,9 @@ class where(Node):
         self.then = then
         self.otherwise = otherwise
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"
+
 
 class multi_clause_where(Node):
     """Selects elements from tensors based on multiple conditions.
@@ -427,6 +519,10 @@ class multi_clause_where(Node):
         super().__init__(name)
         self.clauses = clauses
         self.default_value = default_value
+
+    def __repr__(self) -> str:
+        clauses = [(f"n{condition.id}", f"n{then.id}") for condition, then in self.clauses]
+        return f"n{self.id} = graph.multi_clause_where(clauses={clauses}, default_value=n{self.default_value}, name='{self.name}')"
 
 
 # Shape-changing operations
@@ -456,9 +552,15 @@ class expand_dims(AxisOp):
     This expands the tensor to a higher-dimensional space.
     """
 
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.expand_dims(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
 
 class squeeze(AxisOp):
     """Removes axes of size 1 from a tensor's shape."""
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.squeeze(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 class project_using_sum(AxisOp):
@@ -466,6 +568,9 @@ class project_using_sum(AxisOp):
 
     This projects the tensor to a lower-dimensional space.
     """
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 reduce_sum = project_using_sum
@@ -479,6 +584,9 @@ class project_using_mean(AxisOp):
 
     This projects the tensor to a lower-dimensional space.
     """
+
+    def __repr__(self) -> str:
+        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 reduce_mean = project_using_mean
