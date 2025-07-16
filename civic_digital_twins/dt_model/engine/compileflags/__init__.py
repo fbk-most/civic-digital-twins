@@ -37,7 +37,7 @@ def from_environ(
 
         export DTMODEL_ENGINE_FLAGS=trace,break
 
-    cases this function to return:
+    causes this function to return:
 
         TRACE|BREAK
 
