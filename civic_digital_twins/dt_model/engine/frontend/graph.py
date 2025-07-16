@@ -91,7 +91,7 @@ Gradual Typing
 
 The `Node` class is actually `Node[T]`. If you explicitly
 assign types using `placeholder` and `constant`, the
-type checker will produce squiggles for mismatched operations.
+type checker will produce type errors for mismatched operations.
 
 If at least a node is untyped, then operations are always
 possible without getting static type errors.
