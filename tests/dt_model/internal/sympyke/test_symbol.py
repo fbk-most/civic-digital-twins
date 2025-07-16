@@ -52,8 +52,7 @@ def test_symbol_execution():
     )
 
     # Evaluate
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Check result
     expected = np.array([5, 7, 9])
@@ -79,8 +78,7 @@ def test_symbol_multiple_operations():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Expected: (1+4)*2, (2+5)*3, (3+6)*4 = 10, 21, 36
     expected = np.array([10, 21, 36])
