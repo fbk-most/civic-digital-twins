@@ -239,3 +239,40 @@ def test_unknown_node_type():
 
     with pytest.raises(TypeError, match="unknown node type"):
         linearize.forest(custom_node)
+
+
+def test_boundary():
+    """Test that we stop visiting at the boundary."""
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+
+    # c = (x + 2) * (y - 1)
+    a = graph.add(x, graph.constant(2.0))
+    b = graph.subtract(y, graph.constant(1.0))
+    c = graph.multiply(a, b)
+
+    # g = exp(y) / log(c + 1)
+    d = graph.exp(y)
+    e = graph.add(c, graph.constant(1.0))
+    f = graph.log(e)
+    g = graph.divide(d, f)
+
+    # Create plan for g stopping at the c boundary
+    plan1 = linearize.forest(g, boundary={c})
+
+    # Make sure the generated plan is correct
+    assert len(plan1) == 7
+    assert plan1[0] is y
+    assert plan1[1] is d
+    assert plan1[2] is c
+    assert isinstance(plan1[3], graph.constant) and plan1[3].value == 1.0
+    assert plan1[4] is e
+    assert plan1[5] is f
+    assert plan1[6] is g
+
+    # Create plan for g stopping at the g boundary
+    plan2 = linearize.forest(g, boundary={g})
+
+    # Make sure the generated plan is correct
+    assert len(plan2) == 1
+    assert plan2[0] == g
