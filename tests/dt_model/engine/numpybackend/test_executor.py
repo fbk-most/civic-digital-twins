@@ -642,3 +642,9 @@ def test_forest_tree():
     assert np.array_equal(state.values[diff], expected_diff)
     assert np.array_equal(state.values[condition], expected_condition)
     assert np.array_equal(state.values[result], expected_result)
+
+
+def test_evaluate_nodes_empty():
+    """Ensure that evaluate_nodes returns none if passed no nodes."""
+    rv = executor.evaluate_nodes(executor.State(values={}))
+    assert rv is None
