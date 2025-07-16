@@ -290,8 +290,8 @@ class BinaryOp(Node):
         right: Second input node
     """
 
-    def __init__(self, left: Node, right: Node) -> None:
-        super().__init__()
+    def __init__(self, left: Node, right: Node, name="") -> None:
+        super().__init__(name)
         self.left = left
         self.right = right
 
@@ -364,8 +364,8 @@ class UnaryOp(Node):
         node: Input node
     """
 
-    def __init__(self, node: Node) -> None:
-        super().__init__()
+    def __init__(self, node: Node, name="") -> None:
+        super().__init__(name)
         self.node = node
 
 
@@ -408,8 +408,8 @@ class where(Node):
         otherwise: Values to use where condition is False
     """
 
-    def __init__(self, condition: Node, then: Node, otherwise: Node) -> None:
-        super().__init__()
+    def __init__(self, condition: Node, then: Node, otherwise: Node, name="") -> None:
+        super().__init__(name)
         self.condition = condition
         self.then = then
         self.otherwise = otherwise
@@ -423,8 +423,8 @@ class multi_clause_where(Node):
         default_value: Value to use when no condition is met
     """
 
-    def __init__(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> None:
-        super().__init__()
+    def __init__(self, clauses: Sequence[tuple[Node, Node]], default_value: Node, name="") -> None:
+        super().__init__(name)
         self.clauses = clauses
         self.default_value = default_value
 
@@ -444,8 +444,8 @@ class AxisOp(Node):
         axis: Axis specification
     """
 
-    def __init__(self, node: Node, axis: Axis) -> None:
-        super().__init__()
+    def __init__(self, node: Node, axis: Axis, name="") -> None:
+        super().__init__(name)
         self.node = node
         self.axis = axis
 
