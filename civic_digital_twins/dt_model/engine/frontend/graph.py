@@ -112,8 +112,8 @@ For example:
     e = graph.constant(117)
     f = d + e  # No squiggles, untyped nodes default to Unknown
 
-This module's code contains comments explaining how to upgrade
-to a stricted version of type checking with Python>=3.13.
+A stricter version of type checking, if desired, will become available
+when the minimum Python version becomes 3.13.
 
 Node Identity and Equality
 --------------------------
@@ -163,43 +163,6 @@ NODE_FLAG_BREAK = compileflags.BREAK
 
 _id_generator = atomic.Int()
 """Atomic integer generator for unique node IDs."""
-
-# Evolving the Typing Strategy
-# ----------------------------
-#
-# Node(Generic[T]) enables static type checking: if all participating nodes
-# are explicitly typed, Pyright will issue squiggles on mismatched operations.
-# Otherwise, it behaves like pre-typed code — fully flexible but unchecked.
-#
-# This behavior is documented in the module docstring. Here, we outline how
-# to migrate to stricter type checking once @scc-digitalhub permits it.
-#
-# Currently, we target Python <= 3.11. When the runtime environment (e.g.,
-# @scc-digitalhub) upgrades to Python >= 3.13 and `pyrightconfig.json` is
-# updated accordingly, we could rewrite the following code like so:
-#
-#   class Erased:
-#       """Represents a type-erased dimension."""
-#
-#   T = TypeVar("T", default=Erased)  # requires Python >= 3.13
-#   C = TypeVar("C", default=Erased)  # ditto
-#
-#   def erase(node: Node[T]) -> Node[Erased]:
-#       """Explicitly erase the type of a node."""
-#       return cast(Node[Erased], node)
-#
-# With this setup, untyped nodes default to `Node[Erased]` instead of
-# `Node[Unknown]`, and type operations like `a + b` are only allowed if
-# both operands have the exact same type — including `Erased`.
-#
-# This allows us to enforce strict typing discipline, while still permitting
-# intentional erasure (via `erase(...)`) at evaluation time.
-#
-# In that world, downstream modules (e.g., `linearize.py`) could be typed to
-# accept only `Node[Erased]`, effectively forcing the compiler (which lives
-# outside the frontend) to apply type erasure explicitly before evaluation.
-#
-# TODO(bassosimone): Revisit this migration path once Python >= 3.13 is supported.
 
 T = TypeVar("T")
 """Type associated with a Node."""
