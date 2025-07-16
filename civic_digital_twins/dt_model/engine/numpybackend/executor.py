@@ -23,11 +23,7 @@ from typing import (
 
 import numpy as np
 
-<<<<<<< HEAD
 from ..frontend import forest, graph
-from . import debug, dispatch
-=======
-from ..frontend import graph
 from . import debug
 
 # Type aliases for operation function signatures
@@ -129,7 +125,6 @@ transformations that affect the array's dimensionality or reduce values
 along the specified axis.
 
 Add entries to this table to support more axis operations."""
->>>>>>> main
 
 
 class NodeValueNotFound(Exception):
@@ -202,9 +197,9 @@ def evaluate_tree(state: State, tree: forest.Tree) -> np.ndarray:
     This function is equivalent to calling `evaluate` for each node in the
     tree's nodes and then returning the final value.
     """
-    assert len(tree.nodes) > 0
+    assert len(tree.body) > 0
     rv: np.ndarray | None = None
-    for node in tree.nodes:
+    for node in tree.body:
         rv = evaluate(state, node)
     assert rv is not None
     return rv
