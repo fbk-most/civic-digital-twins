@@ -1,120 +1,172 @@
-"""
-Generates a partitioned forest from a graph and graph leaf nodes.
+"""Partition the DAG into a forest of trees.
 
-A graph is a DAG representing a computation. You construct is using the
-`graph` module in this package or other higher-level modules.
+Given a set of root nodes, this module overlays a forest of trees
+on top of the DAG and returns the trees in topological order.
 
-The graph leaf nodes is the set of leaf nodes to evaluate.
-
-Given a graph and the leaf nodes, this module transforms it into a
-forest (i.e., a list of `Tree`). Each leaf node becomes a `Tree`
-returned in output. Each `Tree` contains:
-
-    1. inputs: the set of input nodes used by the tree
-
-    2. nodes: the topologically sorted list of nodes to compute the root node
-
-The `Tree.nodes` attribute always contains at least the leaf node, which
-you can access using the `Tree.root` method.
-
-Note that this module uses the `linearize` module internally. You don't need
-to use linearize if you are already using this module.
+Note that this module uses `linearize` internally. You don't need
+to use `linearize` if you are already using this module.
 """
 
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+from typing import Any
 
-from . import graph as g0
-from . import linearize, pretty
+from . import graph, linearize
 
 
 @dataclass(frozen=True)
 class Tree:
-    """Tree in the compiled graph.
+    """Tree representing the computation of a root node.
 
-    Contains the root node, the inputs required to compute the value of
-    the root node, and the topologically sorted nodes to evaluate to obtain
-    the value of the root node.
+    Attributes
+    ----------
+    inputs: input nodes required to compute the root node value
+        guaranteed to be sorted by increasing node ID.
+
+    nodes: topologically sorted nodes to compute the root node value.
     """
 
-    # Inputs required to compute the root
-    inputs: set[g0.Node]
+    inputs: list[graph.Node]
+    nodes: list[graph.Node]
 
-    # Topologically sorted nodes.
-    nodes: list[g0.Node]
-
-    def root(self) -> g0.Node:
-        """Return the root node of the tree."""
+    def __post_init__(self) -> None:
+        """Ensure that invariants are respected."""
+        # Make sure the tree is well formed
         assert len(self.nodes) > 0
+
+        # Make sure inputs are sorted by increasing node ID
+        assert sorted(self.inputs, key=lambda x: x.id) == self.inputs
+
+    def root(self) -> graph.Node:
+        """Return the root node of the tree."""
         return self.nodes[-1]
 
     def __hash__(self) -> int:
         """Override hashing to use the root node hash."""
         return hash(self.root())
 
-    def format(self) -> str:
-        """Format returns a string representation of the tree."""
+    def __eq__(self, other: Any) -> bool:
+        """Implement equality operator using hashing equality."""
+        if not isinstance(other, Tree):
+            return NotImplemented
+        return self.root() is other.root()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable Python function representation of the tree."""
+        # Be prepared for assembling lines
         lines: list[str] = []
+
+        # Format the function name
         root = self.root()
+        inputs = ", ".join(f"n{input.id}: graph.Node" for input in self.inputs)
+        lines.append(f"def t{root.id}({inputs}) -> graph.Node:")
+
+        # Format the function body
         for node in self.nodes:
-            line: list[str] = []
-            line.append(f"#{node.id} ")
-            if node in self.inputs:
-                line.append("<INPUT> ")
-            elif node is root:
-                line.append("<OUTPUT> ")
-            else:
-                line.append("<INTERNAL> ")
-            line.append(pretty.format(node))
-            lines.append("".join(line))
+            lines.append("    " + str(node))
+
+        # Format the return statement
+        lines.append(f"    return n{root.id}")
+
+        # Add an empty line
+        lines.append("")
+
+        # Assemble the whole function code
         return "\n".join(lines)
 
+    def __str__(self) -> str:
+        """Return a round-trippable Python function representation of the tree."""
+        return repr(self)
 
-def partition(*leaves_tuple: g0.Node) -> list[Tree]:
-    """Transform a list of graph leaves into a forest.
 
-    The leaves are the nodes to compute. Each leave becomes the root of
-    a tree that contains the topologically nodes to evaluate the leave
-    value. Nodes computed by other trees will not be computed by a tree
-    and are listed as required inputs to evaluate the tree. The relevant
-    placeholders are also listed as required inputs.
+def partition(*roots: graph.Node) -> list[Tree]:
+    """Partition the graph into a set of independent trees.
+
+    Returns one tree per root node, where each tree contains the minimal
+    subgraph required to compute its root. The trees are topologically
+    sorted such that all dependencies are satisfied at evaluation time.
     """
-    # 1. ensure that we use the insertion order sorting
-    leaves = sorted(list(leaves_tuple), key=lambda x: x.id)
+    # 1. partition without topological sorting
+    unsorted = _partition(*roots)
 
-    # 2. be prepared for collecting all the trees
+    # 2. be prepared for returning topologically sorted trees
     trees: list[Tree] = []
 
-    # 3. ensure that we know all the leaves in advance
-    leaves_set: set[g0.Node] = set(leaves)
+    # 3. be prepared to know the trees we've processed
+    processed: set[Tree] = set()
 
-    # 4. process each leave independently
-    for leaf in leaves:
-        # 4.1. get the topological sorting for the leave
-        nodes = linearize.forest(leaf, boundary=leaves_set - set([leaf]))
+    # 4. track the trees that we're working on
+    work = deque(unsorted)
 
-        # 4.2. prepare to collect inputs
-        inputs: set[g0.Node] = set()
+    # 5. iterate until we're out of trees
+    while work:
+        # 5.1. extract the tree currently at the front of the list
+        tree = work.popleft()
 
-        # 4.3. add as inputs all placeholders and all the
-        # leaves in the sorting except the current one
-        for node in nodes:
-            if isinstance(node, g0.placeholder):
-                inputs.add(node)
+        # 5.2. check whether all dependencies are satisfied skipping the
+        # placeholders since they're satisfied by definition
+        satisfied = all(dep in processed if not isinstance(dep, graph.placeholder) else True for dep in tree.inputs)
+
+        # 5.3. if not, put the tree at the back.
+        #
+        # Note: in principle this algorithm loops forever but the input
+        # is a DAG so the algorithm will always converge.
+        if not satisfied:
+            work.append(tree)
+            continue
+
+        # 5.4. finish processing the tree
+        processed.add(tree)
+        trees.append(tree)
+
+    # 6. Make sure invariants hold after processing
+    assert len(processed) == len(unsorted)
+
+    # 7. return the topologically sorted trees
+    return trees
+
+
+def _partition(*roots: graph.Node) -> list[Tree]:
+    # 1. be prepared for collecting all the trees
+    trees: list[Tree] = []
+
+    # 2. ensure that we know all the roots in advance
+    rootset: set[graph.Node] = set(roots)
+
+    # 3. process each root independently
+    for root in roots:
+        # 3.1. compute the boundary where to stop visiting
+        boundary = rootset - {root}
+
+        # 3.2. get the topological sorting for the current root
+        allnodes = linearize.forest(root, boundary=boundary)
+
+        # 3.3. prepare to collect unique inputs
+        unique_inputs: set[graph.Node] = set()
+
+        # 3.4. prepare the collect the "body"
+        nodes: list[graph.Node] = []
+
+        # 3.5. distinguish between inputs and "body"
+        for node in allnodes:
+            if node in boundary:
+                unique_inputs.add(node)
                 continue
-            if node is not leaf and node in leaves_set:
-                inputs.add(node)
-                continue
+            nodes.append(node)
 
-        # 4.4. check some invariants; note that nodes must
-        # always contain at least the leaf node
-        assert len(nodes) > 0 and nodes[-1] is leaf
+        # 3.6. ensure that inputs are sorted by increasing ID
+        sorted_inputs = sorted(unique_inputs, key=lambda x: x.id)
 
-        # 4.4. create the tree for the node
-        trees.append(Tree(inputs, nodes))
+        # 3.7. check some invariants; note that nodes must
+        # always contain at least the root node
+        assert len(nodes) > 0 and nodes[-1] is root
 
-    # 5. return the forest
+        # 3.8. create the tree for the node
+        trees.append(Tree(inputs=sorted_inputs, nodes=nodes))
+
+    # 4. return the forest
     return trees
