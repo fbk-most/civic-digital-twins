@@ -27,23 +27,23 @@ class Tree:
     inputs: input nodes required to compute the root node value
         guaranteed to be sorted by increasing node ID.
 
-    nodes: topologically sorted nodes to compute the root node value.
+    body: topologically sorted nodes to compute the root node value.
     """
 
     inputs: list[graph.Node]
-    nodes: list[graph.Node]
+    body: list[graph.Node]
 
     def __post_init__(self) -> None:
         """Ensure that invariants are respected."""
         # Make sure the tree is well formed
-        assert len(self.nodes) > 0
+        assert len(self.body) > 0
 
         # Make sure inputs are sorted by increasing node ID
         assert sorted(self.inputs, key=lambda x: x.id) == self.inputs
 
     def root(self) -> graph.Node:
         """Return the root node of the tree."""
-        return self.nodes[-1]
+        return self.body[-1]
 
     def __hash__(self) -> int:
         """Override hashing to use the root node hash."""
@@ -66,7 +66,7 @@ class Tree:
         lines.append(f"def t{root.id}({inputs}) -> graph.Node:")
 
         # Format the function body
-        for node in self.nodes:
+        for node in self.body:
             lines.append("    " + str(node))
 
         # Format the return statement
@@ -149,24 +149,24 @@ def _partition(*roots: graph.Node) -> list[Tree]:
         unique_inputs: set[graph.Node] = set()
 
         # 3.4. prepare the collect the "body"
-        nodes: list[graph.Node] = []
+        body: list[graph.Node] = []
 
         # 3.5. distinguish between inputs and "body"
         for node in allnodes:
             if node in boundary:
                 unique_inputs.add(node)
                 continue
-            nodes.append(node)
+            body.append(node)
 
         # 3.6. ensure that inputs are sorted by increasing ID
         sorted_inputs = sorted(unique_inputs, key=lambda x: x.id)
 
         # 3.7. check some invariants; note that nodes must
         # always contain at least the root node
-        assert len(nodes) > 0 and nodes[-1] is root
+        assert len(body) > 0 and body[-1] is root
 
         # 3.8. create the tree for the node
-        trees.append(Tree(inputs=sorted_inputs, nodes=nodes))
+        trees.append(Tree(inputs=sorted_inputs, body=body))
 
     # 4. return the forest
     return trees
