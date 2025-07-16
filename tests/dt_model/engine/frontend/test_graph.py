@@ -2,10 +2,10 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from civic_digital_twins.dt_model.engine.frontend import graph
-
 import subprocess
 import textwrap
+
+from civic_digital_twins.dt_model.engine.frontend import graph
 
 
 def test_basic_node_creation():
@@ -419,7 +419,8 @@ def test_ensure_node_function():
 def test_static_type_checking_success(tmp_path):
     """Test type-checking is okay on success."""
     test_file = tmp_path / "success.py"
-    test_file.write_text(textwrap.dedent("""
+    test_file.write_text(
+        textwrap.dedent("""
         from civic_digital_twins.dt_model.engine.frontend import graph
 
         class Dim: pass
@@ -427,7 +428,8 @@ def test_static_type_checking_success(tmp_path):
         a = graph.placeholder[Dim]("a")
         b = graph.placeholder[Dim]("b")
         c = a + b  # should type check
-    """))
+    """)
+    )
 
     result = subprocess.run(["pyright", str(test_file)], capture_output=True, text=True)
     print(result.stdout)  # for debugging
@@ -438,7 +440,8 @@ def test_static_type_checking_success(tmp_path):
 def test_static_type_checking_failure(tmp_path):
     """Test type-checking fails with mismatched types."""
     test_file = tmp_path / "failure.py"
-    test_file.write_text(textwrap.dedent("""
+    test_file.write_text(
+        textwrap.dedent("""
         from civic_digital_twins.dt_model.engine.frontend import graph
 
         class DimA: pass
@@ -447,7 +450,8 @@ def test_static_type_checking_failure(tmp_path):
         a = graph.placeholder[DimA]("a")
         b = graph.placeholder[DimB]("b")
         c = a + b  # should fail type check
-    """))
+    """)
+    )
 
     result = subprocess.run(["pyright", str(test_file)], capture_output=True, text=True)
     print(result.stdout)  # for debugging
