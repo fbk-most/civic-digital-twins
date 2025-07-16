@@ -5,19 +5,19 @@ import numpy as np
 from ..frontend import graph, pretty
 
 
-def print_graph_node(node: graph.Node) -> None:
+def print_graph_node(node: graph.Node, context: str = "tracepoint") -> None:
     """Print a node within the computation graph."""
-    print("=== begin tracepoint ===")
+    print(f"=== begin {context} ===")
     print(f"name: {node.name}")
     print(f"id: {node.id}")
     print(f"type: {node.__class__}")
     print(f"formula: {pretty.format(node)}")
 
 
-def print_evaluated_node(value: np.ndarray, cached: bool = False) -> None:
+def print_evaluated_node(value: np.ndarray, cached: bool = False, context: str = "tracepoint") -> None:
     """Print a node after evaluation."""
     print(f"shape: {value.shape}")
     print(f"cached: {cached}")
     print(f"value:\n{value}")
-    print("=== end tracepoint ===")
+    print(f"=== end {context} ===")
     print("")

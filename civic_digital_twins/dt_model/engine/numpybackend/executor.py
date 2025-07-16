@@ -153,7 +153,8 @@ class State:
     by initializing the `values` dictionary accordingly.
 
     Note that, if compileflags.TRACE is set, the State will print the
-    nodes provided to the constructor in its __post_init__ method.
+    nodes provided to the constructor in its __post_init__ method using
+    the `=== begin/end placeholder ===' markers.
 
     Attributes
     ----------
@@ -171,8 +172,8 @@ class State:
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                debug.print_graph_node(node)
-                debug.print_evaluated_node(self.values[node], cached=True)
+                debug.print_graph_node(node, context="placeholder")
+                debug.print_evaluated_node(self.values[node], cached=True, context="placeholder")
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
