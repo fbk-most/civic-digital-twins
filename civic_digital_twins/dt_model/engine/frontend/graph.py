@@ -83,7 +83,7 @@ Design Decisions
    - Enables graph traversal and transformation
 
 4. Gradual, Static Typing:
-    - Produce static type errors for explicitly typed nodes
+    - Produce static type errors for explicitly-typed nodes
     - No static type errors otherwise
 
 Gradual, Static Typing
