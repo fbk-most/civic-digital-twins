@@ -94,7 +94,7 @@ assign types using `placeholder` and `constant`, the
 type checker will produce squiggles for mismatched operations.
 
 If at least a node is untyped, then operations are always
-possible without error squiggles.
+possible without getting static type errors.
 
 For example:
 
