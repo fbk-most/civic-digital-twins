@@ -94,7 +94,7 @@ def partition(*leaves_tuple: g0.Node) -> list[Tree]:
     # 4. process each leave independently
     for leaf in leaves:
         # 4.1. get the topological sorting for the leave
-        nodes = linearize.forest(leaf, stopat=leaves_set - set([leaf]))
+        nodes = linearize.forest(leaf, boundary=leaves_set - set([leaf]))
 
         # 4.2. prepare to collect inputs
         inputs: set[g0.Node] = set()

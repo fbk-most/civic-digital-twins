@@ -12,6 +12,9 @@ The linearization process:
 2. Ensures all dependencies are scheduled before their dependents
 3. Handles common graph structures (conditionals, etc.)
 
+Note that output nodes are also called root nodes because they are seen
+as the roots of evaluation trees, while the DAG is a forest of trees.
+
 This is useful for:
 - Creating efficient execution plans for evaluators
 - Visualizing the computation flow in order
@@ -31,24 +34,24 @@ from __future__ import annotations
 from . import graph
 
 
-def forest(*leaves: graph.Node, stopat: set[graph.Node] | None = None) -> list[graph.Node]:
+def forest(*roots: graph.Node, boundary: set[graph.Node] | None = None) -> list[graph.Node]:
     """
-    Linearize a computation forest (multiple output nodes) into an execution plan.
+    Linearize a computation forest (multiple output nodes) into a sequence.
 
-    The nodes passed to this function are called "leaves" because (1) they
-    represent the nodes you'd like to evaluate and (2) these nodes are
-    typically the final results of the computation, which should not depend
-    on any other nodes. We start linearization from such leaf nodes and
-    work backwards to schedule all dependencies in order. That said, it's
-    possible to apply this algorithm to any node within your graph. The
-    result would be the linear scheduling from such node's point of view.
+    The computation forest is an overlay abstraction created over a DAG where the
+    given roots identify each tree within the forest itself.
+
+    While the roots are typically the outputs computed by the DAG, they
+    can actually be any node within the DAG itself.
+
+    Evaluating the returned nodes in order ensures that you always evaluate
+    node A before node B when node B depends on node A.
 
     Args:
-        *leaves: the nodes to start the linearization process from. Use the
+        *roots: the nodes to start the linearization process from. Use the
             unpacking operator `*` to pass a list of nodes.
 
-        stopat: visit, but do not recurse into, the nodes in this set, if
-            any, to enable limiting the depth of the overall visit.
+        boundary: stop visiting when reaching nodes in the boundary set.
 
     Returns
     -------
@@ -86,6 +89,9 @@ def forest(*leaves: graph.Node, stopat: set[graph.Node] | None = None) -> list[g
     # visited caches the nodes we've already visited
     visited: set[graph.Node] = set()
 
+    # ensure the boundary is not none to simplify the check below
+    boundary = boundary if boundary is not None else set()
+
     def _visit(node: graph.Node) -> None:
         # Ensure we only visit a node at most once
         if node in visited:
@@ -100,8 +106,8 @@ def forest(*leaves: graph.Node, stopat: set[graph.Node] | None = None) -> list[g
         # Register that we're visiting this node
         visiting.add(node)
 
-        # Check whether we need to recurse into the node
-        if stopat is None or node not in stopat:
+        # Stop recursing when we reach the boundary
+        if node not in boundary:
             # Get dependent nodes based on this node's type
             deps = _get_dependencies(node)
 
@@ -118,8 +124,8 @@ def forest(*leaves: graph.Node, stopat: set[graph.Node] | None = None) -> list[g
         # We can append this node to the final plan
         plan.append(node)
 
-    # Start visiting from the leaf nodes
-    for node in leaves:
+    # Start visiting from the root nodes
+    for node in roots:
         _visit(node)
 
     # Return the linearized plan to the caller
