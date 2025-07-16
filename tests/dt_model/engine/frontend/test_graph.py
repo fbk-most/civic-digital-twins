@@ -549,7 +549,6 @@ def test_repr():
 
 def test_maybe_set_name():
     """Ensure that Node.maybe_set_name works as intended."""
-
     # When there is already a name
     n1 = graph.placeholder("a")
     n1.maybe_set_name("x")
