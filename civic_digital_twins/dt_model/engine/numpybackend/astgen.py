@@ -46,7 +46,7 @@ class FunctionDef:
 def function_def(tree: forest.Tree, name="") -> FunctionDef:
     """Transform a `forest.Tree` into a `ASTFunctionDef` wrapping Python AST."""
     # 1. ensure that the tree has been correctly compiled
-    assert len(tree.nodes) > 0 and tree.root() is tree.nodes[-1]
+    assert len(tree.body) > 0 and tree.root() is tree.body[-1]
 
     # 2. auto-assign the function name if not assigned
     if not name:
@@ -69,7 +69,7 @@ def function_def(tree: forest.Tree, name="") -> FunctionDef:
                 kwarg=None,
                 defaults=list(),
             ),
-            body=_new_function_body(args, tree.nodes),
+            body=_new_function_body(args, tree.body),
             decorator_list=list(),
             returns=_np_attr_name("ndarray"),
         ),
