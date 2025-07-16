@@ -599,7 +599,7 @@ def test_state_post_init_tracing(capsys):
     assert "cached: True" in output
 
 
-def test_forest_tree():
+def test_evaluate_trees_nonempty():
     """Test execution where we evaluate a forest tree."""
     # Build a more complex graph
     x = graph.placeholder("x")

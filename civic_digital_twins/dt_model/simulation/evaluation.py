@@ -88,8 +88,7 @@ class Evaluation:
 
         # [eval] actually evaluate all the nodes
         state = executor.State(c_subs)
-        for node in linearize.forest(*all_nodes):
-            executor.evaluate(state, node)
+        executor.evaluate_nodes(state, *linearize.forest(*all_nodes))
 
         # [fix] Ensure that we have the correct shape for operands
         def _fix_shapes(value: np.ndarray) -> np.ndarray:

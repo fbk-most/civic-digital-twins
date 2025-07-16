@@ -195,11 +195,11 @@ def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
     """Provide syntactic sugar for evaluating multiple trees."""
     rv: np.ndarray | None = None
     for tree in trees:
-        rv = evaluate_tree(state, tree)
+        rv = evaluate_single_tree(state, tree)
     return rv
 
 
-def evaluate_tree(state: State, tree: forest.Tree) -> np.ndarray:
+def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
     """Evaluate a `forest.Tree` using the current `State`.
 
     This function is syntactic sugar for calling `evaluate_nodes`
@@ -221,11 +221,11 @@ def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     """
     rv: np.ndarray | None = None
     for node in nodes:
-        rv = evaluate_node(state, node)
+        rv = evaluate_single_node(state, node)
     return rv
 
 
-def evaluate_node(state: State, node: graph.Node) -> np.ndarray:
+def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
@@ -275,7 +275,7 @@ def evaluate_node(state: State, node: graph.Node) -> np.ndarray:
     return result
 
 
-evaluate = evaluate_node
+evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
