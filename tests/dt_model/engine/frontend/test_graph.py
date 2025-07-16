@@ -5,6 +5,7 @@
 import subprocess
 import textwrap
 
+from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
 
@@ -44,13 +45,13 @@ def test_debug_flags():
 
     # Test tracepoint
     traced = graph.tracepoint(a)
-    assert traced.flags & graph.NODE_FLAG_TRACE
+    assert traced.flags & compileflags.TRACE
     assert traced is a  # Should return same node
 
     # Test breakpoint
     broken = graph.breakpoint(a)
-    assert broken.flags & graph.NODE_FLAG_BREAK
-    assert broken.flags & graph.NODE_FLAG_TRACE
+    assert broken.flags & compileflags.BREAK
+    assert broken.flags & compileflags.TRACE
     assert broken is a  # Should return same node
 
 

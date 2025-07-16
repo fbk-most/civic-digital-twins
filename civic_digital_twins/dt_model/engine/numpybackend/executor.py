@@ -23,6 +23,7 @@ from typing import (
 
 import numpy as np
 
+from .. import compileflags
 from ..frontend import forest, graph
 from . import debug
 
@@ -151,21 +152,23 @@ class State:
     Make sure to provide values for placeholder nodes ahead of the evaluation
     by initializing the `values` dictionary accordingly.
 
-    Note that, if graph.NODE_FLAG_TRACE is set, the State will print the
+    Note that, if compileflags.TRACE is set, the State will print the
     nodes provided to the constructor in its __post_init__ method.
 
     Attributes
     ----------
         values: A dictionary caching the result of the computation.
-        flags: Bitmask containing debug flags (e.g., graph.NODE_FLAG_BREAK).
+        flags: Bitmask containing debug flags (e.g., compileflags.BREAK) set
+            by default using the `DTMODEL_ENGINE_FLAGS` environement
+            variable as documented by the `compileflags` package docs.
     """
 
     values: dict[graph.Node, np.ndarray]
-    flags: int = 0
+    flags: int = compileflags.defaults
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
-        if self.flags & graph.NODE_FLAG_TRACE != 0:
+        if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
                 debug.print_graph_node(node)
@@ -252,7 +255,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
 
     # 2. check whether we need to trace this node
     flags = node.flags | state.flags
-    tracing = flags & graph.NODE_FLAG_TRACE
+    tracing = flags & compileflags.TRACE
     if tracing:
         debug.print_graph_node(node)
 
@@ -264,7 +267,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
         debug.print_evaluated_node(result, cached=False)
 
     # 5. check whether we need to stop after evaluating this node
-    if flags & graph.NODE_FLAG_BREAK != 0:
+    if flags & compileflags.BREAK != 0:
         input("executor: press any key to continue...")
         print("")
 
