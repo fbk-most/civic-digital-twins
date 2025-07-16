@@ -112,7 +112,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from .. import atomic
+from .. import atomic, compileflags
 
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
@@ -121,10 +121,10 @@ Scalar = bool | float | int
 """Type alias for supported scalar value types."""
 
 
-NODE_FLAG_TRACE = 1 << 0
+NODE_FLAG_TRACE = compileflags.TRACE
 """Inserts a tracepoint at the corresponding graph node."""
 
-NODE_FLAG_BREAK = 1 << 1
+NODE_FLAG_BREAK = compileflags.BREAK
 """Inserts a breakpoint at the corresponding graph node."""
 
 
