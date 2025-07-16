@@ -23,10 +23,6 @@ from typing import (
 
 import numpy as np
 
-<<<<<<< HEAD
-from ..frontend import forest, graph
-from . import debug, dispatch
-=======
 from ..frontend import graph
 from . import debug
 
@@ -129,7 +125,6 @@ transformations that affect the array's dimensionality or reduce values
 along the specified axis.
 
 Add entries to this table to support more axis operations."""
->>>>>>> main
 
 
 class NodeValueNotFound(Exception):
@@ -194,20 +189,6 @@ class State:
             return self.values[node]
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
-
-
-def evaluate_tree(state: State, tree: forest.Tree) -> np.ndarray:
-    """Evaluate a tree given the current state.
-
-    This function is equivalent to calling `evaluate` for each node in the
-    tree's nodes and then returning the final value.
-    """
-    assert len(tree.nodes) > 0
-    rv: np.ndarray | None = None
-    for node in tree.nodes:
-        rv = evaluate(state, node)
-    assert rv is not None
-    return rv
 
 
 def evaluate(state: State, node: graph.Node) -> np.ndarray:
