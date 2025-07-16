@@ -457,3 +457,90 @@ def test_static_type_checking_failure(tmp_path):
     print(result.stdout)  # for debugging
 
     assert result.returncode != 0, "Pyright unexpectedly passed a known type error"
+
+
+def test_repr():
+    """Test we get the correct node __repr__ for each node that has a __repr__."""
+    a = graph.constant(114, name="a")
+    assert str(a) == f"n{a.id} = graph.constant(value=114, name='a')"
+
+    b = graph.placeholder("b", default_value=11)
+    assert str(b) == f"n{b.id} = graph.placeholder(name='b', default_value=11)"
+
+    c = a + b
+    assert str(c) == f"n{c.id} = graph.add(left=n{a.id}, right=n{b.id}, name='')"
+
+    d = a - b
+    assert str(d) == f"n{d.id} = graph.subtract(left=n{a.id}, right=n{b.id}, name='')"
+
+    e = a * b
+    assert str(e) == f"n{e.id} = graph.multiply(left=n{a.id}, right=n{b.id}, name='')"
+
+    f = a / b
+    assert str(f) == f"n{f.id} = graph.divide(left=n{a.id}, right=n{b.id}, name='')"
+
+    g = a == b
+    assert str(g) == f"n{g.id} = graph.equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    h = a != b
+    assert str(h) == f"n{h.id} = graph.not_equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    i = a < b
+    assert str(i) == f"n{i.id} = graph.less(left=n{a.id}, right=n{b.id}, name='')"
+
+    j = a <= b
+    assert str(j) == f"n{j.id} = graph.less_equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    k = a > b
+    assert str(k) == f"n{k.id} = graph.greater(left=n{a.id}, right=n{b.id}, name='')"
+
+    out = a >= b
+    assert str(out) == f"n{out.id} = graph.greater_equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    m = a & b
+    assert str(m) == f"n{m.id} = graph.logical_and(left=n{a.id}, right=n{b.id}, name='')"
+
+    n = a | b
+    assert str(n) == f"n{n.id} = graph.logical_or(left=n{a.id}, right=n{b.id}, name='')"
+
+    o = a ^ b
+    assert str(o) == f"n{o.id} = graph.logical_xor(left=n{a.id}, right=n{b.id}, name='')"
+
+    p = ~a
+    assert str(p) == f"n{p.id} = graph.logical_not(node=n{a.id}, name='')"
+
+    q = graph.exp(a)
+    assert str(q) == f"n{q.id} = graph.exp(node=n{a.id}, name='')"
+
+    r = graph.power(a, b)
+    assert str(r) == f"n{r.id} = graph.power(left=n{a.id}, right=n{b.id}, name='')"
+
+    s = graph.log(a)
+    assert str(s) == f"n{s.id} = graph.log(node=n{a.id}, name='')"
+
+    t = graph.maximum(a, b)
+    assert str(t) == f"n{t.id} = graph.maximum(left=n{a.id}, right=n{b.id}, name='')"
+
+    condition = graph.placeholder("condition")
+    u = graph.where(condition, a, b)
+    assert str(u) == f"n{u.id} = graph.where(condition=n{condition.id}, then=n{a.id}, otherwise=n{b.id}, name='')"
+
+    other_cond = graph.placeholder("other_cond")
+    defval = graph.placeholder("defval")
+    u = graph.multi_clause_where([(condition, a), (other_cond, b)], defval)
+    assert (
+        str(u)
+        == f"n{u.id} = graph.multi_clause_where(clauses=[(n{condition.id}, n{a.id}), (n{other_cond.id}, n{b.id})], default_value=n{defval.id}, name='')"  # noqa: E501
+    )
+
+    v = graph.expand_dims(a, (1, 2))
+    assert str(v) == f"n{v.id} = graph.expand_dims(node=n{a.id}, axis=(1, 2), name='')"
+
+    w = graph.squeeze(a, (1, 2))
+    assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
+
+    x = graph.project_using_sum(a, (1, 2))
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
+
+    y = graph.project_using_mean(a, (1, 2))
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"

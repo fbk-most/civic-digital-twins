@@ -565,7 +565,7 @@ class where(Generic[C, T], Node[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"
+        return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"  # noqa: E501
 
 
 class multi_clause_where(Generic[C, T], Node[T]):
@@ -583,8 +583,8 @@ class multi_clause_where(Generic[C, T], Node[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        clauses = [(f"n{condition.id}", f"n{then.id}") for condition, then in self.clauses]
-        return f"n{self.id} = graph.multi_clause_where(clauses={clauses}, default_value=n{self.default_value}, name='{self.name}')"
+        clauses = ", ".join(f"(n{condition.id}, n{then.id})" for condition, then in self.clauses)
+        return f"n{self.id} = graph.multi_clause_where(clauses=[{clauses}], default_value=n{self.default_value.id}, name='{self.name}')"  # noqa: E501
 
 
 # Shape-changing operations
