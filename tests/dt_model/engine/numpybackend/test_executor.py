@@ -632,8 +632,7 @@ def test_forest_tree():
 
     # Evaluate with executor
     state = executor.State({x: x_val, y: y_val})
-    for tree in trees:
-        executor.evaluate_tree(state, tree)
+    executor.evaluate_trees(state, *trees)
 
     # Check intermediate and final results
     assert np.array_equal(state.values[x_squared], expected_x_squared)
