@@ -591,8 +591,8 @@ def test_state_post_init_tracing(capsys):
     output = captured.out
 
     # Verify that both nodes were traced in the output
-    assert f"name: {x.name}" in output
-    assert f"name: {y.name}" in output
+    assert f"node: {str(x)}" in output
+    assert f"node: {str(y)}" in output
     assert "=== begin placeholder ===" in output
 
     # Verify the cached indication is shown

@@ -25,7 +25,6 @@ import numpy as np
 
 from .. import compileflags
 from ..frontend import forest, graph
-from . import debug
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -128,6 +127,21 @@ along the specified axis.
 Add entries to this table to support more axis operations."""
 
 
+def _print_graph_node(node: graph.Node, context: str = "tracepoint") -> None:
+    """Print a node within the computation graph."""
+    print(f"=== begin {context} ===")
+    print(f"node: {str(node)}")
+
+
+def _print_evaluated_node(value: np.ndarray, cached: bool = False, context: str = "tracepoint") -> None:
+    """Print a node after evaluation."""
+    print(f"shape: {value.shape}")
+    print(f"cached: {cached}")
+    print(f"value:\n{value}")
+    print(f"=== end {context} ===")
+    print("")
+
+
 class NodeValueNotFound(Exception):
     """Raised when a node value is not found in the state."""
 
@@ -172,8 +186,8 @@ class State:
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                debug.print_graph_node(node, context="placeholder")
-                debug.print_evaluated_node(self.values[node], cached=True, context="placeholder")
+                _print_graph_node(node, context="placeholder")
+                _print_evaluated_node(self.values[node], cached=True, context="placeholder")
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
@@ -285,14 +299,14 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     flags = node.flags | state.flags
     tracing = flags & compileflags.TRACE
     if tracing:
-        debug.print_graph_node(node)
+        _print_graph_node(node)
 
     # 3. evaluate the node proper
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result
     if tracing:
-        debug.print_evaluated_node(result, cached=False)
+        _print_evaluated_node(result, cached=False)
 
     # 5. check whether we need to stop after evaluating this node
     if flags & compileflags.BREAK != 0:
