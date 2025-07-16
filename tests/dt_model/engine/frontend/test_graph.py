@@ -430,7 +430,7 @@ def test_static_type_checking_success(tmp_path):
     """))
 
     result = subprocess.run(["pyright", str(test_file)], capture_output=True, text=True)
-    print(result.stdout)  # optional, for debugging
+    print(result.stdout)  # for debugging
 
     assert result.returncode == 0, f"Unexpected pyright failure:\n{result.stdout}"
 
@@ -450,6 +450,6 @@ def test_static_type_checking_failure(tmp_path):
     """))
 
     result = subprocess.run(["pyright", str(test_file)], capture_output=True, text=True)
-    print(result.stdout)  # optional, for debugging
+    print(result.stdout)  # for debugging
 
     assert result.returncode != 0, "Pyright unexpectedly passed a known type error"
