@@ -22,6 +22,12 @@ from . import graph, linearize
 class Tree:
     """Tree representing the computation of a root node.
 
+    Tree Identity and Equality
+    --------------------------
+
+    A tree uses as hashing identity the identity of its root node and the
+    equality operator checks for root node identity equality.
+
     Attributes
     ----------
     inputs: input nodes required to compute the root node value
