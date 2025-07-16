@@ -61,8 +61,7 @@ def test_placeholder_evaluation():
     # Test missing binding
     state_missing = executor.State({})
     with pytest.raises(executor.PlaceholderValueNotProvided):
-        for node in plan_x:
-            executor.evaluate(state_missing, node)
+        executor.evaluate_nodes(state_missing, *plan_x)
 
 
 def test_arithmetic_operations():
@@ -273,7 +272,7 @@ def test_error_handling():
         pass
 
     with pytest.raises(executor.UnsupportedNodeType):
-        executor.evaluate(executor.State({}), unknown_node())
+        executor.evaluate_single_node(executor.State({}), unknown_node())
 
     # Test unknown operation
     class unknown_binary(graph.BinaryOp):
@@ -293,7 +292,7 @@ def test_error_handling():
     # Not following the plan order - trying to evaluate y before x
     state = executor.State({x: np.array([1.0])})
     with pytest.raises(executor.NodeValueNotFound):
-        executor.evaluate(state, y)  # Should fail, x not evaluated yet
+        executor.evaluate_single_node(state, y)  # Should fail, x not evaluated yet
 
 
 def test_reduction_operations():
@@ -407,7 +406,7 @@ def test_state_value_access():
     state = executor.State({x: np.array([1.0, 2.0, 3.0])})
 
     # Evaluate constant node
-    executor.evaluate(state, y)
+    executor.evaluate_single_node(state, y)
 
     # Test that node exists in state.values
     assert y in state.values
