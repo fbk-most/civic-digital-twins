@@ -527,10 +527,10 @@ def test_repr():
 
     other_cond = graph.placeholder("other_cond")
     defval = graph.placeholder("defval")
-    u = graph.multi_clause_where([(condition, a), (other_cond, b)], defval)
+    uu = graph.multi_clause_where([(condition, a), (other_cond, b)], defval)
     assert (
-        str(u)
-        == f"n{u.id} = graph.multi_clause_where(clauses=[(n{condition.id}, n{a.id}), (n{other_cond.id}, n{b.id})], default_value=n{defval.id}, name='')"  # noqa: E501
+        str(uu)
+        == f"n{uu.id} = graph.multi_clause_where(clauses=[(n{condition.id}, n{a.id}), (n{other_cond.id}, n{b.id})], default_value=n{defval.id}, name='')"  # noqa: E501
     )
 
     v = graph.expand_dims(a, (1, 2))

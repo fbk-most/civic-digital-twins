@@ -139,7 +139,7 @@ where you see the node IDs (the format is `nX` where `X` is the ID) and the
 arguments with which they were constructed.
 
 Crucially, if you execute the `__repr__` of each node, you get back the
-same graph that you have constructred with the original code.
+same graph that you have constructed with the original code.
 
 Node Identity and Equality
 --------------------------
