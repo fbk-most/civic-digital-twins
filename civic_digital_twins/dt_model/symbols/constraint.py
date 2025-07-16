@@ -27,6 +27,9 @@ class Constraint:
         capacity: Index,
         name: str = "",
     ) -> None:
-        self.usage = SymIndex(name="", value=usage)
+        # TODO(bassosimone): for debuggability, assign the index name
+        # to be f'{name}_usage` rather than just f'{name}'. Figure out
+        # whether this is the desired outcome or not.
+        self.usage = SymIndex(name=name + "_usage", value=usage)
         self.capacity = capacity
         self.name = name

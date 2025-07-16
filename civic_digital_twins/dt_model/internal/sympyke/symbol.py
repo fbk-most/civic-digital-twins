@@ -17,6 +17,14 @@ class SymbolValue:
     node: graph.placeholder
     name: str
 
+    def __str__(self) -> str:
+        """Return a string representation of the symbol."""
+        return repr(self)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the symbol."""
+        return f"'{self.name}'"
+
 
 class _SymbolTable:
     def __init__(self):
