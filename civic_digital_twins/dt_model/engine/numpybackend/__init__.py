@@ -11,11 +11,7 @@ Key Components
   a previously-topologically-sorted computation graph efficiently
   without recursion.
 
-- dispatch: Maps symbolic operations from the frontend graph to their
-  corresponding NumPy implementations through dispatch tables.
-
-- debug: Provides utilities for tracing and visualizing graph execution,
-  helping with troubleshooting and performance analysis.
+- treecompiler: JIT compiler for evaluating `forest.Tree` instances.
 
 Usage Example:
 -------------
