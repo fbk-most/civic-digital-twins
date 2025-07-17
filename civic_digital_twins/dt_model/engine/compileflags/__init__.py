@@ -17,9 +17,13 @@ BREAK = 1 << 1
 DUMP = 1 << 2
 """Dump nodes in SSA format ahead of evaluation."""
 
+JIT = 1 << 3
+"""When possible use a JIT compiler."""
+
 _flagnames: dict[str, int] = {
     "break": BREAK,
     "dump": DUMP,
+    "jit": JIT,
     "trace": TRACE,
 }
 """Maps the lowercase name of the flag to its value."""
