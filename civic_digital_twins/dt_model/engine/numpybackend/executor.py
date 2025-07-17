@@ -169,7 +169,7 @@ class FunctionProtocol(Protocol):
     """A user-defined callable integrated into the DAG."""
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
-        """Executes the user defined function."""
+        """Execute the user defined function."""
         ...
 
 
@@ -180,7 +180,7 @@ class LambdaAdapter:
         self.callable = callable
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
-        """Executes the wrapped callable with the given arguments."""
+        """Execute the wrapped callable with the given arguments."""
         return self.callable(*args, **kwargs)
 
 

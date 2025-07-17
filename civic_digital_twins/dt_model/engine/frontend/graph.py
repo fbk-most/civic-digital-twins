@@ -717,6 +717,7 @@ class function(Generic[T], Node[T]):
         self.kwargs = kwargs
 
     def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
         arg_reprs = [f"n{arg.id}" for arg in self.args]
         kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
         all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
