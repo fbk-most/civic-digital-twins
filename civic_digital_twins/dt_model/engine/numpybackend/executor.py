@@ -170,7 +170,7 @@ class Functor(Protocol):
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         """Execute the user defined function."""
-        ...
+        ...  # pragma: no cover
 
 
 class LambdaAdapter:
@@ -182,6 +182,9 @@ class LambdaAdapter:
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         """Execute the wrapped callable with the given arguments."""
         return self.callable(*args, **kwargs)
+
+
+_: Functor = LambdaAdapter(lambda *, a, b: np.add(a, b))
 
 
 @dataclass(frozen=True)

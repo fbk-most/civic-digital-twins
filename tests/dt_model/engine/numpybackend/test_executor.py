@@ -653,3 +653,40 @@ def test_evaluate_trees_empty():
     """Ensure that evaluate_trees returns None if passed no trees."""
     rv = executor.evaluate_trees(executor.State(values={}))
     assert rv is None
+
+
+def test_user_defined_function():
+    """Ensure that user-defined functions work."""
+    # When there is a corresponding binding
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = graph.placeholder("c")
+    f = graph.function("f", a, b, c=c)
+    g = graph.add(f, graph.constant(1))
+
+    functor: executor.Functor = executor.LambdaAdapter(lambda a, b, *, c: np.add(np.add(a, b), c))
+
+    state1 = executor.State(
+        values={
+            a: np.asarray(1),
+            b: np.asarray(2),
+            c: np.asarray(55),
+        },
+        functions={
+            f: functor,
+        },
+    )
+    executor.evaluate_nodes(state1, *linearize.forest(g))
+
+    assert state1.get_node_value(g) == np.asarray(59)
+
+    # When there's no corresponding binding
+    with pytest.raises(executor.FunctionNotFound):
+        state2 = executor.State(
+            values={
+                a: np.asarray(1),
+                b: np.asarray(2),
+                c: np.asarray(55),
+            }
+        )
+        executor.evaluate_nodes(state2, *linearize.forest(g))
