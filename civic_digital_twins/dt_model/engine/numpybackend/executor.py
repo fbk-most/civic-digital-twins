@@ -14,6 +14,7 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
+import types
 from dataclasses import dataclass, field
 from typing import (
     Callable,
@@ -21,7 +22,6 @@ from typing import (
     TypeAlias,
     cast,
 )
-import types
 
 import numpy as np
 
@@ -213,7 +213,7 @@ class State:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
 
     def items(self) -> ItemsView[graph.Node, np.ndarray]:
-        """Returns all the items currently present inside the state."""
+        """Return all the items currently present inside the state."""
         return self.values.items()
 
 
@@ -223,6 +223,7 @@ def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
     for tree in trees:
         rv = evaluate_single_tree(state, tree)
     return rv
+
 
 def _evaluate_single_tree_jit(state: State, tree: forest.Tree) -> np.ndarray:
     # 1. check whether node has been already evaluated (note that this

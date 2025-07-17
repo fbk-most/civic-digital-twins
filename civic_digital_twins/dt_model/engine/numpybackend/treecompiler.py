@@ -12,9 +12,9 @@ The output of stage 2 or stage 3 can be executed using call_function.
 
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, ItemsView, Protocol, cast, runtime_checkable
 import ast
 import types
+from typing import Any, ItemsView, Protocol, cast, runtime_checkable
 
 import numba
 import numpy as np
@@ -22,6 +22,7 @@ import numpy as np
 from ..frontend import forest, graph
 
 # === generate_ast ===
+
 
 class UnsupportedNodeType(Exception):
     """Raised when the executor encounters an unsupported node type."""
@@ -243,7 +244,8 @@ def jit_compile(state: State, tree: forest.Tree, filename: str = "<generated>") 
     """JIT compile a `forest.Tree` using Numba.
 
     This function uses `python_compile` to generate the Python function first
-    and then wraps it with `numba.njit` to enable JIT compilation."""
+    and then wraps it with `numba.njit` to enable JIT compilation.
+    """
     return numba.njit(python_compile(state, tree, filename))
 
 
