@@ -165,7 +165,7 @@ class PlaceholderValueNotProvided(Exception):
 
 
 @runtime_checkable
-class FunctionProtocol(Protocol):
+class Functor(Protocol):
     """A user-defined callable integrated into the DAG."""
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
@@ -206,7 +206,7 @@ class State:
 
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
-    functions: dict[graph.Node, FunctionProtocol] = field(default_factory=dict)
+    functions: dict[graph.Node, Functor] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
