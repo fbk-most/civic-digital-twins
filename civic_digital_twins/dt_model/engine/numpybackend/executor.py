@@ -426,7 +426,7 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
     try:
         function = state.functions[node]
     except KeyError:
-        raise FunctionNotFound(f"executor: cannot find function for: {node}")
+        raise FunctionNotFound(f"executor: cannot find functor for: {node}")
     return function(*args, **kwargs)
 
 
