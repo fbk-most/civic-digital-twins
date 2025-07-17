@@ -24,8 +24,8 @@ requires-python = ">=3.11.0"
 dependencies = [
     "numba>=0.61.2",
     "numpy>=2.2.0",
- "pandas>=2.2.0",
- "scipy>=1.15.0",
+    "pandas>=2.2.0",
+    "scipy>=1.15.0",
 ]
 
 [dependency-groups]
