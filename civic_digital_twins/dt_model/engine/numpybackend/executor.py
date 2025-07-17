@@ -14,17 +14,20 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Callable,
+    ItemsView,
     TypeAlias,
     cast,
 )
+import types
 
 import numpy as np
 
 from .. import compileflags
 from ..frontend import forest, graph
+from . import treecompiler
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -146,12 +149,11 @@ class NodeValueNotFound(Exception):
     """Raised when a node value is not found in the state."""
 
 
-class UnsupportedNodeType(Exception):
-    """Raised when the executor encounters an unsupported node type."""
+UnsupportedNodeType = treecompiler.UnsupportedNodeType
+"""Alias for treecompiler.UnsupportedNodeType"""
 
-
-class UnsupportedOperation(Exception):
-    """Raised when the executor encounters an unsupported operation."""
+UnsupportedOperation = treecompiler.UnsupportedOperation
+"""Alias for treecompiler.UnsupportedOperation"""
 
 
 class PlaceholderValueNotProvided(Exception):
@@ -176,10 +178,12 @@ class State:
         flags: Bitmask containing debug flags (e.g., compileflags.BREAK) set
             by default using the `DTMODEL_ENGINE_FLAGS` environement
             variable as documented by the `compileflags` package docs.
+        functions: JIT compiled functions.
     """
 
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
+    functions: dict[forest.Tree, types.FunctionType] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -208,6 +212,10 @@ class State:
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
 
+    def items(self) -> ItemsView[graph.Node, np.ndarray]:
+        """Returns all the items currently present inside the state."""
+        return self.values.items()
+
 
 def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
     """Provide syntactic sugar for evaluating multiple trees."""
@@ -215,6 +223,43 @@ def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
     for tree in trees:
         rv = evaluate_single_tree(state, tree)
     return rv
+
+def _evaluate_single_tree_jit(state: State, tree: forest.Tree) -> np.ndarray:
+    # 1. check whether node has been already evaluated (note that this
+    # covers the case of placeholders provided via the state)
+    root = tree.root()
+    if root in state.values:
+        return state.values[root]
+
+    # 2. check whether we need to trace this node
+    flags = root.flags | state.flags
+    tracing = flags & compileflags.TRACE
+    if tracing:
+        _print_graph_node(root)
+
+    # 3. if necessary, JIT-compile the function
+    func = state.functions.get(tree)
+    if not func:
+        func = treecompiler.jit_compile(state, tree)
+        state.functions[tree] = func
+
+    # 4. evaluate the tree
+    result = treecompiler.call_function(state, tree, func)
+
+    # 5. check whether we need to print the computation result
+    if tracing:
+        _print_evaluated_node(result, cached=False)
+
+    # 6. check whether we need to stop after evaluating this node
+    if flags & compileflags.BREAK != 0:
+        input("executor: press any key to continue...")
+        print("")
+
+    # 7. store the node result in the state
+    state.values[root] = result
+
+    # 8. return the result
+    return result
 
 
 def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
@@ -233,7 +278,11 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
         print("=== end tree dump ===")
         print("")
 
-    # Evaluate the tree body
+    # Honor the jit flag if requested to use JIT code
+    if state.flags & compileflags.JIT != 0:
+        return _evaluate_single_tree_jit(state, tree)
+
+    # Otherwise interpret the tree body
     rv = _evaluate_nodes(state, *tree.body)
 
     # Ensure the invariant holds for the result
@@ -274,7 +323,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
-    is not the case, evaluation will fail. Use the `frontend.linearize`
+    is not the case, evaluation will fail. Use the `linearize.forest`
     module to ensure the graph is topologically sorted.
 
     Args:
@@ -301,7 +350,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     if tracing:
         _print_graph_node(node)
 
-    # 3. evaluate the node proper
+    # 3. evaluate the node
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result

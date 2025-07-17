@@ -12,24 +12,24 @@ The output of stage 2 or stage 3 can be executed using call_function.
 
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, cast
+from typing import Any, ItemsView, Protocol, cast, runtime_checkable
 import ast
 import types
 
 import numba
 import numpy as np
 
-from .. import compileflags
 from ..frontend import forest, graph
-from . import executor
 
 # === generate_ast ===
 
-UnsupportedNodeType = executor.UnsupportedNodeType
-"""Alias for executor.UnsupportedNodeType"""
+class UnsupportedNodeType(Exception):
+    """Raised when the executor encounters an unsupported node type."""
 
-UnsupportedOperation = executor.UnsupportedOperation
-"""Alias for executor.UnsupportedOperation"""
+
+class UnsupportedOperation(Exception):
+    """Raised when the executor encounters an unsupported operation."""
+
 
 _operation_names: dict[type[graph.Node], "str"] = {
     # constant
@@ -203,8 +203,17 @@ def generate_ast(tree: forest.Tree) -> ast.FunctionDef:
 # === generate_function_type ===
 
 
-State = executor.State
-"""Alias for executor.State"""
+@runtime_checkable
+class State(Protocol):
+    """Read-only executor state protocol."""
+
+    def get_node_value(self, node: graph.Node) -> np.ndarray:
+        """Return the value associate with the node or throws an exception."""
+        ...
+
+    def items(self) -> ItemsView[graph.Node, np.ndarray]:
+        """Return all the values present in the state."""
+        ...
 
 
 def _mod_compile(stmts: list[ast.stmt], filename: str) -> types.CodeType:
@@ -224,7 +233,7 @@ def python_compile(state: State, tree: forest.Tree, filename: str = "<generated>
     """
     code = _mod_compile([generate_ast(tree)], filename)
     context: dict[str, Any] = {"np": np}
-    for node, value in state.values.items():
+    for node, value in state.items():
         context[f"n{node.id}"] = value
     exec(code, context)
     return cast(types.FunctionType, context[_tree_name(tree)])
@@ -240,32 +249,4 @@ def jit_compile(state: State, tree: forest.Tree, filename: str = "<generated>") 
 
 def call_function(state: State, tree: forest.Tree, func: types.FunctionType) -> np.ndarray:
     """Call the given func associated with the given tree using the given state."""
-
-    # 1. check whether the tree root node has been already evaluated
-    root = tree.root()
-    if root in state.values:
-        return state.values[root]
-
-    # 2. check whether we need to trace this node
-    flags = root.flags | state.flags
-    tracing = flags & compileflags.TRACE
-    if tracing:
-        executor._print_graph_node(root)
-
-    # 3. evaluate the node function proper
-    result = func(*[state.get_node_value(node) for node in tree.inputs])
-
-    # 4. check whether we need to print the computation result
-    if tracing:
-        executor._print_evaluated_node(result, cached=False)
-
-    # 5. check whether we need to stop after evaluating this node
-    if flags & compileflags.BREAK != 0:
-        input("executor: press any key to continue...")
-        print("")
-
-    # 6. store the node result in the state
-    state.values[root] = result
-
-    # 7. return the result
-    return result
+    return func(*[state.get_node_value(node) for node in tree.inputs])
