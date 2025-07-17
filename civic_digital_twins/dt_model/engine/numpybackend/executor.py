@@ -14,11 +14,13 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Callable,
+    Protocol,
     TypeAlias,
     cast,
+    runtime_checkable,
 )
 
 import numpy as np
@@ -146,6 +148,10 @@ class NodeValueNotFound(Exception):
     """Raised when a node value is not found in the state."""
 
 
+class FunctionNotFound(Exception):
+    """Raised when a user-defined function is not found in the state."""
+
+
 class UnsupportedNodeType(Exception):
     """Raised when the executor encounters an unsupported node type."""
 
@@ -156,6 +162,29 @@ class UnsupportedOperation(Exception):
 
 class PlaceholderValueNotProvided(Exception):
     """Raised when a required placeholder value is not provided in the state."""
+
+
+@runtime_checkable
+class Functor(Protocol):
+    """A user-defined callable integrated into the DAG."""
+
+    def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
+        """Execute the user defined function."""
+        ...  # pragma: no cover
+
+
+class LambdaAdapter:
+    """Adapter that transforms a Callable into a Functor."""
+
+    def __init__(self, callable: Callable[..., np.ndarray]) -> None:
+        self.callable = callable
+
+    def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
+        """Execute the wrapped callable with the given arguments."""
+        return self.callable(*args, **kwargs)
+
+
+_: Functor = LambdaAdapter(lambda *, a, b: np.add(a, b))
 
 
 @dataclass(frozen=True)
@@ -180,6 +209,7 @@ class State:
 
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
+    functions: dict[graph.Node, Functor] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -388,6 +418,21 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
         raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
 
 
+def _eval_function(state: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.function, node)
+    args: list[np.ndarray] = []
+    kwargs: dict[str, np.ndarray] = {}
+    for arg in node.args:
+        args.append(state.get_node_value(arg))
+    for key, value in node.kwargs.items():
+        kwargs[key] = state.get_node_value(value)
+    try:
+        function = state.functions[node]
+    except KeyError:
+        raise FunctionNotFound(f"executor: cannot find functor for: {node}")
+    return function(*args, **kwargs)
+
+
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
@@ -398,6 +443,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.where, _eval_where_op),
     (graph.multi_clause_where, _eval_multi_clause_where_op),
     (graph.AxisOp, _eval_axis_op),
+    (graph.function, _eval_function),
 )
 
 

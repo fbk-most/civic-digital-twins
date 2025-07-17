@@ -546,6 +546,9 @@ def test_repr():
     y = graph.project_using_mean(a, (1, 2))
     assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
 
+    z = graph.function("jarjar", x, y, u, v=v, w=w)
+    assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
+
 
 def test_maybe_set_name():
     """Ensure that Node.maybe_set_name works as intended."""
@@ -558,3 +561,20 @@ def test_maybe_set_name():
     n2 = graph.constant(177114)
     n2.maybe_set_name("x")
     assert n2.name == "x"
+
+
+def test_function_creation():
+    """Test creation of a user-defined function."""
+    n1 = graph.placeholder("a")
+    n2 = graph.placeholder("b")
+    n3 = graph.placeholder("c")
+    n4 = graph.placeholder("d")
+    n5 = graph.function("fx", n1, n2, c=n3, d=n4)
+
+    assert n5.name == "fx"
+    assert len(n5.args) == 2
+    assert len(n5.kwargs) == 2
+    assert n5.args[0] is n1
+    assert n5.args[1] is n2
+    assert n5.kwargs["c"] is n3
+    assert n5.kwargs["d"] is n4

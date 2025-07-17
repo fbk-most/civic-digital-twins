@@ -15,6 +15,7 @@ This module provides:
 7. Reduction operations (sum, mean)
 8. Built-in debug operations (tracepoint, breakpoint)
 9. Support for infix and unary operators (e.g., `a + b`, `~a`)
+10. Support for user-defined functions.
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -695,3 +696,29 @@ def breakpoint(node: Node[T]) -> Node[T]:
     """
     node.flags |= NODE_FLAG_TRACE | NODE_FLAG_BREAK
     return node
+
+
+# User-defined functions
+
+
+class function(Generic[T], Node[T]):
+    """
+    Represent a user-defined function.
+
+    The function takes in input N nodes and returns a single node.
+
+    When evaluating the DAG, the programmer is responsible for
+    providing the corresponding function binding.
+    """
+
+    def __init__(self, name: str, *args: Node[T], **kwargs: Node[T]) -> None:
+        super().__init__(name)
+        self.args = args
+        self.kwargs = kwargs
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        arg_reprs = [f"n{arg.id}" for arg in self.args]
+        kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
+        all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
+        return f"n{self.id} = graph.function({all_args})"
