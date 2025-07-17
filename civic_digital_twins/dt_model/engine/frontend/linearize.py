@@ -170,4 +170,10 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
     if isinstance(node, (graph.constant, graph.placeholder)):
         return []
 
+    if isinstance(node, graph.function):
+        deps: list[graph.Node] = []
+        deps.extend(node.args)
+        deps.extend(node.kwargs.values())
+        return deps
+
     raise TypeError(f"linearize: unknown node type: {type(node)}")
