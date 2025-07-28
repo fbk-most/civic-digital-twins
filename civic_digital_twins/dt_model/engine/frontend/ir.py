@@ -1,6 +1,6 @@
 """Intermediate DAG representation.
 
-The intermediate representation of the DAG consists of:
+The intermediate representation (IR) of the DAG consists of:
 
 1. a possibly-empty list of placeholders;
 
