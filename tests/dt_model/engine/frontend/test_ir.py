@@ -86,7 +86,7 @@ def t{h.id}(n{c.id}: graph.Node, n{g.id}: graph.Node) -> graph.Node:
     n{h.id} = graph.maximum(left=n{c.id}, right=n{g.id}, name='h')
     return n{h.id}
 
-"""
+"""  # noqa: E501
 
     got = str(dag)
 

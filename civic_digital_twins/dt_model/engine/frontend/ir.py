@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import graph, forest
+from . import forest, graph
 
 
 @dataclass(frozen=True)
