@@ -44,7 +44,7 @@ def test_partition():
     assert trees[2].root() is h
 
     # Ensure that the string representation is correct
-    expect = f"""def t{g.id}(n{y.id}: graph.Node, n{k1.id}: graph.Node, n{c.id}: graph.Node) -> graph.Node:
+    expect = f"""def t{g.id}(n{y.id}: graph.placeholder, n{k1.id}: graph.constant, n{c.id}: graph.Node) -> graph.Node:
     n{d.id} = graph.exp(node=n{y.id}, name='d')
     n{e.id} = graph.add(left=n{c.id}, right=n{k1.id}, name='e')
     n{f.id} = graph.log(node=n{e.id}, name='f')
