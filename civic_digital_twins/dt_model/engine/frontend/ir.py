@@ -189,7 +189,7 @@ def compile_trees(*trees: forest.Tree) -> DAG:
 
             # Note: forest.Tree has a very good post init, so it's not
             # so easy to sneak in wrong types. Hence, for now, there does
-            # not seem a need to add assetions or exceptions here.
+            # not seem a need to add assertions or exceptions here.
 
     # 3. prepare the result DAG IR making sure that we sort the
     # constants and placeholders by their insertion order to
