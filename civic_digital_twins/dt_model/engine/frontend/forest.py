@@ -125,7 +125,7 @@ def partition(*roots: graph.Node) -> list[Tree]:
         tree = work.popleft()
 
         # 5.2. check whether all dependencies are satisfied skipping the
-        # placeholders since they're satisfied by definition
+        # placeholders and constants since they're satisfied by definition
         satisfied = all(
             dep in processed if not isinstance(dep, (graph.placeholder, graph.constant)) else True
             for dep in tree.inputs
