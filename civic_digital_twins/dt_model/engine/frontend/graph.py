@@ -177,7 +177,7 @@ from .. import atomic, compileflags
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
 
-Scalar = bool | float | int
+Scalar = bool | float | int | str
 """Type alias for supported scalar value types."""
 
 
