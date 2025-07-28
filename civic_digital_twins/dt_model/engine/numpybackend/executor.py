@@ -263,6 +263,14 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
         print("=== end tree dump ===")
         print("")
 
+    # Ensure that every constant within the tree input has already
+    # been evaluated and otherwise evaluate it once. This is required
+    # because constants are part of the tree input set. Also, remember
+    # that evaluate_single_node evaluates each node at most once.
+    for node in tree.inputs:
+        if isinstance(node, graph.constant):
+            evaluate_single_node(state, node)
+
     # Evaluate the tree body
     rv = _evaluate_nodes(state, *tree.body)
 
