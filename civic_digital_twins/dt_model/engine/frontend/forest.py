@@ -18,6 +18,17 @@ from typing import Any
 from . import graph, linearize
 
 
+def _node_type_repr(node: graph.Node) -> str:
+    """Return one of graph.placeholder, graph.constant, and graph.Node."""
+    return (
+        "graph.placeholder"
+        if isinstance(node, graph.placeholder)
+        else "graph.constant"
+        if isinstance(node, graph.constant)
+        else "graph.Node"
+    )
+
+
 @dataclass(frozen=True)
 class Tree:
     """Tree representing the computation of a root node.
@@ -68,7 +79,7 @@ class Tree:
 
         # Format the function name
         root = self.root()
-        inputs = ", ".join(f"n{input.id}: graph.Node" for input in self.inputs)
+        inputs = ", ".join(f"n{input.id}: {_node_type_repr(input)}" for input in self.inputs)
         lines.append(f"def t{root.id}({inputs}) -> graph.Node:")
 
         # Format the function body
@@ -115,7 +126,10 @@ def partition(*roots: graph.Node) -> list[Tree]:
 
         # 5.2. check whether all dependencies are satisfied skipping the
         # placeholders since they're satisfied by definition
-        satisfied = all(dep in processed if not isinstance(dep, graph.placeholder) else True for dep in tree.inputs)
+        satisfied = all(
+            dep in processed if not isinstance(dep, (graph.placeholder, graph.constant)) else True
+            for dep in tree.inputs
+        )
 
         # 5.3. if not, put the tree at the back.
         #
@@ -157,9 +171,10 @@ def _partition(*roots: graph.Node) -> list[Tree]:
         # 3.4. prepare the collect the "body"
         body: list[graph.Node] = []
 
-        # 3.5. distinguish between inputs and "body"
+        # 3.5. distinguish between inputs and "body" ensuring that
+        # placeholders and constants are considered inputs.
         for node in allnodes:
-            if node in boundary:
+            if node in boundary or isinstance(node, (graph.placeholder, graph.constant)):
                 unique_inputs.add(node)
                 continue
             body.append(node)
