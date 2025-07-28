@@ -18,6 +18,17 @@ from typing import Any
 from . import graph, linearize
 
 
+def _node_type_repr(node: graph.Node) -> str:
+    """Return one of graph.placeholder, graph.constant, and graph.Node."""
+    return (
+        "graph.placeholder"
+        if isinstance(node, graph.placeholder)
+        else "graph.constant"
+        if isinstance(node, graph.constant)
+        else "graph.Node"
+    )
+
+
 @dataclass(frozen=True)
 class Tree:
     """Tree representing the computation of a root node.
@@ -68,7 +79,7 @@ class Tree:
 
         # Format the function name
         root = self.root()
-        inputs = ", ".join(f"n{input.id}: graph.Node" for input in self.inputs)
+        inputs = ", ".join(f"n{input.id}: {_node_type_repr(input)}" for input in self.inputs)
         lines.append(f"def t{root.id}({inputs}) -> graph.Node:")
 
         # Format the function body
