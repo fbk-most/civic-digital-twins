@@ -197,8 +197,8 @@ _id_generator = atomic.Int()
 # intentional erasure (via `erase(...)`) at evaluation time.
 #
 # In that world, downstream modules (e.g., `linearize.py`) could be typed
-# to accept `Node[Erased]`, effectively forcing the compiler (which lives outside
-# of the frontend) to apply type erasure before lowering the code.
+# to accept `Node[Erased]`, effectively forcing the compiler to apply type
+# erasure before starting to lower the code.
 #
 # While we're waiting, would you like play a nice game of chess? If so, my
 # suggestion is that we continue on from this historical game:
