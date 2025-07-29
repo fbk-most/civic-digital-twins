@@ -9,13 +9,24 @@ import os
 from typing import Callable
 
 TRACE = 1 << 0
-"""Indicates that we should trace execution."""
+"""Indicates that we should trace execution.
+
+Specifically, tracing execution means printing the equivalent backend
+code that is being executed in SSA form along with contextual info.
+
+Note that this flag does not mix well with DUMP since both emit
+valid Python code using the same names.
+"""
 
 BREAK = 1 << 1
 """Indicates that we should break execution after evaluation."""
 
 DUMP = 1 << 2
-"""Dump nodes in SSA format ahead of evaluation."""
+"""Dump nodes in SSA format ahead of evaluation.
+
+Note that this flag does not mix well with TRACE since both emit
+valid Python code using the same names.
+"""
 
 _flagnames: dict[str, int] = {
     "break": BREAK,
