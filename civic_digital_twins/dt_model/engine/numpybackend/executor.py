@@ -131,7 +131,7 @@ Add entries to this table to support more axis operations."""
 
 
 def _is_immediate(node: graph.Node) -> bool:
-    """Return whether the node is an immediate or needs to be evaluate.
+    """Return whether the node is an immediate or needs to be evaluated.
 
     An immediate node is a node whose value is known ahead of
     evaluation. Currently, this means placeholder or constant nodes.
