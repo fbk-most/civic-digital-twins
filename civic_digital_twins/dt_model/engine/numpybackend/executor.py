@@ -14,7 +14,6 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
-import ast
 from dataclasses import dataclass, field
 from typing import (
     Callable,
@@ -28,7 +27,6 @@ import numpy as np
 
 from .. import compileflags
 from ..frontend import forest, graph, ir
-from . import jit
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -131,53 +129,18 @@ along the specified axis.
 Add entries to this table to support more axis operations."""
 
 
-def _is_immediate(node: graph.Node) -> bool:
-    """Return whether the node is an immediate or needs to be evaluate.
-
-    An immediate node is a node whose value is known ahead of
-    evaluation. Currently, this means placeholder or constant nodes.
-    """
-    return isinstance(node, (graph.constant, graph.placeholder))
+def _print_graph_node(node: graph.Node, context: str = "tracepoint") -> None:
+    """Print a node within the computation graph."""
+    print(f"=== begin {context} ===")
+    print(f"node: {str(node)}")
 
 
-def _print_graph_node(node: graph.Node) -> None:
-    """Print a node before evaluation."""
-    # 1. print the original DAG node as a comment so we can always
-    # understand what is the specific node leading to this.
-    print(f"# {str(node)}")
-
-    # 2. print the numpy equivalent for non-immediate nodes such
-    # that we can round-trip the representation.
-    if not _is_immediate(node):
-        print(ast.unparse(jit.graph_node_to_ast_stmt(node, None)))
-
-
-def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = False) -> None:
+def _print_evaluated_node(value: np.ndarray, cached: bool = False, context: str = "tracepoint") -> None:
     """Print a node after evaluation."""
-    # Throughout this function we try to be very defensive with respect
-    # to the node operations. Sometimes, numba returns bare floats rather
-    # then `np.ndarray` and this only happens at runtime. This paranoia
-    # does not apply to placeholders and constants, which we provide.
-
-    # 1. for nodes that are not evaluated, we print their actual
-    # value so the representation can round trip.
-    if _is_immediate(node):
-        print(ast.unparse(jit.graph_node_to_ast_stmt(node, value)))
-
-    # 2. print the shape and dtype, which are invaluable when debugging
-    if hasattr(value, "shape"):
-        print(f"# shape: {value.shape}")
-    if hasattr(value, "dtype"):
-        print(f"# dtype: {value.dtype}")
-
-    # 3. print whether the node was read from the cache.
-    print(f"# cached: {cached}")
-
-    # 4. give the user a sense of the node value for debugging purposes
-    print("# value:")
-    print("\n".join("# " + line for line in str(value).splitlines()))
-
-    # 5. add an empty line, which is always nice to separate things
+    print(f"shape: {value.shape}")
+    print(f"cached: {cached}")
+    print(f"value:\n{value}")
+    print(f"=== end {context} ===")
     print("")
 
 
@@ -252,10 +215,9 @@ class State:
         """Print the placeholder values provided to the constructor."""
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
-            if nodes:
-                for node in nodes:
-                    _print_graph_node(node)
-                    _print_evaluated_node(node, self.values[node], cached=True)
+            for node in nodes:
+                _print_graph_node(node, context="placeholder")
+                _print_evaluated_node(self.values[node], cached=True, context="placeholder")
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
@@ -410,11 +372,11 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
 
     # 4. check whether we need to print the computation result
     if tracing:
-        _print_evaluated_node(node, result, cached=False)
+        _print_evaluated_node(result, cached=False)
 
     # 5. check whether we need to stop after evaluating this node
     if flags & compileflags.BREAK != 0:
-        input("# executor: press any key to continue...")
+        input("executor: press any key to continue...")
         print("")
 
     # 6. store the node result in the state

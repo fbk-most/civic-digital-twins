@@ -22,12 +22,16 @@ import numpy as np
 from ..frontend import graph
 
 
-class UnsupportedNodeType(Exception):
+class UnsupportedNodeArguments(Exception):
     """Raised when the executor encounters an unsupported node type."""
 
 
-class UnsupportedOperation(Exception):
+class UnsupportedNodeType(Exception):
     """Raised when the executor encounters an unsupported operation."""
+
+
+class _InternalNode(graph.Node):
+    """Node type used for writing tests."""
 
 
 _operation_names: dict[type[graph.Node], str] = {
@@ -59,9 +63,12 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.multi_clause_where: "select",
     graph.where: "where",
     # axis operations
+    graph.squeeze: "squeeze",
     graph.expand_dims: "expand_dims",
     graph.reduce_sum: "sum",
     graph.reduce_mean: "mean",
+    # internal
+    _InternalNode: "_internal",
 }
 
 
@@ -84,43 +91,96 @@ def _np_ndarray_to_ast_expr(value: graph.Scalar | list) -> ast.expr:
         return ast.Constant(value=value)
 
 
-def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None) -> ast.stmt:
-    """Transform a graph.Node to a Python ast.expr."""
-    # 2. get the operation name
-    try:
-        opname = _operation_names[type(node)]
-    except KeyError:
-        raise UnsupportedOperation(f"jit: unsupported operation: {type(node)}")
+def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) -> ast.stmt:
+    """Transform a graph.Node to a Python ast.ast.
 
-    # 3. prepare for args and kwargs
+    The value is only required for placeholders, whose value is known
+    ahead of evaluation and isn't embedded into the graph. We verify
+    whether this is the case with a runtime assertion checking that the
+    value is only specified for placeholders.
+
+    This function is useful to transform multiple nodes to valid
+    Python AST, which in turn can be JIT compiled with Numba.
+
+    This function calls ast.fix_missing_locations before returning.
+    """
+    # 1. distinguish between user-defined functions and other nodes
+    if isinstance(node, graph.function):
+        assert value is None
+        expr = _graph_function_to_ast_expr(node)
+    else:
+        expr = _simple_graph_node_to_ast_expr(node, value)
+
+    # 2. assign the result of the function call
+    assign = ast.Assign(
+        targets=[ast.Name(id=_node_name(node), ctx=ast.Store())],
+        value=expr,
+    )
+
+    # 3. Fixup the resulting piece of AST recursively
+    ast.fix_missing_locations(assign)
+    return assign
+
+
+def _graph_function_to_ast_expr(node: graph.function) -> ast.expr:
+    # get the operation name
+    opname = node.name
+
+    # 2. prepare for args and kwargs
     posargs: list[ast.expr] = []
     kwargs: list[ast.keyword] = []
 
-    # 4. evaluate placeholders
+    # 3. fill the positional arguments
+    for argument in node.args:
+        posargs.append(ast.Name(id=_node_name(argument), ctx=ast.Load()))
+
+    # 4. fill the keyword arguments
+    for key, value in node.kwargs.items():
+        kwargs.append(ast.keyword(key, ast.Name(id=_node_name(value), ctx=ast.Load())))
+
+    # 5. create function call expr
+    return ast.Call(func=ast.Name(id=opname, ctx=ast.Load()), args=posargs, keywords=kwargs)
+
+
+def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = None) -> ast.expr:
+    # 0. ensure value is only given for placeholders
+    assert (isinstance(node, graph.placeholder) and value is not None) or value is None
+
+    # 1. get the operation name
+    try:
+        opname = _operation_names[type(node)]
+    except KeyError:
+        raise UnsupportedNodeType(f"jit: unsupported operation: {type(node)}")
+
+    # 2. prepare for args and kwargs
+    posargs: list[ast.expr] = []
+    kwargs: list[ast.keyword] = []
+
+    # 3. evaluate placeholders
     if isinstance(node, graph.placeholder):
-        assert value is not None
+        assert value is not None  # make the typechecker really happy
         posargs.append(_np_ndarray_to_ast_expr(value.tolist()))
 
-    # 5. evaluate constants
+    # 4. evaluate constants
     elif isinstance(node, graph.constant):
         posargs.append(ast.Constant(value=node.value))
 
-    # 6. evaluate unary operations
+    # 5. evaluate unary operations
     elif isinstance(node, graph.UnaryOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
 
-    # 7. evaluate binary operations
+    # 6. evaluate binary operations
     elif isinstance(node, graph.BinaryOp):
         posargs.append(ast.Name(id=_node_name(node.left), ctx=ast.Load()))
         posargs.append(ast.Name(id=_node_name(node.right), ctx=ast.Load()))
 
-    # 8. evaluate where operations
+    # 7. evaluate where operations
     elif isinstance(node, graph.where):
         posargs.append(ast.Name(id=_node_name(node.condition), ctx=ast.Load()))
         posargs.append(ast.Name(id=_node_name(node.then), ctx=ast.Load()))
         posargs.append(ast.Name(id=_node_name(node.otherwise), ctx=ast.Load()))
 
-    # 9. evaluate multi_clause_where
+    # 8. evaluate multi_clause_where
     elif isinstance(node, graph.multi_clause_where):
         condlist: list[ast.expr] = []
         choicelist: list[ast.expr] = []
@@ -130,24 +190,23 @@ def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None) -> ast.st
         default: ast.expr = ast.Name(id=_node_name(node.default_value), ctx=ast.Load())
         posargs.extend([ast.List(condlist), ast.List(choicelist), default])
 
-    # 10. evaluate axis operations
+    # 9. evaluate axis operations
     elif isinstance(node, graph.AxisOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)])))
 
-    # 11. catch all for not implemented operations
+    # 10. catch all for not implemented operations
     else:
-        raise UnsupportedNodeType(f"jit: unsupported node type: {type(node)}")
+        raise UnsupportedNodeArguments(f"jit: unsupported node type: {type(node)}")
 
-    # 12. create function call expr
-    expr = ast.Call(func=_np_attr_name(opname), args=posargs, keywords=kwargs)
+    # 11. create function call expr
+    return ast.Call(func=_np_attr_name(opname), args=posargs, keywords=kwargs)
 
-    # 13. assign the result of the function call
-    assign = ast.Assign(
-        targets=[ast.Name(id=_node_name(node), ctx=ast.Store())],
-        value=expr,
-    )
 
-    # 14. Fixup the resulting piece of AST recursively
-    ast.fix_missing_locations(assign)
-    return assign
+def graph_node_to_numpy_code(node: graph.Node, value: np.ndarray | None = None) -> str:
+    """Transform a node to numpy source code.
+
+    This functionality is mainly useful for debugging and for compiling
+    the graph to Python source code.
+    """
+    return ast.unparse(graph_node_to_ast_stmt(node, value))
