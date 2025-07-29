@@ -168,8 +168,9 @@ _id_generator = atomic.Int()
 # ----------------------------
 #
 # Node(Generic[T]) enables static type checking: if all participating nodes
-# are explicitly typed, Pyright will issue squiggles on mismatched operations.
-# Otherwise, it behaves like pre-typed code — fully flexible but unchecked.
+# are explicitly typed, Pyright will issue static type errors resulting in
+# error squiggles inside IDEs. Otherwise, it behaves like type-less code: fully
+# flexible but risking typing errors at runtime.
 #
 # This behavior is documented in the module docstring. Here, we outline how
 # to migrate to stricter type checking once @scc-digitalhub permits it.
@@ -179,7 +180,7 @@ _id_generator = atomic.Int()
 # updated accordingly, we could rewrite the following code like so:
 #
 #   class Erased:
-#       """Represents a type-erased dimension."""
+#       """Represents the type-erased dimension."""
 #
 #   T = TypeVar("T", default=Erased)  # requires Python >= 3.13
 #   C = TypeVar("C", default=Erased)  # ditto
@@ -195,11 +196,45 @@ _id_generator = atomic.Int()
 # This allows us to enforce strict typing discipline, while still permitting
 # intentional erasure (via `erase(...)`) at evaluation time.
 #
-# In that world, downstream modules (e.g., `linearize.py`) could be typed to
-# accept only `Node[Erased]`, effectively forcing the compiler (which lives
-# outside the frontend) to apply type erasure explicitly before evaluation.
+# In that world, downstream modules (e.g., `linearize.py`) could be typed
+# to accept `Node[Erased]`, effectively forcing the compiler (which lives outside
+# of the frontend) to apply type erasure before lowering the code.
 #
-# TODO(bassosimone): Revisit this migration path once Python >= 3.13 is supported.
+# While we're waiting, would you like play a nice game of chess? If so, my
+# suggestion is that we continue on from this historical game:
+#
+#     a b c d e f g h
+#     ---------------
+# 8 | r n b . k b n r | 8
+# 7 | p . p p . p p p | 7
+# 6 | . . . . . . . . | 6
+# 5 | . p . . . . . . | 5
+# 4 | . . B . P p . q | 4
+# 3 | . . . . . . . . | 3
+# 2 | P P P P . . P P | 2
+# 1 | R N B Q . K N R | 1
+#     ---------------
+#     a b c d e f g h
+#
+# Moves so far:
+#
+# 1. e4   e5
+#
+# 2. f4   exf4
+#
+# 3. Bc4  Qh4+
+#
+# 4. Kf1  b5
+#
+# I play Kieseritzky (black) and you play Anderssen. Make sure you tag
+# me when you want my next move. My ELO is probably 400.
+#
+# Your move?
+#
+# Or would you like to play Global Termonuclear War instead?
+#
+#              -sbs (2025-07-29)
+
 
 T = TypeVar("T")
 """Type associated with a Node."""
