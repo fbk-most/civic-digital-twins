@@ -130,15 +130,6 @@ along the specified axis.
 Add entries to this table to support more axis operations."""
 
 
-def _is_immediate(node: graph.Node) -> bool:
-    """Return whether the node is an immediate or needs to be evaluated.
-
-    An immediate node is a node whose value is known ahead of
-    evaluation. Currently, this means placeholder or constant nodes.
-    """
-    return isinstance(node, (graph.constant, graph.placeholder))
-
-
 def _print_graph_node(node: graph.Node) -> None:
     """Print a node before evaluation."""
     # 1. print the original DAG node as a comment so we can always
@@ -147,7 +138,7 @@ def _print_graph_node(node: graph.Node) -> None:
 
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
-    if not _is_immediate(node):
+    if not isinstance(node, (graph.constant, graph.placeholder)):
         print(jit.graph_node_to_numpy_code(node))
 
 
@@ -161,8 +152,10 @@ def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = Fa
 
     # 1. for nodes that are not evaluated, we print their actual
     # value so the representation can round trip.
-    if _is_immediate(node):
+    if isinstance(node, graph.placeholder):
         print(jit.graph_node_to_numpy_code(node, value))
+    elif isinstance(node, graph.constant):
+        print(jit.graph_node_to_numpy_code(node))
 
     # 2. print the shape and dtype, which are invaluable when debugging
     if hasattr(value, "shape"):
@@ -242,6 +235,7 @@ class State:
         flags: Bitmask containing debug flags (e.g., compileflags.BREAK) set
             by default using the `DTMODEL_ENGINE_FLAGS` environement
             variable as documented by the `compileflags` package docs.
+        functions: user-defined functions assignments.
     """
 
     values: dict[graph.Node, np.ndarray]
@@ -252,10 +246,9 @@ class State:
         """Print the placeholder values provided to the constructor."""
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
-            if nodes:
-                for node in nodes:
-                    _print_graph_node(node)
-                    _print_evaluated_node(node, self.values[node], cached=True)
+            for node in nodes:
+                _print_graph_node(node)
+                _print_evaluated_node(node, self.values[node], cached=True)
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
@@ -323,6 +316,9 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
     assert len(tree.body) > 0
 
     # Honor the dump flag if requested to dump the code
+    #
+    # TODO(bassosimone): either remove or ensure the output can
+    # be safely added to a Python program
     if state.flags & compileflags.DUMP != 0:
         print("=== begin tree dump ===")
         print(str(tree))
@@ -356,6 +352,9 @@ def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     This function returns `None` if you do not supply any input node.
     """
     # Honor the DUMP flag when requested to do so
+    #
+    # TODO(bassosimone): either remove or ensure the output can
+    # be safely added to a Python program
     if state.flags & compileflags.DUMP != 0:
         print("=== begin nodes dump ===")
         for node in nodes:
