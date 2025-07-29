@@ -217,7 +217,8 @@ def test_debug_flags(capsys, monkeypatch):
 
     # Create a simple graph
     x = graph.placeholder("x")
-    y = graph.multiply(x, graph.constant(2.0))
+    k0 = graph.constant(2.0)
+    y = graph.multiply(x, k0)
 
     # Set trace flag on node
     traced_y = graph.tracepoint(y)
@@ -231,17 +232,20 @@ def test_debug_flags(capsys, monkeypatch):
 
     # Check trace output
     captured = capsys.readouterr()
-    assert "=== begin tracepoint ===" in captured.out
+    assert f"# n{y.id} = graph.multiply(left=n{x.id}, right=n{k0.id}, name='')" in captured.out
+    assert f"n{y.id} = np.multiply(n{x.id}, n{k0.id})" in captured.out
 
     # Test global trace flag
-    z = graph.add(x, graph.constant(5.0))
+    k1 = graph.constant(5.0)
+    z = graph.add(x, k1)
     plan = linearize.forest(z)
 
     state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=compileflags.TRACE)
     executor.evaluate_nodes(state, *plan)
 
     captured = capsys.readouterr()
-    assert "=== begin tracepoint ===" in captured.out
+    assert f"# n{z.id} = graph.add(left=n{x.id}, right=n{k1.id}, name='')" in captured.out
+    assert f"n{z.id} = np.add(n{x.id}, n{k1.id})" in captured.out
 
     # Test break flag on named node
     named_node = graph.add(x, graph.constant(10.0))
@@ -591,9 +595,10 @@ def test_state_post_init_tracing(capsys):
     output = captured.out
 
     # Verify that both nodes were traced in the output
-    assert f"node: {str(x)}" in output
-    assert f"node: {str(y)}" in output
-    assert "=== begin placeholder ===" in output
+    assert f"# n{x.id} = graph.placeholder(name='x', default_value=None)" in output
+    assert f"n{x.id} = np.asarray([1.0, 2.0, 3.0])" in output
+    assert f"# n{y.id} = graph.placeholder(name='y', default_value=None)" in output
+    assert f"n{y.id} = np.asarray([4.0, 5.0, 6.0])" in output
 
     # Verify the cached indication is shown
     assert "cached: True" in output
