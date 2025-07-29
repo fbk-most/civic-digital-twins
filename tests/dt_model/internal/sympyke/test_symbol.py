@@ -109,3 +109,10 @@ def test_symbol_table_values():
     finally:
         # Restore the original symbol table
         symbol_mod.symbol_table = original_table
+
+
+def test_symbol_str_and_repr():
+    """Ensure the symbol str and repr is consistent."""
+    a = Symbol("a")
+    assert repr(a) == "'a'"
+    assert str(a) == "'a'"
