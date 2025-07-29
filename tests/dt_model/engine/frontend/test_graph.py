@@ -5,6 +5,7 @@
 import subprocess
 import textwrap
 
+from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
 
@@ -44,13 +45,13 @@ def test_debug_flags():
 
     # Test tracepoint
     traced = graph.tracepoint(a)
-    assert traced.flags & graph.NODE_FLAG_TRACE
+    assert traced.flags & compileflags.TRACE
     assert traced is a  # Should return same node
 
     # Test breakpoint
     broken = graph.breakpoint(a)
-    assert broken.flags & graph.NODE_FLAG_BREAK
-    assert broken.flags & graph.NODE_FLAG_TRACE
+    assert broken.flags & compileflags.BREAK
+    assert broken.flags & compileflags.TRACE
     assert broken is a  # Should return same node
 
 
@@ -457,3 +458,123 @@ def test_static_type_checking_failure(tmp_path):
     print(result.stdout)  # for debugging
 
     assert result.returncode != 0, "Pyright unexpectedly passed a known type error"
+
+
+def test_repr():
+    """Test we get the correct node __repr__ for each node that has a __repr__."""
+    a = graph.constant(114, name="a")
+    assert str(a) == f"n{a.id} = graph.constant(value=114, name='a')"
+
+    b = graph.placeholder("b", default_value=11)
+    assert str(b) == f"n{b.id} = graph.placeholder(name='b', default_value=11)"
+
+    c = a + b
+    assert str(c) == f"n{c.id} = graph.add(left=n{a.id}, right=n{b.id}, name='')"
+
+    d = a - b
+    assert str(d) == f"n{d.id} = graph.subtract(left=n{a.id}, right=n{b.id}, name='')"
+
+    e = a * b
+    assert str(e) == f"n{e.id} = graph.multiply(left=n{a.id}, right=n{b.id}, name='')"
+
+    f = a / b
+    assert str(f) == f"n{f.id} = graph.divide(left=n{a.id}, right=n{b.id}, name='')"
+
+    g = a == b
+    assert str(g) == f"n{g.id} = graph.equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    h = a != b
+    assert str(h) == f"n{h.id} = graph.not_equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    i = a < b
+    assert str(i) == f"n{i.id} = graph.less(left=n{a.id}, right=n{b.id}, name='')"
+
+    j = a <= b
+    assert str(j) == f"n{j.id} = graph.less_equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    k = a > b
+    assert str(k) == f"n{k.id} = graph.greater(left=n{a.id}, right=n{b.id}, name='')"
+
+    out = a >= b
+    assert str(out) == f"n{out.id} = graph.greater_equal(left=n{a.id}, right=n{b.id}, name='')"
+
+    m = a & b
+    assert str(m) == f"n{m.id} = graph.logical_and(left=n{a.id}, right=n{b.id}, name='')"
+
+    n = a | b
+    assert str(n) == f"n{n.id} = graph.logical_or(left=n{a.id}, right=n{b.id}, name='')"
+
+    o = a ^ b
+    assert str(o) == f"n{o.id} = graph.logical_xor(left=n{a.id}, right=n{b.id}, name='')"
+
+    p = ~a
+    assert str(p) == f"n{p.id} = graph.logical_not(node=n{a.id}, name='')"
+
+    q = graph.exp(a)
+    assert str(q) == f"n{q.id} = graph.exp(node=n{a.id}, name='')"
+
+    r = graph.power(a, b)
+    assert str(r) == f"n{r.id} = graph.power(left=n{a.id}, right=n{b.id}, name='')"
+
+    s = graph.log(a)
+    assert str(s) == f"n{s.id} = graph.log(node=n{a.id}, name='')"
+
+    t = graph.maximum(a, b)
+    assert str(t) == f"n{t.id} = graph.maximum(left=n{a.id}, right=n{b.id}, name='')"
+
+    condition = graph.placeholder("condition")
+    u = graph.where(condition, a, b)
+    assert str(u) == f"n{u.id} = graph.where(condition=n{condition.id}, then=n{a.id}, otherwise=n{b.id}, name='')"
+
+    other_cond = graph.placeholder("other_cond")
+    defval = graph.placeholder("defval")
+    uu = graph.multi_clause_where([(condition, a), (other_cond, b)], defval)
+    assert (
+        str(uu)
+        == f"n{uu.id} = graph.multi_clause_where(clauses=[(n{condition.id}, n{a.id}), (n{other_cond.id}, n{b.id})], default_value=n{defval.id}, name='')"  # noqa: E501
+    )
+
+    v = graph.expand_dims(a, (1, 2))
+    assert str(v) == f"n{v.id} = graph.expand_dims(node=n{a.id}, axis=(1, 2), name='')"
+
+    w = graph.squeeze(a, (1, 2))
+    assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
+
+    x = graph.project_using_sum(a, (1, 2))
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
+
+    y = graph.project_using_mean(a, (1, 2))
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
+
+    z = graph.function("jarjar", x, y, u, v=v, w=w)
+    assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
+
+
+def test_maybe_set_name():
+    """Ensure that Node.maybe_set_name works as intended."""
+    # When there is already a name
+    n1 = graph.placeholder("a")
+    n1.maybe_set_name("x")
+    assert n1.name == "a"
+
+    # When there is no name
+    n2 = graph.constant(177114)
+    n2.maybe_set_name("x")
+    assert n2.name == "x"
+
+
+def test_function_creation():
+    """Test creation of a user-defined function."""
+    n1 = graph.placeholder("a")
+    n2 = graph.placeholder("b")
+    n3 = graph.placeholder("c")
+    n4 = graph.placeholder("d")
+    n5 = graph.function("fx", n1, n2, c=n3, d=n4)
+
+    assert n5.name == "fx"
+    assert len(n5.args) == 2
+    assert len(n5.kwargs) == 2
+    assert n5.args[0] is n1
+    assert n5.args[1] is n2
+    assert n5.kwargs["c"] is n3
+    assert n5.kwargs["d"] is n4
