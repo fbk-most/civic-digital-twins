@@ -12,8 +12,12 @@ This approach offers several advantages over walking the AST:
 
 The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
+
+Optionally, the executor support JIT compilation and execution of
+trees, provided that the proper compileflags are set.
 """
 
+import types
 from dataclasses import dataclass, field
 from typing import (
     Callable,
@@ -233,11 +237,13 @@ class State:
             by default using the `DTMODEL_ENGINE_FLAGS` environement
             variable as documented by the `compileflags` package docs.
         functions: user-defined functions assignments.
+        jitted: JIT compiled functions.
     """
 
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
     functions: dict[str, Functor] = field(default_factory=dict)
+    jitted: dict[forest.Tree, types.FunctionType] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -307,6 +313,43 @@ def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
     return rv
 
 
+def _evaluate_single_tree_jit(state: State, tree: forest.Tree) -> np.ndarray:
+    # 1. check whether node has been already evaluated
+    root = tree.root()
+    if root in state.values:
+        return state.values[root]
+
+    # 2. check whether we need to trace this node
+    flags = root.flags | state.flags
+    tracing = flags & compileflags.TRACE
+    if tracing:
+        _print_graph_node(root)
+
+    # 3. if necessary, JIT-compile the function
+    func = state.jitted.get(tree)
+    if not func:
+        func = jit.compile_function(tree)
+        state.jitted[tree] = func
+
+    # 4. evaluate the tree
+    result = jit.call_function(state, tree, func)
+
+    # 5. check whether we need to print the computation result
+    if tracing:
+        _print_evaluated_node(root, result)
+
+    # 6. check whether we need to stop after evaluating this node
+    if flags & compileflags.BREAK != 0:
+        input("# executor: press any key to continue...")
+        print("")
+
+    # 7. store the node result in the state
+    state.values[root] = result
+
+    # 8. return the result
+    return result
+
+
 def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
     """Evaluate a `forest.Tree` using the current `State`.
 
@@ -329,7 +372,13 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
         if isinstance(node, graph.constant):
             evaluate_single_node(state, node)
 
-    # Evaluate the tree body
+    # Honor the jit flag if requested to use JIT code. For now, let
+    # us be cautious and disable JIT with user defined functions. We
+    # will be more precise if we decide we actually need JIT.
+    if not state.functions and state.flags & compileflags.JIT != 0:
+        return _evaluate_single_tree_jit(state, tree)
+
+    # Otherwise evaluate the tree body
     rv = _evaluate_nodes(state, *tree.body)
 
     # Ensure the invariant holds for the result

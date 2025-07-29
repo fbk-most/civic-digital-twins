@@ -16,10 +16,15 @@ implement the bare minimum to pretty print nodes for debugging.
 # SPDX-License-Identifier: Apache-2.0
 
 import ast
+import types
+from typing import Any, Protocol, cast, runtime_checkable
 
+import numba
 import numpy as np
 
-from ..frontend import graph
+from ..frontend import forest, graph
+
+# === Python AST generator code ===
 
 
 class UnsupportedNodeArguments(Exception):
@@ -210,3 +215,76 @@ def graph_node_to_numpy_code(node: graph.Node, value: np.ndarray | None = None) 
     the graph to Python source code.
     """
     return ast.unparse(graph_node_to_ast_stmt(node, value))
+
+
+def _ast_generate_nodes(*nodes: graph.Node) -> list[ast.stmt]:
+    return [graph_node_to_ast_stmt(node) for node in nodes]
+
+
+def _ast_generate_tree_body(*nodes: graph.Node) -> list[ast.stmt]:
+    # We need to add a return statement at the end
+    assert len(nodes) > 0
+    stmts = _ast_generate_nodes(*nodes)
+    root = nodes[-1]  # by definition of tree this is the root node
+    stmts.append(ast.Return(value=ast.Name(id=_node_name(root), ctx=ast.Load())))
+    return stmts
+
+
+def _tree_name(tree: forest.Tree) -> str:
+    return f"t{tree.root().id}"
+
+
+def forest_tree_to_ast_function_def(tree: forest.Tree) -> ast.FunctionDef:
+    """Transform a `forest.Tree` into an AST function definition."""
+    assert len(tree.body) > 0 and tree.root() is tree.body[-1]  # tree invariant
+    func = ast.FunctionDef(
+        _tree_name(tree),
+        args=ast.arguments(
+            posonlyargs=list(),
+            args=[ast.arg(f"n{x.id}", _np_attr_name("ndarray")) for x in tree.inputs],
+            vararg=None,
+            kwonlyargs=list(),
+            kw_defaults=list(),
+            kwarg=None,
+            defaults=list(),
+        ),
+        body=_ast_generate_tree_body(*tree.body),
+        decorator_list=list(),
+        returns=_np_attr_name("ndarray"),
+    )
+    ast.fix_missing_locations(func)
+    return func
+
+
+# === JIT compiler proper ===
+
+
+@runtime_checkable
+class State(Protocol):
+    """Read-only executor state protocol."""
+
+    def get_node_value(self, node: graph.Node) -> np.ndarray:
+        """Return the value associate with the node or throws an exception."""
+        ...  # pragma: no cover
+
+
+def _mod_compile(stmts: list[ast.stmt], filename: str) -> types.CodeType:
+    mod = ast.Module(body=stmts, type_ignores=list())
+    return compile(source=mod, filename=filename, mode="exec")
+
+
+def _python_compile_function(tree: forest.Tree, filename: str = "<generated>") -> types.FunctionType:
+    code = _mod_compile([forest_tree_to_ast_function_def(tree)], filename)
+    context: dict[str, Any] = {"np": np}
+    exec(code, context)
+    return cast(types.FunctionType, context[_tree_name(tree)])
+
+
+def compile_function(tree: forest.Tree, filename: str = "<generated>") -> types.FunctionType:
+    """JIT compile a `forest.Tree` using Numba."""
+    return numba.njit(_python_compile_function(tree, filename))
+
+
+def call_function(state: State, tree: forest.Tree, func: types.FunctionType) -> np.ndarray:
+    """Call the given func associated with the given tree using the given state."""
+    return func(*[state.get_node_value(node) for node in tree.inputs])
