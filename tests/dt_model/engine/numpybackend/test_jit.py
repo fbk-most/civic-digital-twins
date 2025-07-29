@@ -104,4 +104,4 @@ def test_no_operation_for_node():
 def test_no_arguments_handling_for_node():
     """Same as above but tests the case when there's no arguments handling code."""
     with pytest.raises(jit.UnsupportedNodeArguments):
-        jit.graph_node_to_ast_stmt(jit._InternalNode())
+        jit.graph_node_to_ast_stmt(jit._InternalTestingNode())

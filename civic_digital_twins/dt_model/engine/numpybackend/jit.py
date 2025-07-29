@@ -30,7 +30,7 @@ class UnsupportedNodeType(Exception):
     """Raised when the JIT compiler does not know the NumPy function a node corresponds to."""
 
 
-class _InternalNode(graph.Node):
+class _InternalTestingNode(graph.Node):
     """Node type used for writing tests."""
 
 
@@ -68,7 +68,7 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.reduce_sum: "sum",
     graph.reduce_mean: "mean",
     # internal
-    _InternalNode: "_internal",
+    _InternalTestingNode: "_internal_testing",
 }
 
 
