@@ -26,7 +26,7 @@ from typing import (
 import numpy as np
 
 from .. import compileflags
-from ..frontend import forest, graph
+from ..frontend import forest, graph, ir
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -237,6 +237,34 @@ class State:
             return self.values[node]
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
+
+
+def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
+    """Evaluate a DAG IR and produce a result or nothing.
+
+    You can obtain the DAG IR using the `frontend.ir` module. The generated DAG
+    contains either topologically sorted trees or topologically sorted nodes
+    to evaluate. We assert on this invariant before the evaluation.
+
+    If the DAG contains nodes, we invoke evaluate_nodes. Otherwise we invoke
+    evaluate_trees. The explicit availability of constants and placeholders
+    allows us to perform transformations on them, should we need it to ensure
+    the backend can handle them. Currently, this is not an issue and, probably,
+    this would never be an issue for the NumPy backend.
+
+    See https://github.com/fbk-most/civic-digital-twins/issues/84#issuecomment-3129629098.
+    """
+    assert (not dag.trees) != (not dag.nodes)
+
+    # Ensure that every constant within the DAG input has already
+    # been evaluated and otherwise evaluate it once. This is required
+    # because constants are refactored outside of the topological
+    # sorting when we're building a DAG from linearized nodes. Also, remember
+    # that evaluate_single_node evaluates each node at most once.
+    for node in dag.constants:
+        evaluate_single_node(state, node)
+
+    return evaluate_trees(state, *dag.trees) if dag.trees else evaluate_nodes(state, *dag.nodes)
 
 
 def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
