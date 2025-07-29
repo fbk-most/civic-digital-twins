@@ -25,11 +25,21 @@ class SymbolValue:
     # See https://github.com/fbk-most/civic-digital-twins/issues/90
 
     def __str__(self) -> str:
-        """Return a string representation of the symbol."""
+        """Pretend that the symbol is actually its name as a string.
+
+        That is str(Symbol("a")) == "'a'".
+
+        This simplifies the debuggability story.
+        """
         return repr(self)
 
     def __repr__(self) -> str:
-        """Return a string representation of the symbol."""
+        """Pretend that the symbol is actually its name as a string.
+
+        That is str(Symbol("a")) == "'a'".
+
+        This simplifies the debuggability story.
+        """
         return f"'{self.name}'"
 
 
