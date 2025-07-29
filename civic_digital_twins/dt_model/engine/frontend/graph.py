@@ -15,6 +15,7 @@ This module provides:
 7. Reduction operations (sum, mean)
 8. Built-in debug operations (tracepoint, breakpoint)
 9. Support for infix and unary operators (e.g., `a + b`, `~a`)
+10. Support for user-defined functions.
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -116,8 +117,8 @@ For example:
     e = graph.constant(117)
     f = d + e  # No static type error: untyped nodes default to Unknown
 
-A stricter version of type checking, if desired, will become available
-when the minimum Python version becomes 3.13.
+This module's code contains comments explaining how to upgrade
+to a stricted version of type checking with Python>=3.13.
 
 Node Representation
 -------------------
@@ -176,7 +177,7 @@ from .. import atomic, compileflags
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
 
-Scalar = bool | float | int
+Scalar = bool | float | int | str
 """Type alias for supported scalar value types."""
 
 
@@ -189,6 +190,78 @@ NODE_FLAG_BREAK = compileflags.BREAK
 
 _id_generator = atomic.Int()
 """Atomic integer generator for unique node IDs."""
+
+# Evolving the Typing Strategy
+# ----------------------------
+#
+# Node(Generic[T]) enables static type checking: if all participating nodes
+# are explicitly typed, Pyright will issue static type errors resulting in
+# error squiggles inside IDEs. Otherwise, it behaves like type-less code: fully
+# flexible but risking typing errors at runtime.
+#
+# This behavior is documented in the module docstring. Here, we outline how
+# to migrate to stricter type checking once @scc-digitalhub permits it.
+#
+# Currently, we target Python <= 3.11. When the runtime environment (e.g.,
+# @scc-digitalhub) upgrades to Python >= 3.13 and `pyrightconfig.json` is
+# updated accordingly, we could rewrite the following code like so:
+#
+#   class Erased:
+#       """Represents the type-erased dimension."""
+#
+#   T = TypeVar("T", default=Erased)  # requires Python >= 3.13
+#   C = TypeVar("C", default=Erased)  # ditto
+#
+#   def erase(node: Node[T]) -> Node[Erased]:
+#       """Explicitly erase the type of a node."""
+#       return cast(Node[Erased], node)
+#
+# With this setup, untyped nodes default to `Node[Erased]` instead of
+# `Node[Unknown]`, and type operations like `a + b` are only allowed if
+# both operands have the exact same type — including `Erased`.
+#
+# This allows us to enforce strict typing discipline, while still permitting
+# intentional erasure (via `erase(...)`) at evaluation time.
+#
+# In that world, downstream modules (e.g., `linearize.py`) could be typed
+# to accept `Node[Erased]`, effectively forcing the compiler to apply type
+# erasure before starting to lower the code.
+#
+# While we're waiting, would you like play a nice game of chess? If so, my
+# suggestion is that we continue on from this historical game:
+#
+#     a b c d e f g h
+#     ---------------
+# 8 | r n b . k b n r | 8
+# 7 | p . p p . p p p | 7
+# 6 | . . . . . . . . | 6
+# 5 | . p . . . . . . | 5
+# 4 | . . B . P p . q | 4
+# 3 | . . . . . . . . | 3
+# 2 | P P P P . . P P | 2
+# 1 | R N B Q . K N R | 1
+#     ---------------
+#     a b c d e f g h
+#
+# Moves so far:
+#
+# 1. e4   e5
+#
+# 2. f4   exf4
+#
+# 3. Bc4  Qh4+
+#
+# 4. Kf1  b5
+#
+# I play Kieseritzky (black) and you play Anderssen. Make sure you tag
+# me when you want my next move. My ELO is probably 400.
+#
+# Your move?
+#
+# Or would you like to play Global Termonuclear War instead?
+#
+#              -sbs (2025-07-29)
+
 
 T = TypeVar("T")
 """Type associated with a Node."""
@@ -695,3 +768,29 @@ def breakpoint(node: Node[T]) -> Node[T]:
     """
     node.flags |= NODE_FLAG_TRACE | NODE_FLAG_BREAK
     return node
+
+
+# User-defined functions
+
+
+class function(Generic[T], Node[T]):
+    """
+    Represent a user-defined function.
+
+    The function takes in input N nodes and returns a single node.
+
+    When evaluating the DAG, the programmer is responsible for
+    providing the corresponding function binding.
+    """
+
+    def __init__(self, name: str, *args: Node[T], **kwargs: Node[T]) -> None:
+        super().__init__(name)
+        self.args = args
+        self.kwargs = kwargs
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        arg_reprs = [f"n{arg.id}" for arg in self.args]
+        kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
+        all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
+        return f"n{self.id} = graph.function({all_args})"

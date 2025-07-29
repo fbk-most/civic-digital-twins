@@ -14,17 +14,19 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Callable,
+    Protocol,
     TypeAlias,
     cast,
+    runtime_checkable,
 )
 
 import numpy as np
 
 from .. import compileflags
-from ..frontend import forest, graph
+from ..frontend import forest, graph, ir
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -146,6 +148,10 @@ class NodeValueNotFound(Exception):
     """Raised when a node value is not found in the state."""
 
 
+class FunctionNotFound(Exception):
+    """Raised when a user-defined function is not found in the state."""
+
+
 class UnsupportedNodeType(Exception):
     """Raised when the executor encounters an unsupported node type."""
 
@@ -156,6 +162,29 @@ class UnsupportedOperation(Exception):
 
 class PlaceholderValueNotProvided(Exception):
     """Raised when a required placeholder value is not provided in the state."""
+
+
+@runtime_checkable
+class Functor(Protocol):
+    """A user-defined callable integrated into the DAG."""
+
+    def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
+        """Execute the user defined function."""
+        ...  # pragma: no cover
+
+
+class LambdaAdapter:
+    """Adapter that transforms a Callable into a Functor."""
+
+    def __init__(self, callable: Callable[..., np.ndarray]) -> None:
+        self.callable = callable
+
+    def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
+        """Execute the wrapped callable with the given arguments."""
+        return self.callable(*args, **kwargs)
+
+
+_: Functor = LambdaAdapter(lambda *, a, b: np.add(a, b))
 
 
 @dataclass(frozen=True)
@@ -180,6 +209,7 @@ class State:
 
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
+    functions: dict[graph.Node, Functor] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -209,6 +239,34 @@ class State:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
 
 
+def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
+    """Evaluate a DAG IR and produce a result or nothing.
+
+    You can obtain the DAG IR using the `frontend.ir` module. The generated DAG
+    contains either topologically sorted trees or topologically sorted nodes
+    to evaluate. We assert on this invariant before the evaluation.
+
+    If the DAG contains nodes, we invoke evaluate_nodes. Otherwise we invoke
+    evaluate_trees. The explicit availability of constants and placeholders
+    allows us to perform transformations on them, should we need it to ensure
+    the backend can handle them. Currently, this is not an issue and, probably,
+    this would never be an issue for the NumPy backend.
+
+    See https://github.com/fbk-most/civic-digital-twins/issues/84#issuecomment-3129629098.
+    """
+    assert (not dag.trees) != (not dag.nodes)
+
+    # Ensure that every constant within the DAG input has already
+    # been evaluated and otherwise evaluate it once. This is required
+    # because constants are refactored outside of the topological
+    # sorting when we're building a DAG from linearized nodes. Also, remember
+    # that evaluate_single_node evaluates each node at most once.
+    for node in dag.constants:
+        evaluate_single_node(state, node)
+
+    return evaluate_trees(state, *dag.trees) if dag.trees else evaluate_nodes(state, *dag.nodes)
+
+
 def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
     """Provide syntactic sugar for evaluating multiple trees."""
     rv: np.ndarray | None = None
@@ -232,6 +290,14 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
         print(str(tree))
         print("=== end tree dump ===")
         print("")
+
+    # Ensure that every constant within the tree input has already
+    # been evaluated and otherwise evaluate it once. This is required
+    # because constants are part of the tree input set. Also, remember
+    # that evaluate_single_node evaluates each node at most once.
+    for node in tree.inputs:
+        if isinstance(node, graph.constant):
+            evaluate_single_node(state, node)
 
     # Evaluate the tree body
     rv = _evaluate_nodes(state, *tree.body)
@@ -388,6 +454,21 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
         raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
 
 
+def _eval_function(state: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.function, node)
+    args: list[np.ndarray] = []
+    kwargs: dict[str, np.ndarray] = {}
+    for arg in node.args:
+        args.append(state.get_node_value(arg))
+    for key, value in node.kwargs.items():
+        kwargs[key] = state.get_node_value(value)
+    try:
+        function = state.functions[node]
+    except KeyError:
+        raise FunctionNotFound(f"executor: cannot find functor for: {node}")
+    return function(*args, **kwargs)
+
+
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
@@ -398,6 +479,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.where, _eval_where_op),
     (graph.multi_clause_where, _eval_multi_clause_where_op),
     (graph.AxisOp, _eval_axis_op),
+    (graph.function, _eval_function),
 )
 
 

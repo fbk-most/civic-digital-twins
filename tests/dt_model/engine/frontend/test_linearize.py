@@ -146,34 +146,42 @@ def test_complex_graph():
     x = graph.placeholder("x")
     y = graph.placeholder("y")
 
-    # c = (x + 2) * (y - 1)
-    a = graph.add(x, graph.constant(2.0))
-    b = graph.subtract(y, graph.constant(1.0))
+    k1 = graph.constant(1.0)
+    k2 = graph.constant(2.0)
+
+    # c = (x + k2) * (y - k1)
+    a = graph.add(x, k2)
+    b = graph.subtract(y, k1)
     c = graph.multiply(a, b)
 
-    # g = exp(y) / log(x + 1)
+    # g = exp(y) / log(x + k1)
     d = graph.exp(y)
-    e = graph.add(x, graph.constant(1.0))
+    e = graph.add(x, k1)
     f = graph.log(e)
     g = graph.divide(d, f)
 
-    # h = max(c, g)
-    h = graph.maximum(c, g)
+    # gg = function("foo", a, b, g, e=e)
+    # h = max(c, gg)
+    gg = graph.function("foo", a, b, g, e=e)
+    h = graph.maximum(c, gg)
 
     plan = linearize.forest(h)
 
     # Check dependencies
-    assert find_node_idx(plan, x) < find_node_idx(plan, a)
-    assert find_node_idx(plan, y) < find_node_idx(plan, b)
-    assert find_node_idx(plan, a) < find_node_idx(plan, c)
-    assert find_node_idx(plan, b) < find_node_idx(plan, c)
-    assert find_node_idx(plan, y) < find_node_idx(plan, d)
-    assert find_node_idx(plan, x) < find_node_idx(plan, e)
-    assert find_node_idx(plan, e) < find_node_idx(plan, f)
-    assert find_node_idx(plan, d) < find_node_idx(plan, g)
-    assert find_node_idx(plan, f) < find_node_idx(plan, g)
-    assert find_node_idx(plan, c) < find_node_idx(plan, h)
-    assert find_node_idx(plan, g) < find_node_idx(plan, h)
+    assert len(plan) == 13
+    assert plan[0] is x
+    assert plan[1] is k2
+    assert plan[2] is a
+    assert plan[3] is y
+    assert plan[4] is k1
+    assert plan[5] is b
+    assert plan[6] is c
+    assert plan[7] is d
+    assert plan[8] is e
+    assert plan[9] is f
+    assert plan[10] is g
+    assert plan[11] is gg
+    assert plan[12] is h
 
 
 def test_axes_operations():
