@@ -23,11 +23,11 @@ from ..frontend import graph
 
 
 class UnsupportedNodeArguments(Exception):
-    """Raised when the executor encounters an unsupported node type."""
+    """Raised when the executor does not know how to AST-compile a node arguments."""
 
 
 class UnsupportedNodeType(Exception):
-    """Raised when the executor encounters an unsupported operation."""
+    """Raised when the executor does not know the NumPy function a node corresponds to."""
 
 
 class _InternalNode(graph.Node):
