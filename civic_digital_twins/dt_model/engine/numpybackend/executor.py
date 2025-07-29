@@ -142,7 +142,7 @@ def _print_graph_node(node: graph.Node) -> None:
         print(jit.graph_node_to_numpy_code(node))
 
 
-def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = False) -> None:
+def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
     """Print a node after evaluation."""
     # Throughout this function we try to be very defensive with respect
     # to the node operations. Sometimes, numba returns bare floats rather
@@ -163,17 +163,11 @@ def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = Fa
     if hasattr(value, "dtype"):
         print(f"# dtype: {value.dtype}")
 
-    # 3. print whether the node was read from the cache.
-    #
-    # TODO(bassosimone): this attribute is a leftover of when we were
-    # evaluating the tree directly and less meaningful now.
-    print(f"# cached: {cached}")
-
-    # 4. give the user a sense of the node value for debugging purposes
+    # 3. give the user a sense of the node value for debugging purposes
     print("# value:")
     print("\n".join("# " + line for line in str(value).splitlines()))
 
-    # 5. add an empty line, which is always nice to separate things
+    # 4. add an empty line, which is always nice to separate things
     print("")
 
 
@@ -251,7 +245,7 @@ class State:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
                 _print_graph_node(node)
-                _print_evaluated_node(node, self.values[node], cached=True)
+                _print_evaluated_node(node, self.values[node])
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
@@ -319,13 +313,8 @@ def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
     assert len(tree.body) > 0
 
     # Honor the dump flag if requested to dump the code
-    #
-    # TODO(bassosimone): either remove or ensure the output can
-    # be safely added to a Python program
     if state.flags & compileflags.DUMP != 0:
-        print("=== begin tree dump ===")
         print(str(tree))
-        print("=== end tree dump ===")
         print("")
 
     # Ensure that every constant within the tree input has already
@@ -355,14 +344,9 @@ def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
     This function returns `None` if you do not supply any input node.
     """
     # Honor the DUMP flag when requested to do so
-    #
-    # TODO(bassosimone): either remove or ensure the output can
-    # be safely added to a Python program
     if state.flags & compileflags.DUMP != 0:
-        print("=== begin nodes dump ===")
         for node in nodes:
             print(str(node))
-        print("=== end nodes dump ===")
         print("")
 
     # Defer to the internal nodes evaluator
@@ -412,7 +396,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
 
     # 4. check whether we need to print the computation result
     if tracing:
-        _print_evaluated_node(node, result, cached=False)
+        _print_evaluated_node(node, result)
 
     # 5. check whether we need to stop after evaluating this node
     if flags & compileflags.BREAK != 0:

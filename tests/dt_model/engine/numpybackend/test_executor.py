@@ -600,9 +600,6 @@ def test_state_post_init_tracing(capsys):
     assert f"# n{y.id} = graph.placeholder(name='y', default_value=None)" in output
     assert f"n{y.id} = np.asarray([4.0, 5.0, 6.0])" in output
 
-    # Verify the cached indication is shown
-    assert "cached: True" in output
-
 
 def test_evaluate_trees_nonempty():
     """Test execution where we evaluate a forest tree."""
