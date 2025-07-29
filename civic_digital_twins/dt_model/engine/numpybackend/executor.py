@@ -14,7 +14,6 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
-import ast
 from dataclasses import dataclass, field
 from typing import (
     Callable,
@@ -149,7 +148,7 @@ def _print_graph_node(node: graph.Node) -> None:
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
     if not _is_immediate(node):
-        print(ast.unparse(jit.graph_node_to_ast_stmt(node, None)))
+        print(jit.graph_node_to_numpy_code(node))
 
 
 def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = False) -> None:
@@ -157,12 +156,13 @@ def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = Fa
     # Throughout this function we try to be very defensive with respect
     # to the node operations. Sometimes, numba returns bare floats rather
     # then `np.ndarray` and this only happens at runtime. This paranoia
-    # does not apply to placeholders and constants, which we provide.
+    # does not apply to placeholders and constants, for which we provide
+    # direct and correct `np.asarray()` initial value assignments.
 
     # 1. for nodes that are not evaluated, we print their actual
     # value so the representation can round trip.
     if _is_immediate(node):
-        print(ast.unparse(jit.graph_node_to_ast_stmt(node, value)))
+        print(jit.graph_node_to_numpy_code(node, value))
 
     # 2. print the shape and dtype, which are invaluable when debugging
     if hasattr(value, "shape"):
