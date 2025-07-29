@@ -164,6 +164,9 @@ def _print_evaluated_node(node: graph.Node, value: np.ndarray, cached: bool = Fa
         print(f"# dtype: {value.dtype}")
 
     # 3. print whether the node was read from the cache.
+    #
+    # TODO(bassosimone): this attribute is a leftover of when we were
+    # evaluating the tree directly and less meaningful now.
     print(f"# cached: {cached}")
 
     # 4. give the user a sense of the node value for debugging purposes
