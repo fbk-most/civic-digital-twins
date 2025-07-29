@@ -123,7 +123,7 @@ def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) ->
 
 
 def _graph_function_to_ast_expr(node: graph.function) -> ast.expr:
-    # get the operation name
+    # 1. get the operation name
     opname = node.name
 
     # 2. prepare for args and kwargs
