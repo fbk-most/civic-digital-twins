@@ -266,6 +266,10 @@ class State:
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
 
+    def set_node_value(self, node: graph.Node, value: np.ndarray) -> None:
+        """Set the value associated with the given node."""
+        self.values[node] = value
+
 
 def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
     """Evaluate a DAG IR and produce a result or nothing.
