@@ -675,7 +675,7 @@ def test_user_defined_function():
             c: np.asarray(55),
         },
         functions={
-            f: functor,
+            "f": functor,
         },
     )
     executor.evaluate_nodes(state1, *linearize.forest(g))
