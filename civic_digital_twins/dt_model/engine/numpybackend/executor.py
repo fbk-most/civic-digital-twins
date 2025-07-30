@@ -368,7 +368,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
-    is not the case, evaluation will fail. Use the `frontend.linearize`
+    is not the case, evaluation will fail. Use the `linearize.forest`
     module to ensure the graph is topologically sorted.
 
     Args:
@@ -395,7 +395,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     if tracing:
         _print_graph_node(node)
 
-    # 3. evaluate the node proper
+    # 3. evaluate the node
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result
