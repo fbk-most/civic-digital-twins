@@ -68,6 +68,12 @@ https://en.wikipedia.org/wiki/Just-in-time_compilation).
 programmer used linear sorting or tree paritioning, it is possible to
 produce an intermediate representation of the DAG suitable to be
 mapped to low-level numeric operations through simple transformations.
+This IR representation singles out constants and placeholders, allowing
+us to easily transform/remap them (e.g., if we need to avoid using
+strings with specific backends). Additionally, the IR contains
+the topologically sorted nodes or trees to evaluate. Whether it
+contains nodes or trees depends on whether the programmer produced
+a linear topological sorting or used tree partitioning.
 
 **Support for Multiple Backends.** The DAG IR is abstract and
 may be evaluated by distinct backends. Currently, we only implement
@@ -77,9 +83,8 @@ such as [TensorFlow](https://github.com/tensorflow/tensorflow).
 Because of this possibility, the compiler is conceptually split into
 a backend-agnostic *frontend* and specific *backends*.
 
-**NumPy Evaluation.** To evaluate a DAG we evaluate either the linear
-topological sorting of the nodes or the topologically sorted trees.
-The evaluation uses a *State* data structure (functionally equivalent
+**NumPy Evaluation.** To evaluate a DAG we evaluate its topological
+sorted nodes or trees. The evaluation uses a *State* data structure (functionally equivalent
 to a dictionary mapping a node to the `np.ndarray` result of
 its evaluation). The basic evaluation algorithm uses a Python-based
 interpreter to map nodes to the corresponding NumPy operations, reading
@@ -87,7 +92,8 @@ required node values from the State and writing results to the
 State. Thus, nodes are only evaluated once. A more advanced, experimental
 evaluation strategy transforms a tree to a Python function using
 NumPy calls and uses [Numba](https://github.com/numba/numba) to
-JIT-compile these functions to efficient code. Preliminary benchmarks
+JIT-compile these functions to efficient code. Preliminary
+[benchmarks](https://github.com/fbk-most/civic-digital-twins/issues/54)
 indicate that using Numba is useful when the same code is evaluated
 multiple times with equally shaped constants and placeholders.
 
@@ -210,7 +216,6 @@ this assumption seems reasonable for most backends.
 | [`frontend/graph.py`](../../civic_digital_twins/dt_model/engine/frontend/graph.py) | Node types and gradually-typed DSL. |
 | [`frontend/ir.py`](../../civic_digital_twins/dt_model/engine/frontend/ir.py) | Intermediate DAG representation. |
 | [`frontend/linearize.py`](../../civic_digital_twins/dt_model/engine/frontend/linearize.py) | Topological sorting. |
-| [`numpybackend/astgen.py`](../../civic_digital_twins/dt_model/engine/numpybackend/astgen.py) | AST generator. |
 | [`numpybackend/executor.py`](../../civic_digital_twins/dt_model/engine/numpybackend/executor.py) | Main executor interface. |
 | [`numpybackend/jit.py`](../../civic_digital_twins/dt_model/engine/numpybackend/jit.py) | JIT infrastructure. |
 
@@ -260,7 +265,9 @@ e = graph.power(a, c) * 144
 
 This DAG that combines input placeholders (`a` and `b`) and operations (`+`,
 `*`, `/`, `graph.exp`, and `graph.power`) to produce specific outputs
-(`c`, `d`, and `e`).
+(`c`, `d`, and `e`). Please, feel encouraged to create a file named
+`examples/design.py` to try for yourself the examples in this tutorial. To
+run the file, use `uv run python examples/design.py`.
 
 To enable optional static type checking of DSL graphs, you
 can annotate nodes with types using Python's generics syntax. This
@@ -307,7 +314,7 @@ scale = graph.constant[Apple](1024)
 
 # ...
 
-# This line produces an error squiggle because the
+# This line produces static typing errors because the
 # operation is mixing apples and oranges.
 d = c * b + scale
 ```
@@ -521,8 +528,8 @@ evaluate (as opposed to producing just a linear list).
 ## frontend/forest.py: Tree Partitioning
 
 Tree partitioning allows us to construct a tree rooted into
-each output node. Each tree depends on placeholders and, possibly,
-on nodes computed by other trees and models a function for
+each output node. Each tree depends on constants, placeholders and, possibly,
+on nodes computed by other trees. The tree models a function for
 computing the output node value given the inputs.
 
 The corresponding module is [frontend/forest.py](../../civic_digital_twins/dt_model/engine/frontend/forest.py).
@@ -633,10 +640,9 @@ needs when constructing and evaluating the model.
 
 In principle, `linearize.py` is enough to produce a result, but
 `forest.py` allows you to explicitly isolate how each root
-node is computed and its dependencies.
-
-As such, it seems that `forest.py` is more appropriate when
-your goal is understanding the trees embedded in a DAG.
+node is computed and its dependencies. As such, it seems that
+`forest.py` is more appropriate when your goal is understanding
+the trees embedded in a DAG.
 
 Additionally, for some use cases, including JIT evaluation, we
 need to explicitly partition the computation in trees and
@@ -644,7 +650,8 @@ JIT-compile each tree independently. (That is, we cannot JIT
 compile the linear representation of the nodes save for the
 easy case where there's just a single root node we're interested
 to evaluate; otherwise, all the intermediate node values will
-not be available, since they will be computed by Numba.)
+not be available, since they will be computed by Numba using
+machine code and there is no way for us to observe their value.)
 
 ## frontend/ir.py: Intermediate DAG Representation
 
@@ -664,14 +671,14 @@ In the latter case, it consists of:
 3. topologically-sorted trees to evaluate.
 
 The main design point here is that of isolating the DAG inputs (constants
-and placeholders) from the abstract DAG strucutre. This split allows
+and placeholders) from the abstract DAG structure. This split allows
 backend modules to manipulate the inputs ahead of evaluation.
-
 For example, as discussed in [#84](https://github.com/fbk-most/civic-digital-twins/issues/84),
 this is the correct place where to remap `np.ndarray` containing strings
 to `np.ndarray` containing numbers referring to the strings whenever
-the backend we are using does not support strings. This is currently not
-a concern, since NumPy supports strings.
+the backend we are using does not support strings. (This is currently not
+a concern, since NumPy supports strings, but it may become a concern if
+we decide to use PyTorch.)
 
 A DAG IR could also be printed. Let us cover both cases. Let us start
 with code to produce a DAG IR from `linearize.py`'s output:
@@ -850,7 +857,7 @@ the current state represents the memory snapshot after the
 evaluation of all the trees evaluated so far.
 
 When the DAG IR contains functions, instead of linear nodes,
-the executor evaluates the node of each tree in order. Because
+the executor evaluates the nodes of each tree in order. Because
 trees are topologically sorted and nodes within them are
 also topologically sorted, the sequence of evaluated nodes
 is equivalent to the one where the DAG contains just the
@@ -874,6 +881,13 @@ state[n10] = np.power(state[n1], state[n7])
 state[n11] = np.asarray(144)
 state[n12] = np.multiply(state[n10], state[n11])
 ```
+
+In other words, when using the standard evaluator, there is no
+actual function stack. Calling or not calling a function does
+not change the values that are actually *saved* inside the state.
+(Incidentally, this is the reason why we say *tree* rather than
+function: a proper function would have a call stack, but we do
+not seem to need this functionality right now.)
 
 ## Tracing execution with `DTMODEL_ENGINE_FLAGS`
 
@@ -992,7 +1006,7 @@ In addition to executing each operation sequentially, the
 a tree using [Numba](https://github.com/numba/numba).
 
 This functionality is experimental and implemented in
-the [#70](https://github.com/fbk-most/civic-digital-twins/pull/70)
+the *unmerged* [#70](https://github.com/fbk-most/civic-digital-twins/pull/70)
 pull request.
 
 The advantage of JIT-compiling a tree using Numba is that it
@@ -1002,8 +1016,7 @@ computations, the cost of JIT compiling is compensated by running faster
 numeric operations during each execution. (If the `shape` and/or the
 `dtype` changes, Numba recompiles the function to produce suitable
 JIT code, which reduces the performance; that said, in our use cases,
-we always evaluate models with the same `shape` and `dtype`, and
-only the sizes of each shape may change from run to run.)
+we frequently evaluate models with the same `shape` and `dtype`.)
 
 Whether or not to use JIT compilation is a matter of profiling
 and knowing the requirements of the use case. Yet, it is not
@@ -1011,10 +1024,11 @@ possible to know *whether* JIT would be beneficial without having
 the *option* to profile it against normal evaluation. We ran
 preliminary benchmarking in [#54](https://github.com/fbk-most/civic-digital-twins/issues/54)
 and concluded that the matter is not urgent, but a potential
-performance benefit is there and further investigation is needed.
+performance benefit is there and further investigation is needed
+to decide whether to merge the Numba branch.
 
 The simplest way to turn on JIT compilation — assuming you are in the
-right branch — is to append `jit` to `DTMODEL_ENGINE_FLAGS`:
+right branch — is to use `DTMODEL_ENGINE_FLAGS`:
 
 ```bash
 # if you only want to use the JIT compiler
@@ -1024,10 +1038,13 @@ export DTMODEL_ENGINE_FLAGS=jit
 export DTMODEL_ENGINE_FLAGS=jit,trace
 ```
 
-However specified, the `jit` flag turns on JIT evaluation on a
+The `jit` flag turns on JIT evaluation on a
 per-`State` basis. In the current prototype, there is no global
-function cache. We may consider this as part of future work,
-particularly if we decide to merge this code.
+function cache. In practical terms this means that, Numba
+will recompile if you use a new state (unless you copy the
+`jitted` field from a previous state.) We may consider better
+caching as part of future work, particularly if we decide
+to merge the Numba branch.
 
 Given the following tree:
 
@@ -1065,11 +1082,11 @@ advantage of this property to pass the arguments to the
 function wrapped by `@njit` in the correct order.
 
 The [numpybackend/jit.py](../../civic_digital_twins/dt_model/engine/numpybackend/jit.py)
-is the internal module implementing JIT evaluation.
+module is where we implement JIT evaluation.
 
 ## More `DTMODEL_ENGINE_FLAGS` goodies
 
-First of all the `DTMODEL_ENGINE_FLAGS` allows to set compiler
+The `DTMODEL_ENGINE_FLAGS` allows to set compiler
 flags using an environment variable. However, you can also
 set flags programmatically. For example:
 
@@ -1097,7 +1114,7 @@ The above code is equivalent to setting:
 export DTMODEL_ENGINE_FLAG=jit,trace
 ```
 
-You can combine take advantage of `compileflags.BREAK` to stop the
+You can also take advantage of `compileflags.BREAK` to stop the
 execution *after* a node has been evaluated:
 
 ```Python
@@ -1124,14 +1141,15 @@ state = executor.State(
 
 When using `compileflags.JIT`, `compileflags.TRACE` and
 `compileflags.BREAK` are also honored, but we cannot step
-inside each JIT-compiled function. Therefore, you can
+inside JIT-compiled functions. Therefore, you can
 only see the value of root nodes, which limits your ability
 to inspect and debug the evaluation.
 
 Conversely, as mentioned before, `compileflags.JIT` is
-more efficient when models are evaluated multiple times,
-since the code is compiled to specific machine code
-matching the expected shapes.
+more efficient when models are evaluated multiple times
+with the same shapes and dtypes, since the code is
+compiled to specific machine code matching the expected shapes
+and dtypes.
 
 ## User-Defined Functions
 
@@ -1248,6 +1266,8 @@ n7 = scale3(n1, n2, k2=n3, k3=n4, scaled2=n6)
 #150
 #1417
 ```
+
+Note that JIT is disabled if you use user-defined functions.
 
 ## Error Handling
 
