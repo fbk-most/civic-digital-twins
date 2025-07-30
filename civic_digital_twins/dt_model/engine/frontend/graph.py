@@ -773,9 +773,9 @@ def breakpoint(node: Node[T]) -> Node[T]:
 # User-defined functions
 
 
-class function(Generic[T], Node[T]):
+class function_call(Generic[T], Node[T]):
     """
-    Represent a user-defined function.
+    Represent calling a user-defined function.
 
     The function takes in input N nodes and returns a single node.
 
@@ -794,3 +794,11 @@ class function(Generic[T], Node[T]):
         kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
         all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
         return f"n{self.id} = graph.function({all_args})"
+
+
+function = function_call
+"""Legacy name for the function_call type.
+
+The function_call name is more appropriate since what happens
+is indeed that we are calling a function.
+"""
