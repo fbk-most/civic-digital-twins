@@ -319,8 +319,8 @@ dimension with shape `(1,)` and the time dimension with
 shape `(255,)`. To perform computations in the time-ensemble
 dimension, one needs to expand vectors into the `(255,1)`
 space. By using types correctly, we avoid mixing dimensions
-and ensure that only nodes belonging to the same
-dimension can be combined through operations.
+and reduce the risk of combining nodes with incorrect
+shapes by mistake.
 
 Regarding how `graph.py` could be implemented, a very simplified
 implementation looks like this:
@@ -640,7 +640,11 @@ your goal is understanding the trees embedded in a DAG.
 
 Additionally, for some use cases, including JIT evaluation, we
 need to explicitly partition the computation in trees and
-JIT-compile each tree independently.
+JIT-compile each tree independently. (That is, we cannot JIT
+compile the linear representation of the nodes save for the
+easy case where there's just a single root node we're interested
+to evaluate; otherwise, all the intermediate node values will
+not be available, since they will be computed by Numba.)
 
 ## frontend/ir.py: Intermediate DAG Representation
 
@@ -1020,6 +1024,11 @@ export DTMODEL_ENGINE_FLAGS=jit
 export DTMODEL_ENGINE_FLAGS=jit,trace
 ```
 
+However specified, the `jit` flag turns on JIT evaluation on a
+per-`State` basis. In the current prototype, there is no global
+function cache. We may consider this as part of future work,
+particularly if we decide to merge this code.
+
 Given the following tree:
 
 ```Python
@@ -1285,9 +1294,6 @@ to future workloads or computational backends.
 
 **DAG**: [Directed-acyclic graph](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of connected nodes.
 
-**Filter**: Numeric filter (i.e., function taking `np.ndarray` in input
-and returning `np.ndarray`) that modifies the result of a tree.
-
 **JIT**: Just in Time compilation. When `@numba.njit` functions
 are invoked, the first execution generates and caches machine code
 for arrays of the given shape. Machine code customized to the
@@ -1304,3 +1310,8 @@ shape is more efficient than generic NumPy code.
 
 **Tree**: A topologically sorted subgraph rooted at a node,
 including all nodes required to compute it.
+
+**User-Specified Function**: Function taking in input `np.ndarray`s
+and returning `np.ndarray` that can be called indirectly when
+building the tree as long as the function implementation is provided
+when we are evaluating the DAG.
