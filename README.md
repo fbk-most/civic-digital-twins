@@ -97,6 +97,10 @@ uv sync --upgrade
 
 7. Upload the package to PyPI using `twine upload dist/*`.
 
+## Design Documents
+
+See the [docs/design](./docs/design) directory.
+
 ## License
 
 ```
