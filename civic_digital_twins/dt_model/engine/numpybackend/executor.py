@@ -364,7 +364,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
-    is not the case, evaluation will fail. Use the `frontend.linearize`
+    is not the case, evaluation will fail. Use the `linearize.forest`
     module to ensure the graph is topologically sorted.
 
     Args:
@@ -391,7 +391,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     if tracing:
         _print_graph_node(node)
 
-    # 3. evaluate the node proper
+    # 3. evaluate the node
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result
@@ -414,12 +414,12 @@ evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
-def _eval_constant_op(state: State, node: graph.Node) -> np.ndarray:
+def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.constant, node)
     return np.asarray(node.value)
 
 
-def _eval_placeholder_default(state: State, node: graph.Node) -> np.ndarray:
+def _eval_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
     # Note: placeholders are part of the state, so, if we end up
     # here it means we didn't find anything in the state.
     node = cast(graph.placeholder, node)
