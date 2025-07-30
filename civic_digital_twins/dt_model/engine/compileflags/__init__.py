@@ -28,9 +28,13 @@ Note that this flag does not mix well with TRACE since both emit
 valid Python code using the same names.
 """
 
+JIT = 1 << 3
+"""When possible use a JIT compiler."""
+
 _flagnames: dict[str, int] = {
     "break": BREAK,
     "dump": DUMP,
+    "jit": JIT,
     "trace": TRACE,
 }
 """Maps the lowercase name of the flag to its value."""
