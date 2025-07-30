@@ -15,6 +15,7 @@ This module provides:
 7. Reduction operations (sum, mean)
 8. Built-in debug operations (tracepoint, breakpoint)
 9. Support for infix and unary operators (e.g., `a + b`, `~a`)
+10. Support for user-defined functions.
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -82,6 +83,65 @@ Design Decisions
    - Nodes are identified by their instance identity
    - Enables graph traversal and transformation
 
+4. Gradual, Static Typing:
+    - Produce static type errors for explicitly-typed nodes
+    - No static type errors otherwise
+
+5. Node Representation:
+    - The __repr__ of a node emits the Python code that would generate the node
+    - Therefore, the __repr__ representation is round-trippable
+
+Gradual, Static Typing
+----------------------
+
+The `Node` class is actually `Node[T]`. If you explicitly
+assign types using `placeholder` and `constant`, the
+type checker will produce type errors for mismatched operations.
+
+If at least a node is untyped, then operations are always
+possible without getting static type errors.
+
+For example:
+
+    class TimeDimension:
+        '''Represents the time dimension.'''
+
+    class EnsembleDimension:
+        '''Represents the ensemble dimension.'''
+
+    a = graph.constant[TimeDimension](14)
+    b = graph.constant[EnsembleDimension](117)
+    c = a + b  # This line produces a static type error due to incompatible types
+
+    d = graph.constant[TimeDimension](14)
+    e = graph.constant(117)
+    f = d + e  # No static type error: untyped nodes default to Unknown
+
+This module's code contains comments explaining how to upgrade
+to a stricted version of type checking with Python>=3.13.
+
+Node Representation
+-------------------
+
+Given this code:
+
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = a + b
+
+If you print each node, you obtain:
+
+    n1 = graph.placeholder(name="a", default_value=None)
+    n2 = graph.placeholder(name="b", default_value=None)
+    n3 = graph.add(left=n1, right=n2, name="")
+
+That is, the `__repr__` (and `__str__`) of each node is an SSA representation
+where you see the node IDs (the format is `nX` where `X` is the ID) and the
+arguments with which they were constructed.
+
+Crucially, if you execute the `__repr__` of each node, you get back the
+same graph that you have constructed with the original code.
+
 Node Identity and Equality
 --------------------------
 
@@ -110,34 +170,112 @@ This behavior impacts code that needs to find nodes in collections like lists:
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Generic, Sequence, TypeVar
 
-from .. import atomic
+from .. import atomic, compileflags
 
 Axis = int | tuple[int, ...]
 """Type alias for axis specifications in shape operations."""
 
-Scalar = bool | float | int
+Scalar = bool | float | int | str
 """Type alias for supported scalar value types."""
 
 
-NODE_FLAG_TRACE = 1 << 0
+NODE_FLAG_TRACE = compileflags.TRACE
 """Inserts a tracepoint at the corresponding graph node."""
 
-NODE_FLAG_BREAK = 1 << 1
+NODE_FLAG_BREAK = compileflags.BREAK
 """Inserts a breakpoint at the corresponding graph node."""
 
 
 _id_generator = atomic.Int()
 """Atomic integer generator for unique node IDs."""
 
+# Evolving the Typing Strategy
+# ----------------------------
+#
+# Node(Generic[T]) enables static type checking: if all participating nodes
+# are explicitly typed, Pyright will issue static type errors resulting in
+# error squiggles inside IDEs. Otherwise, it behaves like type-less code: fully
+# flexible but risking typing errors at runtime.
+#
+# This behavior is documented in the module docstring. Here, we outline how
+# to migrate to stricter type checking once @scc-digitalhub permits it.
+#
+# Currently, we target Python <= 3.11. When the runtime environment (e.g.,
+# @scc-digitalhub) upgrades to Python >= 3.13 and `pyrightconfig.json` is
+# updated accordingly, we could rewrite the following code like so:
+#
+#   class Erased:
+#       """Represents the type-erased dimension."""
+#
+#   T = TypeVar("T", default=Erased)  # requires Python >= 3.13
+#   C = TypeVar("C", default=Erased)  # ditto
+#
+#   def erase(node: Node[T]) -> Node[Erased]:
+#       """Explicitly erase the type of a node."""
+#       return cast(Node[Erased], node)
+#
+# With this setup, untyped nodes default to `Node[Erased]` instead of
+# `Node[Unknown]`, and type operations like `a + b` are only allowed if
+# both operands have the exact same type — including `Erased`.
+#
+# This allows us to enforce strict typing discipline, while still permitting
+# intentional erasure (via `erase(...)`) at evaluation time.
+#
+# In that world, downstream modules (e.g., `linearize.py`) could be typed
+# to accept `Node[Erased]`, effectively forcing the compiler to apply type
+# erasure before starting to lower the code.
+#
+# While we're waiting, would you like play a nice game of chess? If so, my
+# suggestion is that we continue on from this historical game:
+#
+#     a b c d e f g h
+#     ---------------
+# 8 | r n b . k b n r | 8
+# 7 | p . p p . p p p | 7
+# 6 | . . . . . . . . | 6
+# 5 | . p . . . . . . | 5
+# 4 | . . B . P p . q | 4
+# 3 | . . . . . . . . | 3
+# 2 | P P P P . . P P | 2
+# 1 | R N B Q . K N R | 1
+#     ---------------
+#     a b c d e f g h
+#
+# Moves so far:
+#
+# 1. e4   e5
+#
+# 2. f4   exf4
+#
+# 3. Bc4  Qh4+
+#
+# 4. Kf1  b5
+#
+# I play Kieseritzky (black) and you play Anderssen. Make sure you tag
+# me when you want my next move. My ELO is probably 400.
+#
+# Your move?
+#
+# Or would you like to play Global Termonuclear War instead?
+#
+#              -sbs (2025-07-29)
 
-def ensure_node(value: Node | Scalar) -> Node:
+
+T = TypeVar("T")
+"""Type associated with a Node."""
+
+C = TypeVar("C")
+"""Type associated with boolean conditions."""
+
+
+def ensure_node(value: Node[T] | Scalar) -> Node[T]:
     """Convert a scalar value to a constant node if necessary."""
     return value if isinstance(value, Node) else constant(value)
 
 
-class Node:
+class Node(Generic[T]):
     """
     Base class for all computation graph nodes.
 
@@ -160,6 +298,14 @@ class Node:
         self.flags = 0
         self.id = _id_generator.add(1)
 
+    def maybe_set_name(self, name: str) -> None:
+        """Set the node name unless it has already been set."""
+        self.name = self.name if self.name else name
+
+    def __str__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return repr(self)  # subclasses define suitable __repr__
+
     def __hash__(self) -> int:
         """Override hash to use identity-based hashing.
 
@@ -168,96 +314,96 @@ class Node:
         return id(self)
 
     # Arithmetic operators
-    def __add__(self, other: Node | Scalar) -> Node:
+    def __add__(self, other: Node[T] | Scalar) -> Node[T]:
         """Add two nodes or a node and a scalar."""
         return add(self, ensure_node(other))
 
-    def __radd__(self, other: Node | Scalar) -> Node:
+    def __radd__(self, other: Node[T] | Scalar) -> Node[T]:
         """Add two nodes or a node and a scalar."""
         return add(ensure_node(other), self)
 
-    def __sub__(self, other: Node | Scalar) -> Node:
+    def __sub__(self, other: Node[T] | Scalar) -> Node[T]:
         """Subtract two nodes or a node and a scalar."""
         return subtract(self, ensure_node(other))
 
-    def __rsub__(self, other: Node | Scalar) -> Node:
+    def __rsub__(self, other: Node[T] | Scalar) -> Node[T]:
         """Subtract two nodes or a node and a scalar."""
         return subtract(ensure_node(other), self)
 
-    def __mul__(self, other: Node | Scalar) -> Node:
+    def __mul__(self, other: Node[T] | Scalar) -> Node[T]:
         """Multiply two nodes or a node and a scalar."""
         return multiply(self, ensure_node(other))
 
-    def __rmul__(self, other: Node | Scalar) -> Node:
+    def __rmul__(self, other: Node[T] | Scalar) -> Node[T]:
         """Multiply two nodes or a node and a scalar."""
         return multiply(ensure_node(other), self)
 
-    def __truediv__(self, other: Node | Scalar) -> Node:
+    def __truediv__(self, other: Node[T] | Scalar) -> Node[T]:
         """Divide two nodes or a node and a scalar."""
         return divide(self, ensure_node(other))
 
-    def __rtruediv__(self, other: Node | Scalar) -> Node:
+    def __rtruediv__(self, other: Node[T] | Scalar) -> Node[T]:
         """Divide two nodes or a node and a scalar."""
         return divide(ensure_node(other), self)
 
     # Comparison operators
     #
     # See the companion `__hash__` comment.
-    def __eq__(self, other: Node | Scalar) -> Node:  # type: ignore
+    def __eq__(self, other: Node[T] | Scalar) -> Node[T]:  # type: ignore
         """Lazily check whether two nodes are equal."""
         return equal(self, ensure_node(other))
 
-    def __ne__(self, other: Node | Scalar) -> Node:  # type: ignore
+    def __ne__(self, other: Node[T] | Scalar) -> Node[T]:  # type: ignore
         """Lazily check whether two nodes are not equal."""
         return not_equal(self, ensure_node(other))
 
-    def __lt__(self, other: Node | Scalar) -> Node:
+    def __lt__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is less than another."""
         return less(self, ensure_node(other))
 
-    def __le__(self, other: Node | Scalar) -> Node:
+    def __le__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is less than or equal to another."""
         return less_equal(self, ensure_node(other))
 
-    def __gt__(self, other: Node | Scalar) -> Node:
+    def __gt__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is greater than another."""
         return greater(self, ensure_node(other))
 
-    def __ge__(self, other: Node | Scalar) -> Node:
+    def __ge__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is greater than or equal to another."""
         return greater_equal(self, ensure_node(other))
 
     # Logical operators
-    def __and__(self, other: Node | Scalar) -> Node:
+    def __and__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically and with another."""
         return logical_and(self, ensure_node(other))
 
-    def __rand__(self, other: Node | Scalar) -> Node:
+    def __rand__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically and with another."""
         return logical_and(ensure_node(other), self)
 
-    def __or__(self, other: Node | Scalar) -> Node:
+    def __or__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically or with another."""
         return logical_or(self, ensure_node(other))
 
-    def __ror__(self, other: Node | Scalar) -> Node:
+    def __ror__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically or with another."""
         return logical_or(ensure_node(other), self)
 
-    def __xor__(self, other: Node | Scalar) -> Node:
+    def __xor__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically xor with another."""
         return logical_xor(self, ensure_node(other))
 
-    def __rxor__(self, other: Node | Scalar) -> Node:
+    def __rxor__(self, other: Node[T] | Scalar) -> Node[T]:
         """Lazily check whether one node is logically xor with another."""
         return logical_xor(ensure_node(other), self)
 
-    def __invert__(self) -> Node:
+    def __invert__(self) -> Node[T]:
         """Lazily check whether one node is logically not."""
         return logical_not(self)
 
 
-class constant(Node):
+class constant(Generic[T], Node[T]):
     """A constant scalar value in the computation graph.
 
     Args:
@@ -268,8 +414,12 @@ class constant(Node):
         super().__init__(name)
         self.value = value
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.constant(value={self.value}, name='{self.name}')"
 
-class placeholder(Node):
+
+class placeholder(Generic[T], Node[T]):
     """Named placeholder for a value to be provided during evaluation.
 
     Args:
@@ -281,8 +431,12 @@ class placeholder(Node):
         super().__init__(name)
         self.default_value = default_value
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.placeholder(name='{self.name}', default_value={self.default_value})"
 
-class BinaryOp(Node):
+
+class BinaryOp(Generic[T], Node[T]):
     """Base class for binary operations.
 
     Args:
@@ -290,8 +444,8 @@ class BinaryOp(Node):
         right: Second input node
     """
 
-    def __init__(self, left: Node, right: Node) -> None:
-        super().__init__()
+    def __init__(self, left: Node[T], right: Node[T], name="") -> None:
+        super().__init__(name)
         self.left = left
         self.right = right
 
@@ -299,107 +453,179 @@ class BinaryOp(Node):
 # Arithmetic operations
 
 
-class add(BinaryOp):
+class add(Generic[T], BinaryOp[T]):
     """Element-wise addition of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.add(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class subtract(BinaryOp):
+
+class subtract(Generic[T], BinaryOp[T]):
     """Element-wise subtraction of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.subtract(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class multiply(BinaryOp):
+
+class multiply(Generic[T], BinaryOp[T]):
     """Element-wise multiplication of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.multiply(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class divide(BinaryOp):
+
+class divide(Generic[T], BinaryOp[T]):
     """Element-wise division of two tensors."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.divide(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 # Comparison operations
 
 
-class equal(BinaryOp):
+class equal(Generic[T], BinaryOp[T]):
     """Element-wise equality comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class not_equal(BinaryOp):
+
+class not_equal(Generic[T], BinaryOp[T]):
     """Element-wise inequality comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.not_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class less(BinaryOp):
+
+class less(Generic[T], BinaryOp[T]):
     """Element-wise less-than comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.less(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class less_equal(BinaryOp):
+
+class less_equal(Generic[T], BinaryOp[T]):
     """Element-wise less-than-or-equal comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.less_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class greater(BinaryOp):
+
+class greater(Generic[T], BinaryOp[T]):
     """Element-wise greater-than comparison of two tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.greater(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class greater_equal(BinaryOp):
+
+class greater_equal(Generic[T], BinaryOp[T]):
     """Element-wise greater-than-or-equal comparison of two tensors."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.greater_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 # Logical operations
 
 
-class logical_and(BinaryOp):
+class logical_and(Generic[T], BinaryOp[T]):
     """Element-wise logical AND of two boolean tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.logical_and(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class logical_or(BinaryOp):
+
+class logical_or(Generic[T], BinaryOp[T]):
     """Element-wise logical OR of two boolean tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.logical_or(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class logical_xor(BinaryOp):
+
+class logical_xor(Generic[T], BinaryOp[T]):
     """Element-wise logical XOR of two boolean tensors."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.logical_xor(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
-class UnaryOp(Node):
+
+class UnaryOp(Generic[T], Node[T]):
     """Base class for unary operations.
 
     Args:
         node: Input node
     """
 
-    def __init__(self, node: Node) -> None:
-        super().__init__()
+    def __init__(self, node: Node[T], name="") -> None:
+        super().__init__(name)
         self.node = node
 
 
-class logical_not(UnaryOp):
+class logical_not(Generic[T], UnaryOp[T]):
     """Element-wise logical NOT of a boolean tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.logical_not(node=n{self.node.id}, name='{self.name}')"
 
 
 # Math operations
 
 
-class exp(UnaryOp):
+class exp(Generic[T], UnaryOp[T]):
     """Element-wise exponential of a tensor."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.exp(node=n{self.node.id}, name='{self.name}')"
 
-class power(BinaryOp):
+
+class power(Generic[T], BinaryOp[T]):
     """Element-wise power operation (first tensor raised to power of second)."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.power(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 pow = power
 """Name alias for power, for compatibility with NumPy naming."""
 
 
-class log(UnaryOp):
+class log(Generic[T], UnaryOp[T]):
     """Element-wise natural logarithm of a tensor."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.log(node=n{self.node.id}, name='{self.name}')"
 
-class maximum(BinaryOp):
+
+class maximum(Generic[T], BinaryOp[T]):
     """Element-wise maximum of two tensors."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.maximum(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
 # Conditional operations
 
 
-class where(Node):
+class where(Generic[C, T], Node[T]):
     """Selects elements from tensors based on a condition.
 
     Args:
@@ -408,14 +634,18 @@ class where(Node):
         otherwise: Values to use where condition is False
     """
 
-    def __init__(self, condition: Node, then: Node, otherwise: Node) -> None:
-        super().__init__()
+    def __init__(self, condition: Node[C], then: Node[T], otherwise: Node[T], name="") -> None:
+        super().__init__(name)
         self.condition = condition
         self.then = then
         self.otherwise = otherwise
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"  # noqa: E501
 
-class multi_clause_where(Node):
+
+class multi_clause_where(Generic[C, T], Node[T]):
     """Selects elements from tensors based on multiple conditions.
 
     Args:
@@ -423,16 +653,21 @@ class multi_clause_where(Node):
         default_value: Value to use when no condition is met
     """
 
-    def __init__(self, clauses: Sequence[tuple[Node, Node]], default_value: Node) -> None:
-        super().__init__()
+    def __init__(self, clauses: Sequence[tuple[Node[C], Node[T]]], default_value: Node[T], name="") -> None:
+        super().__init__(name)
         self.clauses = clauses
         self.default_value = default_value
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        clauses = ", ".join(f"(n{condition.id}, n{then.id})" for condition, then in self.clauses)
+        return f"n{self.id} = graph.multi_clause_where(clauses=[{clauses}], default_value=n{self.default_value.id}, name='{self.name}')"  # noqa: E501
 
 
 # Shape-changing operations
 
 
-class AxisOp(Node):
+class AxisOp(Generic[T], Node[T]):
     """Base class for axis manipulation operations.
 
     We use these operations to expand a tensor to a higher-dimensional
@@ -444,28 +679,40 @@ class AxisOp(Node):
         axis: Axis specification
     """
 
-    def __init__(self, node: Node, axis: Axis) -> None:
-        super().__init__()
+    def __init__(self, node: Node[T], axis: Axis, name="") -> None:
+        super().__init__(name)
         self.node = node
         self.axis = axis
 
 
-class expand_dims(AxisOp):
+class expand_dims(Generic[T], AxisOp[T]):
     """Adds new axes of size 1 to a tensor's shape.
 
     This expands the tensor to a higher-dimensional space.
     """
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.expand_dims(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
-class squeeze(AxisOp):
+
+class squeeze(Generic[T], AxisOp[T]):
     """Removes axes of size 1 from a tensor's shape."""
 
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.squeeze(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
-class project_using_sum(AxisOp):
+
+class project_using_sum(Generic[T], AxisOp[T]):
     """Computes sum of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
     """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 reduce_sum = project_using_sum
@@ -474,11 +721,15 @@ uses this name. We will remove this symbol once the merge of yakof into
 the dt-model is complete."""
 
 
-class project_using_mean(AxisOp):
+class project_using_mean(Generic[T], AxisOp[T]):
     """Computes mean of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
     """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 reduce_mean = project_using_mean
@@ -490,7 +741,7 @@ yakof into the dt-model is complete."""
 # Debug operations
 
 
-def tracepoint(node: Node) -> Node:
+def tracepoint(node: Node[T]) -> Node[T]:
     """
     Mark the node as a tracepoint and returns it.
 
@@ -505,7 +756,7 @@ def tracepoint(node: Node) -> Node:
     return node
 
 
-def breakpoint(node: Node) -> Node:
+def breakpoint(node: Node[T]) -> Node[T]:
     """
     Mark the node as a breakpoint and returns it.
 
@@ -517,3 +768,29 @@ def breakpoint(node: Node) -> Node:
     """
     node.flags |= NODE_FLAG_TRACE | NODE_FLAG_BREAK
     return node
+
+
+# User-defined functions
+
+
+class function(Generic[T], Node[T]):
+    """
+    Represent a user-defined function.
+
+    The function takes in input N nodes and returns a single node.
+
+    When evaluating the DAG, the programmer is responsible for
+    providing the corresponding function binding.
+    """
+
+    def __init__(self, name: str, *args: Node[T], **kwargs: Node[T]) -> None:
+        super().__init__(name)
+        self.args = args
+        self.kwargs = kwargs
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        arg_reprs = [f"n{arg.id}" for arg in self.args]
+        kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
+        all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
+        return f"n{self.id} = graph.function({all_args})"

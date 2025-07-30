@@ -27,8 +27,7 @@ def test_eq_basics():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Expected: True, False, True, False
     expected = np.array([True, False, True, False])
@@ -53,8 +52,7 @@ def test_eq_with_constants():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     expected = np.array([False, False, True, False])
     assert np.array_equal(state.values[eq1], expected)
@@ -77,8 +75,7 @@ def test_eq_with_mixed_inputs():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     expected = np.array([True, False, True])
     assert np.array_equal(state.values[eq], expected)
@@ -107,8 +104,7 @@ def test_eq_chaining():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Expected: True, True, False, False
     expected = np.array([True, True, False, False])
