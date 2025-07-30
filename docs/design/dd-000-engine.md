@@ -1,4 +1,4 @@
-# DSL Compiler Engine for Civic Digital Twins Modeling
+# DSL Compiler Engine
 
 |                  |                                                |
 | ---------------- | ---------------------------------------------- |
