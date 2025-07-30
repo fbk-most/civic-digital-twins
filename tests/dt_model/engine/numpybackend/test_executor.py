@@ -786,3 +786,12 @@ def test_evaluate_dag_nodes():
     assert np.array_equal(state.values[diff], expected_diff)
     assert np.array_equal(state.values[condition], expected_condition)
     assert np.array_equal(state.values[result], expected_result)
+
+
+def test_state_set_node_value():
+    """Ensure we can mutate the state and set node values."""
+    state = executor.State(values={})
+    node = graph.placeholder("a")
+    value = np.zeros(10)
+    state.set_node_value(node, value)
+    assert np.all(value == state.get_node_value(node))
