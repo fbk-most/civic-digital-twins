@@ -53,7 +53,7 @@ https://en.wikipedia.org/wiki/Directed_acyclic_graph) (DAG).
 **Linear Topological Sorting vs Tree Partitioning.** The programmer may either
 produce a linear [topological sorting](https://en.wikipedia.org/wiki/Topological_sorting)
 of the DAG or partition the DAG into topologically sorted trees. For
-both use cases, the input is a list of root nodes whose value needs to
+both use cases, the input is a list of root nodes whose values need to
 be evaluated. The linear sorting produces the sequence of operations
 that evaluates each root node in the correct order. The tree-based
 sorting produces a subtree for each root node. A tree depends on other
@@ -61,8 +61,8 @@ nodes (constants, placeholders, and results produced by other trees)
 and contains topologically sorted nodes sequencing operations correctly
 to evaluate the tree root node. The tree view makes the dependencies
 between each tree explicit (which helps with debugging) and potentially
-unblocks optimizations such as [JIT-compiling](
-https://en.wikipedia.org/wiki/Just-in-time_compilation) a tree.
+allows optimizations such as [JIT-compiling](
+https://en.wikipedia.org/wiki/Just-in-time_compilation).
 
 **DAG Intermediate Representation (IR).** Regardless of whether the
 programmer used linear sorting or tree paritioning, it is possible to
