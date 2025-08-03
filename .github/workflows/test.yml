@@ -1,5 +1,9 @@
+# This GitHub Actions workflow runs tests and checks code quality
+# on every push or pull request to the `main` branch.
+
 name: Tests
 
+# Triggers: run the workflow on push or PR targeting the main branch
 on:
   push:
     branches: [main]
@@ -8,9 +12,12 @@ on:
 
 jobs:
   test:
+    # Run each job on a fresh Ubuntu VM
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
+        # Test with multiple Python versions (good for forward-compatibility)
         python_version:
           - "3.11"
           - "3.12"
@@ -19,33 +26,45 @@ jobs:
     name: Test with Python ${{ matrix.python_version }}
 
     steps:
+      # Step 1: Checkout the code from the repo
       - uses: actions/checkout@v4
 
+      # Step 2: Install the `uv` package manager
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      # Step 3: Install dependencies (including dev dependencies) from `pyproject.toml`
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python_version }} --dev
 
+      # Step 4: Run ruff in "format check" mode
+      # Only run once (on 3.11) to avoid repeating identical checks across Python versions
       - name: Check formatting with ruff
         if: matrix['python_version'] == '3.11'
         run: uv run --python ${{ matrix.python_version }} ruff format --check .
 
+      # Step 5: Run ruff linter to check code quality and static issues
+      # Again, only on 3.11 to avoid duplication
       - name: Lint with ruff
         if: matrix['python_version'] == '3.11'
         run: uv run --python ${{ matrix.python_version }} ruff check .
 
+      # Step 6: Run static type checking with pyright
+      # Limited to 3.11 to reduce time, since it's version-agnostic in practice
       - name: Check types with pyright
         if: matrix['python_version'] == '3.11'
         run: uv run --python ${{ matrix.python_version }} pyright
 
+      # Step 7: Run tests with pytest (on all Python versions)
       - name: Run tests with pytest
         run: uv run --python ${{ matrix.python_version }} pytest
 
+      # Step 8: Upload code coverage report to Codecov
+      # This only needs to happen once (on 3.11)
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         if: matrix['python_version'] == '3.11'
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.xml
-          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}   # Add this token as a GitHub secret
+          file: ./coverage.xml                  # This is the default output file from pytest-cov
+          fail_ci_if_error: true                # Make the CI fail if the upload doesn't work
