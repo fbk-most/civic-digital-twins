@@ -100,10 +100,12 @@ def plot_scenario(ax, model, situation, title):
 
     # TODO: move elsewhere, it cannot be computed this way...
     area = evaluation.compute_sustainable_area()
-    (i,c) = evaluation.compute_sustainability_index_with_ci(list(zip(sample_tourists, sample_excursionists)),
-                                                            confidence=0.8)
+    (i, c) = evaluation.compute_sustainability_index_with_ci(
+        list(zip(sample_tourists, sample_excursionists)), confidence=0.8
+    )
     sust_indexes = evaluation.compute_sustainability_index_with_ci_per_constraint(
-        list(zip(sample_tourists, sample_excursionists)), confidence=0.8)
+        list(zip(sample_tourists, sample_excursionists)), confidence=0.8
+    )
     critical = min(sust_indexes, key=lambda i: sust_indexes.get(i)[0])
     modals = evaluation.compute_modal_line_per_constraint()
 
@@ -132,7 +134,6 @@ plot_scenario(axs[2], IM_Base, S_Bad_Weather, "Bad weather")
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
 fig.supxlabel("Tourists", fontsize=18)
 fig.supylabel("Excursionists", fontsize=18)
-
 
 
 print("--- %s seconds ---" % (time.time() - start_time))

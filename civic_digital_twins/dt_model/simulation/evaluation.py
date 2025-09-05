@@ -248,7 +248,7 @@ class Evaluation:
         # TODO: fill value
         index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
         m, se = np.mean(index), stats.sem(index)
-        h = se * stats.t.ppf((1 + confidence) / 2., index.size - 1)
+        h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
         return m, h  # type: ignore
 
     def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
@@ -281,7 +281,7 @@ class Evaluation:
                 grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
             )
             m, se = np.mean(index), stats.sem(index)
-            h = se * stats.t.ppf((1 + confidence) / 2., index.size - 1)
+            h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
             indexes[c] = (m, h)
         return indexes
 
