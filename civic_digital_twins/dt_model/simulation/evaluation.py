@@ -240,6 +240,17 @@ class Evaluation:
         index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
         return np.mean(index)  # type: ignore
 
+    def compute_sustainability_index_with_ci(self, presences: list, confidence: float = 0.9) -> (float, float):
+        """Compute the sustainability index with confidence value."""
+        assert self.grid is not None
+        grid = self.grid
+        field = self.field
+        # TODO: fill value
+        index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
+        m, se = np.mean(index), stats.sem(index)
+        h = se * stats.t.ppf((1 + confidence) / 2., index.size - 1)
+        return m, h  # type: ignore
+
     def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
         """Compute the sustainability index per constraint."""
         assert self.grid is not None
@@ -254,6 +265,24 @@ class Evaluation:
                 grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
             )
             indexes[c] = np.mean(index)
+        return indexes
+
+    def compute_sustainability_index_with_ci_per_constraint(self, presences: list, confidence: float = 0.9) -> dict:
+        """Compute the sustainability index with confidence value for each constraint."""
+        assert self.grid is not None
+        assert self.field_elements is not None
+
+        grid = self.grid
+        field_elements = self.field_elements
+        # TODO: fill value
+        indexes = {}
+        for c in self.inst.abs.constraints:
+            index = interpolate.interpn(
+                grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
+            )
+            m, se = np.mean(index), stats.sem(index)
+            h = se * stats.t.ppf((1 + confidence) / 2., index.size - 1)
+            indexes[c] = (m, h)
         return indexes
 
     def compute_modal_line_per_constraint(self) -> dict:

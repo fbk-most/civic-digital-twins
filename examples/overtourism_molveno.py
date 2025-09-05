@@ -100,9 +100,11 @@ def plot_scenario(ax, model, situation, title):
 
     # TODO: move elsewhere, it cannot be computed this way...
     area = evaluation.compute_sustainable_area()
-    index = evaluation.compute_sustainability_index(list(zip(sample_tourists, sample_excursionists)))
-    indexes = evaluation.compute_sustainability_index_per_constraint(list(zip(sample_tourists, sample_excursionists)))
-    critical = min(indexes, key=indexes.get)
+    (i,c) = evaluation.compute_sustainability_index_with_ci(list(zip(sample_tourists, sample_excursionists)),
+                                                            confidence=0.8)
+    sust_indexes = evaluation.compute_sustainability_index_with_ci_per_constraint(
+        list(zip(sample_tourists, sample_excursionists)), confidence=0.8)
+    critical = min(sust_indexes, key=lambda i: sust_indexes.get(i)[0])
     modals = evaluation.compute_modal_line_per_constraint()
 
     ax.pcolormesh(xx, yy, zz, cmap="coolwarm_r", vmin=0.0, vmax=1.0)
@@ -112,8 +114,9 @@ def plot_scenario(ax, model, situation, title):
     ax.set_title(
         f"{title}\n"
         + f"area = {area / 10e6:.2f} kp$^2$ - "
-        + f"Sustainability = {index * 100:.2f}%\n"
-        + f"Critical = {critical.capacity.name} ({indexes[critical] * 100:.2f}%)",
+        + f"Sustainability = {i * 100:.2f}% +/- {c * 100:.2f}%\n"
+        + f"Critical = {critical.capacity.name}"
+        + f"({sust_indexes[critical][0] * 100:.2f}% +/- {sust_indexes[critical][1] * 100:.2f}%)",
         fontsize=12,
     )
     ax.set_xlim(left=0, right=t_max)
@@ -129,6 +132,8 @@ plot_scenario(axs[2], IM_Base, S_Bad_Weather, "Bad weather")
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
 fig.supxlabel("Tourists", fontsize=18)
 fig.supylabel("Excursionists", fontsize=18)
+
+
 
 print("--- %s seconds ---" % (time.time() - start_time))
 
