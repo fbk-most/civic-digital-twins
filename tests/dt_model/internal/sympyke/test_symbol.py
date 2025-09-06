@@ -52,8 +52,7 @@ def test_symbol_execution():
     )
 
     # Evaluate
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Check result
     expected = np.array([5, 7, 9])
@@ -79,8 +78,7 @@ def test_symbol_multiple_operations():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Expected: (1+4)*2, (2+5)*3, (3+6)*4 = 10, 21, 36
     expected = np.array([10, 21, 36])
@@ -111,3 +109,10 @@ def test_symbol_table_values():
     finally:
         # Restore the original symbol table
         symbol_mod.symbol_table = original_table
+
+
+def test_symbol_str_and_repr():
+    """Ensure the symbol str and repr is consistent."""
+    a = Symbol("a")
+    assert repr(a) == "'a'"
+    assert str(a) == "'a'"
