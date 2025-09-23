@@ -319,6 +319,7 @@ class Evaluation:
             # moment, we need to encode the endpoints
             # TODO(pistore,bassosimone): even before we implement the previous TODO,
             # avoid hardcoding of the length (10000)
+            # TODO(pistore): slopes whould be negative, otherwise th approach may not work
 
             def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
                 """Logic for computing the points with vertical regression."""
@@ -336,7 +337,7 @@ class Evaluation:
 
             if horizontal_regr and vertical_regr:
                 # Use regression with better fit (higher rvalue)
-                if horizontal_regr.rvalue < vertical_regr.rvalue:
+                if abs(horizontal_regr.rvalue) < abs(vertical_regr.rvalue):
                     modal_lines[c] = _vertical(vertical_regr)
                 else:
                     modal_lines[c] = _horizontal(horizontal_regr)
