@@ -42,8 +42,7 @@ def test_piecewise_basics():
     )
 
     # Actually evaluate the piecewise function
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Ensure the result is the expected one
     expect = np.array([2, 27, 256])
@@ -60,8 +59,7 @@ def test_piecewise_with_scalars():
     state = executor.State(values={})
 
     # Evaluate
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     assert state.values[result] == 1
 
@@ -116,8 +114,7 @@ def test_piecewise_with_constant_conditions():
     )
 
     # Evaluate the piecewise function
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Since the second condition is True, the result should be expr2
     result = state.values[pw]
@@ -139,7 +136,6 @@ def test_piecewise_only_default_case():
     state = executor.State(values={})
 
     # Evaluate
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     assert state.values[pw] == 1

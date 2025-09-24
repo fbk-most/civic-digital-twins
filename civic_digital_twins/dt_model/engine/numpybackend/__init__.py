@@ -11,11 +11,7 @@ Key Components
   a previously-topologically-sorted computation graph efficiently
   without recursion.
 
-- dispatch: Maps symbolic operations from the frontend graph to their
-  corresponding NumPy implementations through dispatch tables.
-
-- debug: Provides utilities for tracing and visualizing graph execution,
-  helping with troubleshooting and performance analysis.
+- jit: JIT compiler infrastructure
 
 Usage Example:
 -------------
@@ -37,8 +33,7 @@ sorted_nodes = linearize.forest(z)
 state = executor.State(values={x: np.array(2), y: np.array(3)})
 
 # Execute the graph
-for node in sorted_nodes:
-    executor.evaluate(state, node)
+executor.evaluate_nodes(state, *sorted_nodes)
 
 # Access result
 result = state.values[z]  # array(5)
