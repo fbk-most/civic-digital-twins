@@ -34,21 +34,24 @@ from __future__ import annotations
 from . import graph
 
 
-def forest(*roots: graph.Node) -> list[graph.Node]:
+def forest(*roots: graph.Node, boundary: set[graph.Node] | None = None) -> list[graph.Node]:
     """
-    Linearize a computation forest (multiple output nodes) into an execution plan.
+    Linearize a computation forest (multiple output nodes) into a sequence.
 
-    The nodes passed to this function are called "roots" because (1) they
-    represent the nodes you'd like to evaluate and (2) these nodes are
-    typically the final results of the computation, which should not depend
-    on any other nodes. We start linearization from such root nodes and
-    work backwards to schedule all dependencies in order. That said, it's
-    possible to apply this algorithm to any node within your graph. The
-    result would be the linear scheduling from such node's point of view.
+    The computation forest is an overlay abstraction created over a DAG where the
+    given roots identify each tree within the forest itself.
+
+    While the roots are typically the outputs computed by the DAG, they
+    can actually be any node within the DAG itself.
+
+    Evaluating the returned nodes in order ensures that you always evaluate
+    node A before node B when node B depends on node A.
 
     Args:
         *roots: the nodes to start the linearization process from. Use the
             unpacking operator `*` to pass a list of nodes.
+
+        boundary: stop visiting when reaching nodes in the boundary set.
 
     Returns
     -------
@@ -86,6 +89,9 @@ def forest(*roots: graph.Node) -> list[graph.Node]:
     # visited caches the nodes we've already visited
     visited: set[graph.Node] = set()
 
+    # ensure the boundary is not none to simplify the check below
+    boundary = boundary if boundary is not None else set()
+
     def _visit(node: graph.Node) -> None:
         # Ensure we only visit a node at most once
         if node in visited:
@@ -100,12 +106,14 @@ def forest(*roots: graph.Node) -> list[graph.Node]:
         # Register that we're visiting this node
         visiting.add(node)
 
-        # Get dependent nodes based on this node's type
-        deps = _get_dependencies(node)
+        # Stop recursing when we reach the boundary
+        if node not in boundary:
+            # Get dependent nodes based on this node's type
+            deps = _get_dependencies(node)
 
-        # Visit all dependencies first
-        for dep in deps:
-            _visit(dep)
+            # Visit all dependencies first
+            for dep in deps:
+                _visit(dep)
 
         # We are not visiting this node anymore
         visiting.remove(node)
@@ -161,5 +169,11 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
 
     if isinstance(node, (graph.constant, graph.placeholder)):
         return []
+
+    if isinstance(node, graph.function):
+        deps: list[graph.Node] = []
+        deps.extend(node.args)
+        deps.extend(node.kwargs.values())
+        return deps
 
     raise TypeError(f"linearize: unknown node type: {type(node)}")

@@ -37,8 +37,7 @@ sorted_nodes = linearize.forest(z)
 state = executor.State(values={x: np.array(2), y: np.array(3)})
 
 # Execute the graph
-for node in sorted_nodes:
-    executor.evaluate(state, node)
+executor.evaluate_nodes(state, *sorted_nodes)
 
 # Access result
 result = state.values[z]  # array(5)
