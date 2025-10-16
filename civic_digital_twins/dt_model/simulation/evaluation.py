@@ -323,21 +323,21 @@ class Evaluation:
 
             def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
                 """Logic for computing the points with vertical regression."""
-                if regr.slope != 0.00:
+                if regr.slope < 0.00:
                     return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
                 else:
                     return ((regr.intercept, regr.intercept), (0.0, 10000.0))
 
             def _horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
                 """Logic for computing the points with horizontal regression."""
-                if regr.slope != 0.0:
+                if regr.slope < 0.0:
                     return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
                 else:
                     return ((0.0, 10000.0), (regr.intercept, regr.intercept))
 
             if horizontal_regr and vertical_regr:
                 # Use regression with better fit (higher rvalue)
-                if abs(horizontal_regr.rvalue) < abs(vertical_regr.rvalue):
+                if vertical_regr.rvalue >= horizontal_regr.rvalue:
                     modal_lines[c] = _vertical(vertical_regr)
                 else:
                     modal_lines[c] = _horizontal(horizontal_regr)
