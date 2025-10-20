@@ -12,19 +12,26 @@ This approach offers several advantages over walking the AST:
 
 The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
+
+Optionally, the executor support JIT compilation and execution of
+trees, provided that the proper compileflags are set.
 """
 
-from dataclasses import dataclass
+import types
+from dataclasses import dataclass, field
 from typing import (
     Callable,
+    Protocol,
     TypeAlias,
     cast,
+    runtime_checkable,
 )
 
 import numpy as np
 
-from ..frontend import graph
-from . import debug
+from .. import compileflags
+from ..frontend import forest, graph, ir
+from . import jit
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -127,8 +134,53 @@ along the specified axis.
 Add entries to this table to support more axis operations."""
 
 
+def _print_graph_node(node: graph.Node) -> None:
+    """Print a node before evaluation."""
+    # 1. print the original DAG node as a comment so we can always
+    # understand what is the specific node leading to this.
+    print(f"# {str(node)}")
+
+    # 2. print the numpy equivalent for non-immediate nodes such
+    # that we can round-trip the representation.
+    if not isinstance(node, (graph.constant, graph.placeholder)):
+        print(jit.graph_node_to_numpy_code(node))
+
+
+def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
+    """Print a node after evaluation."""
+    # Throughout this function we try to be very defensive with respect
+    # to the node operations. Sometimes, numba returns bare floats rather
+    # then `np.ndarray` and this only happens at runtime. This paranoia
+    # does not apply to placeholders and constants, for which we provide
+    # direct and correct `np.asarray()` initial value assignments.
+
+    # 1. for nodes that are not evaluated, we print their actual
+    # value so the representation can round trip.
+    if isinstance(node, graph.placeholder):
+        print(jit.graph_node_to_numpy_code(node, value))
+    elif isinstance(node, graph.constant):
+        print(jit.graph_node_to_numpy_code(node))
+
+    # 2. print the shape and dtype, which are invaluable when debugging
+    if hasattr(value, "shape"):
+        print(f"# shape: {value.shape}")
+    if hasattr(value, "dtype"):
+        print(f"# dtype: {value.dtype}")
+
+    # 3. give the user a sense of the node value for debugging purposes
+    print("# value:")
+    print("\n".join("# " + line for line in str(value).splitlines()))
+
+    # 4. add an empty line, which is always nice to separate things
+    print("")
+
+
 class NodeValueNotFound(Exception):
     """Raised when a node value is not found in the state."""
+
+
+class FunctionNotFound(Exception):
+    """Raised when a user-defined function is not found in the state."""
 
 
 class UnsupportedNodeType(Exception):
@@ -143,6 +195,29 @@ class PlaceholderValueNotProvided(Exception):
     """Raised when a required placeholder value is not provided in the state."""
 
 
+@runtime_checkable
+class Functor(Protocol):
+    """A user-defined callable integrated into the DAG."""
+
+    def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
+        """Execute the user defined function."""
+        ...  # pragma: no cover
+
+
+class LambdaAdapter:
+    """Adapter that transforms a Callable into a Functor."""
+
+    def __init__(self, callable: Callable[..., np.ndarray]) -> None:
+        self.callable = callable
+
+    def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
+        """Execute the wrapped callable with the given arguments."""
+        return self.callable(*args, **kwargs)
+
+
+_: Functor = LambdaAdapter(lambda *, a, b: np.add(a, b))
+
+
 @dataclass(frozen=True)
 class State:
     """
@@ -151,25 +226,32 @@ class State:
     Make sure to provide values for placeholder nodes ahead of the evaluation
     by initializing the `values` dictionary accordingly.
 
-    Note that, if graph.NODE_FLAG_TRACE is set, the State will print the
-    nodes provided to the constructor in its __post_init__ method.
+    Note that, if compileflags.TRACE is set, the State will print the
+    nodes provided to the constructor in its __post_init__ method using
+    the `=== begin/end placeholder ===' markers.
 
     Attributes
     ----------
         values: A dictionary caching the result of the computation.
-        flags: Bitmask containing debug flags (e.g., graph.NODE_FLAG_BREAK).
+        flags: Bitmask containing debug flags (e.g., compileflags.BREAK) set
+            by default using the `DTMODEL_ENGINE_FLAGS` environement
+            variable as documented by the `compileflags` package docs.
+        functions: user-defined functions assignments.
+        jitted: JIT compiled functions.
     """
 
     values: dict[graph.Node, np.ndarray]
-    flags: int = 0
+    flags: int = compileflags.defaults
+    functions: dict[str, Functor] = field(default_factory=dict)
+    jitted: dict[forest.Tree, types.FunctionType] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
-        if self.flags & graph.NODE_FLAG_TRACE != 0:
+        if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                debug.print_graph_node(node)
-                debug.print_evaluated_node(self.values[node], cached=True)
+                _print_graph_node(node)
+                _print_evaluated_node(node, self.values[node])
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
         """Access the value associated with a node.
@@ -190,12 +272,152 @@ class State:
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
 
+    def set_node_value(self, node: graph.Node, value: np.ndarray) -> None:
+        """Set the value associated with the given node."""
+        self.values[node] = value
 
-def evaluate(state: State, node: graph.Node) -> np.ndarray:
+
+def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
+    """Evaluate a DAG IR and produce a result or nothing.
+
+    You can obtain the DAG IR using the `frontend.ir` module. The generated DAG
+    contains either topologically sorted trees or topologically sorted nodes
+    to evaluate. We assert on this invariant before the evaluation.
+
+    If the DAG contains nodes, we invoke evaluate_nodes. Otherwise we invoke
+    evaluate_trees. The explicit availability of constants and placeholders
+    allows us to perform transformations on them, should we need it to ensure
+    the backend can handle them. Currently, this is not an issue and, probably,
+    this would never be an issue for the NumPy backend.
+
+    See https://github.com/fbk-most/civic-digital-twins/issues/84#issuecomment-3129629098.
+    """
+    assert (not dag.trees) != (not dag.nodes)
+
+    # Ensure that every constant within the DAG input has already
+    # been evaluated and otherwise evaluate it once. This is required
+    # because constants are refactored outside of the topological
+    # sorting when we're building a DAG from linearized nodes. Also, remember
+    # that evaluate_single_node evaluates each node at most once.
+    for node in dag.constants:
+        evaluate_single_node(state, node)
+
+    return evaluate_trees(state, *dag.trees) if dag.trees else evaluate_nodes(state, *dag.nodes)
+
+
+def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
+    """Provide syntactic sugar for evaluating multiple trees."""
+    rv: np.ndarray | None = None
+    for tree in trees:
+        rv = evaluate_single_tree(state, tree)
+    return rv
+
+
+def _evaluate_single_tree_jit(state: State, tree: forest.Tree) -> np.ndarray:
+    # 1. check whether node has been already evaluated
+    root = tree.root()
+    if root in state.values:
+        return state.values[root]
+
+    # 2. check whether we need to trace this node
+    flags = root.flags | state.flags
+    tracing = flags & compileflags.TRACE
+    if tracing:
+        _print_graph_node(root)
+
+    # 3. if necessary, JIT-compile the function
+    func = state.jitted.get(tree)
+    if not func:
+        func = jit.compile_function(tree)
+        state.jitted[tree] = func
+
+    # 4. evaluate the tree
+    result = jit.call_function(state, tree, func)
+
+    # 5. check whether we need to print the computation result
+    if tracing:
+        _print_evaluated_node(root, result)
+
+    # 6. check whether we need to stop after evaluating this node
+    if flags & compileflags.BREAK != 0:
+        input("# executor: press any key to continue...")
+        print("")
+
+    # 7. store the node result in the state
+    state.values[root] = result
+
+    # 8. return the result
+    return result
+
+
+def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
+    """Evaluate a `forest.Tree` using the current `State`.
+
+    This function is syntactic sugar for calling `evaluate_nodes`
+    for each node in the tree body.
+    """
+    # Ensure the invariant for the tree applies
+    assert len(tree.body) > 0
+
+    # Honor the dump flag if requested to dump the code
+    if state.flags & compileflags.DUMP != 0:
+        print(str(tree))
+        print("")
+
+    # Ensure that every constant within the tree input has already
+    # been evaluated and otherwise evaluate it once. This is required
+    # because constants are part of the tree input set. Also, remember
+    # that evaluate_single_node evaluates each node at most once.
+    for node in tree.inputs:
+        if isinstance(node, graph.constant):
+            evaluate_single_node(state, node)
+
+    # Honor the jit flag if requested to use JIT code. For now, let
+    # us be cautious and disable JIT with user defined functions. We
+    # will be more precise if we decide we actually need JIT.
+    if not state.functions and state.flags & compileflags.JIT != 0:
+        return _evaluate_single_tree_jit(state, tree)
+
+    # Otherwise evaluate the tree body
+    rv = _evaluate_nodes(state, *tree.body)
+
+    # Ensure the invariant holds for the result
+    assert rv is not None
+
+    # Return result to the caller
+    return rv
+
+
+def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
+    """Evaluate a list of `graph.Node` using the current `State`.
+
+    This function is syntactic sugar for calling `evaluate_single_node` for each
+    node in the given input and then returning the final value.
+
+    This function returns `None` if you do not supply any input node.
+    """
+    # Honor the DUMP flag when requested to do so
+    if state.flags & compileflags.DUMP != 0:
+        for node in nodes:
+            print(str(node))
+        print("")
+
+    # Defer to the internal nodes evaluator
+    return _evaluate_nodes(state, *nodes)
+
+
+def _evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:
+    rv: np.ndarray | None = None
+    for node in nodes:
+        rv = evaluate_single_node(state, node)
+    return rv
+
+
+def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
-    is not the case, evaluation will fail. Use the `frontend.linearize`
+    is not the case, evaluation will fail. Use the `linearize.forest`
     module to ensure the graph is topologically sorted.
 
     Args:
@@ -218,20 +440,20 @@ def evaluate(state: State, node: graph.Node) -> np.ndarray:
 
     # 2. check whether we need to trace this node
     flags = node.flags | state.flags
-    tracing = flags & graph.NODE_FLAG_TRACE
+    tracing = flags & compileflags.TRACE
     if tracing:
-        debug.print_graph_node(node)
+        _print_graph_node(node)
 
-    # 3. evaluate the node proper
+    # 3. evaluate the node
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result
     if tracing:
-        debug.print_evaluated_node(result, cached=False)
+        _print_evaluated_node(node, result)
 
     # 5. check whether we need to stop after evaluating this node
-    if flags & graph.NODE_FLAG_BREAK != 0:
-        input("executor: press any key to continue...")
+    if flags & compileflags.BREAK != 0:
+        input("# executor: press any key to continue...")
         print("")
 
     # 6. store the node result in the state
@@ -241,12 +463,16 @@ def evaluate(state: State, node: graph.Node) -> np.ndarray:
     return result
 
 
-def _eval_constant_op(state: State, node: graph.Node) -> np.ndarray:
+evaluate = evaluate_single_node
+"""Backward-compatible name for evaluate_node."""
+
+
+def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.constant, node)
     return np.asarray(node.value)
 
 
-def _eval_placeholder_default(state: State, node: graph.Node) -> np.ndarray:
+def _eval_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
     # Note: placeholders are part of the state, so, if we end up
     # here it means we didn't find anything in the state.
     node = cast(graph.placeholder, node)
@@ -305,6 +531,21 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
         raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
 
 
+def _eval_function(state: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.function, node)
+    args: list[np.ndarray] = []
+    kwargs: dict[str, np.ndarray] = {}
+    for arg in node.args:
+        args.append(state.get_node_value(arg))
+    for key, value in node.kwargs.items():
+        kwargs[key] = state.get_node_value(value)
+    try:
+        function = state.functions[node.name]
+    except KeyError:
+        raise FunctionNotFound(f"executor: cannot find functor for: {node.name}")
+    return function(*args, **kwargs)
+
+
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
@@ -315,6 +556,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.where, _eval_where_op),
     (graph.multi_clause_where, _eval_multi_clause_where_op),
     (graph.AxisOp, _eval_axis_op),
+    (graph.function, _eval_function),
 )
 
 
