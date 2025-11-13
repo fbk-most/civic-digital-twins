@@ -29,6 +29,16 @@ from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
 )
 
 OUTPUT_DIR = Path("scenario_results")
+EARLY_STOPPING = True
+if EARLY_STOPPING:
+    EARLY_STOPPING_PARAMS = {
+        "batch_size": 20,
+        "min_iterations": 1,
+        "max_batches": 20,
+        "confidence_threshold": 0.8,
+        "stability_tolerance": 1e-3,
+    }
+PARALLEL_EXECUTION = True
 
 
 class ScenarioManager:
@@ -126,8 +136,8 @@ def compute_scenario(model, scenario_config):
     """Compute all data for a given scenario"""
 
     # static data, might parameters later
-    t_max, e_max = 10000, 10000
-    t_sample, e_sample = 800, 800
+    (t_max, e_max) = (10000, 10000)
+    (t_sample, e_sample) = (100, 100)
     target_presence_samples = 200
     ensemble_size = 20
 
@@ -139,7 +149,12 @@ def compute_scenario(model, scenario_config):
 
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    zz = evaluation.evaluate_grid({PV_tourists: tt, PV_excursionists: ee})
+    if EARLY_STOPPING:
+        zz = evaluation.evaluate_grid_incremental(
+            {PV_tourists: tt, PV_excursionists: ee}, EARLY_STOPPING_PARAMS
+        )
+    else:
+        zz = evaluation.evaluate_grid({PV_tourists: tt, PV_excursionists: ee})
 
     sample_tourists = [
         presence_transformation(

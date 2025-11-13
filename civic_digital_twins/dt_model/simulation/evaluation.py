@@ -32,7 +32,14 @@ class Evaluation:
             assignments = self.inst.values
 
         # [pre] extract the weights and the size of the ensemble
-        c_weight = np.array([c[0] for c in self.ensemble])
+        c_weight = np.array([c[0] for c in self.ensemble], dtype=float)
+        # normalize weights so they always sum to 1 (protects against slicing)
+        w_sum = c_weight.sum()
+        if w_sum <= 0:
+            # fallback to uniform weights to avoid divide-by-zero
+            c_weight = np.full_like(c_weight, 1.0 / c_weight.size)
+        else:
+            c_weight = c_weight / w_sum
         c_size = c_weight.shape[0]
 
         # [pre] create empty placeholders
@@ -113,7 +120,9 @@ class Evaluation:
                 capacity_value = capacity.value
 
             if not isinstance(capacity_value, Distribution):
-                unscaled_result = usage <= _fix_shapes(np.asarray(c_subs[capacity.node]))
+                unscaled_result = usage <= _fix_shapes(
+                    np.asarray(c_subs[capacity.node])
+                )
             else:
                 unscaled_result = 1.0 - capacity_value.cdf(usage)
 
@@ -127,6 +136,101 @@ class Evaluation:
         self.grid = grid
         self.field = field
         self.field_elements = field_elements
+
+        # [post] compute confidence field
+        fields_stack = np.stack(list(field_elements.values()), axis=0)
+        variance_map = np.var(fields_stack, axis=0)
+        mean_map = np.mean(fields_stack, axis=0)
+        eps = 1e-9
+        confidence_field = 1.0 - (variance_map / (np.abs(mean_map) + eps))
+        confidence_field = np.clip(confidence_field, 0.0, 1.0)
+        self.confidence_field = confidence_field
+        return self.field
+
+    def evaluate_grid_incremental(
+        self,
+        grid,
+        early_stopping_params,
+    ):
+        """Evaluate grid progressively over ensemble batches and stop early when confidence stabilizes"""
+        ensemble = list(self.ensemble)
+        total_size = len(ensemble)
+        grid_shape = (grid[self.inst.abs.pvs[0]].size, grid[self.inst.abs.pvs[1]].size)
+
+        # Initialize accumulators
+        cumulative_field = np.zeros(grid_shape)
+        cumulative_weights = np.zeros(grid_shape)
+        total_conf, prev_conf = 0.0, 0.0
+
+        # Incremental evaluation loop
+        for batch_idx in range(early_stopping_params["max_batches"]):
+            start = batch_idx * early_stopping_params["batch_size"]
+            end = min(start + early_stopping_params["batch_size"], total_size)
+            if start >= total_size:
+                break
+
+            # Slice a portion of the ensemble
+            sub_ensemble = ensemble[start:end]
+
+            # Temporarily assign only this sub-ensemble
+            self.ensemble = sub_ensemble
+
+            # Evaluate field for this batch (without recursive early stop)
+            field_batch = self.evaluate_grid(grid)
+
+            # Compute confidence field (already populated inside evaluate_grid)
+            conf_field = self.confidence_field
+            mean_conf = np.mean(conf_field)
+
+            # Incrementally aggregate results
+            cumulative_field += field_batch
+            cumulative_weights += 1.0
+
+            # Track confidence evolution
+            if batch_idx == 0:
+                cumulative_conf = conf_field.copy()
+                conf_weights = np.ones_like(conf_field)
+            else:
+                cumulative_conf += conf_field
+                conf_weights += 1.0
+
+            # Compute global mean confidence so far
+            mean_conf_grid = cumulative_conf / np.maximum(conf_weights, 1e-9)
+            total_conf = np.mean(mean_conf_grid)
+
+            print(
+                f"[INCREMENTAL] Batch {batch_idx+1}/{early_stopping_params['max_batches']} "
+                f"size={len(sub_ensemble)} mean_conf={mean_conf:.4f} total_conf={total_conf:.4f}"
+            )
+
+            # Early stopping criteria
+            if batch_idx > early_stopping_params["min_iterations"]:
+                if total_conf >= early_stopping_params["confidence_threshold"]:
+                    print(
+                        f"[Early stop] Confidence {total_conf:.3f} ≥ {early_stopping_params['confidence_threshold']}"
+                    )
+                    break
+
+                field_diff = (
+                    np.mean(np.abs(field_batch - prev_field))
+                    if batch_idx > 0
+                    else np.inf
+                )
+                if field_diff < early_stopping_params["stability_tolerance"]:
+                    print(f"[Early stop] Field stabilized (Δ={field_diff:.4e})")
+                    break
+
+            prev_field = field_batch.copy()
+            prev_conf = total_conf
+
+        # Restore full ensemble
+        self.ensemble = ensemble
+
+        # Normalize and store results
+        self.field = cumulative_field / np.maximum(cumulative_weights, 1e-9)
+
+        self.mean_confidence = float(total_conf)
+        self.grid = grid
         return self.field
 
     def evaluate_usage(self, presences):
@@ -226,7 +330,8 @@ class Evaluation:
         field = self.field
 
         return field.sum() * reduce(
-            lambda x, y: x * y, [axis.max() / (axis.size - 1) + 1 for axis in list(grid.values())]
+            lambda x, y: x * y,
+            [axis.max() / (axis.size - 1) + 1 for axis in list(grid.values())],
         )
 
     # TODO: use evaluate_usage instead of evaluate_grid?
@@ -237,16 +342,30 @@ class Evaluation:
         grid = self.grid
         field = self.field
         # TODO: fill value
-        index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
+        index = interpolate.interpn(
+            grid.values(),
+            field,
+            np.array(presences),
+            bounds_error=False,
+            fill_value=0.0,
+        )
         return np.mean(index)  # type: ignore
 
-    def compute_sustainability_index_with_ci(self, presences: list, confidence: float = 0.9) -> (float, float):
+    def compute_sustainability_index_with_ci(
+        self, presences: list, confidence: float = 0.9
+    ) -> (float, float):
         """Compute the sustainability index with confidence value."""
         assert self.grid is not None
         grid = self.grid
         field = self.field
         # TODO: fill value
-        index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
+        index = interpolate.interpn(
+            grid.values(),
+            field,
+            np.array(presences),
+            bounds_error=False,
+            fill_value=0.0,
+        )
         m, se = np.mean(index), stats.sem(index)
         h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
         return m, h  # type: ignore
@@ -262,12 +381,18 @@ class Evaluation:
         indexes = {}
         for c in self.inst.abs.constraints:
             index = interpolate.interpn(
-                grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
+                grid.values(),
+                field_elements[c],
+                np.array(presences),
+                bounds_error=False,
+                fill_value=0.0,
             )
             indexes[c] = np.mean(index)
         return indexes
 
-    def compute_sustainability_index_with_ci_per_constraint(self, presences: list, confidence: float = 0.9) -> dict:
+    def compute_sustainability_index_with_ci_per_constraint(
+        self, presences: list, confidence: float = 0.9
+    ) -> dict:
         """Compute the sustainability index with confidence value for each constraint."""
         assert self.grid is not None
         assert self.field_elements is not None
@@ -278,7 +403,11 @@ class Evaluation:
         indexes = {}
         for c in self.inst.abs.constraints:
             index = interpolate.interpn(
-                grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
+                grid.values(),
+                field_elements[c],
+                np.array(presences),
+                bounds_error=False,
+                fill_value=0.0,
             )
             m, se = np.mean(index), stats.sem(index)
             h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
@@ -307,11 +436,15 @@ class Evaluation:
             horizontal_regr = None
             vertical_regr = None
             try:
-                horizontal_regr = stats.linregress(grid[self.inst.abs.pvs[0]][xi], grid[self.inst.abs.pvs[1]][yi])
+                horizontal_regr = stats.linregress(
+                    grid[self.inst.abs.pvs[0]][xi], grid[self.inst.abs.pvs[1]][yi]
+                )
             except ValueError:
                 pass
             try:
-                vertical_regr = stats.linregress(grid[self.inst.abs.pvs[1]][yi], grid[self.inst.abs.pvs[0]][xi])
+                vertical_regr = stats.linregress(
+                    grid[self.inst.abs.pvs[1]][yi], grid[self.inst.abs.pvs[0]][xi]
+                )
             except ValueError:
                 pass
 
