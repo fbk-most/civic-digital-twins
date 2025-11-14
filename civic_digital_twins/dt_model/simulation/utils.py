@@ -7,12 +7,6 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
 from civic_digital_twins.dt_model import InstantiatedModel
-from civic_digital_twins.dt_model.internal.sympyke import Symbol
-from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
-    CV_weather,
-    CV_weekday,
-    CV_season,
-)
 from civic_digital_twins.dt_model import Ensemble, Evaluation
 from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     I_P_excursionists_reduction_factor,
@@ -45,7 +39,7 @@ def compute_scenario(model, scenario_config, early_stopping):
 
     ensemble = Ensemble(model, scenario_config, cv_ensemble_size=ensemble_size)
     scenario_hash = ensemble.compute_hash(
-        [t_max, e_max, t_sample, e_sample, target_presence_samples], "molveno"
+        [t_max, e_max, t_sample, e_sample, target_presence_samples]
     )
     evaluation = Evaluation(model, ensemble)
 
@@ -95,7 +89,7 @@ def compute_scenario(model, scenario_config, early_stopping):
     }, scenario_hash
 
 
-def compute_scenario_worker(scenario_config: dict, parallel_execution, early_stopping):
+def compute_scenario_worker(scenario_config: dict, early_stopping):
     """
     Compute one scenario and save the results to disk.
 
@@ -112,20 +106,10 @@ def compute_scenario_worker(scenario_config: dict, parallel_execution, early_sto
     # Compute scenario data
     result, scenario_name = compute_scenario(IM_Base, scenario_config, early_stopping)
 
-    # Build output path and save
-    if not parallel_execution:
-        OUTPUT_DIR = Path("scenario_results")
-        OUTPUT_DIR.mkdir(exist_ok=True)
-        outfile = OUTPUT_DIR / f"{scenario_name}.pkl"
-        with open(outfile, "wb") as f:
-            pickle.dump(result, f)
-
-        return outfile, result
-    else:
-        return scenario_name, result
+    return scenario_name, result
 
 
-def plot_scenario(data, filename=None):
+def plot_scenario(data, filename: str | Path = None):
     """Plot a single scenario using precomputed data."""
 
     # Compute relevant parts
@@ -172,6 +156,6 @@ def plot_scenario(data, filename=None):
     ax.set_ylabel("Excursionists")
 
     if filename:
-        plt.savefig(filename, bbox_inches="tight")
+        plt.savefig(str(filename), bbox_inches="tight")
     else:
         plt.show()

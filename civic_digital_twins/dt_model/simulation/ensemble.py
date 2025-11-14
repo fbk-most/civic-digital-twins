@@ -37,9 +37,7 @@ class Ensemble:
                 self.ensemble[cv] = cv.sample(cv_ensemble_size)
                 self.size *= cv_ensemble_size
 
-    def compute_hash(
-        self, additional_params: list[int] | None = None, custom_name: str | None = None
-    ) -> str:
+    def compute_hash(self, additional_params: list[int] | None = None) -> str:
         """Compute a stable, unique hash for this ensemble configuration and model.
 
         Args:
@@ -70,10 +68,7 @@ class Ensemble:
 
         json_str = json.dumps(serialized, sort_keys=True)
 
-        if custom_name is not None:
-            return custom_name + "_" + hashlib.sha1(json_str.encode()).hexdigest()[:10]
-        else:
-            return hashlib.sha1(json_str.encode()).hexdigest()[:10]
+        return hashlib.sha1(json_str.encode()).hexdigest()[:10]
 
     def __iter__(self):
         """Return an iterator over the ensemble."""
