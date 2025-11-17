@@ -1,15 +1,7 @@
 from pathlib import Path
 import pickle
 
-EARLY_STOPPING = False
-if EARLY_STOPPING:
-    EARLY_STOPPING_PARAMS = {
-        "batch_size": 20,
-        "min_iterations": 1,
-        "max_batches": 20,
-        "confidence_threshold": 0.8,
-        "stability_tolerance": 1e-3,
-    }
+EARLY_STOPPING = True
 save = True
 
 if __name__ == "__main__":

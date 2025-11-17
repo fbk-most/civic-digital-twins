@@ -41,7 +41,7 @@ def compute_scenario(model, scenario_config, early_stopping):
 
     if early_stopping:
         zz = evaluation.evaluate_grid_incremental(
-            {PV_tourists: tt, PV_excursionists: ee}, early_stopping
+            {PV_tourists: tt, PV_excursionists: ee}
         )
     else:
         zz = evaluation.evaluate_grid({PV_tourists: tt, PV_excursionists: ee})

@@ -11,6 +11,7 @@ from ..internal.sympyke import symbol
 from ..model.instantiated_model import InstantiatedModel
 from ..symbols.context_variable import ContextVariable
 from ..symbols.index import Distribution, Index
+from ..model.setup import early_stopping_params
 
 
 class Evaluation:
@@ -147,89 +148,169 @@ class Evaluation:
         self.confidence_field = confidence_field
         return self.field
 
-    def evaluate_grid_incremental(
-        self,
-        grid,
-        early_stopping_params,
-    ):
-        """Evaluate grid progressively over ensemble batches and stop early when confidence stabilizes"""
-        ensemble = list(self.ensemble)
-        total_size = len(ensemble)
-        grid_shape = (grid[self.inst.abs.pvs[0]].size, grid[self.inst.abs.pvs[1]].size)
-
-        # Initialize accumulators
-        cumulative_field = np.zeros(grid_shape)
-        cumulative_weights = np.zeros(grid_shape)
-        total_conf, prev_conf = 0.0, 0.0
-
-        # Incremental evaluation loop
-        for batch_idx in range(early_stopping_params["max_batches"]):
-            start = batch_idx * early_stopping_params["batch_size"]
-            end = min(start + early_stopping_params["batch_size"], total_size)
-            if start >= total_size:
-                break
-
-            # Slice a portion of the ensemble
-            sub_ensemble = ensemble[start:end]
-
-            # Temporarily assign only this sub-ensemble
+    def evaluate_grid_single_batch(self, grid, sub_ensemble):
+        """
+        Evaluate the grid for a given sub-ensemble only.
+        """
+        # Save original ensemble
+        original_ensemble = self.ensemble
+        try:
             self.ensemble = sub_ensemble
+            field = self.evaluate_grid(grid)
+            conf = self.confidence_field
+            return field, conf
+        finally:
+            # Restore original ensemble
+            self.ensemble = original_ensemble
 
-            # Evaluate field for this batch (without recursive early stop)
-            field_batch = self.evaluate_grid(grid)
+    def evaluate_grid_for_subensemble(self, grid, sub_ensemble):
+        """
+        Stateless batch evaluation suitable for running in a DAG node.
+        Does NOT modify self.ensemble or any class-level state.
+        Returns (field_batch, conf_batch).
+        """
 
-            # Compute confidence field (already populated inside evaluate_grid)
-            conf_field = self.confidence_field
-            mean_conf = np.mean(conf_field)
+        # Temporarily override the ensemble (local only)
+        original_ensemble = self.ensemble
+        try:
+            self.ensemble = sub_ensemble
+            field = self.evaluate_grid(grid)
+            conf = self.confidence_field
+            return field, conf
+        finally:
+            # Always restore state
+            self.ensemble = original_ensemble
 
-            # Incrementally aggregate results
+    def aggregate_batch_results(
+        self,
+        batch_results,
+        previous_state,
+    ):
+        """
+        Aggregates a list of batch results:
+            batch_results = [(field_batch, conf_batch), ...]
+        previous_state contains:
+            cumulative_field, cumulative_weights,
+            cumulative_conf, conf_weights,
+            prev_field, batches_completed
+
+        Returns:
+            new_state, stop_decision (bool)
+        """
+
+        # Unpack state
+        (
+            cumulative_field,
+            cumulative_weights,
+            cumulative_conf,
+            conf_weights,
+            prev_field,
+            batches_completed,
+        ) = previous_state
+
+        stop = False
+
+        # Process each batch result
+        for field_batch, conf_batch in batch_results:
             cumulative_field += field_batch
             cumulative_weights += 1.0
 
-            # Track confidence evolution
-            if batch_idx == 0:
-                cumulative_conf = conf_field.copy()
-                conf_weights = np.ones_like(conf_field)
+            # Confidence accumulation
+            if cumulative_conf is None:
+                cumulative_conf = conf_batch.copy()
+                conf_weights = np.ones_like(conf_batch)
             else:
-                cumulative_conf += conf_field
+                cumulative_conf += conf_batch
                 conf_weights += 1.0
 
-            # Compute global mean confidence so far
-            mean_conf_grid = cumulative_conf / np.maximum(conf_weights, 1e-9)
-            total_conf = np.mean(mean_conf_grid)
+            batches_completed += 1
 
-            print(
-                f"[INCREMENTAL] Batch {batch_idx+1}/{early_stopping_params['max_batches']} "
-                f"size={len(sub_ensemble)} mean_conf={mean_conf:.4f} total_conf={total_conf:.4f}"
-            )
+        # Compute aggregate confidence
+        mean_conf_grid = cumulative_conf / np.maximum(conf_weights, 1e-9)
+        total_conf = float(np.mean(mean_conf_grid))
 
-            # Early stopping criteria
-            if batch_idx > early_stopping_params["min_iterations"]:
-                if total_conf >= early_stopping_params["confidence_threshold"]:
-                    print(
-                        f"[Early stop] Confidence {total_conf:.3f} ≥ {early_stopping_params['confidence_threshold']}"
-                    )
-                    break
+        # Evaluate early stopping
+        if batches_completed >= early_stopping_params["min_batch_iterations"]:
 
-                field_diff = (
-                    np.mean(np.abs(field_batch - prev_field))
-                    if batch_idx > 0
-                    else np.inf
-                )
-                if field_diff < early_stopping_params["stability_tolerance"]:
-                    print(f"[Early stop] Field stabilized (Δ={field_diff:.4e})")
-                    break
+            # Criterion 1: global confidence threshold
+            if total_conf >= early_stopping_params["confidence_threshold"]:
+                stop = True
 
-            prev_field = field_batch.copy()
-            prev_conf = total_conf
+            # Criterion 2: field stability
+            # Only check last batch of the group
+            last_field = batch_results[-1][0]
+            if prev_field is not None:
+                delta = np.mean(np.abs(last_field - prev_field))
+                if delta < early_stopping_params["stability_tolerance"]:
+                    stop = True
 
-        # Restore full ensemble
-        self.ensemble = ensemble
+            prev_field = last_field.copy()
 
-        # Normalize and store results
+        new_state = (
+            cumulative_field,
+            cumulative_weights,
+            cumulative_conf,
+            conf_weights,
+            prev_field,
+            batches_completed,
+        )
+
+        return new_state, stop
+
+    def evaluate_grid_incremental(self, grid):
+        """
+        Local controller. In a DAG version, this logic will be replaced
+        by DAG scheduling, but state transitions remain identical.
+        """
+
+        ensemble = list(self.ensemble)
+        total_batches = int(
+            np.ceil(len(ensemble) / early_stopping_params["batch_size"])
+        )
+
+        N = early_stopping_params["evaluate_every_n_batches"]
+
+        # Prepare empty cumulative state
+        grid_shape = (
+            grid[self.inst.abs.pvs[0]].size,
+            grid[self.inst.abs.pvs[1]].size,
+        )
+
+        state = (
+            np.zeros(grid_shape),  # cumulative_field
+            np.zeros(grid_shape),  # cumulative_weights
+            None,  # cumulative_conf
+            None,  # conf_weights
+            None,  # prev_field
+            0,  # batches_completed
+        )
+
+        for batch_group_start in range(0, total_batches, N):
+            batch_results = []
+
+            # --- compute N batches in parallel later ---
+            for batch_idx in range(
+                batch_group_start, min(batch_group_start + N, total_batches)
+            ):
+
+                start = batch_idx * early_stopping_params["batch_size"]
+                end = min(start + early_stopping_params["batch_size"], len(ensemble))
+                sub_ensemble = ensemble[start:end]
+
+                # Direct local call (in DAG, replaced by remote node)
+                result = self.evaluate_grid_for_subensemble(grid, sub_ensemble)
+                batch_results.append(result)
+
+            # --- aggregate and check early stopping ---
+            state, stop = self.aggregate_batch_results(batch_results, state)
+
+            if stop:
+                print("[Early stop triggered]")
+                break
+
+        # Final normalization
+        cumulative_field, cumulative_weights, *_ = state
         self.field = cumulative_field / np.maximum(cumulative_weights, 1e-9)
-
-        self.mean_confidence = float(total_conf)
         self.grid = grid
         return self.field
 
