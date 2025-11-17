@@ -1,7 +1,5 @@
 from pathlib import Path
 import numpy as np
-import pickle
-
 import matplotlib.pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
@@ -17,6 +15,7 @@ from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     PV_tourists,
     M_Base,
 )
+from civic_digital_twins.dt_model.model.setup import *
 
 
 def presence_transformation(presence, reduction_factor, saturation_level, sharpness=3):
@@ -30,12 +29,6 @@ def presence_transformation(presence, reduction_factor, saturation_level, sharpn
 
 def compute_scenario(model, scenario_config, early_stopping):
     """Compute all data for a given scenario"""
-
-    # static data, might parameters later
-    (t_max, e_max) = (10000, 10000)
-    (t_sample, e_sample) = (100, 100)
-    target_presence_samples = 200
-    ensemble_size = 20
 
     ensemble = Ensemble(model, scenario_config, cv_ensemble_size=ensemble_size)
     scenario_hash = ensemble.compute_hash(
