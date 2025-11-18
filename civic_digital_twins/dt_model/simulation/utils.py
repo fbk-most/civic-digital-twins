@@ -27,7 +27,35 @@ def presence_transformation(presence, reduction_factor, saturation_level, sharpn
     )
 
 
-def compute_scenario(model, scenario_config, early_stopping):
+def evaluate_subensemble_worker(model, scenario_config, sub_ensemble):
+    """
+    Evaluate ONLY the given sub-ensemble. Return the batch-level field and conf arrays.
+    """
+    # Build evaluation object
+    ensemble = Ensemble(model, scenario_config, cv_ensemble_size=len(sub_ensemble))
+    ensemble.ensemble = sub_ensemble  # enforce custom subset
+
+    evaluation = Evaluation(model, ensemble)
+
+    tt = np.linspace(0, t_max, t_sample + 1)
+    ee = np.linspace(0, e_max, e_sample + 1)
+
+    grid = {PV_tourists: tt, PV_excursionists: ee}
+
+    # Single batch evaluation
+    field_batch, conf_batch = evaluation.evaluate_grid_for_subensemble(
+        grid, sub_ensemble
+    )
+
+    return {
+        "field_batch": field_batch,
+        "conf_batch": conf_batch,
+        "sub_ensemble": sub_ensemble,
+        "scenario_config": scenario_config,
+    }
+
+
+def compute_scenario(model, scenario_config):
     """Compute all data for a given scenario"""
 
     ensemble = Ensemble(model, scenario_config, cv_ensemble_size=ensemble_size)
@@ -39,7 +67,7 @@ def compute_scenario(model, scenario_config, early_stopping):
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
 
-    if early_stopping:
+    if EARLY_STOPPING:
         zz = evaluation.evaluate_grid_incremental(
             {PV_tourists: tt, PV_excursionists: ee}
         )
@@ -82,7 +110,7 @@ def compute_scenario(model, scenario_config, early_stopping):
     }, scenario_hash
 
 
-def compute_scenario_worker(scenario_config: dict, early_stopping):
+def compute_scenario_worker(scenario_config: dict):
     """
     Compute one scenario and save the results to disk.
 
@@ -97,7 +125,7 @@ def compute_scenario_worker(scenario_config: dict, early_stopping):
     IM_Base = InstantiatedModel(M_Base, values=scenario_config)
 
     # Compute scenario data
-    result, scenario_name = compute_scenario(IM_Base, scenario_config, early_stopping)
+    result, scenario_name = compute_scenario(IM_Base, scenario_config)
 
     return scenario_name, result
 

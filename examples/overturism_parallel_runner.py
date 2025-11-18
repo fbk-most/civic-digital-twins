@@ -1,7 +1,6 @@
 from pathlib import Path
 import pickle
 
-EARLY_STOPPING = True
 save = True
 
 if __name__ == "__main__":
@@ -18,7 +17,7 @@ if __name__ == "__main__":
 
     for name, config in scenarios.items():
 
-        scenario_name, data = compute_scenario_worker(config, EARLY_STOPPING)
+        scenario_name, data = compute_scenario_worker(config)
         if save:
             # Build output path and save
             OUTPUT_DIR = Path("scenario_results")
