@@ -2,7 +2,6 @@ import json
 import os
 
 from hera.workflows import Workflow, DAG, script, Resources
-from tmp import evaluate_subensemble_worker
 
 DEFAULT_IMAGE = os.environ.get("DH_WORKFLOW_IMAGE", "python:3.12-slim")
 
