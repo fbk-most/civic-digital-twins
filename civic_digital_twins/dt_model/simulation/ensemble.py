@@ -47,13 +47,36 @@ class Ensemble:
         """
 
         def serialize(obj):
+            """Recursively convert objects into deterministic, JSON-serializable data."""
+            
+            # Basic types
+            if obj is None or isinstance(obj, (int, float, str, bool)):
+                return obj
+            
+            # Objects with 'name'
             if hasattr(obj, "name"):
                 return obj.name
+            
+            # Objects with __dict__
             if hasattr(obj, "__dict__"):
-                return str(vars(obj))
+                return serialize(vars(obj))
+            
+            # Dict: sort by key for stable hashing
+            if isinstance(obj, dict):
+                return {
+                    serialize(k): serialize(v)
+                    for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
+                }
+            
+            # List/tuple/set → convert to list
+            if isinstance(obj, (list, tuple, set)):
+                return [serialize(v) for v in obj]
+            
+            # Fallback: string representation
             return str(obj)
 
         model_id = getattr(self.model.abs, "name", str(self.model.abs))
+
         serialized = {
             "model": model_id,
             "size": self.size,
@@ -64,10 +87,9 @@ class Ensemble:
         }
 
         if additional_params is not None:
-            serialized["additional_params"] = [int(v) for v in additional_params]
+            serialized["additional_params"] = serialize(additional_params)
 
         json_str = json.dumps(serialized, sort_keys=True)
-
         return hashlib.sha1(json_str.encode()).hexdigest()[:10]
 
     def __iter__(self):

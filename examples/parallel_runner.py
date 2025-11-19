@@ -7,9 +7,9 @@ import pickle
 
 
 @handler()
-def main(project, name=None, config={}, early_stopping=False):
+def main(project, name=None, config={}, in_params={}):
     # download as local file
-    scenario_name, result = compute_scenario_worker(config, early_stopping)
+    scenario_name, result = compute_scenario_worker(config, in_params)
     outfile = f"{name}_{scenario_name}.pkl"
 
     with open(outfile, "wb") as f:
