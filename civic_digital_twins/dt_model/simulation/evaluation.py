@@ -11,8 +11,6 @@ from ..internal.sympyke import symbol
 from ..model.instantiated_model import InstantiatedModel
 from ..symbols.context_variable import ContextVariable
 from ..symbols.index import Distribution, Index
-from ..model.setup import early_stopping_params
-
 
 class Evaluation:
     """Evaluate a model in specific conditions."""
@@ -185,6 +183,7 @@ class Evaluation:
         self,
         batch_results,
         previous_state,
+        early_stopping_params
     ):
         """
         Aggregates a list of batch results:
@@ -257,7 +256,7 @@ class Evaluation:
 
         return new_state, stop
 
-    def evaluate_grid_incremental(self, grid):
+    def evaluate_grid_incremental(self, grid, early_stopping_params):
         """
         Local controller. In a DAG version, this logic will be replaced
         by DAG scheduling, but state transitions remain identical.
@@ -302,7 +301,7 @@ class Evaluation:
                 batch_results.append(result)
 
             # --- aggregate and check early stopping ---
-            state, stop = self.aggregate_batch_results(batch_results, state)
+            state, stop = self.aggregate_batch_results(batch_results, state, early_stopping_params)
 
             if stop:
                 print("[Early stop triggered]")

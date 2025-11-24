@@ -15,8 +15,6 @@ from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     PV_tourists,
     M_Base,
 )
-from civic_digital_twins.dt_model.model.setup import *
-
 
 def presence_transformation(presence, reduction_factor, saturation_level, sharpness=3):
     tmp = presence * reduction_factor
@@ -26,50 +24,19 @@ def presence_transformation(presence, reduction_factor, saturation_level, sharpn
         / ((tmp**sharpness + saturation_level**sharpness) ** (1 / sharpness))
     )
 
-
-def evaluate_subensemble_worker(model, scenario_config, sub_ensemble):
-    """
-    Evaluate ONLY the given sub-ensemble. Return the batch-level field and conf arrays.
-    """
-    # Build evaluation object
-    ensemble = Ensemble(model, scenario_config, cv_ensemble_size=len(sub_ensemble))
-    ensemble.ensemble = sub_ensemble  # enforce custom subset
-
-    evaluation = Evaluation(model, ensemble)
-
-    tt = np.linspace(0, t_max, t_sample + 1)
-    ee = np.linspace(0, e_max, e_sample + 1)
-
-    grid = {PV_tourists: tt, PV_excursionists: ee}
-
-    # Single batch evaluation
-    field_batch, conf_batch = evaluation.evaluate_grid_for_subensemble(
-        grid, sub_ensemble
-    )
-
-    return {
-        "field_batch": field_batch,
-        "conf_batch": conf_batch,
-        "sub_ensemble": sub_ensemble,
-        "scenario_config": scenario_config,
-    }
-
-
-def compute_scenario(model, scenario_config):
+def compute_scenario(model, scenario_config, params):
     """Compute all data for a given scenario"""
 
-    ensemble = Ensemble(model, scenario_config, cv_ensemble_size=ensemble_size)
-    scenario_hash = ensemble.compute_hash(
-        [t_max, e_max, t_sample, e_sample, target_presence_samples]
-    )
+    ensemble = Ensemble(model, scenario_config, cv_ensemble_size=params["ensemble_size"])
+    scenario_hash = ensemble.compute_hash(params)
     evaluation = Evaluation(model, ensemble)
 
-    tt = np.linspace(0, t_max, t_sample + 1)
-    ee = np.linspace(0, e_max, e_sample + 1)
+    tt = np.linspace(0, params["t_max"], params["t_sample"] + 1)
+    ee = np.linspace(0, params["e_max"], params["e_sample"] + 1)
 
-    if EARLY_STOPPING:
+    if params["early_stopping"]:
         zz = evaluation.evaluate_grid_incremental(
-            {PV_tourists: tt, PV_excursionists: ee}
+            {PV_tourists: tt, PV_excursionists: ee}, params["early_stopping_params"]
         )
     else:
         zz = evaluation.evaluate_grid({PV_tourists: tt, PV_excursionists: ee})
@@ -82,7 +49,7 @@ def compute_scenario(model, scenario_config):
         )
         for c in ensemble
         for presence in PV_tourists.sample(
-            cvs=c[1], nr=max(1, round(c[0] * target_presence_samples))
+            cvs=c[1], nr=max(1, round(c[0] * params["target_presence_samples"]))
         )
     ]
 
@@ -94,7 +61,7 @@ def compute_scenario(model, scenario_config):
         )
         for c in ensemble
         for presence in PV_excursionists.sample(
-            cvs=c[1], nr=max(1, round(c[0] * target_presence_samples))
+            cvs=c[1], nr=max(1, round(c[0] * params["target_presence_samples"]))
         )
     ]
 
@@ -103,39 +70,38 @@ def compute_scenario(model, scenario_config):
         "zz": zz,
         "sample_tourists": sample_tourists,
         "sample_excursionists": sample_excursionists,
-        "t_max": t_max,
-        "t_sample": t_sample,
-        "e_max": e_max,
-        "e_sample": e_sample,
+        "params": params
     }, scenario_hash
 
 
-def compute_scenario_worker(scenario_config: dict):
+def compute_scenario_worker(scenario_config: dict, in_params: dict = {}):
     """
     Compute one scenario and save the results to disk.
 
     Args:
-        scenario_name: name of the scenario ("Base", "GoodWeather", etc.)
-        params: optional dict with custom parameters (future-proof)
+        scenario_config: configuration parameters
+        params: optional dict with custom parameters, default ones will be used if not specified
     Returns:
         Path to the saved results file.
     """
+    from civic_digital_twins.dt_model.model.setup import params as default_params
+    params = in_params if in_params else default_params
 
     # Each worker builds its own model
     IM_Base = InstantiatedModel(M_Base, values=scenario_config)
 
     # Compute scenario data
-    result, scenario_name = compute_scenario(IM_Base, scenario_config)
+    result, scenario_name = compute_scenario(IM_Base, scenario_config, params)
 
     return scenario_name, result
 
 
-def plot_scenario(data, filename: str | Path = None):
+def plot_scenario(data, filename: str | Path = ""):
     """Plot a single scenario using precomputed data."""
 
     # Compute relevant parts
-    tt = np.linspace(0, data["t_max"], data["t_sample"] + 1)
-    ee = np.linspace(0, data["e_max"], data["e_sample"] + 1)
+    tt = np.linspace(0, data["params"]["t_max"], data["params"]["t_sample"] + 1)
+    ee = np.linspace(0, data["params"]["e_max"], data["params"]["e_sample"] + 1)
     xx, yy = np.meshgrid(tt, ee)
     evaluation = data["evaluation"]
 
@@ -170,8 +136,8 @@ def plot_scenario(data, filename: str | Path = None):
         f" ({critical_mean * 100:.2f}% ± {critical_ci * 100:.2f}%)",
         fontsize=12,
     )
-    ax.set_xlim(0, data["t_max"])
-    ax.set_ylim(0, data["e_max"])
+    ax.set_xlim(0, data["params"]["t_max"])
+    ax.set_ylim(0, data["params"]["e_max"])
     fig.colorbar(ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=ax)
     ax.set_xlabel("Tourists")
     ax.set_ylabel("Excursionists")
