@@ -12,6 +12,7 @@ from ..model.instantiated_model import InstantiatedModel
 from ..symbols.context_variable import ContextVariable
 from ..symbols.index import Distribution, Index
 
+
 class Evaluation:
     """Evaluate a model in specific conditions."""
 
@@ -23,8 +24,8 @@ class Evaluation:
         self.field = None
         self.field_elements = None
 
-    def evaluate_grid(self, grid):
-        """Evaluate the model according to the grid."""
+    def _prepare_and_evaluate_nodes(self, asset, grid_mode=True):
+        """Common preprocessing and node evaluation logic for the ensemble."""
         if self.inst.values is None:
             assignments = {}
         else:
@@ -76,14 +77,21 @@ class Evaluation:
 
         # [eval] expand dimensions for all values computed thus far
         for key in c_subs:
-            c_subs[key] = np.expand_dims(c_subs[key], axis=(0, 1))
+            if grid_mode:
+                c_subs[key] = np.expand_dims(c_subs[key], axis=(0, 1))
+            else:
+                c_subs[key] = np.expand_dims(c_subs[key], axis=0)
 
         # [eval] add presence variables and expand dimensions
         assert len(self.inst.abs.pvs) == 2  # TODO: generalize
-        for i, pv in enumerate(self.inst.abs.pvs):
-            c_subs[pv.node] = np.expand_dims(grid[pv], axis=(i, 2))
+        if grid_mode:
+            for i, pv in enumerate(self.inst.abs.pvs):
+                c_subs[pv.node] = np.expand_dims(asset[pv], axis=(i, 2))
+        else:
+            for i, pv in enumerate(self.inst.abs.pvs):
+                c_subs[pv.node] = np.expand_dims(asset[i], axis=1)  # CHANGED
 
-        # [eval] collect all the nodes to evaluate
+        # [eval] collect all nodes to evaluate
         all_nodes: list[graph.Node] = []
         for constraint in self.inst.abs.constraints:
             all_nodes.append(constraint.usage.node)
@@ -96,6 +104,18 @@ class Evaluation:
         state = executor.State(c_subs)
         for node in linearize.forest(*all_nodes):
             executor.evaluate(state, node)
+
+        if grid_mode:
+            return c_subs, c_weight, c_size, assignments
+        else:
+            return c_subs
+
+    def evaluate_grid(self, grid):
+        """Evaluate the model according to the grid."""
+
+        c_subs, c_weight, c_size, assignments = self._prepare_and_evaluate_nodes(
+            grid, True
+        )
 
         # [fix] Ensure that we have the correct shape for operands
         def _fix_shapes(value: np.ndarray) -> np.ndarray:
@@ -146,21 +166,6 @@ class Evaluation:
         self.confidence_field = confidence_field
         return self.field
 
-    def evaluate_grid_single_batch(self, grid, sub_ensemble):
-        """
-        Evaluate the grid for a given sub-ensemble only.
-        """
-        # Save original ensemble
-        original_ensemble = self.ensemble
-        try:
-            self.ensemble = sub_ensemble
-            field = self.evaluate_grid(grid)
-            conf = self.confidence_field
-            return field, conf
-        finally:
-            # Restore original ensemble
-            self.ensemble = original_ensemble
-
     def evaluate_grid_for_subensemble(self, grid, sub_ensemble):
         """
         Stateless batch evaluation suitable for running in a DAG node.
@@ -180,10 +185,7 @@ class Evaluation:
             self.ensemble = original_ensemble
 
     def aggregate_batch_results(
-        self,
-        batch_results,
-        previous_state,
-        early_stopping_params
+        self, batch_results, previous_state, early_stopping_params
     ):
         """
         Aggregates a list of batch results:
@@ -301,7 +303,9 @@ class Evaluation:
                 batch_results.append(result)
 
             # --- aggregate and check early stopping ---
-            state, stop = self.aggregate_batch_results(batch_results, state, early_stopping_params)
+            state, stop = self.aggregate_batch_results(
+                batch_results, state, early_stopping_params
+            )
 
             if stop:
                 print("[Early stop triggered]")
@@ -315,70 +319,8 @@ class Evaluation:
 
     def evaluate_usage(self, presences):
         """Evaluate the model according to the presence argument."""
-        if self.inst.values is None:
-            assignments = {}
-        else:
-            assignments = self.inst.values
 
-        # [pre] extract the weights and the size of the ensemble
-        c_weight = np.array([c[0] for c in self.ensemble])
-        c_size = c_weight.shape[0]
-
-        # [pre] create empty placeholders
-        c_subs: dict[graph.Node, np.ndarray] = {}
-
-        # [pre] add global unique symbols
-        for entry in symbol.symbol_table.values():
-            c_subs[entry.node] = np.array(entry.name)
-
-        # [pre] add context variables
-        collector: dict[ContextVariable, list[float]] = {}
-        for _, entry in self.ensemble:
-            for cv, value in entry.items():
-                collector.setdefault(cv, []).append(value)
-        for key, values in collector.items():
-            c_subs[key.node] = np.asarray(values)
-
-        # [pre] evaluate the indexes depending on distributions
-        #
-        # TODO(bassosimone): the size used here is too small
-        # TODO(pistore): if index is in self.capacities AND type is Distribution,
-        #  there is no need to compute the sample, as the cdf of the distribution is directly
-        #  used in the constraint calculation below (unless index_vals is used)
-        for index in self.inst.abs.indexes + self.inst.abs.capacities:
-            if index.name in assignments:
-                value = assignments[index.name]
-                if isinstance(value, Distribution):
-                    c_subs[index.node] = np.asarray(value.rvs(size=c_size))
-                else:
-                    c_subs[index.node] = np.full(c_size, value)
-            else:
-                if isinstance(index.value, Distribution):
-                    c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
-                # else: not needed, covered by default placeholder behavior
-
-        # [eval] expand dimensions for all values computed thus far
-        for key in c_subs:
-            c_subs[key] = np.expand_dims(c_subs[key], axis=0)  # CHANGED
-
-        # [eval] add presence variables and expand dimensions
-        assert len(self.inst.abs.pvs) == 2  # TODO: generalize
-        for i, pv in enumerate(self.inst.abs.pvs):
-            c_subs[pv.node] = np.expand_dims(presences[i], axis=1)  # CHANGED
-
-        # [eval] collect all the nodes to evaluate
-        all_nodes: list[graph.Node] = []
-        for constraint in self.inst.abs.constraints:
-            all_nodes.append(constraint.usage.node)
-            if not isinstance(constraint.capacity.value, Distribution):
-                all_nodes.append(constraint.capacity.node)
-        for index in self.inst.abs.indexes + self.inst.abs.capacities:
-            all_nodes.append(index.node)
-
-        # [eval] actually evaluate all the nodes
-        state = executor.State(c_subs)
-        for node in linearize.forest(*all_nodes):
-            executor.evaluate(state, node)
+        c_subs = self._prepare_and_evaluate_nodes(presences, False)
 
         # CHANGED FROM HERE
         # [post] compute the usage map
