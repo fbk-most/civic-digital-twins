@@ -14,4 +14,5 @@ params = {
         "stability_tolerance": 1e-3,
     },
     "early_stopping": True,
+    "use_dask": False,
 }

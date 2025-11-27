@@ -1,7 +1,6 @@
 from pathlib import Path
 import pickle
 
-use_dask = True
 save = True
 
 params = {
@@ -19,7 +18,8 @@ params = {
         "confidence_threshold": 0.8,
         "stability_tolerance": 1e-3,
     },
-    "early_stopping": False,
+    "early_stopping": True,
+    "use_dask": True,
 }
 
 if __name__ == "__main__":
@@ -34,7 +34,13 @@ if __name__ == "__main__":
         plot_scenario,
     )
 
-    if use_dask:
+    if params["use_dask"]:
+        from dask.distributed import Client
+
+        client = Client(
+            n_workers=4, threads_per_worker=1, processes=True
+        )  # laptop setup
+
         from dask import delayed, compute
 
         delayed_results = [
@@ -43,10 +49,10 @@ if __name__ == "__main__":
         ]
 
         scenario_results = compute(*delayed_results)  # Parallel execution
-        for name, result in zip(scenarios.keys(), scenario_results):
-            scenario_name, data = result
-            print(f"Scenario {name} completed: {scenario_name}")
-            if save:
+        if save:
+            for name, result in zip(scenarios.keys(), scenario_results):
+                scenario_name, data = result
+
                 # Build output path and save
                 OUTPUT_DIR = Path("scenario_results")
                 OUTPUT_DIR.mkdir(exist_ok=True)
