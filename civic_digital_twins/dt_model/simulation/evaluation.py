@@ -11,10 +11,7 @@ from ..internal.sympyke import symbol
 from ..model.instantiated_model import InstantiatedModel
 from ..symbols.context_variable import ContextVariable
 from ..symbols.index import Distribution, Index
-<<<<<<< HEAD
 
-=======
->>>>>>> 9b5348b455512a044958c67e9c9f8c9517991b05
 
 class Evaluation:
     """Evaluate a model in specific conditions."""
@@ -188,14 +185,7 @@ class Evaluation:
             self.ensemble = original_ensemble
 
     def aggregate_batch_results(
-<<<<<<< HEAD
         self, batch_results, previous_state, early_stopping_params
-=======
-        self,
-        batch_results,
-        previous_state,
-        early_stopping_params
->>>>>>> 9b5348b455512a044958c67e9c9f8c9517991b05
     ):
         """
         Aggregates a list of batch results:
@@ -313,13 +303,9 @@ class Evaluation:
                 batch_results.append(result)
 
             # --- aggregate and check early stopping ---
-<<<<<<< HEAD
             state, stop = self.aggregate_batch_results(
                 batch_results, state, early_stopping_params
             )
-=======
-            state, stop = self.aggregate_batch_results(batch_results, state, early_stopping_params)
->>>>>>> 9b5348b455512a044958c67e9c9f8c9517991b05
 
             if stop:
                 print("[Early stop triggered]")
