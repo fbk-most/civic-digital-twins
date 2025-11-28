@@ -1,9 +1,10 @@
 """Code to evaluate a model in specific conditions."""
 
+import os
 from functools import reduce
-
 import numpy as np
 from scipy import interpolate, ndimage, stats
+from concurrent.futures import ThreadPoolExecutor
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
@@ -258,25 +259,22 @@ class Evaluation:
 
         return new_state, stop
 
-    def evaluate_grid_incremental(self, grid, early_stopping_params):
-        """
-        Local controller. In a DAG version, this logic will be replaced
-        by DAG scheduling, but state transitions remain identical.
-        """
+    from concurrent.futures import ThreadPoolExecutor
 
+    def evaluate_grid_incremental(
+        self, grid, early_stopping_params, threads_per_worker=1
+    ):
+        """Evaluate ensemble incrementally using batches with threads."""
         ensemble = list(self.ensemble)
         total_batches = int(
             np.ceil(len(ensemble) / early_stopping_params["batch_size"])
         )
-
         N = early_stopping_params["evaluate_every_n_batches"]
+        tmp = 4
+        max_threads = min(N, threads_per_worker, os.cpu_count())
 
         # Prepare empty cumulative state
-        grid_shape = (
-            grid[self.inst.abs.pvs[0]].size,
-            grid[self.inst.abs.pvs[1]].size,
-        )
-
+        grid_shape = (grid[self.inst.abs.pvs[0]].size, grid[self.inst.abs.pvs[1]].size)
         state = (
             np.zeros(grid_shape),  # cumulative_field
             np.zeros(grid_shape),  # cumulative_weights
@@ -287,26 +285,24 @@ class Evaluation:
         )
 
         for batch_group_start in range(0, total_batches, N):
-            batch_results = []
-
-            # --- compute N batches in parallel later ---
-            for batch_idx in range(
+            batch_indices = range(
                 batch_group_start, min(batch_group_start + N, total_batches)
-            ):
+            )
 
+            # Evaluate N batches in parallel threads
+            def process_batch(batch_idx):
                 start = batch_idx * early_stopping_params["batch_size"]
                 end = min(start + early_stopping_params["batch_size"], len(ensemble))
                 sub_ensemble = ensemble[start:end]
+                return self.evaluate_grid_for_subensemble(grid, sub_ensemble)
 
-                # Direct local call (in DAG, replaced by remote node)
-                result = self.evaluate_grid_for_subensemble(grid, sub_ensemble)
-                batch_results.append(result)
+            with ThreadPoolExecutor(max_workers=max_threads) as executor_pool:
+                batch_results = list(executor_pool.map(process_batch, batch_indices))
 
-            # --- aggregate and check early stopping ---
+            # Aggregate results
             state, stop = self.aggregate_batch_results(
                 batch_results, state, early_stopping_params
             )
-
             if stop:
                 print("[Early stop triggered]")
                 break

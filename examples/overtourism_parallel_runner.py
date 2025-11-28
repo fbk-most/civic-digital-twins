@@ -12,9 +12,9 @@ params = {
     "ensemble_size": 20,
     "early_stopping_params": {
         "batch_size": 20,
-        "min_batch_iterations": 1,
+        "min_batch_iterations": 3,
         "max_batch_iterations": 20,
-        "evaluate_every_n_batches": 1,
+        "evaluate_every_n_batches": 3,
         "confidence_threshold": 0.8,
         "stability_tolerance": 1e-3,
     },
@@ -37,14 +37,16 @@ if __name__ == "__main__":
     if params["use_dask"]:
         from dask.distributed import Client
 
+        threads_per_worker = 4
+
         client = Client(
-            n_workers=4, threads_per_worker=1, processes=True
+            n_workers=4, threads_per_worker=threads_per_worker, processes=True
         )  # laptop setup
 
         from dask import delayed, compute
 
         delayed_results = [
-            delayed(compute_scenario_worker)(config, params)
+            delayed(compute_scenario_worker)(config, params, threads_per_worker)
             for config in scenarios.values()
         ]
 

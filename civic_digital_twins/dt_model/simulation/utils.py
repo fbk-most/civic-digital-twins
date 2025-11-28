@@ -16,6 +16,7 @@ from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     M_Base,
 )
 
+
 def presence_transformation(presence, reduction_factor, saturation_level, sharpness=3):
     tmp = presence * reduction_factor
     return (
@@ -24,22 +25,43 @@ def presence_transformation(presence, reduction_factor, saturation_level, sharpn
         / ((tmp**sharpness + saturation_level**sharpness) ** (1 / sharpness))
     )
 
-def compute_scenario(model, scenario_config, params):
-    """Compute all data for a given scenario"""
 
-    ensemble = Ensemble(model, scenario_config, cv_ensemble_size=params["ensemble_size"])
+def compute_scenario_worker(
+    scenario_config: dict, in_params: dict = {}, threads_per_worker=1
+):
+    """
+    Compute one scenario and save the results to disk.
+
+    Args:
+        scenario_config: configuration parameters
+        params: optional dict with custom parameters, default ones will be used if not specified
+    Returns:
+        Path to the saved results file.
+    """
+    from civic_digital_twins.dt_model.model.setup import params as default_params
+
+    params = in_params if in_params else default_params
+
+    # Each worker builds its own model
+    IM_Base = InstantiatedModel(M_Base, values=scenario_config)
+
+    # Compute scenario data
+    ensemble = Ensemble(
+        IM_Base, scenario_config, cv_ensemble_size=params["ensemble_size"]
+    )
     scenario_hash = ensemble.compute_hash(params)
-    evaluation = Evaluation(model, ensemble)
+    evaluation = Evaluation(IM_Base, ensemble)
 
     tt = np.linspace(0, params["t_max"], params["t_sample"] + 1)
     ee = np.linspace(0, params["e_max"], params["e_sample"] + 1)
+    grid = {PV_tourists: tt, PV_excursionists: ee}
 
     if params["early_stopping"]:
         zz = evaluation.evaluate_grid_incremental(
-            {PV_tourists: tt, PV_excursionists: ee}, params["early_stopping_params"]
+            grid, params["early_stopping_params"], threads_per_worker
         )
     else:
-        zz = evaluation.evaluate_grid({PV_tourists: tt, PV_excursionists: ee})
+        zz = evaluation.evaluate_grid(grid)
 
     sample_tourists = [
         presence_transformation(
@@ -65,35 +87,13 @@ def compute_scenario(model, scenario_config, params):
         )
     ]
 
-    return {
+    return scenario_hash, {
         "evaluation": evaluation,
         "zz": zz,
         "sample_tourists": sample_tourists,
         "sample_excursionists": sample_excursionists,
-        "params": params
-    }, scenario_hash
-
-
-def compute_scenario_worker(scenario_config: dict, in_params: dict = {}):
-    """
-    Compute one scenario and save the results to disk.
-
-    Args:
-        scenario_config: configuration parameters
-        params: optional dict with custom parameters, default ones will be used if not specified
-    Returns:
-        Path to the saved results file.
-    """
-    from civic_digital_twins.dt_model.model.setup import params as default_params
-    params = in_params if in_params else default_params
-
-    # Each worker builds its own model
-    IM_Base = InstantiatedModel(M_Base, values=scenario_config)
-
-    # Compute scenario data
-    result, scenario_name = compute_scenario(IM_Base, scenario_config, params)
-
-    return scenario_name, result
+        "params": params,
+    }
 
 
 def plot_scenario(data, filename: str | Path = ""):
