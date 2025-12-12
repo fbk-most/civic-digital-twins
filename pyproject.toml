@@ -1,62 +1,140 @@
+# pyproject.toml - package-specific definitions
+#
+# See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/.
+
+# SPDX-License-Identifier: Apache-2.0
+
+# Define how we are building this package
+#
+# We're using hatching rather than setuptools because hatchling provides a modern,
+# fast, and easy to use backend that is well suited for pure-Python code.
 [build-system]
+
+# We need hatchling to build
 requires = ["hatchling"]
+
+# We use hatchling to build
 build-backend = "hatchling.build"
 
+# Project Metadata
 [project]
+
+# Package name
 name = "civic-digital-twins"
+
+# Current version
 version = "0.5.1"
+
+# Short description of the project
 description = "Civic-Digital-Twins Modeling Framework"
+
+# Use README.md as the long description
 readme = "README.md"
+
+# Author information
 authors = [
     { name = "Fondazione Bruno Kessler", email = "most@fbk.eu" },
     { name = "Marco Pistore", email = "pistore@fbk.eu" },
     { name = "Simone Basso", email = "sibasso@fbk.eu" },
 ]
+
+# Open-source license
 license = "Apache-2.0"
+
+# PyPI classifiers for metadata
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+
+# Search keywords (empty for now)
 keywords = []
+
+# Minimum required Python version
+#
+# We target the maximum version supported by @scc-digitalhub.
 requires-python = ">=3.11.0"
+
+# Runtime dependencies
 dependencies = ["numpy>=2.2.0", "pandas>=2.2.0", "scipy>=1.15.0"]
 
+# Optional Dependencies (Dev)
 [dependency-groups]
+
+# Developer tools: testing, linting, type checking, visualization
 dev = [
-    "matplotlib>=3.10.1",
-    "pyright>=1.1.397",
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.11.0",
+    "matplotlib>=3.10.1",   # for plots and visual debugging
+    "pyright>=1.1.397",     # static type checker
+    "pytest>=7.0.0",        # test runner
+    "pytest-cov>=4.0.0",    # code coverage plugin for pytest
+    "ruff>=0.11.0",         # formatter + linter
 ]
 
+# Project-specific URLs
 [project.urls]
+
 Homepage = "https://github.com/fbk-most/dt-model"
 
+# Hatch Build Configuration
 [tool.hatch.build.targets.wheel]
+
+# The top-level package to include into the wheel
 packages = ["civic_digital_twins"]
 
+# Pytest Configuration
 [tool.pytest.ini_options]
+
+# Directory where to look for test files
 testpaths = ["tests"]
+
+# Test file naming convention
 python_files = ["test_*.py"]
+
+# Coverage configuration (XML and terminal output)
 addopts = "--cov=civic_digital_twins --cov-report=xml --cov-report=term-missing"
 
+# Ruff Global Settings
 [tool.ruff]
+
+# Target Python version for linting and formatting
+#
+# We target the maximum version supported by @scc-digitalhub.
 target-version = "py311"
+
+# Maximum line length
 line-length = 120
+
+# Indentation width
 indent-width = 4
 
+# Ruff Formatting Rules
 [tool.ruff.format]
+
+# Use double quotes for strings
 quote-style = "double"
+
+# Use spaces (not tabs) for indentation
 indent-style = "space"
+
+# Use Unix-style line endings
 line-ending = "lf"
+
+# Keep trailing commas when appropriate
 skip-magic-trailing-comma = false
 
+# Ruff Linting Rules
 [tool.ruff.lint]
+
+# Basic error codes and conventions to enforce
 select = ["E", "F", "I", "D"]
+
+# Extended rule sets: Warnings, Quotes, etc.
 extend-select = ["W", "Q"]
 
+# Pydocstyle: Docstring Conventions
 [tool.ruff.lint.pydocstyle]
+
+# Follow NumPy-style docstrings conventions
 convention = "numpy"
