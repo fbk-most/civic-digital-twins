@@ -5,7 +5,8 @@
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.engine.frontend import graph, linearize
+from civic_digital_twins.dt_model.engine import compileflags
+from civic_digital_twins.dt_model.engine.frontend import forest, graph, ir, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
@@ -27,12 +28,9 @@ def test_constant_evaluation():
     state3 = executor.State({})
 
     # Execute each node in the plan
-    for node in plan1:
-        executor.evaluate(state1, node)
-    for node in plan2:
-        executor.evaluate(state2, node)
-    for node in plan3:
-        executor.evaluate(state3, node)
+    executor.evaluate_nodes(state1, *plan1)
+    executor.evaluate_nodes(state2, *plan2)
+    executor.evaluate_nodes(state3, *plan3)
 
     # Check results
     assert np.array_equal(state1.values[node1], np.array(1.0))
@@ -53,21 +51,18 @@ def test_placeholder_evaluation():
     # Test with binding
     x_value = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     state_x = executor.State({x: x_value})
-    for node in plan_x:
-        executor.evaluate(state_x, node)
+    executor.evaluate_nodes(state_x, *plan_x)
     assert np.array_equal(state_x.values[x], x_value)
 
     # Test default value
     state_y = executor.State({})
-    for node in plan_y:
-        executor.evaluate(state_y, node)
+    executor.evaluate_nodes(state_y, *plan_y)
     assert np.array_equal(state_y.values[y], np.array(3.14))
 
     # Test missing binding
     state_missing = executor.State({})
     with pytest.raises(executor.PlaceholderValueNotProvided):
-        for node in plan_x:
-            executor.evaluate(state_missing, node)
+        executor.evaluate_nodes(state_missing, *plan_x)
 
 
 def test_arithmetic_operations():
@@ -94,26 +89,22 @@ def test_arithmetic_operations():
 
     # Test addition
     add_state = executor.State({x_node: x, y_node: y})
-    for node in add_plan:
-        executor.evaluate(add_state, node)
+    executor.evaluate_nodes(add_state, *add_plan)
     assert np.array_equal(add_state.values[add_node], x + y)
 
     # Test subtraction
     sub_state = executor.State({x_node: x, y_node: y})
-    for node in sub_plan:
-        executor.evaluate(sub_state, node)
+    executor.evaluate_nodes(sub_state, *sub_plan)
     assert np.array_equal(sub_state.values[sub_node], x - y)
 
     # Test multiplication
     mul_state = executor.State({x_node: x, y_node: y})
-    for node in mul_plan:
-        executor.evaluate(mul_state, node)
+    executor.evaluate_nodes(mul_state, *mul_plan)
     assert np.array_equal(mul_state.values[mul_node], x * y)
 
     # Test division
     div_state = executor.State({x_node: x, y_node: y})
-    for node in div_plan:
-        executor.evaluate(div_state, node)
+    executor.evaluate_nodes(div_state, *div_plan)
     assert np.array_equal(div_state.values[div_node], x / y)
 
 
@@ -136,8 +127,7 @@ def test_where_operation():
 
     # Evaluate with executor
     state = executor.State({cond_node: cond, x_node: x, y_node: y})
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Check result
     assert np.array_equal(state.values[where_node], expected)
@@ -164,8 +154,7 @@ def test_multi_clause_where():
 
     # Evaluate with executor
     state = executor.State({cond1: cond1_val, cond2: cond2_val})
-    for node_in_plan in plan:
-        executor.evaluate(state, node_in_plan)
+    executor.evaluate_nodes(state, *plan)
 
     # Check result
     assert np.array_equal(state.values[node], expected)
@@ -202,10 +191,9 @@ def test_complex_graph():
     expected_condition = x_val > y_val
     expected_result = np.where(expected_condition, expected_sum, expected_diff)
 
-    # Evaluate with executor
-    state = executor.State({x: x_val, y: y_val})
-    for node_in_plan in plan:
-        executor.evaluate(state, node_in_plan)
+    # Evaluate with executor setting the DUMP flag to exercise it
+    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
+    executor.evaluate_nodes(state, *plan)
 
     # Check intermediate and final results
     assert np.array_equal(state.values[x_squared], expected_x_squared)
@@ -229,7 +217,8 @@ def test_debug_flags(capsys, monkeypatch):
 
     # Create a simple graph
     x = graph.placeholder("x")
-    y = graph.multiply(x, graph.constant(2.0))
+    k0 = graph.constant(2.0)
+    y = graph.multiply(x, k0)
 
     # Set trace flag on node
     traced_y = graph.tracepoint(y)
@@ -239,32 +228,32 @@ def test_debug_flags(capsys, monkeypatch):
 
     # Evaluate with trace flag
     state = executor.State({x: np.array([1.0, 2.0, 3.0])})
-    for node in plan:
-        executor.evaluate(state, node)
+    executor.evaluate_nodes(state, *plan)
 
     # Check trace output
     captured = capsys.readouterr()
-    assert "=== begin tracepoint ===" in captured.out
+    assert f"# n{y.id} = graph.multiply(left=n{x.id}, right=n{k0.id}, name='')" in captured.out
+    assert f"n{y.id} = np.multiply(n{x.id}, n{k0.id})" in captured.out
 
     # Test global trace flag
-    z = graph.add(x, graph.constant(5.0))
+    k1 = graph.constant(5.0)
+    z = graph.add(x, k1)
     plan = linearize.forest(z)
 
-    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=graph.NODE_FLAG_TRACE)
-    for node in plan:
-        executor.evaluate(state, node)
+    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=compileflags.TRACE)
+    executor.evaluate_nodes(state, *plan)
 
     captured = capsys.readouterr()
-    assert "=== begin tracepoint ===" in captured.out
+    assert f"# n{z.id} = graph.add(left=n{x.id}, right=n{k1.id}, name='')" in captured.out
+    assert f"n{z.id} = np.add(n{x.id}, n{k1.id})" in captured.out
 
     # Test break flag on named node
     named_node = graph.add(x, graph.constant(10.0))
     named_node.name = "named_addition"
     plan = linearize.forest(named_node)
 
-    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=graph.NODE_FLAG_BREAK)
-    for node in plan:
-        executor.evaluate(state, node)
+    state = executor.State({x: np.array([1.0, 2.0, 3.0])}, flags=compileflags.BREAK)
+    executor.evaluate_nodes(state, *plan)
 
     # Check that input was called (breakpoint triggered)
     assert len(mock_input_calls) > 0
@@ -281,15 +270,14 @@ def test_error_handling():
     # Test missing placeholder value
     state = executor.State({x: np.array([1.0, 2.0])})  # y is missing
     with pytest.raises(executor.PlaceholderValueNotProvided):
-        for node in plan:
-            executor.evaluate(state, node)
+        executor.evaluate_nodes(state, *plan)
 
     # Test unknown node type
     class unknown_node(graph.Node):
         pass
 
     with pytest.raises(executor.UnsupportedNodeType):
-        executor.evaluate(executor.State({}), unknown_node())
+        executor.evaluate_single_node(executor.State({}), unknown_node())
 
     # Test unknown operation
     class unknown_binary(graph.BinaryOp):
@@ -300,8 +288,7 @@ def test_error_handling():
     state = executor.State({})
 
     with pytest.raises(executor.UnsupportedOperation):
-        for node in plan:
-            executor.evaluate(state, node)
+        executor.evaluate_nodes(state, *plan)
 
     # Test evaluation ordering error (missing dependency)
     x = graph.placeholder("x")
@@ -310,7 +297,7 @@ def test_error_handling():
     # Not following the plan order - trying to evaluate y before x
     state = executor.State({x: np.array([1.0])})
     with pytest.raises(executor.NodeValueNotFound):
-        executor.evaluate(state, y)  # Should fail, x not evaluated yet
+        executor.evaluate_single_node(state, y)  # Should fail, x not evaluated yet
 
 
 def test_reduction_operations():
@@ -329,14 +316,12 @@ def test_reduction_operations():
 
     # Test sum reduction
     sum_state = executor.State({x: x_val})
-    for node in sum_plan:
-        executor.evaluate(sum_state, node)
+    executor.evaluate_nodes(sum_state, *sum_plan)
     assert np.array_equal(sum_state.values[sum_node], np.sum(x_val, axis=0))
 
     # Test mean reduction
     mean_state = executor.State({x: x_val})
-    for node in mean_plan:
-        executor.evaluate(mean_state, node)
+    executor.evaluate_nodes(mean_state, *mean_plan)
     assert np.array_equal(mean_state.values[mean_node], np.mean(x_val, axis=1))
 
 
@@ -358,58 +343,24 @@ def test_expand_dims_operation():
 
     # Test expand dims on axis 0
     state0 = executor.State({x: x_val})
-    for node in plan0:
-        executor.evaluate(state0, node)
+    executor.evaluate_nodes(state0, *plan0)
     result0 = state0.values[expanded0]
     assert result0.shape == (1, 2, 3)
     assert np.array_equal(result0[0], x_val)
 
     # Test expand dims on axis 1
     state1 = executor.State({x: x_val})
-    for node in plan1:
-        executor.evaluate(state1, node)
+    executor.evaluate_nodes(state1, *plan1)
     result1 = state1.values[expanded1]
     assert result1.shape == (2, 1, 3)
     assert np.array_equal(result1[:, 0, :], x_val)
 
     # Test expand dims on axis 2
     state2 = executor.State({x: x_val})
-    for node in plan2:
-        executor.evaluate(state2, node)
+    executor.evaluate_nodes(state2, *plan2)
     result2 = state2.values[expanded2]
     assert result2.shape == (2, 3, 1)
     assert np.array_equal(result2[:, :, 0], x_val)
-
-
-def test_execute_plan_helper():
-    """Test a helper function to execute an entire plan in one go."""
-    # This test demonstrates how you might create a helper function
-    # to simplify the common pattern of executing a linearized plan
-
-    def execute_plan(plan, initial_state):
-        """Execute a full plan with the given initial state."""
-        state = initial_state
-        for node in plan:
-            executor.evaluate(state, node)
-        return state
-
-    # Create a simple graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-    z = graph.add(x, y)
-    w = graph.multiply(z, graph.constant(2.0))
-
-    # Linearize
-    plan = linearize.forest(w)
-
-    # Execute the plan
-    x_val = np.array([1.0, 2.0, 3.0])
-    y_val = np.array([4.0, 5.0, 6.0])
-
-    state = execute_plan(plan, executor.State({x: x_val, y: y_val}))
-
-    # Check result
-    assert np.array_equal(state.values[w], (x_val + y_val) * 2.0)
 
 
 def test_comparison_operations():
@@ -446,8 +397,7 @@ def test_comparison_operations():
     # Test each operation
     for op, plan in plans.items():
         state = executor.State({x: x_val, y: y_val})
-        for node in plan:
-            executor.evaluate(state, node)
+        executor.evaluate_nodes(state, *plan)
         assert np.array_equal(state.values[op], expected[op])
 
 
@@ -461,7 +411,7 @@ def test_state_value_access():
     state = executor.State({x: np.array([1.0, 2.0, 3.0])})
 
     # Evaluate constant node
-    executor.evaluate(state, y)
+    executor.evaluate_single_node(state, y)
 
     # Test that node exists in state.values
     assert y in state.values
@@ -485,8 +435,7 @@ def test_placeholder_with_state_value():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state1, node)
+    executor.evaluate_nodes(state1, *plan)
 
     assert np.array_equal(state1.values[x_no_default], np.array([1.0, 2.0, 3.0]))
     assert np.array_equal(state1.values[y_with_default], np.array([4.0, 5.0, 6.0]))
@@ -500,8 +449,7 @@ def test_placeholder_with_state_value():
         }
     )
 
-    for node in plan:
-        executor.evaluate(state2, node)
+    executor.evaluate_nodes(state2, *plan)
 
     assert np.array_equal(state2.values[x_no_default], np.array([7.0, 8.0, 9.0]))
     assert np.array_equal(state2.values[y_with_default], np.array(100.0))
@@ -517,8 +465,7 @@ def test_placeholder_with_state_value():
 
     # This should raise an error when x_no_default is evaluated
     with pytest.raises(executor.PlaceholderValueNotProvided):
-        for node in plan:
-            executor.evaluate(state3, node)
+        executor.evaluate_nodes(state3, *plan)
 
 
 def test_unary_operations():
@@ -544,20 +491,17 @@ def test_unary_operations():
 
     # Test exponential
     exp_state = executor.State({x: x_numeric})
-    for node in exp_plan:
-        executor.evaluate(exp_state, node)
+    executor.evaluate_nodes(exp_state, *exp_plan)
     assert np.array_equal(exp_state.values[exp_node], np.exp(x_numeric))
 
     # Test logarithm (using positive values to avoid warnings)
     log_state = executor.State({x: np.abs(x_numeric)})
-    for node in log_plan:
-        executor.evaluate(log_state, node)
+    executor.evaluate_nodes(log_state, *log_plan)
     assert np.array_equal(log_state.values[log_node], np.log(np.abs(x_numeric)))
 
     # Test logical not
     not_state = executor.State({x: x_boolean})
-    for node in not_plan:
-        executor.evaluate(not_state, node)
+    executor.evaluate_nodes(not_state, *not_plan)
     assert np.array_equal(not_state.values[not_node], np.logical_not(x_boolean))
 
     # Test unsupported unary operation
@@ -570,8 +514,7 @@ def test_unary_operations():
     unsupported_state = executor.State({x: x_numeric})
 
     with pytest.raises(executor.UnsupportedOperation):
-        for node in unsupported_plan:
-            executor.evaluate(unsupported_state, node)
+        executor.evaluate_nodes(unsupported_state, *unsupported_plan)
 
 
 def test_axis_operations():
@@ -594,23 +537,20 @@ def test_axis_operations():
 
     # Test expand_dims
     expand_state = executor.State({x: x_val})
-    for node in expand_plan:
-        executor.evaluate(expand_state, node)
+    executor.evaluate_nodes(expand_state, *expand_plan)
     expected_expand = np.expand_dims(x_val, axis=1)
     assert np.array_equal(expand_state.values[expand_node], expected_expand)
     assert expand_state.values[expand_node].shape == (3, 1, 3)
 
     # Test reduce_sum
     sum_state = executor.State({x: x_val})
-    for node in sum_plan:
-        executor.evaluate(sum_state, node)
+    executor.evaluate_nodes(sum_state, *sum_plan)
     expected_sum = np.sum(x_val, axis=0)
     assert np.array_equal(sum_state.values[sum_node], expected_sum)
 
     # Test reduce_mean
     mean_state = executor.State({x: x_val})
-    for node in mean_plan:
-        executor.evaluate(mean_state, node)
+    executor.evaluate_nodes(mean_state, *mean_plan)
     expected_mean = np.mean(x_val, axis=1)
     assert np.array_equal(mean_state.values[mean_node], expected_mean)
 
@@ -624,8 +564,7 @@ def test_axis_operations():
     unsupported_state = executor.State({x: x_val})
 
     with pytest.raises(executor.UnsupportedOperation):
-        for node in unsupported_plan:
-            executor.evaluate(unsupported_state, node)
+        executor.evaluate_nodes(unsupported_state, *unsupported_plan)
 
     # Test invalid axis value
     with pytest.raises(ValueError):  # NumPy raises ValueError for invalid axes
@@ -635,8 +574,7 @@ def test_axis_operations():
         invalid_plan = linearize.forest(invalid_axis_node)
         invalid_state = executor.State({x: x_val})
 
-        for node in invalid_plan:
-            executor.evaluate(invalid_state, node)
+        executor.evaluate_nodes(invalid_state, *invalid_plan)
 
 
 def test_state_post_init_tracing(capsys):
@@ -650,16 +588,201 @@ def test_state_post_init_tracing(capsys):
     y_val = np.array([4.0, 5.0, 6.0])
 
     # Create state with tracing flag
-    executor.State({x: x_val, y: y_val}, flags=graph.NODE_FLAG_TRACE)
+    executor.State({x: x_val, y: y_val}, flags=compileflags.TRACE)
 
     # Check that tracing output was generated during initialization
     captured = capsys.readouterr()
     output = captured.out
 
     # Verify that both nodes were traced in the output
-    assert f"name: {x.name}" in output
-    assert f"name: {y.name}" in output
-    assert "=== begin tracepoint ===" in output
+    assert f"# n{x.id} = graph.placeholder(name='x', default_value=None)" in output
+    assert f"n{x.id} = np.asarray([1.0, 2.0, 3.0])" in output
+    assert f"# n{y.id} = graph.placeholder(name='y', default_value=None)" in output
+    assert f"n{y.id} = np.asarray([4.0, 5.0, 6.0])" in output
 
-    # Verify the cached indication is shown
-    assert "cached: True" in output
+
+def test_evaluate_trees_nonempty():
+    """Test execution where we evaluate a forest tree."""
+    # Build a more complex graph
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+
+    # x^2 + 2*y
+    x_squared = graph.power(x, graph.constant(2.0))
+    two_y = graph.multiply(y, graph.constant(2.0))
+    sum_term = graph.add(x_squared, two_y)
+
+    # where(x > y, x^2 + 2*y, y - x)
+    diff = graph.subtract(y, x)
+    condition = graph.greater(x, y)
+    result = graph.where(condition, sum_term, diff)
+
+    # Create the trees
+    trees = forest.partition(result)
+
+    # Test data
+    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
+    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
+
+    # Expected result calculations
+    expected_x_squared = x_val**2
+    expected_two_y = 2 * y_val
+    expected_sum = expected_x_squared + expected_two_y
+    expected_diff = y_val - x_val
+    expected_condition = x_val > y_val
+    expected_result = np.where(expected_condition, expected_sum, expected_diff)
+
+    # Evaluate with executor setting the DUMP flag to exercise it
+    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
+    executor.evaluate_trees(state, *trees)
+
+    # Check intermediate and final results
+    assert np.array_equal(state.values[x_squared], expected_x_squared)
+    assert np.array_equal(state.values[two_y], expected_two_y)
+    assert np.array_equal(state.values[sum_term], expected_sum)
+    assert np.array_equal(state.values[diff], expected_diff)
+    assert np.array_equal(state.values[condition], expected_condition)
+    assert np.array_equal(state.values[result], expected_result)
+
+
+def test_evaluate_nodes_empty():
+    """Ensure that evaluate_nodes returns None if passed no nodes."""
+    rv = executor.evaluate_nodes(executor.State(values={}))
+    assert rv is None
+
+
+def test_evaluate_trees_empty():
+    """Ensure that evaluate_trees returns None if passed no trees."""
+    rv = executor.evaluate_trees(executor.State(values={}))
+    assert rv is None
+
+
+def test_user_defined_function():
+    """Ensure that user-defined functions work."""
+    # When there is a corresponding binding
+    a = graph.placeholder("a")
+    b = graph.placeholder("b")
+    c = graph.placeholder("c")
+    f = graph.function("f", a, b, c=c)
+    g = graph.add(f, graph.constant(1))
+
+    functor: executor.Functor = executor.LambdaAdapter(lambda a, b, *, c: np.add(np.add(a, b), c))
+
+    state1 = executor.State(
+        values={
+            a: np.asarray(1),
+            b: np.asarray(2),
+            c: np.asarray(55),
+        },
+        functions={
+            f: functor,
+        },
+    )
+    executor.evaluate_nodes(state1, *linearize.forest(g))
+
+    assert state1.get_node_value(g) == np.asarray(59)
+
+    # When there's no corresponding binding
+    with pytest.raises(executor.FunctionNotFound):
+        state2 = executor.State(
+            values={
+                a: np.asarray(1),
+                b: np.asarray(2),
+                c: np.asarray(55),
+            }
+        )
+        executor.evaluate_nodes(state2, *linearize.forest(g))
+
+
+def test_evaluate_dag_trees():
+    """Test execution where we evaluate an IR DAG containing trees."""
+    # Build a more complex graph
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+
+    # x^2 + 2*y
+    x_squared = graph.power(x, graph.constant(2.0))
+    two_y = graph.multiply(y, graph.constant(2.0))
+    sum_term = graph.add(x_squared, two_y)
+
+    # where(x > y, x^2 + 2*y, y - x)
+    diff = graph.subtract(y, x)
+    condition = graph.greater(x, y)
+    result = graph.where(condition, sum_term, diff)
+
+    # Create the trees
+    trees = forest.partition(sum_term, result)
+
+    # Transform the trees into an IR DAG
+    dag = ir.compile_trees(*trees)
+
+    # Test data
+    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
+    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
+
+    # Expected result calculations
+    expected_x_squared = x_val**2
+    expected_two_y = 2 * y_val
+    expected_sum = expected_x_squared + expected_two_y
+    expected_diff = y_val - x_val
+    expected_condition = x_val > y_val
+    expected_result = np.where(expected_condition, expected_sum, expected_diff)
+
+    # Evaluate with executor setting the DUMP flag to exercise it
+    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
+    executor.evaluate_dag(state, dag)
+
+    # Check intermediate and final results
+    assert np.array_equal(state.values[x_squared], expected_x_squared)
+    assert np.array_equal(state.values[two_y], expected_two_y)
+    assert np.array_equal(state.values[sum_term], expected_sum)
+    assert np.array_equal(state.values[diff], expected_diff)
+    assert np.array_equal(state.values[condition], expected_condition)
+    assert np.array_equal(state.values[result], expected_result)
+
+
+def test_evaluate_dag_nodes():
+    """Test execution where we evaluate an IR DAG containing nodes."""
+    # Build a more complex graph
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+
+    # x^2 + 2*y
+    x_squared = graph.power(x, graph.constant(2.0))
+    two_y = graph.multiply(y, graph.constant(2.0))
+    sum_term = graph.add(x_squared, two_y)
+
+    # where(x > y, x^2 + 2*y, y - x)
+    diff = graph.subtract(y, x)
+    condition = graph.greater(x, y)
+    result = graph.where(condition, sum_term, diff)
+
+    # Create the topological sorting
+    plan = linearize.forest(sum_term, result)
+
+    # Transform the topological sorting into an IR DAG
+    dag = ir.compile_nodes(*plan)
+
+    # Test data
+    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
+    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
+
+    # Expected result calculations
+    expected_x_squared = x_val**2
+    expected_two_y = 2 * y_val
+    expected_sum = expected_x_squared + expected_two_y
+    expected_diff = y_val - x_val
+    expected_condition = x_val > y_val
+    expected_result = np.where(expected_condition, expected_sum, expected_diff)
+
+    # Evaluate with executor setting the DUMP flag to exercise it
+    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
+    executor.evaluate_dag(state, dag)
+
+    # Check intermediate and final results
+    assert np.array_equal(state.values[x_squared], expected_x_squared)
+    assert np.array_equal(state.values[two_y], expected_two_y)
+    assert np.array_equal(state.values[sum_term], expected_sum)
+    assert np.array_equal(state.values[diff], expected_diff)
+    assert np.array_equal(state.values[condition], expected_condition)
+    assert np.array_equal(state.values[result], expected_result)
