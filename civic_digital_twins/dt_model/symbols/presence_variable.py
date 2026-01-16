@@ -56,9 +56,20 @@ class PresenceVariable:
         if cvs is not None:
             all_cvs = [cvs[cv] for cv in self.cvs if cv in cvs.keys()]
             # TODO: solve this issue of symbols vs names
-            all_cvs = list(map(lambda v: v.name if isinstance(v, SymbolValue) else v, all_cvs))
+            all_cvs = list(
+                map(lambda v: v.name if isinstance(v, SymbolValue) else v, all_cvs)
+            )
         assert self.distribution is not None
         distr: dict = self.distribution(*all_cvs)
         return np.asarray(
-            stats.truncnorm.rvs(-distr["mean"] / distr["std"], 10, loc=distr["mean"], scale=distr["std"], size=nr),
+            stats.truncnorm.rvs(
+                -distr["mean"] / distr["std"],
+                10,
+                loc=distr["mean"],
+                scale=distr["std"],
+                size=nr,
+            ),
         )
+
+    def __repr__(self):
+        return f"PresenceVariable(name='{self.name}')"

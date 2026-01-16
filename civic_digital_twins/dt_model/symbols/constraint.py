@@ -27,8 +27,12 @@ class Constraint:
         capacity: Index,
         name: str = "",
     ) -> None:
-        # For debuggability, assign the f'{name}_usage` name so it's
-        # clear that this is the constraint's usage.
-        self.usage = SymIndex(name=f"{name}_usage", value=usage)
+        self.usage = SymIndex(name="", value=usage)
         self.capacity = capacity
         self.name = name
+
+    def __repr__(self):
+        return f"Constraint(name='{self.name}')"
+
+    def constraint_name(c):
+        return getattr(c, "name", None) or str(c)

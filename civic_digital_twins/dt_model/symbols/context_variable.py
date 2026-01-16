@@ -60,6 +60,9 @@ class ContextVariable(ABC):
         """
         ...
 
+    def __repr__(self):
+        return f"ContextVariable(name='{self.name}')"
+
 
 class UniformCategoricalContextVariable(ContextVariable):
     """
@@ -87,7 +90,9 @@ class UniformCategoricalContextVariable(ContextVariable):
         """Sample values from the support."""
         # TODO: subset (if defined) should be a subset of the support (also: with repetitions?)
 
-        (values, size) = (self.values, self.size) if subset is None else (subset, len(subset))
+        (values, size) = (
+            (self.values, self.size) if subset is None else (subset, len(subset))
+        )
 
         if force_sample or nr < size:
             assert nr > 0
@@ -118,18 +123,28 @@ class CategoricalContextVariable(ContextVariable):
         force_sample: bool = False,
     ) -> list[tuple[float, SymbolValue]]:
         """Return a sample from the categorical context variable."""
-        (values, size) = (self.values, self.size) if subset is None else (subset, len(subset))
+        (values, size) = (
+            (self.values, self.size) if subset is None else (subset, len(subset))
+        )
 
         if force_sample or nr < size:
             assert nr > 0
-            return [(1 / nr, r) for r in random.choices(values, k=nr, weights=[self.distribution[v] for v in values])]
+            return [
+                (1 / nr, r)
+                for r in random.choices(
+                    values, k=nr, weights=[self.distribution[v] for v in values]
+                )
+            ]
 
         if subset is None:
             return [(self.distribution[v], v) for v in values]
 
         subset_probability = [self.distribution[v] for v in values]
         subset_probability_sum = sum(subset_probability)
-        return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
+        return [
+            (p / subset_probability_sum, v)
+            for (p, v) in zip(subset_probability, subset)
+        ]
 
 
 class ContinuousContextVariable(ContextVariable):
@@ -147,7 +162,9 @@ class ContinuousContextVariable(ContextVariable):
         """Return the size of the support of the continuous context variable."""
         return -1  # TODO: do better
 
-    def sample(self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False) -> list:
+    def sample(
+        self, nr: int = 1, *, subset: list | None = None, force_sample: bool = False
+    ) -> list:
         """Sample from the continuous context variable."""
         if force_sample or subset is None or nr < len(subset):
             assert nr > 0
@@ -155,4 +172,7 @@ class ContinuousContextVariable(ContextVariable):
 
         subset_probability = list(self.rvc.pdf(subset))
         subset_probability_sum = sum(subset_probability)
-        return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
+        return [
+            (p / subset_probability_sum, v)
+            for (p, v) in zip(subset_probability, subset)
+        ]

@@ -21,7 +21,12 @@ classifiers = [
 ]
 keywords = []
 requires-python = ">=3.11.0"
-dependencies = ["numpy>=2.2.0", "pandas>=2.2.0", "scipy>=1.15.0"]
+dependencies = [
+    "numpy>=2.2.0",
+    "ollama>=0.6.1",
+    "pandas>=2.2.0",
+    "scipy>=1.15.0",
+]
 
 [dependency-groups]
 dev = [

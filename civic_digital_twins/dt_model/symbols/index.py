@@ -75,11 +75,7 @@ class Index:
 
         # Otherwise, it's just a reference to an existing node (which
         # typically is the result of defining a formula).
-        #
-        # For debuggability, let's assign the name to the node if it
-        # has not been already set by previous code.
         elif value is not None:
-            value.maybe_set_name(name)
             self.value = value
             self.node = value
 
@@ -88,6 +84,9 @@ class Index:
         else:
             self.value = None
             self.node = graph.placeholder(name)
+
+    def __repr__(self):
+        return f"Index(name='{self.name}')"
 
 
 class UniformDistIndex(Index):
