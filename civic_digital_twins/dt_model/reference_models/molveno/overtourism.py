@@ -30,6 +30,7 @@ PV_excursionists = PresenceVariable("excursionists", [CV_weekday, CV_season, CV_
 # Capacity indexes
 
 I_C_parking = UniformDistIndex("parking capacity", loc=350.0, scale=100.0)
+I_C_parking2 = UniformDistIndex("parking capacity", loc=600.0, scale=100.0)
 I_C_beach = UniformDistIndex("beach capacity", loc=6000.0, scale=1000.0)
 I_C_accommodation = LognormDistIndex("accommodation capacity", s=0.125, loc=0.0, scale=5000.0)
 I_C_food = TriangDistIndex("food service capacity", loc=3000.0, scale=1000.0, c=0.5)
@@ -94,6 +95,14 @@ C_parking = Constraint(
     capacity=I_C_parking,
     name="parking",
 )
+C_parking2 = Constraint(
+    usage=PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
+    + PV_excursionists.node
+    * I_U_excursionists_parking.node
+    / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node),
+    capacity=I_C_parking2,
+    name="parking",
+)
 
 C_beach = Constraint(
     usage=PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
@@ -155,4 +164,34 @@ M_Base = AbstractModel(
     ],
     [I_C_parking, I_C_beach, I_C_accommodation, I_C_food],
     [C_parking, C_beach, C_accommodation, C_food],
+)
+
+M_Parking = AbstractModel(
+    "parking model",
+    [CV_weekday, CV_season, CV_weather],
+    [PV_tourists, PV_excursionists],
+    [
+        I_U_tourists_parking,
+        I_U_excursionists_parking,
+        I_U_tourists_beach,
+        I_U_excursionists_beach,
+        I_U_tourists_accommodation,
+        I_U_tourists_food,
+        I_U_excursionists_food,
+        I_Xa_tourists_per_vehicle,
+        I_Xa_excursionists_per_vehicle,
+        I_Xa_tourists_accommodation,
+        I_Xo_tourists_parking,
+        I_Xo_excursionists_parking,
+        I_Xo_tourists_beach,
+        I_Xo_excursionists_beach,
+        I_Xa_visitors_food,
+        I_Xo_visitors_food,
+        I_P_tourists_reduction_factor,
+        I_P_excursionists_reduction_factor,
+        I_P_tourists_saturation_level,
+        I_P_excursionists_saturation_level,
+    ],
+    [I_C_parking2, I_C_beach, I_C_accommodation, I_C_food],
+    [C_parking2, C_beach, C_accommodation, C_food],
 )

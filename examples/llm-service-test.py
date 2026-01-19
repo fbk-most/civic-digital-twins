@@ -19,9 +19,12 @@ from civic_digital_twins.dt_model.reference_models.molveno.overtourism import (
     I_P_tourists_reduction_factor,
     I_P_tourists_saturation_level,
     M_Base,
+    M_Parking,
     PV_excursionists,
     PV_tourists,
 )
+
+from civic_digital_twins.dt_model.symbols.index import UniformDistIndex
 
 def scale(p, v):
     """Scale a probability by a value."""
@@ -33,12 +36,14 @@ def threshold(p, t):
     return min(p, t) + 0.05 / (1 + np.exp(-(p - t)))
 
 
-def compute_scenario(model_name, situation):
-    #TODO: implement map
-    if model_name == "Base":
-        model = InstantiatedModel(M_Base) # Instantiate the model
+def compute_scenario(model, situation):
 
-    """Plot a scenario."""
+    (t_max, e_max) = (10000, 10000)
+    (t_sample, e_sample) = (100, 100)
+    target_presence_samples = 200
+    ensemble_size = 20  # TODO: make configurable; may it be a CV parameter?
+
+    """Compute a scenario."""
     ensemble = Ensemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
@@ -144,19 +149,26 @@ def summarize_simulation(evaluation, sample_tourists, sample_excursionists):
 
     return summary
 
+def get_scenarios():
+    model1 = InstantiatedModel(M_Base)
+    model2 = InstantiatedModel(M_Parking)
 
+    S_Good_Weather = {CV_weather: [Symbol("good"), Symbol("unsettled")]}
 
-S_Good_Weather = {CV_weather: [Symbol("good"), Symbol("unsettled")]}
-(t_max, e_max) = (10000, 10000)
-(t_sample, e_sample) = (100, 100)
-target_presence_samples = 200
-ensemble_size = 20  # TODO: make configurable; may it be a CV parameter?
+    evaluation1, sample_tourists1, sample_excursionists1 = compute_scenario(
+        model1, S_Good_Weather
+    )
 
-evaluation, sample_tourists, sample_excursionists = compute_scenario(
-    "Base", S_Good_Weather
-)
+    evaluation2, sample_tourists2, sample_excursionists2 = compute_scenario(
+        model2, S_Good_Weather
+    )
 
-summary = summarize_simulation(evaluation, sample_tourists, sample_excursionists)
+    summary1 = summarize_simulation(evaluation1, sample_tourists1, sample_excursionists1)
+    summary2 = summarize_simulation(evaluation2, sample_tourists2, sample_excursionists2)
+
+    return summary1, summary2
+
+summary1, summary2 = get_scenarios()
 
 # QUERY SINGLE SIMULATION
 URL = "http://127.0.0.1:9000/agent"
@@ -166,7 +178,7 @@ state = {
     "sim1_id": "sim1",
     "sim2_id": None,
     "simulation_data": {
-        "sim1": summary
+        "sim1": summary1
     }, 
     "simulation_data_loaded_at": datetime.datetime.now().isoformat(),
     "pending_inputs": {},
@@ -177,8 +189,8 @@ state = {
     "response": "",
 }
 
-print("\n=== SENDING STATE TO AGENT ===")
-print(json.dumps(state, indent=2))
+# print("\n=== SENDING STATE TO AGENT ===")
+# print(json.dumps(state, indent=2))
 
 response = requests.post(
     URL,
@@ -190,5 +202,39 @@ response.raise_for_status()
 
 result = response.json()
 
-print("\n=== AGENT RESPONSE ===")
+print("\n=== AGENT RESPONSE SINGLE SIMULATION ===")
+print(result["response"])
+
+
+state = {
+    "user_message": "What is the main difference between the two scenarios?",
+    "sim1_id": "sim1",
+    "sim2_id": "sim2",
+    "simulation_data": {
+        "sim1": summary1,
+        "sim2": summary2
+    }, 
+    "simulation_data_loaded_at": datetime.datetime.now().isoformat(),
+    "pending_inputs": {},
+    "missing_inputs": [],
+    "awaiting_confirmation": False,
+    "running_simulation": False,
+    "next_action": None,
+    "response": "",
+}
+
+# print("\n=== SENDING STATE TO AGENT ===")
+# print(json.dumps(state, indent=2))
+
+response = requests.post(
+    URL,
+    json=state,
+    timeout=2000
+)
+
+response.raise_for_status()
+
+result = response.json()
+
+print("\n=== AGENT RESPONSE SINGLE SIMULATION ===")
 print(result["response"])
