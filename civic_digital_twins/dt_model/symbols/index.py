@@ -306,3 +306,59 @@ class SymIndex(Index):
     def __str__(self):
         """Return a string representation of the symbolic index."""
         return f"sympy_idx({self.value})"
+
+
+class TimeseriesIndex(Index):
+    """Class to represent an index as a fixed timeseries of values.
+
+    Unlike Distribution-based indexes whose values are sampled at evaluation
+    time, a TimeseriesIndex holds a deterministic sequence of values indexed
+    by time step.
+
+    The timeseries is represented as a numpy array of values (shape ``(T,)``)
+    with an optional companion array of time points (also shape ``(T,)``).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        values: np.ndarray,
+        times: np.ndarray | None = None,
+    ) -> None:
+        # numpy arrays are not a recognised Index value type, so we set
+        # attributes directly instead of delegating to Index.__init__.
+        self.name = name
+        self.cvs = None
+        self._values = np.asarray(values)
+        self._times = np.asarray(times) if times is not None else None
+        self.value = self._values
+        self.node = graph.timeseries_constant(self._values, self._times, name)
+
+    @property
+    def values(self) -> np.ndarray:
+        """The timeseries values."""
+        return self._values
+
+    @values.setter
+    def values(self, new_values: np.ndarray) -> None:
+        """Set the timeseries values and refresh the graph node."""
+        new_values = np.asarray(new_values)
+        if not np.array_equal(self._values, new_values):
+            self._values = new_values
+            self.value = self._values
+            self.node = graph.timeseries_constant(self._values, self._times, self.name)
+
+    @property
+    def times(self) -> np.ndarray | None:
+        """The time axis (optional)."""
+        return self._times
+
+    @times.setter
+    def times(self, new_times: np.ndarray | None) -> None:
+        """Set the time axis and refresh the graph node."""
+        self._times = np.asarray(new_times) if new_times is not None else None
+        self.node = graph.timeseries_constant(self._values, self._times, self.name)
+
+    def __str__(self) -> str:
+        """Return a string representation of the timeseries index."""
+        return f"timeseries_idx({self._values.tolist()!r})"
