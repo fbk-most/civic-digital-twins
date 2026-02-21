@@ -138,7 +138,8 @@ def _print_graph_node(node: graph.Node) -> None:
 
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
-    if not isinstance(node, (graph.constant, graph.placeholder)):
+    if not isinstance(node, (graph.constant, graph.placeholder,
+                              graph.timeseries_constant, graph.timeseries_placeholder)):
         print(jit.graph_node_to_numpy_code(node))
 
 
@@ -418,6 +419,18 @@ evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
+def _eval_timeseries_constant(_: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.timeseries_constant, node)
+    return np.asarray(node.values)
+
+
+def _eval_timeseries_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.timeseries_placeholder, node)
+    raise PlaceholderValueNotProvided(
+        f"executor: no value provided for timeseries placeholder '{node.name}'"
+    )
+
+
 def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.constant, node)
     return np.asarray(node.value)
@@ -500,6 +513,8 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
+    (graph.timeseries_constant, _eval_timeseries_constant),
+    (graph.timeseries_placeholder, _eval_timeseries_placeholder_default),
     (graph.constant, _eval_constant_op),
     (graph.placeholder, _eval_placeholder_default),
     (graph.BinaryOp, _eval_binary_op),

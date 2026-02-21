@@ -436,6 +436,43 @@ class placeholder(Generic[T], Node[T]):
         return f"n{self.id} = graph.placeholder(name='{self.name}', default_value={self.default_value})"
 
 
+class timeseries_constant(Generic[T], Node[T]):
+    """A node holding a fixed sequence of values indexed by time.
+
+    Args:
+        values: Array-like of shape (T,) containing the timeseries values.
+        times: Optional array-like of shape (T,) containing the corresponding
+            time points. May be None when the time axis is implicit.
+        name: Optional name for the node.
+    """
+
+    def __init__(self, values, times=None, name: str = "") -> None:
+        super().__init__(name)
+        self.values = values
+        self.times = times
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.timeseries_constant(values={list(self.values)!r}, name={self.name!r})"
+        )
+
+
+class timeseries_placeholder(Generic[T], Node[T]):
+    """Named placeholder for a timeseries value to be provided during evaluation.
+
+    Args:
+        name: The name of the placeholder.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.timeseries_placeholder(name={self.name!r})"
+
+
 class BinaryOp(Generic[T], Node[T]):
     """Base class for binary operations.
 

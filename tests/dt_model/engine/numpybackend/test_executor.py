@@ -795,3 +795,42 @@ def test_state_set_node_value():
     value = np.zeros(10)
     state.set_node_value(node, value)
     assert np.all(value == state.get_node_value(node))
+
+
+def test_timeseries_constant_evaluation():
+    """Test evaluation of timeseries_constant nodes."""
+    values = np.array([1.0, 2.0, 3.0])
+    node = graph.timeseries_constant(values)
+    plan = linearize.forest(node)
+    state = executor.State({})
+    executor.evaluate_nodes(state, *plan)
+    assert np.array_equal(state.values[node], values)
+
+
+def test_timeseries_placeholder_evaluation():
+    """Test evaluation of timeseries_placeholder nodes with a provided value."""
+    node = graph.timeseries_placeholder("ts")
+    plan = linearize.forest(node)
+    values = np.array([4.0, 5.0, 6.0])
+    state = executor.State({node: values})
+    executor.evaluate_nodes(state, *plan)
+    assert np.array_equal(state.values[node], values)
+
+
+def test_timeseries_placeholder_missing():
+    """Test that evaluating a timeseries_placeholder without a value raises an error."""
+    node = graph.timeseries_placeholder("ts")
+    plan = linearize.forest(node)
+    state = executor.State({})
+    with pytest.raises(executor.PlaceholderValueNotProvided):
+        executor.evaluate_nodes(state, *plan)
+
+
+def test_timeseries_in_arithmetic():
+    """Test that timeseries_constant participates correctly in arithmetic operations."""
+    ts = graph.timeseries_constant([2.0, 4.0, 6.0])
+    result = ts * graph.constant(0.5)
+    plan = linearize.forest(result)
+    state = executor.State({})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[result], [1.0, 2.0, 3.0])
