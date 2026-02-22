@@ -271,8 +271,21 @@ C = TypeVar("C")
 
 
 def ensure_node(value: Node[T] | Scalar) -> Node[T]:
-    """Convert a scalar value to a constant node if necessary."""
-    return value if isinstance(value, Node) else constant(value)
+    """Convert a scalar value to a constant node if necessary.
+
+    If *value* is already a ``Node`` it is returned as-is.  If it exposes
+    a ``.node`` attribute that is itself a ``Node`` (e.g. any
+    ``GenericIndex`` subclass), that inner node is returned so that index
+    objects can appear on either side of a graph operator without being
+    incorrectly wrapped in a ``constant``.  Anything else is wrapped in a
+    ``constant`` node.
+    """
+    if isinstance(value, Node):
+        return value
+    inner = getattr(value, "node", None)
+    if isinstance(inner, Node):
+        return inner
+    return constant(value)
 
 
 class Node(Generic[T]):
@@ -345,6 +358,14 @@ class Node(Generic[T]):
     def __rtruediv__(self, other: Node[T] | Scalar) -> Node[T]:
         """Divide two nodes or a node and a scalar."""
         return divide(ensure_node(other), self)
+
+    def __pow__(self, other: Node[T] | Scalar) -> Node[T]:
+        """Raise a node to the power of another node or scalar."""
+        return power(self, ensure_node(other))
+
+    def __rpow__(self, other: Node[T] | Scalar) -> Node[T]:
+        """Raise a scalar or node to the power of this node."""
+        return power(ensure_node(other), self)
 
     # Comparison operators
     #
@@ -745,11 +766,21 @@ class project_using_sum(Generic[T], AxisOp[T]):
     """Computes sum of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to sum.
+        keepdims: If True, the reduced axis is kept as size 1 (like
+            ``np.sum(..., keepdims=True)``).  Defaults to False.
     """
+
+    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
 
 
 reduce_sum = project_using_sum
@@ -762,11 +793,21 @@ class project_using_mean(Generic[T], AxisOp[T]):
     """Computes mean of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to average.
+        keepdims: If True, the reduced axis is kept as size 1 (like
+            ``np.mean(..., keepdims=True)``).  Defaults to False.
     """
+
+    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
 
 
 reduce_mean = project_using_mean
