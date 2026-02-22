@@ -260,6 +260,23 @@ def test_infix_arithmetic_operations():
     assert div.left is a
     assert div.right is b
 
+    pw = a ** b
+    assert isinstance(pw, graph.power)
+    assert pw.left is a
+    assert pw.right is b
+
+    pw_scalar = a ** 2.0
+    assert isinstance(pw_scalar, graph.power)
+    assert pw_scalar.left is a
+    assert isinstance(pw_scalar.right, graph.constant)
+    assert pw_scalar.right.value == 2.0
+
+    rpw = 2.0 ** a
+    assert isinstance(rpw, graph.power)
+    assert isinstance(rpw.left, graph.constant)
+    assert rpw.left.value == 2.0
+    assert rpw.right is a
+
 
 def test_infix_comparison_operations():
     """Test infix comparison operations between nodes."""
@@ -541,10 +558,10 @@ def test_repr():
     assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
 
     x = graph.project_using_sum(a, (1, 2))
-    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
 
     y = graph.project_using_mean(a, (1, 2))
-    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
 
     z = graph.function("jarjar", x, y, u, v=v, w=w)
     assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"

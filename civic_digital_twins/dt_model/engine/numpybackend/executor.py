@@ -489,6 +489,13 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
 def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.AxisOp, node)
     operand = state.get_node_value(node.node)
+    keepdims: bool = getattr(node, "keepdims", False)
+    if keepdims:
+        # project_using_sum and project_using_mean support keepdims.
+        if isinstance(node, graph.project_using_sum):
+            return np.sum(operand, axis=node.axis, keepdims=True)
+        if isinstance(node, graph.project_using_mean):
+            return np.mean(operand, axis=node.axis, keepdims=True)
     try:
         return _axes_operations[type(node)](operand, node.axis)
     except KeyError:
