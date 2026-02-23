@@ -260,6 +260,23 @@ def test_infix_arithmetic_operations():
     assert div.left is a
     assert div.right is b
 
+    pw = a**b
+    assert isinstance(pw, graph.power)
+    assert pw.left is a
+    assert pw.right is b
+
+    pw_scalar = a**2.0
+    assert isinstance(pw_scalar, graph.power)
+    assert pw_scalar.left is a
+    assert isinstance(pw_scalar.right, graph.constant)
+    assert pw_scalar.right.value == 2.0
+
+    rpw = 2.0**a
+    assert isinstance(rpw, graph.power)
+    assert isinstance(rpw.left, graph.constant)
+    assert rpw.left.value == 2.0
+    assert rpw.right is a
+
 
 def test_infix_comparison_operations():
     """Test infix comparison operations between nodes."""
@@ -541,10 +558,10 @@ def test_repr():
     assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
 
     x = graph.project_using_sum(a, (1, 2))
-    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
 
     y = graph.project_using_mean(a, (1, 2))
-    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
 
     z = graph.function("jarjar", x, y, u, v=v, w=w)
     assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
@@ -578,3 +595,45 @@ def test_function_creation():
     assert n5.args[1] is n2
     assert n5.kwargs["c"] is n3
     assert n5.kwargs["d"] is n4
+
+
+def test_timeseries_constant_creation():
+    """Test creation of timeseries_constant nodes."""
+    node = graph.timeseries_constant([1.0, 2.0, 3.0], name="ts")
+    assert node.name == "ts"
+    assert list(node.values) == [1.0, 2.0, 3.0]
+    assert node.times is None
+
+
+def test_timeseries_constant_with_times():
+    """Test creation of timeseries_constant with an explicit time axis."""
+    node = graph.timeseries_constant([1.0, 2.0], times=[0, 1], name="ts")
+    assert list(node.values) == [1.0, 2.0]
+    assert node.times is not None
+    assert list(node.times) == [0, 1]
+
+
+def test_timeseries_placeholder_creation():
+    """Test creation of timeseries_placeholder nodes."""
+    node = graph.timeseries_placeholder("ts_ph")
+    assert node.name == "ts_ph"
+
+
+def test_timeseries_constant_repr():
+    """Test the __repr__ of timeseries_constant."""
+    node = graph.timeseries_constant([10.0, 20.0], name="cap")
+    assert str(node) == f"n{node.id} = graph.timeseries_constant(values=[10.0, 20.0], name='cap')"
+
+
+def test_timeseries_placeholder_repr():
+    """Test the __repr__ of timeseries_placeholder."""
+    node = graph.timeseries_placeholder("ts_ph")
+    assert str(node) == f"n{node.id} = graph.timeseries_placeholder(name='ts_ph')"
+
+
+def test_timeseries_constant_identity():
+    """Test identity semantics of timeseries_constant nodes."""
+    n1 = graph.timeseries_constant([1.0, 2.0])
+    n2 = graph.timeseries_constant([1.0, 2.0])
+    assert n1 is not n2
+    assert hash(n1) != hash(n2)

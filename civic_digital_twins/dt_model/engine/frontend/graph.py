@@ -172,6 +172,9 @@ from __future__ import annotations
 
 from typing import Generic, Sequence, TypeVar
 
+import numpy as np
+from numpy.typing import ArrayLike
+
 from .. import atomic, compileflags
 
 Axis = int | tuple[int, ...]
@@ -271,8 +274,21 @@ C = TypeVar("C")
 
 
 def ensure_node(value: Node[T] | Scalar) -> Node[T]:
-    """Convert a scalar value to a constant node if necessary."""
-    return value if isinstance(value, Node) else constant(value)
+    """Convert a scalar value to a constant node if necessary.
+
+    If *value* is already a ``Node`` it is returned as-is.  If it exposes
+    a ``.node`` attribute that is itself a ``Node`` (e.g. any
+    ``GenericIndex`` subclass), that inner node is returned so that index
+    objects can appear on either side of a graph operator without being
+    incorrectly wrapped in a ``constant``.  Anything else is wrapped in a
+    ``constant`` node.
+    """
+    if isinstance(value, Node):
+        return value
+    inner = getattr(value, "node", None)
+    if isinstance(inner, Node):
+        return inner
+    return constant(value)
 
 
 class Node(Generic[T]):
@@ -345,6 +361,14 @@ class Node(Generic[T]):
     def __rtruediv__(self, other: Node[T] | Scalar) -> Node[T]:
         """Divide two nodes or a node and a scalar."""
         return divide(ensure_node(other), self)
+
+    def __pow__(self, other: Node[T] | Scalar) -> Node[T]:
+        """Raise a node to the power of another node or scalar."""
+        return power(self, ensure_node(other))
+
+    def __rpow__(self, other: Node[T] | Scalar) -> Node[T]:
+        """Raise a scalar or node to the power of this node."""
+        return power(ensure_node(other), self)
 
     # Comparison operators
     #
@@ -434,6 +458,41 @@ class placeholder(Generic[T], Node[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.placeholder(name='{self.name}', default_value={self.default_value})"
+
+
+class timeseries_constant(Generic[T], Node[T]):
+    """A node holding a fixed sequence of values indexed by time.
+
+    Args:
+        values: Array-like of shape (T,) containing the timeseries values.
+        times: Optional array-like of shape (T,) containing the corresponding
+            time points. May be None when the time axis is implicit.
+        name: Optional name for the node.
+    """
+
+    def __init__(self, values: ArrayLike, times: ArrayLike | None = None, name: str = "") -> None:
+        super().__init__(name)
+        self.values: np.ndarray = np.asarray(values)
+        self.times: np.ndarray | None = np.asarray(times) if times is not None else None
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.timeseries_constant(values={self.values.tolist()!r}, name={self.name!r})"
+
+
+class timeseries_placeholder(Generic[T], Node[T]):
+    """Named placeholder for a timeseries value to be provided during evaluation.
+
+    Args:
+        name: The name of the placeholder.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.timeseries_placeholder(name={self.name!r})"
 
 
 class BinaryOp(Generic[T], Node[T]):
@@ -708,11 +767,24 @@ class project_using_sum(Generic[T], AxisOp[T]):
     """Computes sum of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to sum.
+        keepdims: If True, the reduced axis is kept as size 1 (like
+            ``np.sum(..., keepdims=True)``).  Defaults to False.
     """
+
+    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return (
+            f"n{self.id} = graph.project_using_sum"
+            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        )
 
 
 reduce_sum = project_using_sum
@@ -725,11 +797,24 @@ class project_using_mean(Generic[T], AxisOp[T]):
     """Computes mean of tensor elements along specified axes.
 
     This projects the tensor to a lower-dimensional space.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to average.
+        keepdims: If True, the reduced axis is kept as size 1 (like
+            ``np.mean(..., keepdims=True)``).  Defaults to False.
     """
+
+    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return (
+            f"n{self.id} = graph.project_using_mean"
+            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        )
 
 
 reduce_mean = project_using_mean

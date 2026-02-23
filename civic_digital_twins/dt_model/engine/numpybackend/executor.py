@@ -138,7 +138,9 @@ def _print_graph_node(node: graph.Node) -> None:
 
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
-    if not isinstance(node, (graph.constant, graph.placeholder)):
+    if not isinstance(
+        node, (graph.constant, graph.placeholder, graph.timeseries_constant, graph.timeseries_placeholder)
+    ):
         print(jit.graph_node_to_numpy_code(node))
 
 
@@ -418,6 +420,16 @@ evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
+def _eval_timeseries_constant(_: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.timeseries_constant, node)
+    return np.asarray(node.values)
+
+
+def _eval_timeseries_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.timeseries_placeholder, node)
+    raise PlaceholderValueNotProvided(f"executor: no value provided for timeseries placeholder '{node.name}'")
+
+
 def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.constant, node)
     return np.asarray(node.value)
@@ -476,6 +488,13 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
 def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.AxisOp, node)
     operand = state.get_node_value(node.node)
+    keepdims: bool = getattr(node, "keepdims", False)
+    if keepdims:
+        # project_using_sum and project_using_mean support keepdims.
+        if isinstance(node, graph.project_using_sum):
+            return np.sum(operand, axis=node.axis, keepdims=True)
+        if isinstance(node, graph.project_using_mean):
+            return np.mean(operand, axis=node.axis, keepdims=True)
     try:
         return _axes_operations[type(node)](operand, node.axis)
     except KeyError:
@@ -500,6 +519,8 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
+    (graph.timeseries_constant, _eval_timeseries_constant),
+    (graph.timeseries_placeholder, _eval_timeseries_placeholder_default),
     (graph.constant, _eval_constant_op),
     (graph.placeholder, _eval_placeholder_default),
     (graph.BinaryOp, _eval_binary_op),
