@@ -138,8 +138,9 @@ def _print_graph_node(node: graph.Node) -> None:
 
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
-    if not isinstance(node, (graph.constant, graph.placeholder,
-                              graph.timeseries_constant, graph.timeseries_placeholder)):
+    if not isinstance(
+        node, (graph.constant, graph.placeholder, graph.timeseries_constant, graph.timeseries_placeholder)
+    ):
         print(jit.graph_node_to_numpy_code(node))
 
 
@@ -426,9 +427,7 @@ def _eval_timeseries_constant(_: State, node: graph.Node) -> np.ndarray:
 
 def _eval_timeseries_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.timeseries_placeholder, node)
-    raise PlaceholderValueNotProvided(
-        f"executor: no value provided for timeseries placeholder '{node.name}'"
-    )
+    raise PlaceholderValueNotProvided(f"executor: no value provided for timeseries placeholder '{node.name}'")
 
 
 def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:

@@ -260,18 +260,18 @@ def test_infix_arithmetic_operations():
     assert div.left is a
     assert div.right is b
 
-    pw = a ** b
+    pw = a**b
     assert isinstance(pw, graph.power)
     assert pw.left is a
     assert pw.right is b
 
-    pw_scalar = a ** 2.0
+    pw_scalar = a**2.0
     assert isinstance(pw_scalar, graph.power)
     assert pw_scalar.left is a
     assert isinstance(pw_scalar.right, graph.constant)
     assert pw_scalar.right.value == 2.0
 
-    rpw = 2.0 ** a
+    rpw = 2.0**a
     assert isinstance(rpw, graph.power)
     assert isinstance(rpw.left, graph.constant)
     assert rpw.left.value == 2.0

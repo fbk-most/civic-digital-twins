@@ -11,7 +11,16 @@ from .symbols.context_variable import (
     ContinuousContextVariable,
     UniformCategoricalContextVariable,
 )
-from .symbols.index import ConstIndex, GenericIndex, Index, LognormDistIndex, SymIndex, TimeseriesIndex, TriangDistIndex, UniformDistIndex
+from .symbols.index import (
+    ConstIndex,
+    GenericIndex,
+    Index,
+    LognormDistIndex,
+    SymIndex,
+    TimeseriesIndex,
+    TriangDistIndex,
+    UniformDistIndex,
+)
 from .symbols.presence_variable import PresenceVariable
 
 __all__ = [

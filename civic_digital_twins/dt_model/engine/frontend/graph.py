@@ -474,9 +474,7 @@ class timeseries_constant(Generic[T], Node[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return (
-            f"n{self.id} = graph.timeseries_constant(values={list(self.values)!r}, name={self.name!r})"
-        )
+        return f"n{self.id} = graph.timeseries_constant(values={list(self.values)!r}, name={self.name!r})"
 
 
 class timeseries_placeholder(Generic[T], Node[T]):
