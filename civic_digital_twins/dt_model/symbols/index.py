@@ -76,6 +76,7 @@ class GenericIndex(ABC):
     # ------------------------------------------------------------------
 
     def __hash__(self) -> int:
+        """Return identity-based hash (required because __eq__ is overridden)."""
         return id(self)
 
     # ------------------------------------------------------------------
@@ -83,33 +84,43 @@ class GenericIndex(ABC):
     # ------------------------------------------------------------------
 
     def __add__(self, other: object) -> graph.Node:
+        """Return a graph node for self + other."""
         return self.node + self._node_of(other)
 
     def __radd__(self, other: object) -> graph.Node:
+        """Return a graph node for other + self."""
         return self._node_of(other) + self.node  # type: ignore[operator]
 
     def __sub__(self, other: object) -> graph.Node:
+        """Return a graph node for self - other."""
         return self.node - self._node_of(other)
 
     def __rsub__(self, other: object) -> graph.Node:
+        """Return a graph node for other - self."""
         return self._node_of(other) - self.node  # type: ignore[operator]
 
     def __mul__(self, other: object) -> graph.Node:
+        """Return a graph node for self * other."""
         return self.node * self._node_of(other)
 
     def __rmul__(self, other: object) -> graph.Node:
+        """Return a graph node for other * self."""
         return self._node_of(other) * self.node  # type: ignore[operator]
 
     def __truediv__(self, other: object) -> graph.Node:
+        """Return a graph node for self / other."""
         return self.node / self._node_of(other)
 
     def __rtruediv__(self, other: object) -> graph.Node:
+        """Return a graph node for other / self."""
         return self._node_of(other) / self.node  # type: ignore[operator]
 
     def __pow__(self, other: object) -> graph.Node:
+        """Return a graph node for self ** other."""
         return self.node ** self._node_of(other)
 
     def __rpow__(self, other: object) -> graph.Node:
+        """Return a graph node for other ** self."""
         return self._node_of(other) ** self.node  # type: ignore[operator]
 
     # ------------------------------------------------------------------
@@ -118,21 +129,27 @@ class GenericIndex(ABC):
     # ------------------------------------------------------------------
 
     def __eq__(self, other: object) -> graph.Node:  # type: ignore[override]
+        """Return a graph node for self == other (lazy evaluation)."""
         return self.node == self._node_of(other)
 
     def __ne__(self, other: object) -> graph.Node:  # type: ignore[override]
+        """Return a graph node for self != other (lazy evaluation)."""
         return self.node != self._node_of(other)
 
     def __lt__(self, other: object) -> graph.Node:
+        """Return a graph node for self < other (lazy evaluation)."""
         return self.node < self._node_of(other)
 
     def __le__(self, other: object) -> graph.Node:
+        """Return a graph node for self <= other (lazy evaluation)."""
         return self.node <= self._node_of(other)
 
     def __gt__(self, other: object) -> graph.Node:
+        """Return a graph node for self > other (lazy evaluation)."""
         return self.node > self._node_of(other)
 
     def __ge__(self, other: object) -> graph.Node:
+        """Return a graph node for self >= other (lazy evaluation)."""
         return self.node >= self._node_of(other)
 
     # ------------------------------------------------------------------

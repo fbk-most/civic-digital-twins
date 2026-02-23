@@ -778,7 +778,8 @@ class project_using_sum(Generic[T], AxisOp[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_sum" + \
+            f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
 
 
 reduce_sum = project_using_sum
@@ -805,7 +806,8 @@ class project_using_mean(Generic[T], AxisOp[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_mean" + \
+            f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
 
 
 reduce_mean = project_using_mean

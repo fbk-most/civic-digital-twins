@@ -6,20 +6,18 @@ We include this model into the source tree as an illustrative example.
 # SPDX-License-Identifier: Apache-2.0
 
 import math
-import numbers
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import stats
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import FuncFormatter
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+from scipy import stats
 
 from civic_digital_twins.dt_model import Index, TimeseriesIndex, UniformDistIndex
-from civic_digital_twins.dt_model.internal.sympyke import Piecewise
-from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
-
+from civic_digital_twins.dt_model.internal.sympyke import Piecewise
 
 vehicle_inflow = np.array(
     [
@@ -630,7 +628,7 @@ euro_class_emission = {
 
 
 def _ts_solve(ts: np.ndarray) -> np.ndarray:
-    """Iterative traffic convergence solver.
+    """Solve traffic with iterative method.
 
     Computes steady-state circulating traffic from an inflow time series by
     iterating a simple feedback loop until convergence (50 iterations).
@@ -659,6 +657,8 @@ def _ts_solve(ts: np.ndarray) -> np.ndarray:
 
 
 class Model:
+    """Model for the Bologna mobility example."""
+
     def __init__(self):
         self.TS = TimeseriesIndex(
             "time range",
@@ -961,6 +961,7 @@ class Model:
         ]
 
     def evaluate(self, size=1):
+        """Evaluate ensemble model."""
         from civic_digital_twins.dt_model.engine.frontend import linearize
         from civic_digital_twins.dt_model.engine.numpybackend import executor
 
@@ -1007,6 +1008,7 @@ class Model:
 
 
 def distribution(field, size=10000, num=100):
+    """Compute the field distribution for graphical display."""
     xx, yy = np.meshgrid(np.linspace(0, size, num + 1), range(field.shape[1]))
     zz = stats.poisson(mu=np.expand_dims(field, axis=2)).cdf(np.expand_dims(xx, axis=0))
     return zz.mean(axis=0)
@@ -1028,6 +1030,7 @@ field_colormap = LinearSegmentedColormap.from_list(
 def plot_field_graph(
     field, horizontal_label, vertical_label, vertical_size=None, vertical_formatter=None, reference_line=None
 ):
+    """Generate plot figure."""
     if vertical_size is None:
         vertical_size = roundup(np.max(field))
     dist = distribution(field, vertical_size, 100)
@@ -1073,6 +1076,7 @@ def plot_field_graph(
 
 
 def compute_kpis(m, evals):
+    """Compute the KPIs for the mobility example."""
     return {
         "Base inflow [veh/day]": int(evals[m.I_total_base_inflow].mean()),
         "Modified inflow [veh/day]": int(evals[m.I_total_modified_inflow].mean()),
@@ -1086,9 +1090,10 @@ def compute_kpis(m, evals):
 
 
 def roundup(val):
+    """Compute a rounded-up approximation of `val`."""
     v = val * 1.4
-    l = math.floor(math.log10(v * 1.3))
-    return round(v / 10**l) * 10**l
+    s = math.floor(math.log10(v * 1.3))
+    return round(v / 10**s) * 10**s
 
 
 if __name__ == "__main__":
