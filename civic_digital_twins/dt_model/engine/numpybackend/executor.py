@@ -237,7 +237,7 @@ class State:
 
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
-    functions: dict[graph.Node, Functor] = field(default_factory=dict)
+    functions: dict[str, Functor] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -265,6 +265,10 @@ class State:
             return self.values[node]
         except KeyError:
             raise NodeValueNotFound(f"executor: node '{node.name}' has not been evaluated")
+
+    def set_node_value(self, node: graph.Node, value: np.ndarray) -> None:
+        """Set the value associated with the given node."""
+        self.values[node] = value
 
 
 def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
@@ -364,7 +368,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a node given the current state.
 
     This function assumes you have already linearized the graph. If this
-    is not the case, evaluation will fail. Use the `frontend.linearize`
+    is not the case, evaluation will fail. Use the `linearize.forest`
     module to ensure the graph is topologically sorted.
 
     Args:
@@ -391,7 +395,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     if tracing:
         _print_graph_node(node)
 
-    # 3. evaluate the node proper
+    # 3. evaluate the node
     result = _evaluate(state, node)
 
     # 4. check whether we need to print the computation result
@@ -414,12 +418,12 @@ evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
-def _eval_constant_op(state: State, node: graph.Node) -> np.ndarray:
+def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.constant, node)
     return np.asarray(node.value)
 
 
-def _eval_placeholder_default(state: State, node: graph.Node) -> np.ndarray:
+def _eval_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
     # Note: placeholders are part of the state, so, if we end up
     # here it means we didn't find anything in the state.
     node = cast(graph.placeholder, node)
@@ -487,9 +491,9 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
     for key, value in node.kwargs.items():
         kwargs[key] = state.get_node_value(value)
     try:
-        function = state.functions[node]
+        function = state.functions[node.name]
     except KeyError:
-        raise FunctionNotFound(f"executor: cannot find functor for: {node}")
+        raise FunctionNotFound(f"executor: cannot find functor for: {node.name}")
     return function(*args, **kwargs)
 
 
