@@ -246,13 +246,11 @@ class Model:
                            self.I_P_cost[3] * euro_class_split['euro_3'] +
                            self.I_P_cost[4] * euro_class_split['euro_4'] +
                            self.I_P_cost[5] * euro_class_split['euro_5'] +
-                           self.I_P_cost[6] * euro_class_split['euro_6'],
-                           cvs=[*self.I_P_cost])
+                           self.I_P_cost[6] * euro_class_split['euro_6'])
 
         self.I_fraction_rigid_euro = [Index(f'rigid vehicles euro_{e} %',
                                        (1 - self.I_P_fraction_exempted) *
-                                            (np.e ** (self.I_P_cost[e] / self.I_B_p50_cost * np.log(0.5))),
-                                       cvs=[self.I_P_fraction_exempted, self.I_P_cost[e], self.I_B_p50_cost]) for e in range(7)]
+                                            (np.e ** (self.I_P_cost[e] / self.I_B_p50_cost * np.log(0.5)))) for e in range(7)]
 
         self.I_fraction_rigid = Index('rigid vehicles %',
                                  self.I_fraction_rigid_euro[0] * euro_class_split['euro_0'] +
@@ -261,115 +259,93 @@ class Model:
                                  self.I_fraction_rigid_euro[3] * euro_class_split['euro_3'] +
                                  self.I_fraction_rigid_euro[4] * euro_class_split['euro_4'] +
                                  self.I_fraction_rigid_euro[5] * euro_class_split['euro_5'] +
-                                 self.I_fraction_rigid_euro[6] * euro_class_split['euro_6'],
-                                 cvs=[*self.I_fraction_rigid_euro])
+                                 self.I_fraction_rigid_euro[6] * euro_class_split['euro_6'])
 
         self.I_modified_euro_class_split = [Index(f'modified split euro_{e} %',
                                             euro_class_split[f'euro_{e}'] * (self.I_P_fraction_exempted + self.I_fraction_rigid_euro[e]) /
-                                            (self.I_P_fraction_exempted + self.I_fraction_rigid),
-                                            cvs=[self.I_P_fraction_exempted, self.I_fraction_rigid_euro[e], self.I_fraction_rigid]) for e in
-                                      range(7)]
+                                            (self.I_P_fraction_exempted + self.I_fraction_rigid)) for e in range(7)]
 
         self.I_delta_from_start = TimeseriesIndex('delta time from start',
                                    Piecewise(((self.TS - self.I_P_start_time) / pd.Timedelta('1h').total_seconds(), self.TS >= self.I_P_start_time),
-                                             (np.inf, True)),
-                                   cvs=[self.TS, self.I_P_start_time])
+                                             (np.inf, True)))
 
         self.I_fraction_anticipating = TimeseriesIndex('anticipating vehicles %',
                                         np.e ** (self.I_delta_from_start / self.I_B_p50_anticipating * np.log(0.5)) *
-                                        (1 - self.I_P_fraction_exempted - self.I_fraction_rigid),
-                                        cvs=[self.I_delta_from_start, self.I_B_p50_anticipating, self.I_P_fraction_exempted, self.I_fraction_rigid])
+                                        (1 - self.I_P_fraction_exempted - self.I_fraction_rigid))
 
-        self.I_number_anticipating = TimeseriesIndex('anticipating vehicles', self.I_fraction_anticipating * self.TS_inflow,
-                                      cvs=[self.I_fraction_anticipating, self.TS_inflow])
+        self.I_number_anticipating = TimeseriesIndex('anticipating vehicles', self.I_fraction_anticipating * self.TS_inflow)
 
         self.I_delta_to_end = TimeseriesIndex('delta time to end',
                                Piecewise(((self.I_P_end_time - self.TS) / pd.Timedelta('1h').total_seconds(), self.TS <= self.I_P_end_time),
-                                         (np.inf, True)),
-                               cvs=[self.TS, self.I_P_end_time])
+                                         (np.inf, True)))
 
         self.I_fraction_postponing = TimeseriesIndex('postponing vehicles %',
                                       np.e ** (self.I_delta_to_end / self.I_B_p50_postponing * np.log(0.5)) *
-                                      (1 - self.I_P_fraction_exempted - self.I_fraction_rigid),
-                                      cvs=[self.I_delta_to_end, self.I_B_p50_postponing, self.I_P_fraction_exempted, self.I_fraction_rigid])
+                                      (1 - self.I_P_fraction_exempted - self.I_fraction_rigid))
 
-        self.I_number_postponing = TimeseriesIndex('postponing vehicles', self.I_fraction_postponing * self.TS_inflow,
-                                    cvs=[self.I_fraction_postponing, self.TS_inflow])
+        self.I_number_postponing = TimeseriesIndex('postponing vehicles', self.I_fraction_postponing * self.TS_inflow)
 
-        self.I_total_anticipating = Index('total anticipating vehicles', self.I_number_anticipating.sum(), cvs=[self.I_number_anticipating])
+        self.I_total_anticipating = Index('total anticipating vehicles', self.I_number_anticipating.sum())
 
-        self.I_total_postponing = Index('total postponing vehicles', self.I_number_postponing.sum(), cvs=[self.I_number_postponing])
+        self.I_total_postponing = Index('total postponing vehicles', self.I_number_postponing.sum())
 
         self.I_delta_before_start = TimeseriesIndex('delta time before start',
                                      Piecewise(
                                          ((self.I_P_start_time - self.TS) / pd.Timedelta('1h').total_seconds(), self.TS < self.I_P_start_time),
-                                         (np.inf, True)),
-                                     cvs=[self.TS, self.I_P_start_time])
+                                         (np.inf, True)))
         self.I_number_anticipated = TimeseriesIndex('anticipated vehicles',
                                      np.e ** (self.I_delta_before_start / self.I_B_p50_anticipation * np.log(
-                                         0.5)) / self.I_B_p50_anticipation * np.log(2) / 12 * self.I_total_anticipating,
-                                     cvs=[self.I_delta_before_start, self.I_B_p50_anticipation, self.I_total_anticipating])
+                                         0.5)) / self.I_B_p50_anticipation * np.log(2) / 12 * self.I_total_anticipating)
 
         self.I_delta_after_end = TimeseriesIndex('delta time after end',
                                   Piecewise(((self.TS - self.I_P_end_time) / pd.Timedelta('1h').total_seconds(), self.TS > self.I_P_end_time),
-                                            (np.inf, True)),
-                                  cvs=[self.TS, self.I_P_end_time])
+                                            (np.inf, True)))
         self.I_number_postponed = TimeseriesIndex('postponed vehicles',
                                    np.e ** (self.I_delta_after_end / self.I_B_p50_postponement * np.log(0.5)) / self.I_B_p50_postponement * np.log(
-                                       2) / 12 * self.I_total_postponing,
-                                   cvs=[self.I_delta_after_end, self.I_B_p50_postponement, self.I_total_postponing])
+                                       2) / 12 * self.I_total_postponing)
 
-        self.I_number_shifted = TimeseriesIndex('shifted vehicles', self.I_number_anticipated + self.I_number_postponed,
-                                 cvs=[self.I_number_anticipated, self.I_number_postponed])
+        self.I_number_shifted = TimeseriesIndex('shifted vehicles', self.I_number_anticipated + self.I_number_postponed)
 
         self.I_modified_inflow = Index('modified vehicle inflow',
                                Piecewise(((self.I_P_fraction_exempted + self.I_fraction_rigid) * self.TS_inflow,
                                           (self.TS >= self.I_P_start_time) & (self.TS <= self.I_P_end_time)),
-                                         (self.TS_inflow + self.I_number_shifted, True)),
-                               cvs=[self.I_P_fraction_exempted, self.I_fraction_rigid, self.I_P_start_time, self.I_P_end_time, self.TS, self.TS_inflow,
-                                    self.I_number_shifted])
+                                         (self.TS_inflow + self.I_number_shifted, True)))
 
-        self.I_total_base_inflow = Index('total base vehicle flow', self.TS_inflow.sum(), cvs=[self.TS_inflow])
-        self.I_total_modified_inflow = Index('total modified vehicle inflow', self.I_modified_inflow.sum(), cvs=[self.I_modified_inflow])
+        self.I_total_base_inflow = Index('total base vehicle flow', self.TS_inflow.sum())
+        self.I_total_modified_inflow = Index('total modified vehicle inflow', self.I_modified_inflow.sum())
         self.I_number_paying = Index('paying vehicles',
                                 Piecewise((self.I_fraction_rigid * self.TS_inflow,
                                            (self.TS >= self.I_P_start_time) & (self.TS <= self.I_P_end_time)),
-                                          (0, True)),
-                                cvs=[self.I_fraction_rigid, self.I_P_start_time, self.I_P_end_time, self.TS, self.TS_inflow])
+                                          (0, True)))
 
-        self.I_total_paying = Index('total vehicles paying', self.I_number_paying.sum(), cvs=[self.I_number_paying])
+        self.I_total_paying = Index('total vehicles paying', self.I_number_paying.sum())
 
-        self.I_modified_starting = Index('modified starting', self.TS_starting + self.I_modified_inflow * (self.I_B_starting_modified_factor - 1),
-                                    cvs=[self.TS_starting, self.I_modified_inflow, self.I_B_starting_modified_factor])
+        self.I_modified_starting = Index('modified starting', self.TS_starting + self.I_modified_inflow * (self.I_B_starting_modified_factor - 1))
 
         # TODO: flat rates for all AV
         self.I_inflow_ratio = Index('ratio between modified flow and base flow',
-                             self.TS_inflow / self.I_modified_inflow, [self.TS_inflow, self.I_modified_inflow])
+                             self.TS_inflow / self.I_modified_inflow)
 
         self.I_starting_ratio = Index('ratio between modified starting and base starting',
-                                 self.TS_starting / self.I_modified_starting, [self.TS_starting, self.I_modified_starting])
+                                 self.TS_starting / self.I_modified_starting)
 
         # TODO: fix, compute real value!
-        self.I_total_payed = Index('total payed fees', self.I_total_paying * self.I_avg_cost,
-                              cvs=[self.I_total_paying, self.I_avg_cost])
+        self.I_total_payed = Index('total payed fees', self.I_total_paying * self.I_avg_cost)
 
-        self.I_total_anticipated = Index('total vehicles anticipated', self.I_number_anticipated.sum(), cvs=[self.I_number_anticipated])
+        self.I_total_anticipated = Index('total vehicles anticipated', self.I_number_anticipated.sum())
 
-        self.I_total_postponed = Index('total vehicles postponed', self.I_number_postponed.sum(), cvs=[self.I_number_postponed])
+        self.I_total_postponed = Index('total vehicles postponed', self.I_number_postponed.sum())
 
-        self.I_total_shifted = Index('total vehicles shifted', self.I_total_anticipated + self.I_total_postponed,
-                                cvs=[self.I_total_anticipated, self.I_total_postponed])
+        self.I_total_shifted = Index('total vehicles shifted', self.I_total_anticipated + self.I_total_postponed)
 
         self.I_traffic = TimeseriesIndex('reference traffic',
-                                          graph.function_call("ts_solve", self.TS_inflow + self.TS_starting),
-                                          cvs=[self.TS_inflow, self.TS_starting])
+                                          graph.function_call("ts_solve", self.TS_inflow + self.TS_starting))
 
         self.I_modified_traffic = TimeseriesIndex('modified traffic',
-                                                   graph.function_call("ts_solve", self.I_modified_inflow + self.I_modified_starting),
-                                                   cvs=[self.I_modified_inflow, self.I_modified_starting])
+                                                   graph.function_call("ts_solve", self.I_modified_inflow + self.I_modified_starting))
 
         self.I_traffic_ratio = Index('ratio between modified traffic and base traffic',
-                                self.I_traffic / self.I_modified_traffic, [self.I_traffic, self.I_modified_traffic])
+                                self.I_traffic / self.I_modified_traffic)
 
 
         self.I_average_emissions = Index('average emissions (per vehicle, per km)',
@@ -388,14 +364,12 @@ class Model:
                                             euro_class_emission['euro_3'] * self.I_modified_euro_class_split[3] +
                                             euro_class_emission['euro_4'] * self.I_modified_euro_class_split[4] +
                                             euro_class_emission['euro_5'] * self.I_modified_euro_class_split[5] +
-                                            euro_class_emission['euro_6'] * self.I_modified_euro_class_split[6],
-                                            cvs=[*self.I_modified_euro_class_split])
+                                            euro_class_emission['euro_6'] * self.I_modified_euro_class_split[6])
 
         # TODO: improve - at the moment, the conversion factor is 2,5 km per 5 minutes
-        self.I_emissions = TimeseriesIndex('emissions', 2.5 * self.I_average_emissions * self.I_traffic, cvs=[self.I_average_emissions, self.I_traffic])
+        self.I_emissions = TimeseriesIndex('emissions', 2.5 * self.I_average_emissions * self.I_traffic)
 
-        # I_modified_emissions = Index('modified emissions', 2.5 * I_modified_average_emissions * I_modified_traffic,
-        #                             cvs=[I_modified_average_emissions, I_modified_traffic])
+        # I_modified_emissions = Index('modified emissions', 2.5 * I_modified_average_emissions * I_modified_traffic)
         #
         # TODO: The average emissions is probably different outside regulated hours
         #  (shifted cars' emissions are probably proportional to shifted cars' euro level mix)
@@ -403,14 +377,11 @@ class Model:
         self.I_modified_emissions = Index('modified emissions',
                                     Piecewise((2.5 * self.I_modified_average_emissions * self.I_modified_traffic,
                                                (self.TS >= self.I_P_start_time) & (self.TS <= self.I_P_end_time)),
-                                              (2.5 * self.I_average_emissions * self.I_modified_traffic, True)),
-                                    cvs=[self.I_average_emissions, self.I_modified_average_emissions, self.I_modified_traffic, self.I_P_start_time,
-                                         self.I_P_end_time, self.TS])
+                                              (2.5 * self.I_average_emissions * self.I_modified_traffic, True)))
 
-        self.I_total_emissions = Index('total emissions', self.I_emissions.sum(), cvs=[self.I_emissions])
+        self.I_total_emissions = Index('total emissions', self.I_emissions.sum())
 
-        self.I_total_modified_emissions = Index('total modified emissions', self.I_modified_emissions.sum(),
-                                          cvs=[self.I_modified_emissions])
+        self.I_total_modified_emissions = Index('total modified emissions', self.I_modified_emissions.sum())
 
         self.indexes = [
             self.TS, self.TS_inflow, self.TS_starting,
