@@ -16,6 +16,7 @@ def test_timeseries_index_construction():
     idx = TimeseriesIndex("cap", values)
     assert idx.name == "cap"
     assert isinstance(idx.node, graph.timeseries_constant)
+    assert idx.values is not None
     assert np.array_equal(idx.values, values)
     assert idx.times is None
     assert idx.cvs is None
@@ -26,6 +27,8 @@ def test_timeseries_index_with_times():
     values = np.array([1.0, 2.0])
     times = np.array([0, 1])
     idx = TimeseriesIndex("cap", values, times)
+    assert idx.times is not None
+    assert idx.values is not None
     assert np.array_equal(idx.times, times)
     assert np.array_equal(idx.values, values)
 
@@ -34,6 +37,7 @@ def test_timeseries_index_value_attribute():
     """Test that the value attribute holds the numpy array."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
+    assert isinstance(idx.value, np.ndarray)
     assert np.array_equal(idx.value, values)
 
 
@@ -56,6 +60,7 @@ def test_timeseries_index_values_setter():
     idx.values = new_values
 
     assert np.array_equal(idx.values, new_values)
+    assert isinstance(idx.value, np.ndarray)
     assert np.array_equal(idx.value, new_values)
     # A new node is created
     assert idx.node is not old_node
@@ -237,9 +242,9 @@ def test_timeseries_index_formula_via_operators():
 # ---------------------------------------------------------------------------
 
 
-def _eval(node, **placeholders):
-    """Evaluate a graph node with the given placeholder values."""
-    state = executor.State({k: np.asarray(v) for k, v in placeholders.items()})
+def _eval(node: graph.Node) -> np.ndarray:
+    """Evaluate a graph node with no external placeholder values."""
+    state = executor.State({})
     executor.evaluate_nodes(state, *linearize.forest(node))
     return state.values[node]
 

@@ -609,6 +609,7 @@ def test_timeseries_constant_with_times():
     """Test creation of timeseries_constant with an explicit time axis."""
     node = graph.timeseries_constant([1.0, 2.0], times=[0, 1], name="ts")
     assert list(node.values) == [1.0, 2.0]
+    assert node.times is not None
     assert list(node.times) == [0, 1]
 
 

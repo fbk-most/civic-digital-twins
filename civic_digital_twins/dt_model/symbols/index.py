@@ -9,13 +9,12 @@ be a constant, a distribution, or a symbolic expression.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 from scipy import stats
 
 from ..engine.frontend import graph
-from .context_variable import ContextVariable
 
 
 @runtime_checkable
@@ -185,7 +184,7 @@ class Index(GenericIndex):
         self,
         name: str,
         value: graph.Scalar | Distribution | graph.Node | None,
-        cvs: list[ContextVariable] | None = None,
+        cvs: list[Any] | None = None,
     ) -> None:
         self.name = name
         self.cvs = cvs
@@ -438,7 +437,7 @@ class SymIndex(Index):
         self,
         name: str,
         value: graph.Node,
-        cvs: list[ContextVariable] | None = None,
+        cvs: list[Any] | None = None,
     ) -> None:
         super().__init__(name, value, cvs)
         self.sym_value = value
@@ -475,7 +474,7 @@ class TimeseriesIndex(Index):
         name: str,
         values: np.ndarray | graph.Node | None = None,
         times: np.ndarray | None = None,
-        cvs: list[ContextVariable] | None = None,
+        cvs: list[Any] | None = None,
     ) -> None:
         # We bypass Index.__init__ and set attributes directly because
         # numpy arrays are not a recognised Index value type.

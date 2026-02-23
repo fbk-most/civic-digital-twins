@@ -172,6 +172,9 @@ from __future__ import annotations
 
 from typing import Generic, Sequence, TypeVar
 
+import numpy as np
+from numpy.typing import ArrayLike
+
 from .. import atomic, compileflags
 
 Axis = int | tuple[int, ...]
@@ -467,14 +470,14 @@ class timeseries_constant(Generic[T], Node[T]):
         name: Optional name for the node.
     """
 
-    def __init__(self, values, times=None, name: str = "") -> None:
+    def __init__(self, values: ArrayLike, times: ArrayLike | None = None, name: str = "") -> None:
         super().__init__(name)
-        self.values = values
-        self.times = times
+        self.values: np.ndarray = np.asarray(values)
+        self.times: np.ndarray | None = np.asarray(times) if times is not None else None
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_constant(values={list(self.values)!r}, name={self.name!r})"
+        return f"n{self.id} = graph.timeseries_constant(values={self.values.tolist()!r}, name={self.name!r})"
 
 
 class timeseries_placeholder(Generic[T], Node[T]):
@@ -778,8 +781,10 @@ class project_using_sum(Generic[T], AxisOp[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_sum" + \
-            f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        return (
+            f"n{self.id} = graph.project_using_sum"
+            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        )
 
 
 reduce_sum = project_using_sum
@@ -806,8 +811,10 @@ class project_using_mean(Generic[T], AxisOp[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_mean" + \
-            f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        return (
+            f"n{self.id} = graph.project_using_mean"
+            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
+        )
 
 
 reduce_mean = project_using_mean
