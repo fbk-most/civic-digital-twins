@@ -4,6 +4,7 @@
 
 import subprocess
 import textwrap
+from collections.abc import Iterable
 
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
@@ -601,16 +602,8 @@ def test_timeseries_constant_creation():
     """Test creation of timeseries_constant nodes."""
     node = graph.timeseries_constant([1.0, 2.0, 3.0], name="ts")
     assert node.name == "ts"
+    assert isinstance(node.values, Iterable)
     assert list(node.values) == [1.0, 2.0, 3.0]
-    assert node.times is None
-
-
-def test_timeseries_constant_with_times():
-    """Test creation of timeseries_constant with an explicit time axis."""
-    node = graph.timeseries_constant([1.0, 2.0], times=[0, 1], name="ts")
-    assert list(node.values) == [1.0, 2.0]
-    assert node.times is not None
-    assert list(node.times) == [0, 1]
 
 
 def test_timeseries_placeholder_creation():

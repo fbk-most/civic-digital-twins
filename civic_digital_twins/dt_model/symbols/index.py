@@ -463,24 +463,19 @@ class TimeseriesIndex(Index):
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
       The node is an arbitrary computation graph node whose result is
       time-indexed (analogous to passing a ``graph.Node`` to ``Index``).
-      The ``values`` and ``times`` attributes are ``None`` in this mode.
-
-    The optional ``times`` parameter attaches a companion array of time
-    points to fixed-array and placeholder modes.
+      The ``values`` attribute is ``None`` in this mode.
     """
 
     def __init__(
         self,
         name: str,
         values: np.ndarray | graph.Node | None = None,
-        times: np.ndarray | None = None,
         cvs: list[Any] | None = None,
     ) -> None:
         # We bypass Index.__init__ and set attributes directly because
         # numpy arrays are not a recognised Index value type.
         self.name = name
         self.cvs = cvs
-        self._times = np.asarray(times) if times is not None else None
         if isinstance(values, graph.Node):
             # Formula mode — same dispatch as Index for graph nodes.
             values.maybe_set_name(name)
@@ -490,7 +485,7 @@ class TimeseriesIndex(Index):
         elif values is not None:
             self._values = np.asarray(values)
             self.value = self._values
-            self.node = graph.timeseries_constant(self._values, self._times, name)
+            self.node = graph.timeseries_constant(self._values, name)
         else:
             self._values = None
             self.value = None
@@ -518,23 +513,7 @@ class TimeseriesIndex(Index):
             if self._values is None or not np.array_equal(self._values, new_values):
                 self._values = new_values
                 self.value = self._values
-                self.node = graph.timeseries_constant(self._values, self._times, self.name)
-
-    @property
-    def times(self) -> np.ndarray | None:
-        """The time axis (optional)."""
-        return self._times
-
-    @times.setter
-    def times(self, new_times: np.ndarray | None) -> None:
-        """Set the time axis and refresh the graph node.
-
-        When no values are set (placeholder mode), only the stored times are
-        updated; the node remains a timeseries_placeholder.
-        """
-        self._times = np.asarray(new_times) if new_times is not None else None
-        if self._values is not None:
-            self.node = graph.timeseries_constant(self._values, self._times, self.name)
+                self.node = graph.timeseries_constant(self._values, self.name)
 
     def __str__(self) -> str:
         """Return a string representation of the timeseries index."""

@@ -173,7 +173,6 @@ from __future__ import annotations
 
 from typing import Generic, Sequence, TypeVar
 
-import numpy as np
 from numpy.typing import ArrayLike
 
 from .. import atomic, compileflags
@@ -464,21 +463,22 @@ class placeholder(Generic[T], Node[T]):
 class timeseries_constant(Generic[T], Node[T]):
     """A node holding a fixed sequence of values indexed by time.
 
+    ``values`` is stored as-is.  The executor is responsible for converting
+    it to a concrete array when the node is evaluated — consistent with how
+    ``constant`` stores its scalar value without conversion.
+
     Args:
         values: Array-like of shape (T,) containing the timeseries values.
-        times: Optional array-like of shape (T,) containing the corresponding
-            time points. May be None when the time axis is implicit.
         name: Optional name for the node.
     """
 
-    def __init__(self, values: ArrayLike, times: ArrayLike | None = None, name: str = "") -> None:
+    def __init__(self, values: ArrayLike, name: str = "") -> None:
         super().__init__(name)
-        self.values: np.ndarray = np.asarray(values)
-        self.times: np.ndarray | None = np.asarray(times) if times is not None else None
+        self.values: ArrayLike = values
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_constant(values={self.values.tolist()!r}, name={self.name!r})"
+        return f"n{self.id} = graph.timeseries_constant(values={self.values!r}, name={self.name!r})"
 
 
 class timeseries_placeholder(Generic[T], Node[T]):
