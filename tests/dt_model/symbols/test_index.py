@@ -18,19 +18,7 @@ def test_timeseries_index_construction():
     assert isinstance(idx.node, graph.timeseries_constant)
     assert idx.values is not None
     assert np.array_equal(idx.values, values)
-    assert idx.times is None
     assert idx.cvs is None
-
-
-def test_timeseries_index_with_times():
-    """Test construction of a TimeseriesIndex with an explicit time axis."""
-    values = np.array([1.0, 2.0])
-    times = np.array([0, 1])
-    idx = TimeseriesIndex("cap", values, times)
-    assert idx.times is not None
-    assert idx.values is not None
-    assert np.array_equal(idx.times, times)
-    assert np.array_equal(idx.values, values)
 
 
 def test_timeseries_index_value_attribute():
@@ -83,25 +71,6 @@ def test_timeseries_index_values_setter_no_change():
     assert idx.node is old_node
 
 
-def test_timeseries_index_times_setter():
-    """Test that updating the time axis refreshes the graph node."""
-    idx = TimeseriesIndex("cap", np.array([1.0, 2.0]))
-    old_node = idx.node
-
-    new_times = np.array([100, 200])
-    idx.times = new_times
-
-    assert np.array_equal(idx.times, new_times)
-    assert idx.node is not old_node
-
-
-def test_timeseries_index_times_setter_to_none():
-    """Test setting the time axis to None."""
-    idx = TimeseriesIndex("cap", np.array([1.0, 2.0]), times=np.array([0, 1]))
-    idx.times = None
-    assert idx.times is None
-
-
 def test_timeseries_index_str():
     """Test the string representation of a TimeseriesIndex."""
     idx = TimeseriesIndex("cap", np.array([1.0, 2.0]))
@@ -130,7 +99,6 @@ def test_timeseries_index_no_values():
     assert isinstance(idx.node, graph.timeseries_placeholder)
     assert idx.values is None
     assert idx.value is None
-    assert idx.times is None
 
 
 def test_timeseries_index_placeholder_raises_without_state():
@@ -175,17 +143,6 @@ def test_timeseries_index_str_placeholder():
     """Test the string representation of a placeholder TimeseriesIndex."""
     idx = TimeseriesIndex("inflow")
     assert str(idx) == "timeseries_idx(placeholder)"
-
-
-def test_timeseries_index_times_setter_placeholder_mode():
-    """Test that updating times in placeholder mode does not change the node type."""
-    idx = TimeseriesIndex("inflow")
-    old_node = idx.node
-    idx.times = np.array([0, 1, 2])
-    # Node should still be a placeholder (no values to embed)
-    assert isinstance(idx.node, graph.timeseries_placeholder)
-    assert idx.node is old_node
-    assert np.array_equal(idx.times, [0, 1, 2])
 
 
 # ---------------------------------------------------------------------------
@@ -409,15 +366,35 @@ def test_index_hash_is_identity_based():
 
 
 # ---------------------------------------------------------------------------
+# GenericIndex.__neg__
+# ---------------------------------------------------------------------------
+
+
+def test_index_neg_returns_negate_node():
+    """__neg__ returns a negate graph node wrapping the index's node."""
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    result = -ts
+    assert isinstance(result, graph.negate)
+    assert result.node is ts.node
+
+
+def test_index_neg_evaluates_correctly():
+    """__neg__ evaluates to the element-wise negation of the index values."""
+    ts = TimeseriesIndex("ts", np.array([1.0, -2.0, 3.0]))
+    result = _eval(-ts)
+    assert np.allclose(result, [-1.0, 2.0, -3.0])
+
+
+# ---------------------------------------------------------------------------
 # GenericIndex.sum / mean
 # ---------------------------------------------------------------------------
 
 
-def test_index_sum_returns_reduce_sum_node():
-    """sum() returns a reduce_sum graph node."""
+def test_index_sum_returns_project_using_sum_node():
+    """sum() returns a project_using_sum graph node."""
     ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
     node = ts.sum()
-    assert isinstance(node, graph.reduce_sum)
+    assert isinstance(node, graph.project_using_sum)
 
 
 def test_index_sum_evaluates_correctly():
@@ -444,11 +421,11 @@ def test_index_sum_batched():
     assert np.allclose(result, [[6.0], [15.0]])
 
 
-def test_index_mean_returns_reduce_mean_node():
-    """mean() returns a reduce_mean graph node."""
+def test_index_mean_returns_project_using_mean_node():
+    """mean() returns a project_using_mean graph node."""
     ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
     node = ts.mean()
-    assert isinstance(node, graph.reduce_mean)
+    assert isinstance(node, graph.project_using_mean)
 
 
 def test_index_mean_evaluates_correctly():

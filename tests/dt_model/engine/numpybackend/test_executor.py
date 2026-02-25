@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from civic_digital_twins.dt_model.engine import compileflags
-from civic_digital_twins.dt_model.engine.frontend import forest, graph, ir, linearize
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
@@ -304,8 +304,8 @@ def test_reduction_operations():
     """Test reduction operations with the executor."""
     # Create nodes
     x = graph.placeholder("x")
-    sum_node = graph.reduce_sum(x, axis=0)
-    mean_node = graph.reduce_mean(x, axis=1)
+    sum_node = graph.project_using_sum(x, axis=0)
+    mean_node = graph.project_using_mean(x, axis=1)
 
     # Create execution plans
     sum_plan = linearize.forest(sum_node)
@@ -314,15 +314,15 @@ def test_reduction_operations():
     # Test data
     x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
 
-    # Test sum reduction
+    # Test sum reduction (keepdims=True: axis is preserved as size 1)
     sum_state = executor.State({x: x_val})
     executor.evaluate_nodes(sum_state, *sum_plan)
-    assert np.array_equal(sum_state.values[sum_node], np.sum(x_val, axis=0))
+    assert np.array_equal(sum_state.values[sum_node], np.sum(x_val, axis=0, keepdims=True))
 
-    # Test mean reduction
+    # Test mean reduction (keepdims=True: axis is preserved as size 1)
     mean_state = executor.State({x: x_val})
     executor.evaluate_nodes(mean_state, *mean_plan)
-    assert np.array_equal(mean_state.values[mean_node], np.mean(x_val, axis=1))
+    assert np.array_equal(mean_state.values[mean_node], np.mean(x_val, axis=1, keepdims=True))
 
 
 def test_expand_dims_operation():
@@ -524,8 +524,8 @@ def test_axis_operations():
 
     # Create various axis operation nodes
     expand_node = graph.expand_dims(x, axis=1)
-    sum_node = graph.reduce_sum(x, axis=0)
-    mean_node = graph.reduce_mean(x, axis=1)
+    sum_node = graph.project_using_sum(x, axis=0)
+    mean_node = graph.project_using_mean(x, axis=1)
 
     # Create execution plans
     expand_plan = linearize.forest(expand_node)
@@ -542,16 +542,16 @@ def test_axis_operations():
     assert np.array_equal(expand_state.values[expand_node], expected_expand)
     assert expand_state.values[expand_node].shape == (3, 1, 3)
 
-    # Test reduce_sum
+    # Test project_using_sum (keepdims=True: axis preserved as size 1)
     sum_state = executor.State({x: x_val})
     executor.evaluate_nodes(sum_state, *sum_plan)
-    expected_sum = np.sum(x_val, axis=0)
+    expected_sum = np.sum(x_val, axis=0, keepdims=True)
     assert np.array_equal(sum_state.values[sum_node], expected_sum)
 
-    # Test reduce_mean
+    # Test project_using_mean (keepdims=True: axis preserved as size 1)
     mean_state = executor.State({x: x_val})
     executor.evaluate_nodes(mean_state, *mean_plan)
-    expected_mean = np.mean(x_val, axis=1)
+    expected_mean = np.mean(x_val, axis=1, keepdims=True)
     assert np.array_equal(mean_state.values[mean_node], expected_mean)
 
     # Test unsupported axis operation
@@ -570,7 +570,7 @@ def test_axis_operations():
     with pytest.raises(ValueError):  # NumPy raises ValueError for invalid axes
         # Create a valid node type but with invalid axis
         # Note: x is only 2D, so axis=5 is invalid
-        invalid_axis_node = graph.reduce_sum(x, axis=5)
+        invalid_axis_node = graph.project_using_sum(x, axis=5)
         invalid_plan = linearize.forest(invalid_axis_node)
         invalid_state = executor.State({x: x_val})
 
@@ -601,59 +601,9 @@ def test_state_post_init_tracing(capsys):
     assert f"n{y.id} = np.asarray([4.0, 5.0, 6.0])" in output
 
 
-def test_evaluate_trees_nonempty():
-    """Test execution where we evaluate a forest tree."""
-    # Build a more complex graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-
-    # x^2 + 2*y
-    x_squared = graph.power(x, graph.constant(2.0))
-    two_y = graph.multiply(y, graph.constant(2.0))
-    sum_term = graph.add(x_squared, two_y)
-
-    # where(x > y, x^2 + 2*y, y - x)
-    diff = graph.subtract(y, x)
-    condition = graph.greater(x, y)
-    result = graph.where(condition, sum_term, diff)
-
-    # Create the trees
-    trees = forest.partition(result)
-
-    # Test data
-    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
-    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
-
-    # Expected result calculations
-    expected_x_squared = x_val**2
-    expected_two_y = 2 * y_val
-    expected_sum = expected_x_squared + expected_two_y
-    expected_diff = y_val - x_val
-    expected_condition = x_val > y_val
-    expected_result = np.where(expected_condition, expected_sum, expected_diff)
-
-    # Evaluate with executor setting the DUMP flag to exercise it
-    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
-    executor.evaluate_trees(state, *trees)
-
-    # Check intermediate and final results
-    assert np.array_equal(state.values[x_squared], expected_x_squared)
-    assert np.array_equal(state.values[two_y], expected_two_y)
-    assert np.array_equal(state.values[sum_term], expected_sum)
-    assert np.array_equal(state.values[diff], expected_diff)
-    assert np.array_equal(state.values[condition], expected_condition)
-    assert np.array_equal(state.values[result], expected_result)
-
-
 def test_evaluate_nodes_empty():
     """Ensure that evaluate_nodes returns None if passed no nodes."""
     rv = executor.evaluate_nodes(executor.State(values={}))
-    assert rv is None
-
-
-def test_evaluate_trees_empty():
-    """Ensure that evaluate_trees returns None if passed no trees."""
-    rv = executor.evaluate_trees(executor.State(values={}))
     assert rv is None
 
 
@@ -663,7 +613,7 @@ def test_user_defined_function():
     a = graph.placeholder("a")
     b = graph.placeholder("b")
     c = graph.placeholder("c")
-    f = graph.function("f", a, b, c=c)
+    f = graph.function_call("f", a, b, c=c)
     g = graph.add(f, graph.constant(1))
 
     functor: executor.Functor = executor.LambdaAdapter(lambda a, b, *, c: np.add(np.add(a, b), c))
@@ -692,100 +642,6 @@ def test_user_defined_function():
             }
         )
         executor.evaluate_nodes(state2, *linearize.forest(g))
-
-
-def test_evaluate_dag_trees():
-    """Test execution where we evaluate an IR DAG containing trees."""
-    # Build a more complex graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-
-    # x^2 + 2*y
-    x_squared = graph.power(x, graph.constant(2.0))
-    two_y = graph.multiply(y, graph.constant(2.0))
-    sum_term = graph.add(x_squared, two_y)
-
-    # where(x > y, x^2 + 2*y, y - x)
-    diff = graph.subtract(y, x)
-    condition = graph.greater(x, y)
-    result = graph.where(condition, sum_term, diff)
-
-    # Create the trees
-    trees = forest.partition(sum_term, result)
-
-    # Transform the trees into an IR DAG
-    dag = ir.compile_trees(*trees)
-
-    # Test data
-    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
-    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
-
-    # Expected result calculations
-    expected_x_squared = x_val**2
-    expected_two_y = 2 * y_val
-    expected_sum = expected_x_squared + expected_two_y
-    expected_diff = y_val - x_val
-    expected_condition = x_val > y_val
-    expected_result = np.where(expected_condition, expected_sum, expected_diff)
-
-    # Evaluate with executor setting the DUMP flag to exercise it
-    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
-    executor.evaluate_dag(state, dag)
-
-    # Check intermediate and final results
-    assert np.array_equal(state.values[x_squared], expected_x_squared)
-    assert np.array_equal(state.values[two_y], expected_two_y)
-    assert np.array_equal(state.values[sum_term], expected_sum)
-    assert np.array_equal(state.values[diff], expected_diff)
-    assert np.array_equal(state.values[condition], expected_condition)
-    assert np.array_equal(state.values[result], expected_result)
-
-
-def test_evaluate_dag_nodes():
-    """Test execution where we evaluate an IR DAG containing nodes."""
-    # Build a more complex graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-
-    # x^2 + 2*y
-    x_squared = graph.power(x, graph.constant(2.0))
-    two_y = graph.multiply(y, graph.constant(2.0))
-    sum_term = graph.add(x_squared, two_y)
-
-    # where(x > y, x^2 + 2*y, y - x)
-    diff = graph.subtract(y, x)
-    condition = graph.greater(x, y)
-    result = graph.where(condition, sum_term, diff)
-
-    # Create the topological sorting
-    plan = linearize.forest(sum_term, result)
-
-    # Transform the topological sorting into an IR DAG
-    dag = ir.compile_nodes(*plan)
-
-    # Test data
-    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
-    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
-
-    # Expected result calculations
-    expected_x_squared = x_val**2
-    expected_two_y = 2 * y_val
-    expected_sum = expected_x_squared + expected_two_y
-    expected_diff = y_val - x_val
-    expected_condition = x_val > y_val
-    expected_result = np.where(expected_condition, expected_sum, expected_diff)
-
-    # Evaluate with executor setting the DUMP flag to exercise it
-    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
-    executor.evaluate_dag(state, dag)
-
-    # Check intermediate and final results
-    assert np.array_equal(state.values[x_squared], expected_x_squared)
-    assert np.array_equal(state.values[two_y], expected_two_y)
-    assert np.array_equal(state.values[sum_term], expected_sum)
-    assert np.array_equal(state.values[diff], expected_diff)
-    assert np.array_equal(state.values[condition], expected_condition)
-    assert np.array_equal(state.values[result], expected_result)
 
 
 def test_state_set_node_value():
@@ -834,3 +690,23 @@ def test_timeseries_in_arithmetic():
     state = executor.State({})
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[result], [1.0, 2.0, 3.0])
+
+
+def test_negate_evaluation():
+    """Test that negate evaluates to the element-wise negation of its input."""
+    n = graph.placeholder("x")
+    result = graph.negate(n)
+    plan = linearize.forest(result)
+    state = executor.State({n: np.array([1.0, -2.0, 3.0])})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[result], [-1.0, 2.0, -3.0])
+
+
+def test_neg_operator_evaluation():
+    """Test that the -node operator evaluates correctly via the executor."""
+    n = graph.placeholder("x")
+    result = -n
+    plan = linearize.forest(result)
+    state = executor.State({n: np.array([4.0, 0.0, -5.0])})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[result], [-4.0, 0.0, 5.0])

@@ -4,6 +4,7 @@
 
 import subprocess
 import textwrap
+from collections.abc import Iterable
 
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
@@ -558,13 +559,13 @@ def test_repr():
     assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
 
     x = graph.project_using_sum(a, (1, 2))
-    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
 
     y = graph.project_using_mean(a, (1, 2))
-    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
 
-    z = graph.function("jarjar", x, y, u, v=v, w=w)
-    assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
+    z = graph.function_call("jarjar", x, y, u, v=v, w=w)
+    assert str(z) == f"n{z.id} = graph.function_call(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
 
 
 def test_maybe_set_name():
@@ -586,7 +587,7 @@ def test_function_creation():
     n2 = graph.placeholder("b")
     n3 = graph.placeholder("c")
     n4 = graph.placeholder("d")
-    n5 = graph.function("fx", n1, n2, c=n3, d=n4)
+    n5 = graph.function_call("fx", n1, n2, c=n3, d=n4)
 
     assert n5.name == "fx"
     assert len(n5.args) == 2
@@ -601,16 +602,8 @@ def test_timeseries_constant_creation():
     """Test creation of timeseries_constant nodes."""
     node = graph.timeseries_constant([1.0, 2.0, 3.0], name="ts")
     assert node.name == "ts"
+    assert isinstance(node.values, Iterable)
     assert list(node.values) == [1.0, 2.0, 3.0]
-    assert node.times is None
-
-
-def test_timeseries_constant_with_times():
-    """Test creation of timeseries_constant with an explicit time axis."""
-    node = graph.timeseries_constant([1.0, 2.0], times=[0, 1], name="ts")
-    assert list(node.values) == [1.0, 2.0]
-    assert node.times is not None
-    assert list(node.times) == [0, 1]
 
 
 def test_timeseries_placeholder_creation():
@@ -637,3 +630,73 @@ def test_timeseries_constant_identity():
     n2 = graph.timeseries_constant([1.0, 2.0])
     assert n1 is not n2
     assert hash(n1) != hash(n2)
+
+
+def test_negate_creation():
+    """Test creation of a negate node."""
+    n = graph.constant(3.0)
+    result = graph.negate(n)
+    assert isinstance(result, graph.negate)
+    assert result.node is n
+
+
+def test_negate_repr():
+    """Test the __repr__ of a negate node."""
+    n = graph.constant(3.0, name="x")
+    result = graph.negate(n, name="neg_x")
+    assert str(result) == f"n{result.id} = graph.negate(node=n{n.id}, name='neg_x')"
+
+
+def test_neg_operator_on_node():
+    """Test that -node produces a negate node."""
+    n = graph.constant(3.0)
+    result = -n
+    assert isinstance(result, graph.negate)
+    assert result.node is n
+
+
+def test_piecewise_returns_multi_clause_where():
+    """Ensure that piecewise with non-trivial clauses returns a multi_clause_where node."""
+    cond = graph.placeholder("cond")
+    expr1 = graph.constant(1.0)
+    expr2 = graph.constant(2.0)
+    result = graph.piecewise((expr1, cond), (expr2, True))
+    assert isinstance(result, graph.multi_clause_where)
+
+
+def test_piecewise_only_default_returns_constant():
+    """Ensure that piecewise with a single True clause returns the default value directly."""
+    expr = graph.constant(42.0)
+    result = graph.piecewise((expr, True))
+    assert result is expr
+
+
+def test_piecewise_scalar_clauses():
+    """Ensure that piecewise wraps scalar expressions and conditions in constant nodes."""
+    result = graph.piecewise((1.0, False), (2.0, True))
+    # (1.0, False) is a real clause (condition wraps to constant(False));
+    # (2.0, True) becomes the default — overall result is a multi_clause_where.
+    assert isinstance(result, graph.multi_clause_where)
+
+
+def test_piecewise_filters_after_true():
+    """Test that clauses after the first True condition are discarded."""
+    expr_a = graph.constant(1.0)
+    expr_b = graph.constant(2.0)
+    expr_c = graph.constant(3.0)
+    # (expr_c, True) and anything after should be ignored
+    result_a = graph.piecewise((expr_a, False), (expr_b, True), (expr_c, True))
+    result_b = graph.piecewise((expr_a, False), (expr_b, True))
+    # Both should produce the same graph structure (a multi_clause_where
+    # with expr_b as default) — verify by checking the default value node.
+    assert isinstance(result_a, graph.multi_clause_where)
+    assert isinstance(result_b, graph.multi_clause_where)
+    assert result_a.default_value is result_b.default_value
+
+
+def test_piecewise_empty_raises():
+    """Ensure that piecewise with no clauses raises ValueError."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        graph.piecewise()

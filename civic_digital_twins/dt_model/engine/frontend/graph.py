@@ -8,15 +8,16 @@ This module provides:
 
 1. Basic node types for constants and placeholders
 2. Timeseries node types (timeseries_constant, timeseries_placeholder)
-3. Arithmetic operations (add, subtract, multiply, divide, power)
+3. Arithmetic operations (add, subtract, multiply, divide, power, negate)
 4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
 5. Logical operations (and, or, xor, not)
 6. Mathematical operations (exp, log)
-7. Shape manipulation operations (expand_dims, squeeze)
-8. Reduction operations (sum, mean)
-9. Support for user-defined functions.
-10. Built-in debug operations (tracepoint, breakpoint)
-11. Support for infix and unary operators (e.g., `a + b`, `~a`).
+7. Conditional operations (where, multi_clause_where, piecewise)
+8. Shape manipulation operations (expand_dims, squeeze)
+9. Reduction operations (sum, mean)
+10. Support for user-defined functions.
+11. Built-in debug operations (tracepoint, breakpoint)
+12. Support for infix and unary operators (e.g., `a + b`, `~a`).
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -173,7 +174,6 @@ from __future__ import annotations
 
 from typing import Generic, Sequence, TypeVar
 
-import numpy as np
 from numpy.typing import ArrayLike
 
 from .. import atomic, compileflags
@@ -423,6 +423,10 @@ class Node(Generic[T]):
         """Lazily check whether one node is logically xor with another."""
         return logical_xor(ensure_node(other), self)
 
+    def __neg__(self) -> Node[T]:
+        """Lazily negate the node element-wise (unary minus)."""
+        return negate(self)
+
     def __invert__(self) -> Node[T]:
         """Lazily check whether one node is logically not."""
         return logical_not(self)
@@ -464,21 +468,22 @@ class placeholder(Generic[T], Node[T]):
 class timeseries_constant(Generic[T], Node[T]):
     """A node holding a fixed sequence of values indexed by time.
 
+    ``values`` is stored as-is.  The executor is responsible for converting
+    it to a concrete array when the node is evaluated — consistent with how
+    ``constant`` stores its scalar value without conversion.
+
     Args:
         values: Array-like of shape (T,) containing the timeseries values.
-        times: Optional array-like of shape (T,) containing the corresponding
-            time points. May be None when the time axis is implicit.
         name: Optional name for the node.
     """
 
-    def __init__(self, values: ArrayLike, times: ArrayLike | None = None, name: str = "") -> None:
+    def __init__(self, values: ArrayLike, name: str = "") -> None:
         super().__init__(name)
-        self.values: np.ndarray = np.asarray(values)
-        self.times: np.ndarray | None = np.asarray(times) if times is not None else None
+        self.values: ArrayLike = values
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_constant(values={self.values.tolist()!r}, name={self.name!r})"
+        return f"n{self.id} = graph.timeseries_constant(values={self.values!r}, name={self.name!r})"
 
 
 class timeseries_placeholder(Generic[T], Node[T]):
@@ -508,6 +513,18 @@ class BinaryOp(Generic[T], Node[T]):
         super().__init__(name)
         self.left = left
         self.right = right
+
+
+class UnaryOp(Generic[T], Node[T]):
+    """Base class for unary operations.
+
+    Args:
+        node: Input node
+    """
+
+    def __init__(self, node: Node[T], name="") -> None:
+        super().__init__(name)
+        self.node = node
 
 
 # Arithmetic operations
@@ -555,6 +572,14 @@ class power(Generic[T], BinaryOp[T]):
 
 pow = power
 """Name alias for power, for compatibility with NumPy naming."""
+
+
+class negate(Generic[T], UnaryOp[T]):
+    """Element-wise negation of a tensor (unary minus)."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.negate(node=n{self.node.id}, name='{self.name}')"
 
 
 # Comparison operations
@@ -635,18 +660,6 @@ class logical_xor(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.logical_xor(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class UnaryOp(Generic[T], Node[T]):
-    """Base class for unary operations.
-
-    Args:
-        node: Input node
-    """
-
-    def __init__(self, node: Node[T], name="") -> None:
-        super().__init__(name)
-        self.node = node
-
-
 class logical_not(Generic[T], UnaryOp[T]):
     """Element-wise logical NOT of a boolean tensor."""
 
@@ -724,6 +737,78 @@ class multi_clause_where(Generic[C, T], Node[T]):
         return f"n{self.id} = graph.multi_clause_where(clauses=[{clauses}], default_value=n{self.default_value.id}, name='{self.name}')"  # noqa: E501
 
 
+# TODO(python3.12): replace inline annotations below with generic type aliases:
+#   type Expr[T] = Node[T] | Scalar
+#   type Cond[T] = Node[T] | Scalar
+#   type Clause[T] = tuple[Expr[T], Cond[T]]
+
+
+def piecewise(*clauses: tuple[Node[T] | Scalar, Node[T] | Scalar]) -> Node[T]:
+    """Build a piecewise function from ``(expression, condition)`` clauses.
+
+    Converts clauses in sympy.Piecewise convention — ``(expression, condition)``
+    pairs — into a ``multi_clause_where`` node.  Clauses that follow the first
+    unconditional (``True``) clause are discarded.  If the last remaining clause
+    has a ``True`` condition it becomes the default value; otherwise the default
+    is ``NaN``.
+
+    Args:
+        *clauses: ``(expression, condition)`` pairs.  At least one is required.
+
+    Returns
+    -------
+        A computation node representing the piecewise function.
+
+    Raises
+    ------
+        ValueError: If no clauses are provided.
+    """
+    return _piecewise_to_node(_filter_piecewise_clauses(clauses))
+
+
+def _filter_piecewise_clauses(
+    clauses: tuple[tuple[Node[T] | Scalar, Node[T] | Scalar], ...],
+) -> list[tuple[Node[T] | Scalar, Node[T] | Scalar]]:
+    """Discard clauses that follow the first unconditional (``True``) clause."""
+    filtered: list[tuple[Node[T] | Scalar, Node[T] | Scalar]] = []
+    for expr, cond in clauses:
+        filtered.append((expr, cond))
+        if cond is True:
+            break
+    return filtered
+
+
+def _piecewise_to_node(
+    clauses: list[tuple[Node[T] | Scalar, Node[T] | Scalar]],
+) -> Node[T]:
+    if len(clauses) < 1:
+        raise ValueError("piecewise: at least one clause is required")
+
+    # Extract the default value from the last True-condition clause, or use NaN.
+    default: Node[T] | Scalar = float("NaN")
+    last_expr, last_cond = clauses[-1]
+    if last_cond is True:
+        default = last_expr
+        clauses = clauses[:-1]
+    if isinstance(default, Scalar):
+        default = constant(default)
+
+    # If filtering consumed all clauses, just return the default.
+    if not clauses:
+        return default  # type: ignore[return-value]
+
+    # Build the (condition, expression) pairs expected by multi_clause_where.
+    node_clauses: list[tuple[Node[T], Node[T]]] = []
+    for expr, cond in clauses:
+        if isinstance(expr, Scalar):
+            expr = constant(expr)
+        if isinstance(cond, Scalar):
+            cond = constant(cond)
+        node_clauses.append((cond, expr))  # type: ignore[arg-type]
+
+    return multi_clause_where(node_clauses, default)  # type: ignore[arg-type]
+
+
 # Shape-changing operations
 
 
@@ -765,63 +850,39 @@ class squeeze(Generic[T], AxisOp[T]):
 
 
 class project_using_sum(Generic[T], AxisOp[T]):
-    """Computes sum of tensor elements along specified axes.
+    """Computes sum of tensor elements along specified axes, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.sum(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
 
     Args:
         node: Input tensor.
         axis: Axis along which to sum.
-        keepdims: If True, the reduced axis is kept as size 1 (like
-            ``np.sum(..., keepdims=True)``).  Defaults to False.
     """
-
-    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
-        super().__init__(node, axis, name)
-        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return (
-            f"n{self.id} = graph.project_using_sum"
-            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
-        )
-
-
-reduce_sum = project_using_sum
-"""Name alias for project_using_sum, for compatibility with yakof, which still
-uses this name. We will remove this symbol once the merge of yakof into
-the dt-model is complete."""
+        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 class project_using_mean(Generic[T], AxisOp[T]):
-    """Computes mean of tensor elements along specified axes.
+    """Computes mean of tensor elements along specified axes, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.mean(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
 
     Args:
         node: Input tensor.
         axis: Axis along which to average.
-        keepdims: If True, the reduced axis is kept as size 1 (like
-            ``np.mean(..., keepdims=True)``).  Defaults to False.
     """
-
-    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
-        super().__init__(node, axis, name)
-        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return (
-            f"n{self.id} = graph.project_using_mean"
-            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
-        )
-
-
-reduce_mean = project_using_mean
-"""Name alias for project_using_mean, for compatibility with yakof, which
-still uses this name. We will remove this symbol once the merge of
-yakof into the dt-model is complete."""
+        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 # User-defined functions
@@ -847,15 +908,7 @@ class function_call(Generic[T], Node[T]):
         arg_reprs = [f"n{arg.id}" for arg in self.args]
         kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
         all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
-        return f"n{self.id} = graph.function({all_args})"
-
-
-function = function_call
-"""Legacy name for the function_call type.
-
-The function_call name is more appropriate since what happens
-is indeed that we are calling a function.
-"""
+        return f"n{self.id} = graph.function_call({all_args})"
 
 
 # Debug operations

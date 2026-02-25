@@ -82,6 +82,10 @@ class GenericIndex(ABC):
     # Arithmetic operators
     # ------------------------------------------------------------------
 
+    def __neg__(self) -> graph.Node:
+        """Return a graph node for -self."""
+        return graph.negate(self.node)
+
     def __add__(self, other: object) -> graph.Node:
         """Return a graph node for self + other."""
         return self.node + self._node_of(other)
@@ -159,22 +163,22 @@ class GenericIndex(ABC):
         """Return a graph node that sums this index over the given axis.
 
         The default axis ``-1`` sums across the last (time) dimension.
-        ``keepdims=True`` is used so that the reduced axis is preserved as
-        size 1.  This ensures the result broadcasts correctly against both
-        plain timeseries ``(T,)`` and ensemble-batched timeseries
-        ``(size, T)``:
+        The reduced axis is always preserved as size 1, ensuring the result
+        broadcasts correctly against both plain timeseries ``(T,)`` and
+        ensemble-batched timeseries ``(size, T)``:
 
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
-        return graph.reduce_sum(self.node, axis, keepdims=True)
+        return graph.project_using_sum(self.node, axis)
 
     def mean(self, axis: int = -1) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
 
-        Same axis and keepdims convention as :meth:`sum`.
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
         """
-        return graph.reduce_mean(self.node, axis, keepdims=True)
+        return graph.project_using_mean(self.node, axis)
 
 
 class Index(GenericIndex):
@@ -463,24 +467,19 @@ class TimeseriesIndex(Index):
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
       The node is an arbitrary computation graph node whose result is
       time-indexed (analogous to passing a ``graph.Node`` to ``Index``).
-      The ``values`` and ``times`` attributes are ``None`` in this mode.
-
-    The optional ``times`` parameter attaches a companion array of time
-    points to fixed-array and placeholder modes.
+      The ``values`` attribute is ``None`` in this mode.
     """
 
     def __init__(
         self,
         name: str,
         values: np.ndarray | graph.Node | None = None,
-        times: np.ndarray | None = None,
         cvs: list[Any] | None = None,
     ) -> None:
         # We bypass Index.__init__ and set attributes directly because
         # numpy arrays are not a recognised Index value type.
         self.name = name
         self.cvs = cvs
-        self._times = np.asarray(times) if times is not None else None
         if isinstance(values, graph.Node):
             # Formula mode — same dispatch as Index for graph nodes.
             values.maybe_set_name(name)
@@ -490,7 +489,7 @@ class TimeseriesIndex(Index):
         elif values is not None:
             self._values = np.asarray(values)
             self.value = self._values
-            self.node = graph.timeseries_constant(self._values, self._times, name)
+            self.node = graph.timeseries_constant(self._values, name)
         else:
             self._values = None
             self.value = None
@@ -518,23 +517,7 @@ class TimeseriesIndex(Index):
             if self._values is None or not np.array_equal(self._values, new_values):
                 self._values = new_values
                 self.value = self._values
-                self.node = graph.timeseries_constant(self._values, self._times, self.name)
-
-    @property
-    def times(self) -> np.ndarray | None:
-        """The time axis (optional)."""
-        return self._times
-
-    @times.setter
-    def times(self, new_times: np.ndarray | None) -> None:
-        """Set the time axis and refresh the graph node.
-
-        When no values are set (placeholder mode), only the stored times are
-        updated; the node remains a timeseries_placeholder.
-        """
-        self._times = np.asarray(new_times) if new_times is not None else None
-        if self._values is not None:
-            self.node = graph.timeseries_constant(self._values, self._times, self.name)
+                self.node = graph.timeseries_constant(self._values, self.name)
 
     def __str__(self) -> str:
         """Return a string representation of the timeseries index."""

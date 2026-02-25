@@ -11,7 +11,7 @@ Key Components
   a previously-topologically-sorted computation graph efficiently
   without recursion.
 
-- jit: JIT compiler infrastructure
+- numpy_ast: NumPy AST code generator for debugging
 
 Usage Example:
 -------------
