@@ -867,8 +867,6 @@ class project_using_sum(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-
-
 class project_using_mean(Generic[T], AxisOp[T]):
     """Computes mean of tensor elements along specified axes, preserving dimensions.
 
@@ -885,8 +883,6 @@ class project_using_mean(Generic[T], AxisOp[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
-
-
 
 
 # User-defined functions
@@ -913,8 +909,6 @@ class function_call(Generic[T], Node[T]):
         kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
         all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
         return f"n{self.id} = graph.function_call({all_args})"
-
-
 
 
 # Debug operations

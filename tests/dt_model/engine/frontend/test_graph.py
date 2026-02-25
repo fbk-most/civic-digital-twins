@@ -656,7 +656,7 @@ def test_neg_operator_on_node():
 
 
 def test_piecewise_returns_multi_clause_where():
-    """piecewise with non-trivial clauses returns a multi_clause_where node."""
+    """Ensure that piecewise with non-trivial clauses returns a multi_clause_where node."""
     cond = graph.placeholder("cond")
     expr1 = graph.constant(1.0)
     expr2 = graph.constant(2.0)
@@ -665,14 +665,14 @@ def test_piecewise_returns_multi_clause_where():
 
 
 def test_piecewise_only_default_returns_constant():
-    """piecewise with a single True clause returns the default value directly."""
+    """Ensure that piecewise with a single True clause returns the default value directly."""
     expr = graph.constant(42.0)
     result = graph.piecewise((expr, True))
     assert result is expr
 
 
 def test_piecewise_scalar_clauses():
-    """piecewise wraps scalar expressions and conditions in constant nodes."""
+    """Ensure that piecewise wraps scalar expressions and conditions in constant nodes."""
     result = graph.piecewise((1.0, False), (2.0, True))
     # (1.0, False) is a real clause (condition wraps to constant(False));
     # (2.0, True) becomes the default — overall result is a multi_clause_where.
@@ -680,7 +680,7 @@ def test_piecewise_scalar_clauses():
 
 
 def test_piecewise_filters_after_true():
-    """Clauses after the first True condition are discarded."""
+    """Test that clauses after the first True condition are discarded."""
     expr_a = graph.constant(1.0)
     expr_b = graph.constant(2.0)
     expr_c = graph.constant(3.0)
@@ -695,7 +695,8 @@ def test_piecewise_filters_after_true():
 
 
 def test_piecewise_empty_raises():
-    """piecewise with no clauses raises ValueError."""
+    """Ensure that piecewise with no clauses raises ValueError."""
     import pytest
+
     with pytest.raises(ValueError):
         graph.piecewise()
