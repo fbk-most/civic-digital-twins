@@ -71,20 +71,14 @@ def test_piecewise_empty():
 
 
 def test_piecewise_filtering():
-    """Test the internal _filter_clauses function."""
-    from civic_digital_twins.dt_model.internal.sympyke.piecewise import _filter_clauses
-
-    clauses = (
-        (1, False),
-        (2, True),
-        (3, False),  # Should be filtered out
-        (4, True),  # Should be filtered out
-    )
-
-    filtered = _filter_clauses(clauses)
-    assert len(filtered) == 2
-    assert filtered[0] == (1, False)
-    assert filtered[1] == (2, True)
+    """Clauses after the first unconditional (True) clause are discarded."""
+    # (3, False) and (4, True) come after (2, True) and must be ignored.
+    # The result should be the value from the (2, True) clause, i.e. 2.
+    result = Piecewise((1, False), (2, True), (3, False), (4, True))
+    plan = linearize.forest(result)
+    state = executor.State(values={})
+    executor.evaluate_nodes(state, *plan)
+    assert state.values[result] == 2
 
 
 def test_piecewise_with_constant_conditions():

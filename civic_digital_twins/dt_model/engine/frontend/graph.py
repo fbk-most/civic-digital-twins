@@ -12,11 +12,12 @@ This module provides:
 4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
 5. Logical operations (and, or, xor, not)
 6. Mathematical operations (exp, log)
-7. Shape manipulation operations (expand_dims, squeeze)
-8. Reduction operations (sum, mean)
-9. Support for user-defined functions.
-10. Built-in debug operations (tracepoint, breakpoint)
-11. Support for infix and unary operators (e.g., `a + b`, `~a`).
+7. Conditional operations (where, multi_clause_where, piecewise)
+8. Shape manipulation operations (expand_dims, squeeze)
+9. Reduction operations (sum, mean)
+10. Support for user-defined functions.
+11. Built-in debug operations (tracepoint, breakpoint)
+12. Support for infix and unary operators (e.g., `a + b`, `~a`).
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -734,6 +735,78 @@ class multi_clause_where(Generic[C, T], Node[T]):
         """Return a round-trippable SSA representation of the node."""
         clauses = ", ".join(f"(n{condition.id}, n{then.id})" for condition, then in self.clauses)
         return f"n{self.id} = graph.multi_clause_where(clauses=[{clauses}], default_value=n{self.default_value.id}, name='{self.name}')"  # noqa: E501
+
+
+# TODO(python3.12): replace inline annotations below with generic type aliases:
+#   type Expr[T] = Node[T] | Scalar
+#   type Cond[T] = Node[T] | Scalar
+#   type Clause[T] = tuple[Expr[T], Cond[T]]
+
+
+def piecewise(*clauses: tuple[Node[T] | Scalar, Node[T] | Scalar]) -> Node[T]:
+    """Build a piecewise function from ``(expression, condition)`` clauses.
+
+    Converts clauses in sympy.Piecewise convention — ``(expression, condition)``
+    pairs — into a ``multi_clause_where`` node.  Clauses that follow the first
+    unconditional (``True``) clause are discarded.  If the last remaining clause
+    has a ``True`` condition it becomes the default value; otherwise the default
+    is ``NaN``.
+
+    Args:
+        *clauses: ``(expression, condition)`` pairs.  At least one is required.
+
+    Returns
+    -------
+        A computation node representing the piecewise function.
+
+    Raises
+    ------
+        ValueError: If no clauses are provided.
+    """
+    return _piecewise_to_node(_filter_piecewise_clauses(clauses))
+
+
+def _filter_piecewise_clauses(
+    clauses: tuple[tuple[Node[T] | Scalar, Node[T] | Scalar], ...],
+) -> list[tuple[Node[T] | Scalar, Node[T] | Scalar]]:
+    """Discard clauses that follow the first unconditional (``True``) clause."""
+    filtered: list[tuple[Node[T] | Scalar, Node[T] | Scalar]] = []
+    for expr, cond in clauses:
+        filtered.append((expr, cond))
+        if cond is True:
+            break
+    return filtered
+
+
+def _piecewise_to_node(
+    clauses: list[tuple[Node[T] | Scalar, Node[T] | Scalar]],
+) -> Node[T]:
+    if len(clauses) < 1:
+        raise ValueError("piecewise: at least one clause is required")
+
+    # Extract the default value from the last True-condition clause, or use NaN.
+    default: Node[T] | Scalar = float("NaN")
+    last_expr, last_cond = clauses[-1]
+    if last_cond is True:
+        default = last_expr
+        clauses = clauses[:-1]
+    if isinstance(default, Scalar):
+        default = constant(default)
+
+    # If filtering consumed all clauses, just return the default.
+    if not clauses:
+        return default  # type: ignore[return-value]
+
+    # Build the (condition, expression) pairs expected by multi_clause_where.
+    node_clauses: list[tuple[Node[T], Node[T]]] = []
+    for expr, cond in clauses:
+        if isinstance(expr, Scalar):
+            expr = constant(expr)
+        if isinstance(cond, Scalar):
+            cond = constant(cond)
+        node_clauses.append((cond, expr))  # type: ignore[arg-type]
+
+    return multi_clause_where(node_clauses, default)  # type: ignore[arg-type]
 
 
 # Shape-changing operations

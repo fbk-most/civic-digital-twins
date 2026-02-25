@@ -653,3 +653,49 @@ def test_neg_operator_on_node():
     result = -n
     assert isinstance(result, graph.negate)
     assert result.node is n
+
+
+def test_piecewise_returns_multi_clause_where():
+    """piecewise with non-trivial clauses returns a multi_clause_where node."""
+    cond = graph.placeholder("cond")
+    expr1 = graph.constant(1.0)
+    expr2 = graph.constant(2.0)
+    result = graph.piecewise((expr1, cond), (expr2, True))
+    assert isinstance(result, graph.multi_clause_where)
+
+
+def test_piecewise_only_default_returns_constant():
+    """piecewise with a single True clause returns the default value directly."""
+    expr = graph.constant(42.0)
+    result = graph.piecewise((expr, True))
+    assert result is expr
+
+
+def test_piecewise_scalar_clauses():
+    """piecewise wraps scalar expressions and conditions in constant nodes."""
+    result = graph.piecewise((1.0, False), (2.0, True))
+    # (1.0, False) is a real clause (condition wraps to constant(False));
+    # (2.0, True) becomes the default — overall result is a multi_clause_where.
+    assert isinstance(result, graph.multi_clause_where)
+
+
+def test_piecewise_filters_after_true():
+    """Clauses after the first True condition are discarded."""
+    expr_a = graph.constant(1.0)
+    expr_b = graph.constant(2.0)
+    expr_c = graph.constant(3.0)
+    # (expr_c, True) and anything after should be ignored
+    result_a = graph.piecewise((expr_a, False), (expr_b, True), (expr_c, True))
+    result_b = graph.piecewise((expr_a, False), (expr_b, True))
+    # Both should produce the same graph structure (a multi_clause_where
+    # with expr_b as default) — verify by checking the default value node.
+    assert isinstance(result_a, graph.multi_clause_where)
+    assert isinstance(result_b, graph.multi_clause_where)
+    assert result_a.default_value is result_b.default_value
+
+
+def test_piecewise_empty_raises():
+    """piecewise with no clauses raises ValueError."""
+    import pytest
+    with pytest.raises(ValueError):
+        graph.piecewise()
