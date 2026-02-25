@@ -366,6 +366,26 @@ def test_index_hash_is_identity_based():
 
 
 # ---------------------------------------------------------------------------
+# GenericIndex.__neg__
+# ---------------------------------------------------------------------------
+
+
+def test_index_neg_returns_negate_node():
+    """__neg__ returns a negate graph node wrapping the index's node."""
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    result = -ts
+    assert isinstance(result, graph.negate)
+    assert result.node is ts.node
+
+
+def test_index_neg_evaluates_correctly():
+    """__neg__ evaluates to the element-wise negation of the index values."""
+    ts = TimeseriesIndex("ts", np.array([1.0, -2.0, 3.0]))
+    result = _eval(-ts)
+    assert np.allclose(result, [-1.0, 2.0, -3.0])
+
+
+# ---------------------------------------------------------------------------
 # GenericIndex.sum / mean
 # ---------------------------------------------------------------------------
 

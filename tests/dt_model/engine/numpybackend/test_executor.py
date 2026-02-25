@@ -834,3 +834,23 @@ def test_timeseries_in_arithmetic():
     state = executor.State({})
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[result], [1.0, 2.0, 3.0])
+
+
+def test_negate_evaluation():
+    """Test that negate evaluates to the element-wise negation of its input."""
+    n = graph.placeholder("x")
+    result = graph.negate(n)
+    plan = linearize.forest(result)
+    state = executor.State({n: np.array([1.0, -2.0, 3.0])})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[result], [-1.0, 2.0, -3.0])
+
+
+def test_neg_operator_evaluation():
+    """Test that the -node operator evaluates correctly via the executor."""
+    n = graph.placeholder("x")
+    result = -n
+    plan = linearize.forest(result)
+    state = executor.State({n: np.array([4.0, 0.0, -5.0])})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[result], [-4.0, 0.0, 5.0])

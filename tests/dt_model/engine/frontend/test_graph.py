@@ -630,3 +630,26 @@ def test_timeseries_constant_identity():
     n2 = graph.timeseries_constant([1.0, 2.0])
     assert n1 is not n2
     assert hash(n1) != hash(n2)
+
+
+def test_negate_creation():
+    """Test creation of a negate node."""
+    n = graph.constant(3.0)
+    result = graph.negate(n)
+    assert isinstance(result, graph.negate)
+    assert result.node is n
+
+
+def test_negate_repr():
+    """Test the __repr__ of a negate node."""
+    n = graph.constant(3.0, name="x")
+    result = graph.negate(n, name="neg_x")
+    assert str(result) == f"n{result.id} = graph.negate(node=n{n.id}, name='neg_x')"
+
+
+def test_neg_operator_on_node():
+    """Test that -node produces a negate node."""
+    n = graph.constant(3.0)
+    result = -n
+    assert isinstance(result, graph.negate)
+    assert result.node is n

@@ -82,6 +82,10 @@ class GenericIndex(ABC):
     # Arithmetic operators
     # ------------------------------------------------------------------
 
+    def __neg__(self) -> graph.Node:
+        """Return a graph node for -self."""
+        return graph.negate(self.node)
+
     def __add__(self, other: object) -> graph.Node:
         """Return a graph node for self + other."""
         return self.node + self._node_of(other)

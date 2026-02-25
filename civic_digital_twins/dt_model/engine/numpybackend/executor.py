@@ -61,6 +61,7 @@ Add entries to this table to support more binary operations.
 
 
 _unary_operations: dict[type[graph.UnaryOp], _UnaryOpFunc] = {
+    graph.negate: np.negative,
     graph.logical_not: np.logical_not,
     graph.exp: np.exp,
     graph.log: np.log,

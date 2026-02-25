@@ -8,7 +8,7 @@ This module provides:
 
 1. Basic node types for constants and placeholders
 2. Timeseries node types (timeseries_constant, timeseries_placeholder)
-3. Arithmetic operations (add, subtract, multiply, divide, power)
+3. Arithmetic operations (add, subtract, multiply, divide, power, negate)
 4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
 5. Logical operations (and, or, xor, not)
 6. Mathematical operations (exp, log)
@@ -422,6 +422,10 @@ class Node(Generic[T]):
         """Lazily check whether one node is logically xor with another."""
         return logical_xor(ensure_node(other), self)
 
+    def __neg__(self) -> Node[T]:
+        """Lazily negate the node element-wise (unary minus)."""
+        return negate(self)
+
     def __invert__(self) -> Node[T]:
         """Lazily check whether one node is logically not."""
         return logical_not(self)
@@ -510,6 +514,18 @@ class BinaryOp(Generic[T], Node[T]):
         self.right = right
 
 
+class UnaryOp(Generic[T], Node[T]):
+    """Base class for unary operations.
+
+    Args:
+        node: Input node
+    """
+
+    def __init__(self, node: Node[T], name="") -> None:
+        super().__init__(name)
+        self.node = node
+
+
 # Arithmetic operations
 
 
@@ -555,6 +571,14 @@ class power(Generic[T], BinaryOp[T]):
 
 pow = power
 """Name alias for power, for compatibility with NumPy naming."""
+
+
+class negate(Generic[T], UnaryOp[T]):
+    """Element-wise negation of a tensor (unary minus)."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.negate(node=n{self.node.id}, name='{self.name}')"
 
 
 # Comparison operations
@@ -633,18 +657,6 @@ class logical_xor(Generic[T], BinaryOp[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.logical_xor(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
-
-
-class UnaryOp(Generic[T], Node[T]):
-    """Base class for unary operations.
-
-    Args:
-        node: Input node
-    """
-
-    def __init__(self, node: Node[T], name="") -> None:
-        super().__init__(name)
-        self.node = node
 
 
 class logical_not(Generic[T], UnaryOp[T]):
