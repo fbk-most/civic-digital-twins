@@ -173,7 +173,7 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
     if isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)):
         return []
 
-    if isinstance(node, graph.function):
+    if isinstance(node, graph.function_call):
         deps: list[graph.Node] = []
         deps.extend(node.args)
         deps.extend(node.kwargs.values())

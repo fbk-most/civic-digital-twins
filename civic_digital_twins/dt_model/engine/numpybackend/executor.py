@@ -507,7 +507,7 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
 
 
 def _eval_function(state: State, node: graph.Node) -> np.ndarray:
-    node = cast(graph.function, node)
+    node = cast(graph.function_call, node)
     args: list[np.ndarray] = []
     kwargs: dict[str, np.ndarray] = {}
     for arg in node.args:
@@ -533,7 +533,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.where, _eval_where_op),
     (graph.multi_clause_where, _eval_multi_clause_where_op),
     (graph.AxisOp, _eval_axis_op),
-    (graph.function, _eval_function),
+    (graph.function_call, _eval_function),
 )
 
 

@@ -663,7 +663,7 @@ def test_user_defined_function():
     a = graph.placeholder("a")
     b = graph.placeholder("b")
     c = graph.placeholder("c")
-    f = graph.function("f", a, b, c=c)
+    f = graph.function_call("f", a, b, c=c)
     g = graph.add(f, graph.constant(1))
 
     functor: executor.Functor = executor.LambdaAdapter(lambda a, b, *, c: np.add(np.add(a, b), c))

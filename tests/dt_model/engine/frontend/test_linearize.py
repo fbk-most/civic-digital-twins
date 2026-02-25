@@ -162,7 +162,7 @@ def test_complex_graph():
 
     # gg = function("foo", a, b, g, e=e)
     # h = max(c, gg)
-    gg = graph.function("foo", a, b, g, e=e)
+    gg = graph.function_call("foo", a, b, g, e=e)
     h = graph.maximum(c, gg)
 
     plan = linearize.forest(h)
@@ -188,9 +188,9 @@ def test_axes_operations():
     """Test linearization with shape-changing operations."""
     x = graph.placeholder("x")
 
-    # expand_dims followed by reduce_sum
+    # expand_dims followed by project_using_sum
     expanded = graph.expand_dims(x, axis=0)
-    reduced = graph.reduce_sum(expanded, axis=1)
+    reduced = graph.project_using_sum(expanded, axis=1)
 
     plan = linearize.forest(reduced)
 

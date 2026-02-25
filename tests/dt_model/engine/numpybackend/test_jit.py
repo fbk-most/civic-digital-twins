@@ -87,7 +87,7 @@ def test_round_trip():
     node = graph.project_using_mean(k, axis=(2,))
     assert jit.graph_node_to_numpy_code(node) == f"n{node.id} = np.mean(n{k.id}, axis=(2,), keepdims=True)"
 
-    node = graph.function("foo", k, p, k=k, p=p)
+    node = graph.function_call("foo", k, p, k=k, p=p)
     assert jit.graph_node_to_numpy_code(node) == f"n{node.id} = foo(n{k.id}, n{p.id}, k=n{k.id}, p=n{p.id})"
 
 

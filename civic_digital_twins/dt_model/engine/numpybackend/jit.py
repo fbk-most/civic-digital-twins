@@ -105,7 +105,7 @@ def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) ->
     This function calls ast.fix_missing_locations before returning.
     """
     # 1. distinguish between user-defined functions and other nodes
-    if isinstance(node, graph.function):
+    if isinstance(node, graph.function_call):
         assert value is None
         expr = _graph_function_to_ast_expr(node)
     else:
@@ -122,7 +122,7 @@ def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) ->
     return assign
 
 
-def _graph_function_to_ast_expr(node: graph.function) -> ast.expr:
+def _graph_function_to_ast_expr(node: graph.function_call) -> ast.expr:
     # 1. get the operation name
     opname = node.name
 

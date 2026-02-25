@@ -564,8 +564,8 @@ def test_repr():
     y = graph.project_using_mean(a, (1, 2))
     assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
 
-    z = graph.function("jarjar", x, y, u, v=v, w=w)
-    assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
+    z = graph.function_call("jarjar", x, y, u, v=v, w=w)
+    assert str(z) == f"n{z.id} = graph.function_call(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
 
 
 def test_maybe_set_name():
@@ -587,7 +587,7 @@ def test_function_creation():
     n2 = graph.placeholder("b")
     n3 = graph.placeholder("c")
     n4 = graph.placeholder("d")
-    n5 = graph.function("fx", n1, n2, c=n3, d=n4)
+    n5 = graph.function_call("fx", n1, n2, c=n3, d=n4)
 
     assert n5.name == "fx"
     assert len(n5.args) == 2
