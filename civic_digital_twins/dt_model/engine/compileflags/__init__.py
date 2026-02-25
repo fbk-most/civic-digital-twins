@@ -3,6 +3,15 @@ The compileflags package defines the flags used by the compiler engine.
 
 We centralize the definition of flags to avoid defining flags into each package
 and ending up with incompatible compiler engine flags.
+
+**End-user usage**
+
+Set the ``DTMODEL_ENGINE_FLAGS`` environment variable to a comma-separated list
+of flag names before starting Python.  For example::
+
+    export DTMODEL_ENGINE_FLAGS=trace
+
+Available flag names: ``trace``, ``dump``, ``break``.
 """
 
 import os
@@ -68,4 +77,8 @@ def from_environ(
 
 
 defaults = from_environ()
-"""Default compile flags initialized from the `DTMODEL_ENGINE_FLAGS` environment variable."""
+"""Default compile flags initialized from the ``DTMODEL_ENGINE_FLAGS`` environment variable.
+
+Read once at import time — the env var must be set *before* importing any engine
+module; changes to the environment after import have no effect on this value.
+"""

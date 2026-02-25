@@ -39,6 +39,7 @@ _binary_operations: dict[type[graph.BinaryOp], _BinaryOpFunc] = {
     graph.subtract: np.subtract,
     graph.multiply: np.multiply,
     graph.divide: np.divide,
+    graph.power: np.power,
     graph.equal: np.equal,
     graph.not_equal: np.not_equal,
     graph.less: np.less,
@@ -48,7 +49,6 @@ _binary_operations: dict[type[graph.BinaryOp], _BinaryOpFunc] = {
     graph.logical_and: np.logical_and,
     graph.logical_or: np.logical_or,
     graph.logical_xor: np.logical_xor,
-    graph.power: np.power,
     graph.maximum: np.maximum,
 }
 """Maps a binary op in the graph domain to the corresponding numpy operation.
@@ -148,7 +148,7 @@ def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
     """Print a node after evaluation."""
     # Throughout this function we try to be very defensive with respect
     # to the node operations. Sometimes, numba returns bare floats rather
-    # then `np.ndarray` and this only happens at runtime. This paranoia
+    # than `np.ndarray` and this only happens at runtime. This paranoia
     # does not apply to placeholders and constants, for which we provide
     # direct and correct `np.asarray()` initial value assignments.
 
@@ -235,6 +235,17 @@ class State:
             by default using the `DTMODEL_ENGINE_FLAGS` environement
             variable as documented by the `compileflags` package docs.
         functions: user-defined functions assignments.
+
+    Notes
+    -----
+    ``frozen=True`` prevents *attribute reassignment* (e.g.
+    ``state.values = new_dict`` raises ``FrozenInstanceError``), giving an
+    identity-stability guarantee: any caller that holds a reference to
+    ``state.values`` can rely on that reference remaining valid for the
+    lifetime of the ``State`` object.  It does **not** make the dict
+    itself immutable — ``state.values[node] = result`` works freely and
+    is exactly what the executor does throughout evaluation.  This is
+    intentional.
     """
 
     values: dict[graph.Node, np.ndarray]

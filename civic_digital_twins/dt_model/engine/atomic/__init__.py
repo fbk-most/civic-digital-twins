@@ -13,6 +13,14 @@ class Int:
     This class provides atomic operations on integer values by using
     a lock to ensure thread-safety. It allows incrementing, adding,
     and reading values without race conditions in multithreaded environments.
+
+    Note: when an instance is created at module level (as ``graph._id_generator``
+    is), it acts as a process-global counter.  Every call to ``add`` across
+    *all* graph constructions in the same Python session increments the same
+    counter, so IDs are unique across all graphs in a process — not just within
+    a single graph.  This is intentional: node IDs serve as dict keys in
+    ``executor.State.values``, so they must never collide across graphs that
+    share a state.
     """
 
     def __init__(self):

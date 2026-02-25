@@ -18,6 +18,7 @@ from scipy import stats
 from civic_digital_twins.dt_model import Index, TimeseriesIndex, UniformDistIndex
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.internal.sympyke import Piecewise
+from civic_digital_twins.dt_model.engine import compileflags
 
 vehicle_inflow = np.array(
     [
@@ -700,6 +701,8 @@ class Model:
             + self.I_P_cost[6] * euro_class_split["euro_6"],
         )
 
+        self.I_test = TimeseriesIndex("test", self.TS_inflow * self.I_B_p50_cost)
+
         self.I_fraction_rigid_euro = [
             Index(
                 f"rigid vehicles euro_{e} %",
@@ -921,6 +924,7 @@ class Model:
             self.I_B_p50_postponement,
             self.I_B_starting_modified_factor,
             self.I_avg_cost,
+            self.I_temp,
             *self.I_fraction_rigid_euro,
             self.I_fraction_rigid,
             *self.I_modified_euro_class_split,
@@ -973,7 +977,7 @@ class Model:
 
         state = executor.State(
             initial_values,
-            # compileflags.defaults | compileflags.TRACE,
+            compileflags.defaults | compileflags.TRACE,
             functions={"ts_solve": executor.LambdaAdapter(_ts_solve)},
         )
 

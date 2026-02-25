@@ -7,15 +7,16 @@ to NumPy primitives, albeit with minor naming differences.
 This module provides:
 
 1. Basic node types for constants and placeholders
-2. Arithmetic operations (add, subtract, multiply, divide)
-3. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
-4. Logical operations (and, or, xor, not)
-5. Mathematical operations (exp, power, log)
-6. Shape manipulation operations (expand_dims, squeeze)
-7. Reduction operations (sum, mean)
-8. Built-in debug operations (tracepoint, breakpoint)
-9. Support for infix and unary operators (e.g., `a + b`, `~a`)
-10. Support for user-defined functions.
+2. Timeseries node types (timeseries_constant, timeseries_placeholder)
+3. Arithmetic operations (add, subtract, multiply, divide, power)
+4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
+5. Logical operations (and, or, xor, not)
+6. Mathematical operations (exp, log)
+7. Shape manipulation operations (expand_dims, squeeze)
+8. Reduction operations (sum, mean)
+9. Support for user-defined functions.
+10. Built-in debug operations (tracepoint, breakpoint)
+11. Support for infix and unary operators (e.g., `a + b`, `~a`).
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -544,6 +545,18 @@ class divide(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.divide(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
+class power(Generic[T], BinaryOp[T]):
+    """Element-wise power operation (first tensor raised to power of second)."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.power(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
+
+pow = power
+"""Name alias for power, for compatibility with NumPy naming."""
+
+
 # Comparison operations
 
 
@@ -651,18 +664,6 @@ class exp(Generic[T], UnaryOp[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.exp(node=n{self.node.id}, name='{self.name}')"
-
-
-class power(Generic[T], BinaryOp[T]):
-    """Element-wise power operation (first tensor raised to power of second)."""
-
-    def __repr__(self) -> str:
-        """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.power(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
-
-
-pow = power
-"""Name alias for power, for compatibility with NumPy naming."""
 
 
 class log(Generic[T], UnaryOp[T]):
@@ -823,38 +824,6 @@ still uses this name. We will remove this symbol once the merge of
 yakof into the dt-model is complete."""
 
 
-# Debug operations
-
-
-def tracepoint(node: Node[T]) -> Node[T]:
-    """
-    Mark the node as a tracepoint and returns it.
-
-    The tracepoint will take effect while evaluating the node. We will
-    print information before evaluating the node, evaluate it, then
-    print the result.
-
-    This function acts like the unit in the category with semantic side
-    effects depending on the debug operation that is requested.
-    """
-    node.flags |= NODE_FLAG_TRACE
-    return node
-
-
-def breakpoint(node: Node[T]) -> Node[T]:
-    """
-    Mark the node as a breakpoint and returns it.
-
-    The breakpoint will cause the interpreter to stop before
-    evaluating the node.
-
-    This function acts like the unit in the category with semantic side
-    effects depending on the debug operation that is requested.
-    """
-    node.flags |= NODE_FLAG_TRACE | NODE_FLAG_BREAK
-    return node
-
-
 # User-defined functions
 
 
@@ -887,3 +856,35 @@ function = function_call
 The function_call name is more appropriate since what happens
 is indeed that we are calling a function.
 """
+
+
+# Debug operations
+
+
+def tracepoint(node: Node[T]) -> Node[T]:
+    """
+    Mark the node as a tracepoint and returns it.
+
+    The tracepoint will take effect while evaluating the node. We will
+    print information before evaluating the node, evaluate it, then
+    print the result.
+
+    This function acts like the unit in the category with semantic side
+    effects depending on the debug operation that is requested.
+    """
+    node.flags |= NODE_FLAG_TRACE
+    return node
+
+
+def breakpoint(node: Node[T]) -> Node[T]:
+    """
+    Mark the node as a breakpoint and returns it.
+
+    The breakpoint will cause the interpreter to stop before
+    evaluating the node.
+
+    This function acts like the unit in the category with semantic side
+    effects depending on the debug operation that is requested.
+    """
+    node.flags |= NODE_FLAG_TRACE | NODE_FLAG_BREAK
+    return node
