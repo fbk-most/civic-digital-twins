@@ -90,7 +90,7 @@ def _expand_dims(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
 
 
 def _reduce_sum(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
-    """Reduce an array by summing along the specified axis.
+    """Sum along the specified axis, keeping the reduced axis as size 1.
 
     Args:
         x: The input array to reduce
@@ -98,13 +98,13 @@ def _reduce_sum(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
 
     Returns
     -------
-        Array with the specified axis reduced by summation
+        Array with the specified axis reduced by summation (keepdims=True)
     """
-    return np.sum(x, axis=axis)
+    return np.sum(x, axis=axis, keepdims=True)
 
 
 def _reduce_mean(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
-    """Reduce an array by computing the mean along the specified axis.
+    """Average along the specified axis, keeping the reduced axis as size 1.
 
     Args:
         x: The input array to reduce
@@ -112,15 +112,15 @@ def _reduce_mean(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
 
     Returns
     -------
-        Array with the specified axis reduced by averaging
+        Array with the specified axis reduced by averaging (keepdims=True)
     """
-    return np.mean(x, axis=axis)
+    return np.mean(x, axis=axis, keepdims=True)
 
 
 _axes_operations: dict[type[graph.AxisOp], _AxisOpFunc] = {
     graph.expand_dims: _expand_dims,
-    graph.reduce_sum: _reduce_sum,
-    graph.reduce_mean: _reduce_mean,
+    graph.project_using_sum: _reduce_sum,
+    graph.project_using_mean: _reduce_mean,
 }
 """Maps an axis op in the graph domain to the corresponding numpy operation.
 
@@ -500,13 +500,6 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
 def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.AxisOp, node)
     operand = state.get_node_value(node.node)
-    keepdims: bool = getattr(node, "keepdims", False)
-    if keepdims:
-        # project_using_sum and project_using_mean support keepdims.
-        if isinstance(node, graph.project_using_sum):
-            return np.sum(operand, axis=node.axis, keepdims=True)
-        if isinstance(node, graph.project_using_mean):
-            return np.mean(operand, axis=node.axis, keepdims=True)
     try:
         return _axes_operations[type(node)](operand, node.axis)
     except KeyError:

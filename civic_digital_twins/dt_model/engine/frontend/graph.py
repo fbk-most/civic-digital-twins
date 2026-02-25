@@ -850,27 +850,21 @@ class squeeze(Generic[T], AxisOp[T]):
 
 
 class project_using_sum(Generic[T], AxisOp[T]):
-    """Computes sum of tensor elements along specified axes.
+    """Computes sum of tensor elements along specified axes, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.sum(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
 
     Args:
         node: Input tensor.
         axis: Axis along which to sum.
-        keepdims: If True, the reduced axis is kept as size 1 (like
-            ``np.sum(..., keepdims=True)``).  Defaults to False.
     """
-
-    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
-        super().__init__(node, axis, name)
-        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return (
-            f"n{self.id} = graph.project_using_sum"
-            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
-        )
+        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 reduce_sum = project_using_sum
@@ -880,27 +874,21 @@ the dt-model is complete."""
 
 
 class project_using_mean(Generic[T], AxisOp[T]):
-    """Computes mean of tensor elements along specified axes.
+    """Computes mean of tensor elements along specified axes, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.mean(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
 
     Args:
         node: Input tensor.
         axis: Axis along which to average.
-        keepdims: If True, the reduced axis is kept as size 1 (like
-            ``np.mean(..., keepdims=True)``).  Defaults to False.
     """
-
-    def __init__(self, node: Node[T], axis: Axis, keepdims: bool = False, name: str = "") -> None:
-        super().__init__(node, axis, name)
-        self.keepdims = keepdims
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return (
-            f"n{self.id} = graph.project_using_mean"
-            + f"(node=n{self.node.id}, axis={self.axis}, keepdims={self.keepdims}, name='{self.name}')"
-        )
+        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
 reduce_mean = project_using_mean

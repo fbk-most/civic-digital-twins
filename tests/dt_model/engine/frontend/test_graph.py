@@ -559,10 +559,10 @@ def test_repr():
     assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
 
     x = graph.project_using_sum(a, (1, 2))
-    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
 
     y = graph.project_using_mean(a, (1, 2))
-    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), keepdims=False, name='')"
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
 
     z = graph.function("jarjar", x, y, u, v=v, w=w)
     assert str(z) == f"n{z.id} = graph.function(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"

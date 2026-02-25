@@ -390,11 +390,11 @@ def test_index_neg_evaluates_correctly():
 # ---------------------------------------------------------------------------
 
 
-def test_index_sum_returns_reduce_sum_node():
-    """sum() returns a reduce_sum graph node."""
+def test_index_sum_returns_project_using_sum_node():
+    """sum() returns a project_using_sum graph node."""
     ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
     node = ts.sum()
-    assert isinstance(node, graph.reduce_sum)
+    assert isinstance(node, graph.project_using_sum)
 
 
 def test_index_sum_evaluates_correctly():
@@ -421,11 +421,11 @@ def test_index_sum_batched():
     assert np.allclose(result, [[6.0], [15.0]])
 
 
-def test_index_mean_returns_reduce_mean_node():
-    """mean() returns a reduce_mean graph node."""
+def test_index_mean_returns_project_using_mean_node():
+    """mean() returns a project_using_mean graph node."""
     ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
     node = ts.mean()
-    assert isinstance(node, graph.reduce_mean)
+    assert isinstance(node, graph.project_using_mean)
 
 
 def test_index_mean_evaluates_correctly():

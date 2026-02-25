@@ -163,22 +163,22 @@ class GenericIndex(ABC):
         """Return a graph node that sums this index over the given axis.
 
         The default axis ``-1`` sums across the last (time) dimension.
-        ``keepdims=True`` is used so that the reduced axis is preserved as
-        size 1.  This ensures the result broadcasts correctly against both
-        plain timeseries ``(T,)`` and ensemble-batched timeseries
-        ``(size, T)``:
+        The reduced axis is always preserved as size 1, ensuring the result
+        broadcasts correctly against both plain timeseries ``(T,)`` and
+        ensemble-batched timeseries ``(size, T)``:
 
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
-        return graph.reduce_sum(self.node, axis, keepdims=True)
+        return graph.project_using_sum(self.node, axis)
 
     def mean(self, axis: int = -1) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
 
-        Same axis and keepdims convention as :meth:`sum`.
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
         """
-        return graph.reduce_mean(self.node, axis, keepdims=True)
+        return graph.project_using_mean(self.node, axis)
 
 
 class Index(GenericIndex):

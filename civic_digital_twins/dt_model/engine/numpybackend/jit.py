@@ -65,8 +65,8 @@ _operation_names: dict[type[graph.Node], str] = {
     # axis operations
     graph.squeeze: "squeeze",
     graph.expand_dims: "expand_dims",
-    graph.reduce_sum: "sum",
-    graph.reduce_mean: "mean",
+    graph.project_using_sum: "sum",
+    graph.project_using_mean: "mean",
     # internal
     _InternalTestingNode: "_internal_testing",
 }
@@ -194,6 +194,8 @@ def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = 
     elif isinstance(node, graph.AxisOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)])))
+        if isinstance(node, (graph.project_using_sum, graph.project_using_mean)):
+            kwargs.append(ast.keyword("keepdims", ast.Constant(value=True)))
 
     # 10. catch all for not implemented operations
     else:
