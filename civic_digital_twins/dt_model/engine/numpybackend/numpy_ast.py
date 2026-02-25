@@ -1,16 +1,12 @@
-"""NumPy JIT compiler infrastructure.
+"""NumPy AST code generator.
 
-This module provides support for:
+Transforms ``graph.Node`` objects into a Python AST that uses NumPy
+function calls (e.g. ``graph.add`` → ``np.add``), and unparses the
+AST back to Python source code.
 
-1. transforming graph.Node, forest.Tree, and ir.DAG into a Python AST
-that uses NumPy function calls (e.g., `graph.add` -> `np.add`).
-
-2. compiling the Python AST to Python bytecode.
-
-3. JIT compiling the Python bytecode using Numba.
-
-This code is still experimental and also incomplete. For now, we only
-implement the bare minimum to pretty print nodes for debugging.
+The primary use case is debugging: the generated source shows the
+exact NumPy calls that would evaluate a computation graph node,
+making it easy to inspect and verify graph construction.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -23,11 +19,11 @@ from ..frontend import graph
 
 
 class UnsupportedNodeArguments(Exception):
-    """Raised when the JIT compiler does not know how to AST-compile a node arguments."""
+    """Raised when the AST generator does not know how to compile a node's arguments."""
 
 
 class UnsupportedNodeType(Exception):
-    """Raised when the JIT compiler does not know the NumPy function a node corresponds to."""
+    """Raised when the AST generator does not know the NumPy function a node corresponds to."""
 
 
 class _InternalTestingNode(graph.Node):
@@ -35,6 +31,9 @@ class _InternalTestingNode(graph.Node):
 
 
 _operation_names: dict[type[graph.Node], str] = {
+    # timeseries
+    graph.timeseries_constant: "asarray",
+    graph.timeseries_placeholder: "asarray",
     # placeholder
     graph.placeholder: "asarray",
     # constant
@@ -56,6 +55,7 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.power: "power",
     graph.maximum: "maximum",
     # unary
+    graph.negate: "negative",
     graph.logical_not: "logical_not",
     graph.exp: "exp",
     graph.log: "log",
@@ -92,15 +92,12 @@ def _np_ndarray_to_ast_expr(value: graph.Scalar | list) -> ast.expr:
 
 
 def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) -> ast.stmt:
-    """Transform a graph.Node to a Python ast.ast.
+    """Transform a graph.Node to a Python AST assignment statement.
 
-    The value is only required for placeholders, whose value is known
-    ahead of evaluation and isn't embedded into the graph. We verify
-    whether this is the case with a runtime assertion checking that the
-    value is only specified for placeholders.
-
-    This function is useful to transform multiple nodes to valid
-    Python AST, which in turn can be JIT compiled with Numba.
+    The value is only required for placeholder nodes (``graph.placeholder``
+    and ``graph.timeseries_placeholder``), whose value is known ahead of
+    evaluation and is not embedded in the graph.  We verify this invariant
+    at runtime.
 
     This function calls ast.fix_missing_locations before returning.
     """
@@ -143,44 +140,50 @@ def _graph_function_to_ast_expr(node: graph.function_call) -> ast.expr:
 
 
 def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = None) -> ast.expr:
-    # 0. ensure value is only given for placeholders
-    assert (isinstance(node, graph.placeholder) and value is not None) or value is None
+    _placeholders = (graph.placeholder, graph.timeseries_placeholder)
+
+    # 0. ensure value is only given for placeholder nodes
+    assert (isinstance(node, _placeholders) and value is not None) or value is None
 
     # 1. get the operation name
     try:
         opname = _operation_names[type(node)]
     except KeyError:
-        raise UnsupportedNodeType(f"jit: unsupported operation: {type(node)}")
+        raise UnsupportedNodeType(f"numpy_ast: unsupported operation: {type(node)}")
 
     # 2. prepare for args and kwargs
     posargs: list[ast.expr] = []
     kwargs: list[ast.keyword] = []
 
-    # 3. evaluate placeholders
-    if isinstance(node, graph.placeholder):
+    # 3. evaluate timeseries constants (values embedded in the node)
+    if isinstance(node, graph.timeseries_constant):
+        posargs.append(_np_ndarray_to_ast_expr(np.asarray(node.values).tolist()))
+
+    # 4. evaluate placeholder nodes (value provided externally)
+    elif isinstance(node, _placeholders):
         assert value is not None  # make the typechecker really happy
         posargs.append(_np_ndarray_to_ast_expr(value.tolist()))
 
-    # 4. evaluate constants
+    # 5. evaluate scalar constants
     elif isinstance(node, graph.constant):
         posargs.append(ast.Constant(value=node.value))
 
-    # 5. evaluate unary operations
+    # 6. evaluate unary operations
     elif isinstance(node, graph.UnaryOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
 
-    # 6. evaluate binary operations
+    # 7. evaluate binary operations
     elif isinstance(node, graph.BinaryOp):
         posargs.append(ast.Name(id=_node_name(node.left), ctx=ast.Load()))
         posargs.append(ast.Name(id=_node_name(node.right), ctx=ast.Load()))
 
-    # 7. evaluate where operations
+    # 8. evaluate where operations
     elif isinstance(node, graph.where):
         posargs.append(ast.Name(id=_node_name(node.condition), ctx=ast.Load()))
         posargs.append(ast.Name(id=_node_name(node.then), ctx=ast.Load()))
         posargs.append(ast.Name(id=_node_name(node.otherwise), ctx=ast.Load()))
 
-    # 8. evaluate multi_clause_where
+    # 9. evaluate multi_clause_where
     elif isinstance(node, graph.multi_clause_where):
         condlist: list[ast.expr] = []
         choicelist: list[ast.expr] = []
@@ -190,25 +193,25 @@ def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = 
         default: ast.expr = ast.Name(id=_node_name(node.default_value), ctx=ast.Load())
         posargs.extend([ast.List(condlist), ast.List(choicelist), default])
 
-    # 9. evaluate axis operations
+    # 10. evaluate axis operations
     elif isinstance(node, graph.AxisOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)])))
         if isinstance(node, (graph.project_using_sum, graph.project_using_mean)):
             kwargs.append(ast.keyword("keepdims", ast.Constant(value=True)))
 
-    # 10. catch all for not implemented operations
+    # 11. catch all for not implemented operations
     else:
-        raise UnsupportedNodeArguments(f"jit: unsupported node type: {type(node)}")
+        raise UnsupportedNodeArguments(f"numpy_ast: unsupported node type: {type(node)}")
 
-    # 11. create function call expr
+    # 12. create function call expr
     return ast.Call(func=_np_attr_name(opname), args=posargs, keywords=kwargs)
 
 
 def graph_node_to_numpy_code(node: graph.Node, value: np.ndarray | None = None) -> str:
-    """Transform a node to numpy source code.
+    """Transform a node to NumPy source code.
 
-    This functionality is mainly useful for debugging and for compiling
-    the graph to Python source code.
+    This is mainly useful for debugging: the returned string shows the
+    exact NumPy call that would evaluate the given graph node.
     """
     return ast.unparse(graph_node_to_ast_stmt(node, value))

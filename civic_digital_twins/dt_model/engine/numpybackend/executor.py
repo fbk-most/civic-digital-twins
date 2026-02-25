@@ -26,8 +26,8 @@ from typing import (
 import numpy as np
 
 from .. import compileflags
-from ..frontend import forest, graph, ir
-from . import jit
+from ..frontend import graph
+from . import numpy_ast
 
 # Type aliases for operation function signatures
 _BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -142,7 +142,7 @@ def _print_graph_node(node: graph.Node) -> None:
     if not isinstance(
         node, (graph.constant, graph.placeholder, graph.timeseries_constant, graph.timeseries_placeholder)
     ):
-        print(jit.graph_node_to_numpy_code(node))
+        print(numpy_ast.graph_node_to_numpy_code(node))
 
 
 def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
@@ -156,9 +156,9 @@ def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
     # 1. for nodes that are not evaluated, we print their actual
     # value so the representation can round trip.
     if isinstance(node, graph.placeholder):
-        print(jit.graph_node_to_numpy_code(node, value))
+        print(numpy_ast.graph_node_to_numpy_code(node, value))
     elif isinstance(node, graph.constant):
-        print(jit.graph_node_to_numpy_code(node))
+        print(numpy_ast.graph_node_to_numpy_code(node))
 
     # 2. print the shape and dtype, which are invaluable when debugging
     if hasattr(value, "shape"):
@@ -283,74 +283,6 @@ class State:
     def set_node_value(self, node: graph.Node, value: np.ndarray) -> None:
         """Set the value associated with the given node."""
         self.values[node] = value
-
-
-def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
-    """Evaluate a DAG IR and produce a result or nothing.
-
-    You can obtain the DAG IR using the `frontend.ir` module. The generated DAG
-    contains either topologically sorted trees or topologically sorted nodes
-    to evaluate. We assert on this invariant before the evaluation.
-
-    If the DAG contains nodes, we invoke evaluate_nodes. Otherwise we invoke
-    evaluate_trees. The explicit availability of constants and placeholders
-    allows us to perform transformations on them, should we need it to ensure
-    the backend can handle them. Currently, this is not an issue and, probably,
-    this would never be an issue for the NumPy backend.
-
-    See https://github.com/fbk-most/civic-digital-twins/issues/84#issuecomment-3129629098.
-    """
-    assert (not dag.trees) != (not dag.nodes)
-
-    # Ensure that every constant within the DAG input has already
-    # been evaluated and otherwise evaluate it once. This is required
-    # because constants are refactored outside of the topological
-    # sorting when we're building a DAG from linearized nodes. Also, remember
-    # that evaluate_single_node evaluates each node at most once.
-    for node in dag.constants:
-        evaluate_single_node(state, node)
-
-    return evaluate_trees(state, *dag.trees) if dag.trees else evaluate_nodes(state, *dag.nodes)
-
-
-def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
-    """Provide syntactic sugar for evaluating multiple trees."""
-    rv: np.ndarray | None = None
-    for tree in trees:
-        rv = evaluate_single_tree(state, tree)
-    return rv
-
-
-def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
-    """Evaluate a `forest.Tree` using the current `State`.
-
-    This function is syntactic sugar for calling `evaluate_nodes`
-    for each node in the tree body.
-    """
-    # Ensure the invariant for the tree applies
-    assert len(tree.body) > 0
-
-    # Honor the dump flag if requested to dump the code
-    if state.flags & compileflags.DUMP != 0:
-        print(str(tree))
-        print("")
-
-    # Ensure that every constant within the tree input has already
-    # been evaluated and otherwise evaluate it once. This is required
-    # because constants are part of the tree input set. Also, remember
-    # that evaluate_single_node evaluates each node at most once.
-    for node in tree.inputs:
-        if isinstance(node, graph.constant):
-            evaluate_single_node(state, node)
-
-    # Evaluate the tree body
-    rv = _evaluate_nodes(state, *tree.body)
-
-    # Ensure the invariant holds for the result
-    assert rv is not None
-
-    # Return result to the caller
-    return rv
 
 
 def evaluate_nodes(state: State, *nodes: graph.Node) -> np.ndarray | None:

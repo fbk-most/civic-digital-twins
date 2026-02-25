@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from civic_digital_twins.dt_model.engine import compileflags
-from civic_digital_twins.dt_model.engine.frontend import forest, graph, ir, linearize
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
@@ -601,59 +601,9 @@ def test_state_post_init_tracing(capsys):
     assert f"n{y.id} = np.asarray([4.0, 5.0, 6.0])" in output
 
 
-def test_evaluate_trees_nonempty():
-    """Test execution where we evaluate a forest tree."""
-    # Build a more complex graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-
-    # x^2 + 2*y
-    x_squared = graph.power(x, graph.constant(2.0))
-    two_y = graph.multiply(y, graph.constant(2.0))
-    sum_term = graph.add(x_squared, two_y)
-
-    # where(x > y, x^2 + 2*y, y - x)
-    diff = graph.subtract(y, x)
-    condition = graph.greater(x, y)
-    result = graph.where(condition, sum_term, diff)
-
-    # Create the trees
-    trees = forest.partition(result)
-
-    # Test data
-    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
-    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
-
-    # Expected result calculations
-    expected_x_squared = x_val**2
-    expected_two_y = 2 * y_val
-    expected_sum = expected_x_squared + expected_two_y
-    expected_diff = y_val - x_val
-    expected_condition = x_val > y_val
-    expected_result = np.where(expected_condition, expected_sum, expected_diff)
-
-    # Evaluate with executor setting the DUMP flag to exercise it
-    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
-    executor.evaluate_trees(state, *trees)
-
-    # Check intermediate and final results
-    assert np.array_equal(state.values[x_squared], expected_x_squared)
-    assert np.array_equal(state.values[two_y], expected_two_y)
-    assert np.array_equal(state.values[sum_term], expected_sum)
-    assert np.array_equal(state.values[diff], expected_diff)
-    assert np.array_equal(state.values[condition], expected_condition)
-    assert np.array_equal(state.values[result], expected_result)
-
-
 def test_evaluate_nodes_empty():
     """Ensure that evaluate_nodes returns None if passed no nodes."""
     rv = executor.evaluate_nodes(executor.State(values={}))
-    assert rv is None
-
-
-def test_evaluate_trees_empty():
-    """Ensure that evaluate_trees returns None if passed no trees."""
-    rv = executor.evaluate_trees(executor.State(values={}))
     assert rv is None
 
 
@@ -692,100 +642,6 @@ def test_user_defined_function():
             }
         )
         executor.evaluate_nodes(state2, *linearize.forest(g))
-
-
-def test_evaluate_dag_trees():
-    """Test execution where we evaluate an IR DAG containing trees."""
-    # Build a more complex graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-
-    # x^2 + 2*y
-    x_squared = graph.power(x, graph.constant(2.0))
-    two_y = graph.multiply(y, graph.constant(2.0))
-    sum_term = graph.add(x_squared, two_y)
-
-    # where(x > y, x^2 + 2*y, y - x)
-    diff = graph.subtract(y, x)
-    condition = graph.greater(x, y)
-    result = graph.where(condition, sum_term, diff)
-
-    # Create the trees
-    trees = forest.partition(sum_term, result)
-
-    # Transform the trees into an IR DAG
-    dag = ir.compile_trees(*trees)
-
-    # Test data
-    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
-    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
-
-    # Expected result calculations
-    expected_x_squared = x_val**2
-    expected_two_y = 2 * y_val
-    expected_sum = expected_x_squared + expected_two_y
-    expected_diff = y_val - x_val
-    expected_condition = x_val > y_val
-    expected_result = np.where(expected_condition, expected_sum, expected_diff)
-
-    # Evaluate with executor setting the DUMP flag to exercise it
-    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
-    executor.evaluate_dag(state, dag)
-
-    # Check intermediate and final results
-    assert np.array_equal(state.values[x_squared], expected_x_squared)
-    assert np.array_equal(state.values[two_y], expected_two_y)
-    assert np.array_equal(state.values[sum_term], expected_sum)
-    assert np.array_equal(state.values[diff], expected_diff)
-    assert np.array_equal(state.values[condition], expected_condition)
-    assert np.array_equal(state.values[result], expected_result)
-
-
-def test_evaluate_dag_nodes():
-    """Test execution where we evaluate an IR DAG containing nodes."""
-    # Build a more complex graph
-    x = graph.placeholder("x")
-    y = graph.placeholder("y")
-
-    # x^2 + 2*y
-    x_squared = graph.power(x, graph.constant(2.0))
-    two_y = graph.multiply(y, graph.constant(2.0))
-    sum_term = graph.add(x_squared, two_y)
-
-    # where(x > y, x^2 + 2*y, y - x)
-    diff = graph.subtract(y, x)
-    condition = graph.greater(x, y)
-    result = graph.where(condition, sum_term, diff)
-
-    # Create the topological sorting
-    plan = linearize.forest(sum_term, result)
-
-    # Transform the topological sorting into an IR DAG
-    dag = ir.compile_nodes(*plan)
-
-    # Test data
-    x_val = np.array([[1.0, 5.0], [3.0, 2.0]])
-    y_val = np.array([[2.0, 3.0], [1.0, 4.0]])
-
-    # Expected result calculations
-    expected_x_squared = x_val**2
-    expected_two_y = 2 * y_val
-    expected_sum = expected_x_squared + expected_two_y
-    expected_diff = y_val - x_val
-    expected_condition = x_val > y_val
-    expected_result = np.where(expected_condition, expected_sum, expected_diff)
-
-    # Evaluate with executor setting the DUMP flag to exercise it
-    state = executor.State({x: x_val, y: y_val}, flags=compileflags.DUMP)
-    executor.evaluate_dag(state, dag)
-
-    # Check intermediate and final results
-    assert np.array_equal(state.values[x_squared], expected_x_squared)
-    assert np.array_equal(state.values[two_y], expected_two_y)
-    assert np.array_equal(state.values[sum_term], expected_sum)
-    assert np.array_equal(state.values[diff], expected_diff)
-    assert np.array_equal(state.values[condition], expected_condition)
-    assert np.array_equal(state.values[result], expected_result)
 
 
 def test_state_set_node_value():
