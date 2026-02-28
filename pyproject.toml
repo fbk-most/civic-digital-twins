@@ -111,6 +111,10 @@ addopts = "--cov=civic_digital_twins --cov-report=xml --cov-report=term-missing"
 # We target the maximum version supported by @scc-digitalhub.
 target-version = "py311"
 
+# Exclude doc test scripts: they mirror documentation snippets verbatim and
+# are not subject to style enforcement.
+extend-exclude = ["examples/doc"]
+
 # Maximum line length
 line-length = 120
 

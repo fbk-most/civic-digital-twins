@@ -1,11 +1,12 @@
 # DSL Compiler Engine
 
-|                  |                                                |
-| ---------------- | ---------------------------------------------- |
-| Author           | [@bassosimone](https://github.com/bassosimone) |
-| Last-Updated     | 2025-07-30                                     |
-| Status           | Draft                                          |
-| Approved-By      | N/A                                            |
+|              | Document data                                  |
+|--------------|------------------------------------------------|
+| Author       | [@bassosimone](https://github.com/bassosimone) |
+| Co-authors   | [@pistore](https://github.com/pistore)         |
+| Last-Updated | 2026-02-28                                     |
+| Status       | Draft                                          |
+| Approved-By  | N/A                                            |
 
 The [dt_model](../../civic_digital_twins/dt_model) package includes
 [engine](../../civic_digital_twins/dt_model/engine):
@@ -50,59 +51,29 @@ in input zero or more `np.ndarray` and returning a `np.ndarray`.
 **DAG.** The written DSL code is as a [directed acyclic graph](
 https://en.wikipedia.org/wiki/Directed_acyclic_graph) (DAG).
 
-**Linear Topological Sorting vs Tree Partitioning.** The programmer may either
-produce a linear [topological sorting](https://en.wikipedia.org/wiki/Topological_sorting)
-of the DAG or partition the DAG into topologically sorted trees. For
-both use cases, the input is a list of root nodes whose values need to
-be evaluated. The linear sorting produces the sequence of operations
-that evaluates each root node in the correct order. The tree-based
-sorting produces a subtree for each root node. A tree depends on other
-nodes (constants, placeholders, and results produced by other trees)
-and contains topologically sorted nodes sequencing operations correctly
-to evaluate the tree root node. The tree view makes the dependencies
-between each tree explicit (which helps with debugging) and potentially
-allows optimizations such as [JIT-compiling](
-https://en.wikipedia.org/wiki/Just-in-time_compilation).
-
-**DAG Intermediate Representation (IR).** Regardless of whether the
-programmer used linear sorting or tree paritioning, it is possible to
-produce an intermediate representation of the DAG suitable to be
-mapped to low-level numeric operations through simple transformations.
-This IR representation singles out constants and placeholders, allowing
-us to easily transform/remap them (e.g., if we need to avoid using
-strings with specific backends). Additionally, the IR contains
-the topologically sorted nodes or trees to evaluate. Whether it
-contains nodes or trees depends on whether the programmer produced
-a linear topological sorting or used tree partitioning.
-
-**Support for Multiple Backends.** The DAG IR is abstract and
-may be evaluated by distinct backends. Currently, we only implement
-a [NumPy](https://github.com/numpy/numpy) backend. However,
-the code can easily be extended to support other backends,
-such as [TensorFlow](https://github.com/tensorflow/tensorflow).
+**Support for Multiple Backends.** The DAG may be evaluated by distinct
+backends. Currently, we only implement a [NumPy](https://github.com/numpy/numpy)
+backend. However, the code can easily be extended to support other
+backends, such as [TensorFlow](https://github.com/tensorflow/tensorflow).
 Because of this possibility, the compiler is conceptually split into
 a backend-agnostic *frontend* and specific *backends*.
 
-**NumPy Evaluation.** To evaluate a DAG we evaluate its topological
-sorted nodes or trees. The evaluation uses a *State* data structure (functionally equivalent
-to a dictionary mapping a node to the `np.ndarray` result of
-its evaluation). The basic evaluation algorithm uses a Python-based
-interpreter to map nodes to the corresponding NumPy operations, reading
-required node values from the State and writing results to the
-State. Thus, nodes are only evaluated once. A more advanced, experimental
-evaluation strategy transforms a tree to a Python function using
-NumPy calls and uses [Numba](https://github.com/numba/numba) to
-JIT-compile these functions to efficient code. Preliminary
-[benchmarks](https://github.com/fbk-most/civic-digital-twins/issues/54)
-indicate that using Numba is useful when the same code is evaluated
-multiple times with equally shaped constants and placeholders.
+**NumPy Evaluation.** To evaluate a DAG we evaluate its topologically
+sorted nodes. The evaluation uses a *State* data structure (functionally
+equivalent to a dictionary mapping a node to the `np.ndarray` result of
+its evaluation). The evaluation algorithm uses a Python-based interpreter
+that maps nodes to the corresponding NumPy operations, reads required node
+values from the State, and writes results back to the State. Each node is
+evaluated at most once. An experimental JIT compilation strategy using
+[Numba](https://github.com/numba/numba) is developed in a separate branch;
+see [#54](https://github.com/fbk-most/civic-digital-twins/issues/54).
 
 ## End-To-End Example
 
 ```Python
 import numpy as np
 
-from civic_digital_twins.dt_model.engine.frontend import forest, graph, ir
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
@@ -124,11 +95,8 @@ c1 = graph.function_call("reduce", c)
 d = a * k0 - b
 d1 = graph.function_call("reduce", d)
 
-# Partition it into two subtrees for `c` and `d`
-trees = forest.partition(c1, d1)
-
-# Create an intermediate DAG representation
-dag = ir.compile_trees(*trees)
+# Obtain a topological ordering for the nodes of interest
+nodes = linearize.forest(c1, d1)
 
 # Setup initial state including placeholder values
 # and the user-defined function `reduce`
@@ -144,8 +112,8 @@ state = executor.State(
     },
 )
 
-# Evaluate the intermediate representation
-executor.evaluate_dag(state, dag)
+# Evaluate nodes in topological order
+executor.evaluate_nodes(state, *nodes)
 
 # Print the results
 print(state.get_node_value(c1))
@@ -182,48 +150,22 @@ that evaluates the DAG using [NumPy](https://github.com/numpy/numpy).
 Additional backends will take the `<backend>backend` name. For example:
 `tensorflowbackend`, `jaxbackend`.
 
-## Frontend-Backend Contract
-
-All backends should implement an `evaluate_dag(state, dag)` function
-and conform to the semantics defined by the frontend:
-
-```Python
-from typing import Protocol, runtime_checkable
-
-from civic_digital_twins.dt_model.engine.frontend import graph, ir
-
-@runtime_checkable
-class State(Protocol):
-    def set_node_value(self, node: graph.Node, value: np.ndarray) -> None: ...
-
-    def get_node_value(self, node: graph.Node) -> np.ndarray: ...
-
-def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray|None: ...
-```
-
-This design assumes that any backend we may want to use is able to cheaply
-convert its internal array representation from/to `np.ndarray`. As discussed
-in [#84](https://github.com/fbk-most/civic-digital-twins/issues/84#issuecomment-3129629098),
-this assumption seems reasonable for most backends.
-
 ## Main Modules: a Quick Reference
 
 | Module | Responsibility |
 | ------ | -------------- |
 | [`atomic/__init__.py`](../../civic_digital_twins/dt_model/engine/atomic/__init__.py) | Atomic counters. |
 | [`compileflags/__init__.py`](../../civic_digital_twins/dt_model/engine/compileflags/__init__.py) | Compile flags definition. |
-| [`frontend/forest.py`](../../civic_digital_twins/dt_model/engine/frontend/forest.py) | Forest partitioning. |
 | [`frontend/graph.py`](../../civic_digital_twins/dt_model/engine/frontend/graph.py) | Node types and gradually-typed DSL. |
-| [`frontend/ir.py`](../../civic_digital_twins/dt_model/engine/frontend/ir.py) | Intermediate DAG representation. |
 | [`frontend/linearize.py`](../../civic_digital_twins/dt_model/engine/frontend/linearize.py) | Topological sorting. |
 | [`numpybackend/executor.py`](../../civic_digital_twins/dt_model/engine/numpybackend/executor.py) | Main executor interface. |
-| [`numpybackend/jit.py`](../../civic_digital_twins/dt_model/engine/numpybackend/jit.py) | JIT infrastructure. |
+| [`numpybackend/numpy_ast.py`](../../civic_digital_twins/dt_model/engine/numpybackend/numpy_ast.py) | Graph-to-NumPy AST translation (debugging). |
 
 ## Overall Data Flow
 
 ```mermaid
 flowchart TD
-    A[Gradually-Typed DAG<br/>frontend/graph.py] --> B[DAG IR<br/>frontend/ir.py]
+    A[Gradually-Typed DAG<br/>frontend/graph.py] --> B[Topological Sort<br/>frontend/linearize.py]
     B --> C[np.ndarray<br/>numpybackend/executor.py]
     style A fill:#f0f8ff,stroke:#333,stroke-width:1px
     style B fill:#f5fff5,stroke:#333,stroke-width:1px
@@ -401,6 +343,61 @@ def reduce(c: np.ndarray, d: np.ndarray, e: np.ndarray) -> np.ndarray: ...
 In the next section, we will start to play around to understand
 what is the structure of this DAG that we have created.
 
+### Timeseries Nodes
+
+In addition to scalar `constant` and `placeholder`, `graph.py` provides
+two nodes for representing time-indexed data:
+
+- **`graph.timeseries_constant(values, name="")`** — stores a fixed 1-D
+  array of values (one per time step).  At evaluation time the executor
+  converts it to a `np.ndarray` of the corresponding shape.
+
+- **`graph.timeseries_placeholder(name)`** — a placeholder whose value
+  is a 1-D array supplied at evaluation time (e.g. a measured time-series).
+
+Example:
+
+```Python
+import numpy as np
+from civic_digital_twins.dt_model.engine.frontend import graph
+
+# A fixed time series (e.g. 24 hourly demand values)
+demand = graph.timeseries_constant(np.arange(24, dtype=float), "demand")
+
+# A placeholder for an externally supplied time series
+traffic = graph.timeseries_placeholder("traffic")
+
+# Formulas can combine timeseries nodes with scalar nodes
+scaled = demand * graph.constant(0.5)
+```
+
+The executor evaluates timeseries nodes in the same way as scalar nodes;
+the difference is purely in the shape of the resulting `np.ndarray`.
+
+### Axis Management
+
+`graph.py` provides four operations for reshaping arrays produced by other
+nodes.  These are essential when combining values that live in different
+broadcast dimensions (e.g. scalar model parameters versus multi-dimensional
+evaluation grids).
+
+| Operation | Description |
+| --------- | ----------- |
+| `graph.project_using_sum(node, axis=-1)` | Reduce `node` along `axis` by summing; the reduced axis is *preserved* as size 1 (keepdims semantics). |
+| `graph.project_using_mean(node, axis=-1)` | Same as above but using the mean. |
+| `graph.expand_dims(node, axis)` | Insert a new size-1 axis at position `axis` (equivalent to `np.expand_dims`). |
+| `graph.squeeze(node, axis)` | Remove the size-1 axis at position `axis` (equivalent to `np.squeeze`). |
+
+`GenericIndex.sum(axis=-1)` and `GenericIndex.mean(axis=-1)` are convenience
+wrappers that delegate to `project_using_sum` and `project_using_mean`
+respectively, and are the recommended way to use these operations at the
+model layer.
+
+> **Note on `project_using_sum` / `project_using_mean` semantics.**
+> Both operations always preserve the reduced axis as a size-1 dimension.
+> Callers that previously relied on axis *collapsing* (the 0.5.0 default)
+> must now use `np.squeeze` or `graph.squeeze` on the result.
+
 ## Printing DAG Nodes
 
 Once we have a DAG, we can dump its internal representation by
@@ -519,272 +516,17 @@ Also, note that when we perform a topological sorting targeting
 `c`, we only see the relevant DAG nodes. This makes sense because
 we are basically selecting the subgraph tree rooted in `c`.
 
-With topological sorting, we already have a powerful way
-of transforming a DAG into an actionable sequence of operations
-for producing a value. An alternative approach, discussed in the
-next section, is to produce a tree for each node we want to
-evaluate (as opposed to producing just a linear list).
-
-## frontend/forest.py: Tree Partitioning
-
-Tree partitioning allows us to construct a tree rooted into
-each output node. Each tree depends on constants, placeholders and, possibly,
-on nodes computed by other trees. The tree models a function for
-computing the output node value given the inputs.
-
-The corresponding module is [frontend/forest.py](../../civic_digital_twins/dt_model/engine/frontend/forest.py).
-To perform tree partitioning, we use `forest.partition`.
-
-The general guideline is to partition the DAG using as roots the
-desired outputs. However, because some trees may be independent
-of each other, more fine grained splitting allows, in principle,
-for computing them in parallel.
-
-Let us see what happens when we partition the DAG we created
-previously using `c`, `d`, and `e` as the root nodes:
-
-```Python
-# Import the partitioning functionality
-from civic_digital_twins.dt_model.engine.frontend import forest
-
-# Partition the DAG into trees rooted in `e`, `d`, and `c`
-trees = forest.partition(e, d, c)
-
-# Print the results of the partitioning
-for tree in trees:
-    print(tree)
-```
-
-This code produces the following output (which I annotated with
-comments showing the original DAG code for clarity):
-
-```Python
-# c = graph.exp(a) + 55 / a
-def t7(n1: graph.placeholder, n5: graph.constant) -> graph.Node:
-    n4 = graph.exp(node=n1, name='')
-    n6 = graph.divide(left=n5, right=n1, name='')
-    n7 = graph.add(left=n4, right=n6, name='')
-    return n7
-
-# e = graph.power(a, c) * 144
-def t12(n1: graph.placeholder, n7: graph.Node, n11: graph.constant) -> graph.Node:
-    n10 = graph.power(left=n1, right=n7, name='')
-    n12 = graph.multiply(left=n10, right=n11, name='')
-    return n12
-
-# d = c * b + scale
-def t9(n2: graph.placeholder, n3: graph.constant, n7: graph.Node) -> graph.Node:
-    n8 = graph.multiply(left=n7, right=n2, name='')
-    n9 = graph.add(left=n8, right=n3, name='')
-    return n9
-```
-
-As I mentioned above, a tree is functionally equivalent to a
-function and, unsurprisingly, its string representation is
-indeed a Python function, named `tN` where `N` is the ID of the root node.
-
-Note how each function depends on either placeholders or constants
-or nodes produced by dependent trees (e.g., `t9` depends on `n7`,
-produced by the `t7` tree evaluation).
-
-In terms of actual implementation a minimal tree is like:
-
-```Python
-# === Extremely simplified tree implementation (illustrative only) ===
-
-
-class Tree:
-    inputs: set[graph.Node]  # nodes used as the tree input
-    nodes: list[graph.Node]  # topologically sorted nodes in the "function" body
-
-
-# Also note the following invariants:
-assert len(tree.nodes) >= 1
-assert tree.nodes[-1] is root_node
-```
-
-Also, please note that:
-
-1. the body of each function (i.e., the tree nodes used to
-evaluate the root node) is topologically sorted;
-
-2. trees depend on either placeholders (such as `n1` and `n2`) or
-nodes computed by other trees (such as `n7`).
-
-This representation allows one to clearly see the rules to
-compute each tree. Additionally, we could
-in principle evaluate independent trees in parallel. This is
-not implemented right now, but it should be simple to do.
-
-Also note that we passed `e, d, c` to `forest.partition` and
-the function returned trees to execute in the correct
-order (i.e., also trees are topologically sorted). Specifically,
-since `t9` and `t12` both depend on `n7`,
-computed by `t7`, `t7` comes *before* `t9` and `t12`.
-
-As a final note, `forest.py` uses `linearize.py` to
-construct topologically sorted nodes for a tree. Namely,
-it uses the `boundary=` parameter of `linearize.forest` to
-avoid recursing into nodes belonging to other trees.
-
-To summarize, `forest.partition`:
-
-1. returns topologically sorted trees;
-
-2. each tree contains topologically sorted nodes.
-
-## Linear Topological Sorting vs Tree Partitioning
-
-Whether to use `linearize.py` or `forest.py` depends on your
-needs when constructing and evaluating the model.
-
-In principle, `linearize.py` is enough to produce a result, but
-`forest.py` allows you to explicitly isolate how each root
-node is computed and its dependencies. As such, it seems that
-`forest.py` is more appropriate when your goal is understanding
-the trees embedded in a DAG.
-
-Additionally, for some use cases, including JIT evaluation, we
-need to explicitly partition the computation in trees and
-JIT-compile each tree independently. (That is, we cannot JIT
-compile the linear representation of the nodes save for the
-easy case where there's just a single root node we're interested
-to evaluate; otherwise, all the intermediate node values will
-not be available, since they will be computed by Numba using
-machine code and there is no way for us to observe their value.)
-
-## frontend/ir.py: Intermediate DAG Representation
-
-The [frontend/ir.py](../../civic_digital_twins/dt_model/engine/frontend/ir.py)
-module allows to produce an uniform intermediate representation
-regardless of whether you used `linearize.py` or `forest.py`. In
-the former case, the representation consists of:
-
-1. a sorted-by-ID list of placeholders;
-2. a sorted-by-ID list of constants;
-3. topologically-sorted nodes to evaluate.
-
-In the latter case, it consists of:
-
-1. a sorted-by-ID list of placeholders;
-2. a sorted-by-ID list of constants;
-3. topologically-sorted trees to evaluate.
-
-The main design point here is that of isolating the DAG inputs (constants
-and placeholders) from the abstract DAG structure. This split allows
-backend modules to manipulate the inputs ahead of evaluation.
-For example, as discussed in [#84](https://github.com/fbk-most/civic-digital-twins/issues/84),
-this is the correct place where to remap `np.ndarray` containing strings
-to `np.ndarray` containing numbers referring to the strings whenever
-the backend we are using does not support strings. (This is currently not
-a concern, since NumPy supports strings, but it may become a concern if
-we decide to use PyTorch.)
-
-A DAG IR could also be printed. Let us cover both cases. Let us start
-with code to produce a DAG IR from `linearize.py`'s output:
-
-```Python
-# ...
-
-from civic_digital_twins.dt_model.engine.frontend import ir
-
-# Generate the DAG IR from the trees
-dag = ir.compile_nodes(*plan)
-
-# Print the DAG IR
-print(dag)
-```
-
-Executing this program will produce the following output:
-
-```Python
-# === placeholders ===
-n1 = graph.placeholder(name='a', default_value=None)
-n2 = graph.placeholder(name='b', default_value=None)
-
-# === constants ===
-n3 = graph.constant(value=1024, name='')
-n5 = graph.constant(value=55, name='')
-n11 = graph.constant(value=144, name='')
-
-# === nodes ===
-n4 = graph.exp(node=n1, name='')
-n6 = graph.divide(left=n5, right=n1, name='')
-n7 = graph.add(left=n4, right=n6, name='')
-n10 = graph.power(left=n1, right=n7, name='')
-n12 = graph.multiply(left=n10, right=n11, name='')
-n8 = graph.multiply(left=n7, right=n2, name='')
-n9 = graph.add(left=n8, right=n3, name='')
-```
-
-You can easily see that constants and placeholders are defined independently
-at the top, then topologically sorted nodes follow.
-
-Let us now focus on producing and printing a DAG IR from `forest.py` output:
-
-```Python
-# ...
-
-from civic_digital_twins.dt_model.engine.frontend import ir
-
-# Generate the DAG IR from the trees
-dag = ir.compile_trees(*trees)
-
-# Print the DAG IR
-print(dag)
-```
-
-Executing this program will produce the following output:
-
-```Python
-# === placeholders ===
-n1 = graph.placeholder(name='a', default_value=None)
-n2 = graph.placeholder(name='b', default_value=None)
-
-# === constants ===
-n3 = graph.constant(value=1024, name='')
-n5 = graph.constant(value=55, name='')
-n11 = graph.constant(value=144, name='')
-
-# === trees ===
-def t7(n1: graph.placeholder, n5: graph.constant) -> graph.Node:
-    n4 = graph.exp(node=n1, name='')
-    n6 = graph.divide(left=n5, right=n1, name='')
-    n7 = graph.add(left=n4, right=n6, name='')
-    return n7
-
-def t12(n1: graph.placeholder, n7: graph.Node, n11: graph.constant) -> graph.Node:
-    n10 = graph.power(left=n1, right=n7, name='')
-    n12 = graph.multiply(left=n10, right=n11, name='')
-    return n12
-
-def t9(n2: graph.placeholder, n3: graph.constant, n7: graph.Node) -> graph.Node:
-    n8 = graph.multiply(left=n7, right=n2, name='')
-    n9 = graph.add(left=n8, right=n3, name='')
-    return n9
-```
-
-You can easily see that constants and placeholders are defined independently
-at the top, then tree function definitions follow.
-
-Equipped with knowledge about the DAG IR, we are now ready
-to explain how a DAG IR is evaluated in practice.
-
+With topological sorting, we have a powerful and sufficient way of transforming
+a DAG into an actionable sequence of operations that the executor can evaluate
+step by step.
 
 ## numpybackend/executor.py: NumPy Evaluator Interface
 
 The [numpybackend/executor.py](../../civic_digital_twins/dt_model/engine/numpybackend/executor.py)
-module allows to evaluate DAG IRs to produce numeric results.
+module evaluates a sequence of topologically sorted graph nodes and produces numeric results.
 
-To evaluate a DAG IR, by default, `executor` runs a Python virtual
-machine that maps each node to the corresponding NumPy
-operation. For example, `graph.add` corresponds to `numpy.add`,
-`graph.exp` corresponds to `numpy.exp`, etc.
-
-The `executor` is associated with a state. Such state is
-functionally equivalent to a Python dictionary mapping a `graph.Node`
-to a `np.ndarray`. Therefore, a barebone executor
-implementation looks like this:
+The `executor` is associated with a *State* data structure that maps each
+`graph.Node` to its `np.ndarray` result.  A barebone implementation looks like:
 
 ```Python
 # === Extremely simplified executor implementation (illustrative only) ===
@@ -797,28 +539,20 @@ state[a] = np.asarray(4)
 state[b] = np.asarray(2)
 
 # Define the evaluator function
-def evaluate_tree(state: dict[graph.Node, np.ndarray], tree: forest.Tree) -> np.ndarray:
-    rv: np.ndarray | None = None
-    for node in tree.nodes:
+def evaluate_nodes(state: dict[graph.Node, np.ndarray], *nodes: graph.Node) -> None:
+    for node in nodes:
 
         # compute each node at most once
         if node in state:
             continue
 
-        # execute the proper action depending on the node state
-        if isinstance(node, graph.Add):
-            rv = np.add(state[node.left], state[node.right])
-            state[node] = rv
+        # execute the proper action depending on the node type
+        if isinstance(node, graph.add):
+            state[node] = np.add(state[node.left], state[node.right])
             continue
 
         # ...
-
-    assert(rv is not None)
-    return rv
 ```
-
-This evaluator is called "step-by-step" evaluator because it
-interprets each node sequentially.
 
 In terms of the *actual* usage, the following code illustrates
 how you can use the executor in your code:
@@ -826,6 +560,7 @@ how you can use the executor in your code:
 ```Python
 # ...
 
+from civic_digital_twins.dt_model.engine.frontend import linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 import numpy as np
@@ -838,8 +573,11 @@ state = executor.State(
     }
 )
 
-# evaluate all the DAG IR
-executor.evaluate_dag(state, dag)
+# obtain a topological ordering covering the nodes of interest
+nodes = linearize.forest(c, d, e)
+
+# evaluate all nodes in order
+executor.evaluate_nodes(state, *nodes)
 
 # print the "d" result
 print(state.get_node_value(d))
@@ -854,40 +592,7 @@ avoid performing redundant work. If you need to re-evaluate
 a model, you should start from an empty state. However, note
 that you can prepopulate the state, if that's needed. Basically,
 the current state represents the memory snapshot after the
-evaluation of all the trees evaluated so far.
-
-When the DAG IR contains functions, instead of linear nodes,
-the executor evaluates the nodes of each tree in order. Because
-trees are topologically sorted and nodes within them are
-also topologically sorted, the sequence of evaluated nodes
-is equivalent to the one where the DAG contains just the
-topologically sorted nodes.
-
-To be more specific, the following tree:
-
-```Python
-def t12(n1: graph.Node, n7: graph.Node) -> graph.Node:
-    n10 = graph.power(left=n1, right=n7, name='')
-    n11 = graph.constant(value=144, name='')
-    n12 = graph.multiply(left=n10, right=n11, name='')
-    return n12
-```
-
-Leads the executor to perform these operations:
-
-```Python
-# === Equivalent operations performed by the evaluator ===
-state[n10] = np.power(state[n1], state[n7])
-state[n11] = np.asarray(144)
-state[n12] = np.multiply(state[n10], state[n11])
-```
-
-In other words, when using the standard evaluator, there is no
-actual function stack. Calling or not calling a function does
-not change the values that are actually *saved* inside the state.
-(Incidentally, this is the reason why we say *tree* rather than
-function: a proper function would have a call stack, but we do
-not seem to need this functionality right now.)
+evaluation of all the nodes evaluated so far.
 
 ## Tracing execution with `DTMODEL_ENGINE_FLAGS`
 
@@ -998,124 +703,13 @@ at the top to make the script valid). For each node, we print:
 
 Note that we use `np.asarray` to create constants and placeholders.
 
-## JIT Execution Using Numba
-
-In addition to executing each operation sequentially, the
-`evaluator` also allows to
-[JIT-compile](https://en.wikipedia.org/wiki/Just-in-time_compilation)
-a tree using [Numba](https://github.com/numba/numba).
-
-This functionality is experimental and implemented in
-the *unmerged* [#70](https://github.com/fbk-most/civic-digital-twins/pull/70)
-pull request.
-
-The advantage of JIT-compiling a tree using Numba is that it
-produces machine code optimized for specific inputs. If the
-`shape` and `dtype` of the input is always the same, for repeated
-computations, the cost of JIT compiling is compensated by running faster
-numeric operations during each execution. (If the `shape` and/or the
-`dtype` changes, Numba recompiles the function to produce suitable
-JIT code, which reduces the performance; that said, in our use cases,
-we frequently evaluate models with the same `shape` and `dtype`.)
-
-Whether or not to use JIT compilation is a matter of profiling
-and knowing the requirements of the use case. Yet, it is not
-possible to know *whether* JIT would be beneficial without having
-the *option* to profile it against normal evaluation. We ran
-preliminary benchmarking in [#54](https://github.com/fbk-most/civic-digital-twins/issues/54)
-and concluded that the matter is not urgent, but a potential
-performance benefit is there and further investigation is needed
-to decide whether to merge the Numba branch.
-
-The simplest way to turn on JIT compilation — assuming you are in the
-right branch — is to use `DTMODEL_ENGINE_FLAGS`:
-
-```bash
-# if you only want to use the JIT compiler
-export DTMODEL_ENGINE_FLAGS=jit
-
-# but you may also want to combine with tracing
-export DTMODEL_ENGINE_FLAGS=jit,trace
-```
-
-The `jit` flag turns on JIT evaluation on a
-per-`State` basis. In the current prototype, there is no global
-function cache. In practical terms this means that, Numba
-will recompile if you use a new state (unless you copy the
-`jitted` field from a previous state.) We may consider better
-caching as part of future work, particularly if we decide
-to merge the Numba branch.
-
-Given the following tree:
-
-```Python
-def t12(n1: graph.Node, n7: graph.Node) -> graph.Node:
-    n10 = graph.power(left=n1, right=n7, name='')
-    n11 = graph.constant(value=144, name='')
-    n12 = graph.multiply(left=n10, right=n11, name='')
-    return n12
-```
-
-the process to JIT-compile it is the following:
-
-1. We transform the tree into a Python
-[AST](https://docs.python.org/3/library/ast.html) equivalent
-to the following code:
-
-```Python
-def t12_jit(n1: np.ndarray, n7: np.ndarray) -> np.ndarray:
-    n10 = np.power(n1, n7)
-    n11 = np.asarray(144)
-    return np.multiply(n10, n11)
-```
-
-2. We use the [compile](https://docs.python.org/3/library/functions.html#compile)
-built-in function to transform the AST into Python bytecode.
-
-3. We use Numba's `@njit` decorator to wrap the bytecode and
-produce a new function, with the same signature, that
-internally uses Numba and JIT compilation.
-
-When we transform the tree into an AST, we sort the argument
-nodes by increasing node ID. The `evaluate_tree` takes
-advantage of this property to pass the arguments to the
-function wrapped by `@njit` in the correct order.
-
-The [numpybackend/jit.py](../../civic_digital_twins/dt_model/engine/numpybackend/jit.py)
-module is where we implement JIT evaluation.
-
 ## More `DTMODEL_ENGINE_FLAGS` goodies
 
 The `DTMODEL_ENGINE_FLAGS` allows to set compiler
 flags using an environment variable. However, you can also
-set flags programmatically. For example:
-
-```Python
-# ...
-
-# import the compileflags package to get flags values
-from civic_digital_twins.dt_model.engine import compileflags
-
-# create state with placeholder values
-state = executor.State(
-    values={
-        a: np.asarray(4),
-        b: np.asarray(2),
-    },
-    flags=compileflags.JIT|compileflags.TRACE,
-)
-
-# ...
-```
-
-The above code is equivalent to setting:
-
-```bash
-export DTMODEL_ENGINE_FLAG=jit,trace
-```
-
-You can also take advantage of `compileflags.BREAK` to stop the
-execution *after* a node has been evaluated:
+set flags programmatically. For example, you can take advantage
+of `compileflags.BREAK` to stop the execution *after* a node has
+been evaluated:
 
 ```Python
 # ...
@@ -1139,18 +733,6 @@ state = executor.State(
 # ...
 ```
 
-When using `compileflags.JIT`, `compileflags.TRACE` and
-`compileflags.BREAK` are also honored, but we cannot step
-inside JIT-compiled functions. Therefore, you can
-only see the value of root nodes, which limits your ability
-to inspect and debug the evaluation.
-
-Conversely, as mentioned before, `compileflags.JIT` is
-more efficient when models are evaluated multiple times
-with the same shapes and dtypes, since the code is
-compiled to specific machine code matching the expected shapes
-and dtypes.
-
 ## User-Defined Functions
 
 Use the `numpybackend.executor.LambdaAdapter` to wrap an
@@ -1161,7 +743,7 @@ The following code shows some usage examples:
 ```Python
 import numpy as np
 
-from civic_digital_twins.dt_model.engine.frontend import graph, ir, linearize
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 # Define just two constants to operate on
@@ -1179,8 +761,8 @@ scaled2 = graph.function_call("scale2", k0=k0, k1=k1)
 # Call a function that takes a mixture of arguments
 scaled3 = graph.function_call("scale3", k0, k1, k2=k2, k3=k3, scaled2=scaled2)
 
-# Compile to a DAG IR
-dag = ir.compile_nodes(*linearize.forest(scaled1, scaled2, scaled3))
+# Obtain a topological ordering for the nodes of interest
+nodes = linearize.forest(scaled1, scaled2, scaled3)
 
 # Initialize the evaluation state
 state = executor.State(
@@ -1200,8 +782,8 @@ state = executor.State(
     },
 )
 
-# Evaluate the DAG
-executor.evaluate_dag(state, dag)
+# Evaluate the nodes in order
+executor.evaluate_nodes(state, *nodes)
 
 # Print the results
 print(f"#{state.get_node_value(scaled1)}")
@@ -1241,21 +823,21 @@ n4 = np.asarray(1000)
 # value:
 # 1000
 
-# n5 = graph.function(name='scale1', n1, n2)
+# n5 = graph.function_call(name='scale1', n1, n2)
 n5 = scale1(n1, n2)
 # shape: ()
 # dtype: int64
 # value:
 # 150
 
-# n6 = graph.function(name='scale2', k0=n1, k1=n2)
+# n6 = graph.function_call(name='scale2', k0=n1, k1=n2)
 n6 = scale2(k0=n1, k1=n2)
 # shape: ()
 # dtype: int64
 # value:
 # 150
 
-# n7 = graph.function(name='scale3', n1, n2, k2=n3, k3=n4, scaled2=n6)
+# n7 = graph.function_call(name='scale3', n1, n2, k2=n3, k3=n4, scaled2=n6)
 n7 = scale3(n1, n2, k2=n3, k3=n4, scaled2=n6)
 # shape: ()
 # dtype: int64
@@ -1267,19 +849,14 @@ n7 = scale3(n1, n2, k2=n3, k3=n4, scaled2=n6)
 #1417
 ```
 
-Note that JIT is disabled if you use user-defined functions.
-
 ## Error Handling
 
 - The topological sorting algorithm will detect cycles
 in the DAG and throw an exception in such a case.
 
-- If Numba fails to compile because the code is not purely
-functional and numeric, it throws an exception.
-
 - We assume that shapes and dtypes match. We expect static
 type checking to help avoiding such mistakes. Yet, in case
-of mismatches NumPy or Numba will throw at runtime.
+of mismatches NumPy will throw at runtime.
 
 - Evaluating a tree whose input nodes have not been evaluated
 yet causes an exception to be throw by the evaluator.
@@ -1301,12 +878,14 @@ well as on whether to use Numba.
 
 ## Conclusion
 
-The compiler provides a complete pipeline: representing computations
-as DAGs, possibly partitioning them into evaluable units, and supporting
-multiple execution strategies, including a step-by-step
-interpreter and JIT-compilation using Numba. This enables flexibility
-in balancing debuggability and performance, and allows the system to adapt
-to future workloads or computational backends.
+The compiler provides a complete pipeline: representing computations as a
+gradually-typed DAG, linearising the DAG via topological sorting, and
+evaluating the resulting sequence of nodes with a Python-based NumPy interpreter.
+This design enables debuggability (via `DTMODEL_ENGINE_FLAGS=trace`),
+extensibility (user-defined functions via `function_call`), and a clean
+separation between the frontend DSL and the NumPy backend.  An experimental
+JIT compilation path using Numba is tracked in
+[#54](https://github.com/fbk-most/civic-digital-twins/issues/54).
 
 ## Appendix
 

@@ -4,12 +4,89 @@
 
 This repository contains a Python package implementing a Civic-Digital-Twins
 modeling framework. The framework is designed to support defining digital
-twins models and evaluating them in simulated environment with varying
+twins models and evaluating them in simulated environments with varying
 contextual conditions. We develop this package at [@fbk-most](
 https://github.com/fbk-most), a research unit at [Fondazione Bruno Kessler](
 https://www.fbk.eu/en/).
 
 *Note: this package is currently in an early development stage.*
+
+## Conceptual Overview
+
+The framework is organised in three layers.
+
+### Engine layer
+
+The engine (`civic_digital_twins.dt_model.engine`) is an embedded DSL
+compiler.  The programmer builds a *computation graph* (DAG) by composing
+typed nodes — constants, placeholders, and operations — using ordinary Python
+expressions.  The graph is then linearised by topological sorting and
+evaluated by a NumPy-based interpreter that maps each node to the
+corresponding `numpy` operation.
+
+```python
+from civic_digital_twins.dt_model.engine.frontend import graph, linearize
+from civic_digital_twins.dt_model.engine.numpybackend import executor
+import numpy as np
+
+a = graph.placeholder("a")
+b = graph.placeholder("b")
+c = a * 2 + b
+
+state = executor.State(values={a: np.asarray(3.0), b: np.asarray(1.0)})
+executor.evaluate_nodes(state, *linearize.forest(c))
+print(state.get_node_value(c))  # 7.0
+```
+
+See [docs/design/dd-cdt-engine.md](docs/design/dd-cdt-engine.md) for a
+full description of the engine.
+
+### Model / simulation layer
+
+The model layer (`civic_digital_twins.dt_model`) provides higher-level
+abstractions built on top of the engine:
+
+- **`Index`** / **`TimeseriesIndex`** — named wrappers around graph nodes.
+  An index can be a constant, a distribution (sampled at evaluation time),
+  or a formula.
+- **`Model`** — a named collection of `Index` objects.  A model is
+  *abstract* when some indexes are unbound (distributions or placeholders);
+  it becomes concrete once all indexes are resolved.
+- **`Evaluation`** — evaluates a model over a sequence of *weighted
+  scenarios*, each of which maps every abstract index to a concrete value.
+- **`Ensemble`** / **`WeightedScenario`** — a protocol and type alias that
+  define the scenario contract consumed by `Evaluation`.
+
+```python
+from civic_digital_twins.dt_model import Evaluation, Model
+from civic_digital_twins.dt_model.model.index import Index, UniformDistIndex
+
+# Two distribution-backed indexes
+x = UniformDistIndex("x", loc=0.0, scale=1.0)
+y = UniformDistIndex("y", loc=0.0, scale=1.0)
+result = Index("result", x + y)
+
+model = Model("example", [x, y, result])
+```
+
+### Usage patterns
+
+Two concrete usage patterns are illustrated in the `examples/` directory.
+
+**Direct pattern** (`examples/mobility_bologna/`) — the model consists
+entirely of `Index` and `TimeseriesIndex` objects;
+`DistributionEnsemble` samples each distribution-backed index to produce
+weighted scenarios; `Evaluation.evaluate()` runs the engine and returns an
+`EvaluationResult`.
+
+**Vertical extension pattern** (`examples/overtourism_molveno/`) — the
+domain-specific layer introduces `ContextVariable`, `PresenceVariable`,
+`Constraint`, and `OvertourismModel` on top of the core types.
+`OvertourismEnsemble` samples context variables and produces weighted
+scenarios.  `Evaluation.evaluate(axes={pv: array, …})` evaluates the model
+on a multi-dimensional grid, returning arrays of shape `(N₀, …, Nₖ, S)`
+where `S` is the number of scenarios and each `Nᵢ` corresponds to one
+presence axis.
 
 ## Installation
 
@@ -97,9 +174,13 @@ uv sync --upgrade
 
 7. Upload the package to PyPI using `twine upload dist/*`.
 
-## Design Documents
+## Documentation
 
-See the [docs/design](./docs/design) directory.
+| Document | Description |
+| -------- | ----------- |
+| [Getting Started](docs/getting-started.md) | Step-by-step guide covering the direct and vertical extension usage patterns. |
+| [dd-cdt-engine.md](docs/design/dd-cdt-engine.md) | DSL compiler engine — graph nodes, topological sorting, NumPy executor. |
+| [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model / simulation layer — `Model`, `Evaluation`, `WeightedScenario`, and the vertical extension pattern. |
 
 ## License
 
