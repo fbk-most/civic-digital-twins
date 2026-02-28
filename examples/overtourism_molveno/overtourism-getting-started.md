@@ -141,12 +141,18 @@ scenario: dict[ContextVariable, list] = {
 
 ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
 scenarios = list(ensemble)
-# 2 × 3 × 10 = 60 weighted scenarios
+# 2 × 3 = 6 weighted scenarios
 ```
 
-For each combination of CV values, `OvertourismEnsemble` draws
-`cv_ensemble_size` samples from every distribution-backed non-PV non-CV
-abstract index (here: `I_C_beach`).
+`OvertourismEnsemble` enumerates all combinations of CV values and yields
+one weighted scenario per combination — here 2 × 3 = 6 scenarios, one per
+(season, weather) pair.  Each scenario also includes one sample of every
+distribution-backed non-PV non-CV abstract index (here: `I_C_beach`).
+
+The `cv_ensemble_size` parameter controls random sampling only when a CV's
+support is too large (or continuous) to enumerate fully.  For the small
+finite CVs above every value is enumerated and `cv_ensemble_size` is
+unused.
 
 ## 6 — Grid evaluation
 
