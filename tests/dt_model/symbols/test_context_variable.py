@@ -4,13 +4,11 @@
 
 import pytest
 import scipy
-
-from civic_digital_twins.dt_model import (
+from overtourism_molveno.overtourism_metamodel import (
     CategoricalContextVariable,
     ContinuousContextVariable,
     UniformCategoricalContextVariable,
 )
-from civic_digital_twins.dt_model.internal.sympyke import Symbol
 
 
 @pytest.fixture
@@ -18,12 +16,7 @@ def uniform_cv():
     """Create a UniformCategoricalContextVariable."""
     return UniformCategoricalContextVariable(
         "Uniform",
-        [
-            Symbol("a"),
-            Symbol("b"),
-            Symbol("c"),
-            Symbol("d"),
-        ],
+        ["a", "b", "c", "d"],
     )
 
 
@@ -33,10 +26,10 @@ def categorical_cv():
     return CategoricalContextVariable(
         "Categorical",
         {
-            Symbol("a"): 0.1,
-            Symbol("b"): 0.2,
-            Symbol("c"): 0.3,
-            Symbol("d"): 0.4,
+            "a": 0.1,
+            "b": 0.2,
+            "c": 0.3,
+            "d": 0.4,
         },
     )
 
@@ -50,8 +43,8 @@ def continuous_cv():
 @pytest.mark.parametrize(
     "cv_fixture_name,sizes,values",
     [
-        ("uniform_cv", [1, 2, 4, 8], [Symbol("a"), Symbol("b"), Symbol("c")]),
-        ("categorical_cv", [1, 2, 4, 8], [Symbol("a"), Symbol("b"), Symbol("c")]),
+        ("uniform_cv", [1, 2, 4, 8], ["a", "b", "c"]),
+        ("categorical_cv", [1, 2, 4, 8], ["a", "b", "c"]),
         ("continuous_cv", [1, 2, 4, 8], [2.1, 3.0, 3.9]),
     ],
 )

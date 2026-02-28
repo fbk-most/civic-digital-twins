@@ -1,4 +1,4 @@
-"""Tests for TimeseriesIndex and TimeseriesSymIndex."""
+"""Tests for GenericIndex, Index, and TimeseriesIndex."""
 
 # SPDX-License-Identifier: Apache-2.0
 
@@ -18,7 +18,6 @@ def test_timeseries_index_construction():
     assert isinstance(idx.node, graph.timeseries_constant)
     assert idx.values is not None
     assert np.array_equal(idx.values, values)
-    assert idx.cvs is None
 
 
 def test_timeseries_index_value_attribute():
@@ -176,11 +175,11 @@ def test_timeseries_index_formula_evaluation():
     assert np.allclose(state.values[result.node], values**2)
 
 
-def test_timeseries_index_formula_with_cvs():
-    """TimeseriesIndex in formula mode stores cvs."""
+def test_timeseries_index_formula_mode():
+    """TimeseriesIndex in formula mode wraps the given graph node."""
     ts = TimeseriesIndex("inflow")
-    result = TimeseriesIndex("outflow", ts.node * graph.constant(2.0), cvs=[ts])
-    assert result.cvs == [ts]
+    result = TimeseriesIndex("outflow", ts.node * graph.constant(2.0))
+    assert result.node is not None
 
 
 def test_timeseries_index_formula_via_operators():

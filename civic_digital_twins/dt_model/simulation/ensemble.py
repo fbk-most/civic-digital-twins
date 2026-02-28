@@ -1,54 +1,99 @@
-"""Implementation of the ensemble."""
+"""Ensemble protocol and built-in ensemble implementations."""
 
 from __future__ import annotations
 
-from functools import reduce
+from typing import Any, Iterator, Protocol, runtime_checkable
 
-from ..internal.sympyke.symbol import SymbolValue
-from ..model.instantiated_model import InstantiatedModel
-from ..symbols.context_variable import ContextVariable
+import numpy as np
+
+from ..model.index import Distribution, GenericIndex, Index
+from ..model.model import Model
+
+WeightedScenario = tuple[float, dict[GenericIndex, Any]]
+"""A weighted scenario maps each abstract index to a concrete value.
+
+The first element is the scenario weight (probability); the second is a
+mapping from each abstract index to its concrete value for this scenario.
+Together a list of ``WeightedScenario`` objects defines a discrete
+probability distribution over instantiations of an abstract model.
+"""
 
 
-class Ensemble:
-    """Iterator generating ensemble conditions."""
+@runtime_checkable
+class Ensemble(Protocol):
+    """Protocol for iterables that yield :data:`WeightedScenario` instances.
 
-    def __init__(
-        self,
-        model: InstantiatedModel,
-        scenario: dict[ContextVariable, list[SymbolValue]],
-        cv_ensemble_size: int = 20,
-    ):
-        """Initialize the ensemble."""
-        # TODO: what if cvs is empty?
-        self.model = model
-        self.ensemble = {}
-        self.size = 1
-        for cv in model.abs.cvs:
-            if cv in scenario.keys():
-                if len(scenario[cv]) == 1:
-                    self.ensemble[cv] = [(1, scenario[cv][0])]
-                else:
-                    self.ensemble[cv] = cv.sample(cv_ensemble_size, subset=scenario[cv])
-                    self.size *= cv_ensemble_size
+    Any object that implements ``__iter__`` returning an iterator over
+    ``WeightedScenario`` tuples satisfies this protocol.  This is used as
+    a common type for ensemble generators (e.g. domain-specific classes
+    that enumerate context-variable combinations with associated weights).
+    """
+
+    def __iter__(self) -> Iterator[WeightedScenario]:
+        """Yield weighted scenarios."""
+        ...
+
+
+class DistributionEnsemble:
+    """Ensemble that independently samples each :class:`~model.index.Distribution`-backed index.
+
+    Each of the *size* scenarios draws one sample from every
+    :class:`~model.index.Distribution`-backed abstract index in *model* and
+    assigns equal weight ``1 / size``.
+
+    This is the standard ensemble for models whose only source of uncertainty
+    is a set of independently distributed parameters (e.g., the Bologna
+    mobility example).
+
+    Parameters
+    ----------
+    model:
+        The model whose abstract indexes are sampled.  Every abstract index
+        must be :class:`~model.index.Distribution`-backed; a
+        :class:`ValueError` is raised at construction time otherwise.
+    size:
+        Number of scenarios (samples).
+    rng:
+        Optional :class:`numpy.random.Generator` for reproducibility.  When
+        ``None``, the global NumPy random state is used.
+
+    Raises
+    ------
+    ValueError
+        If any abstract index of *model* is not :class:`~model.index.Distribution`-backed.
+    """
+
+    def __init__(self, model: Model, size: int, rng: np.random.Generator | None = None) -> None:
+        abstract = model.abstract_indexes()
+        non_dist = [idx for idx in abstract if not (isinstance(idx, Index) and isinstance(idx.value, Distribution))]
+        if non_dist:
+            names = ", ".join(getattr(idx, "name", repr(idx)) for idx in non_dist)
+            raise ValueError(
+                f"DistributionEnsemble requires all abstract indexes to be Distribution-backed; "
+                f"non-distribution indexes: {names}"
+            )
+        self._model = model
+        self._size = size
+        self._rng = rng
+
+    def __iter__(self) -> Iterator[WeightedScenario]:
+        """Yield *size* equally-weighted scenarios, one sample per index per scenario."""
+        abstract = self._model.abstract_indexes()
+        weight = 1.0 / self._size
+
+        # Pre-sample each distribution: shape (size, 1) so that stacking
+        # produces (size, 1) substitution arrays, which broadcast correctly
+        # against timeseries of shape (T,) via numpy's (size, 1) × (T,) → (size, T).
+        samples: dict[GenericIndex, np.ndarray] = {}
+        for idx in abstract:
+            assert isinstance(idx, Index) and isinstance(idx.value, Distribution)
+            if self._rng is not None:
+                raw = idx.value.rvs(size=self._size, random_state=self._rng)
             else:
-                self.ensemble[cv] = cv.sample(cv_ensemble_size)
-                self.size *= cv_ensemble_size
+                raw = idx.value.rvs(size=self._size)
+            # Wrap each sample as a 1-element array so stacking gives (S, 1).
+            samples[idx] = np.asarray(raw).reshape(self._size, 1)
 
-    def __iter__(self):
-        """Return an iterator over the ensemble."""
-        self.pos = {k: 0 for k in self.ensemble.keys()}
-        self.pos[list(self.ensemble.keys())[0]] = -1
-        return self
-
-    def __next__(self):
-        """Return the next ensemble condition."""
-        for k in self.ensemble.keys():
-            self.pos[k] += 1
-            if self.pos[k] < len(self.ensemble[k]):
-                cv_values = {k: self.ensemble[k][self.pos[k]][1] for k in self.ensemble.keys()}
-                cv_probability = reduce(
-                    lambda x, y: x * y, [self.ensemble[k][self.pos[k]][0] for k in self.ensemble.keys()]
-                )
-                return cv_probability, cv_values
-            self.pos[k] = 0
-        raise StopIteration
+        for i in range(self._size):
+            assignments: dict[GenericIndex, Any] = {idx: samples[idx][i] for idx in abstract}
+            yield weight, assignments
