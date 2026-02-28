@@ -3,13 +3,13 @@
 This guide walks through the two main usage patterns of the
 `civic_digital_twins.dt_model` package:
 
-1. **Direct pattern** — build a model entirely from built-in index types,
-   sample uncertain parameters with `DistributionEnsemble`, and evaluate
-   with `Evaluation`.
-2. **Vertical extension pattern** — subclass `Model` and introduce
-   domain-specific index types (context variables, presence variables,
-   constraints) to evaluate a sustainability field on a multi-dimensional
-   grid.
+- **Direct pattern** — build a model entirely from built-in index types,
+  sample uncertain parameters with `DistributionEnsemble`, and evaluate
+  with `Evaluation`.
+- **Vertical extension pattern** — subclass `Model` and introduce
+  domain-specific index types (context variables, presence variables,
+  constraints) to evaluate a sustainability field on a multi-dimensional
+  grid.
 
 Full working examples are in the
 [`examples/`](../examples) directory:
