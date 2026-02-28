@@ -1,11 +1,11 @@
 # Model / Simulation Layer
 
-|                  |                                                |
-| ---------------- | ---------------------------------------------- |
-| Author           | [@bassosimone](https://github.com/bassosimone) |
-| Last-Updated     | 2026-02-28                                     |
-| Status           | Draft                                          |
-| Approved-By      | N/A                                            |
+|              | Document data                                  |
+|--------------| ---------------------------------------------- |
+| Author       |  [@pistore](https://github.com/pistore)        |
+| Last-Updated | 2026-02-28                                     |
+| Status       | Draft                                          |
+| Approved-By  | N/A                                            |
 
 The [dt_model](../../civic_digital_twins/dt_model) package provides
 a model/simulation layer built on top of the

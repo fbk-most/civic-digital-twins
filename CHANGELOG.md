@@ -108,10 +108,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `numpybackend/jit.py` — renamed to `numpybackend/numpy_ast.py`
   (internal; experimental, unmerged).
 
-## [0.5.1] - 2026-02-23
-
-Internal release. See git log for details.
-
 ## [0.5.0] - 2025-07-14
-
-Initial public release.

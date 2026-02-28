@@ -1,11 +1,12 @@
 # DSL Compiler Engine
 
-|                  |                                                |
-| ---------------- | ---------------------------------------------- |
-| Author           | [@bassosimone](https://github.com/bassosimone) |
-| Last-Updated     | 2026-02-28                                     |
-| Status           | Draft                                          |
-| Approved-By      | N/A                                            |
+|              | Document data                                  |
+|--------------|------------------------------------------------|
+| Author       | [@bassosimone](https://github.com/bassosimone) |
+| Co-authors   | [@pistore](https://github.com/pistore)         |
+| Last-Updated | 2026-02-28                                     |
+| Status       | Draft                                          |
+| Approved-By  | N/A                                            |
 
 The [dt_model](../../civic_digital_twins/dt_model) package includes
 [engine](../../civic_digital_twins/dt_model/engine):
