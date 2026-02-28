@@ -1,45 +1,31 @@
-"""The dt_model package implements the tool for digital twins modeling and simulation."""
+"""Digital twin modeling and simulation library."""
 
-from .model.abstract_model import AbstractModel
-from .model.instantiated_model import InstantiatedModel
-from .simulation.ensemble import Ensemble
-from .simulation.evaluation import Evaluation
-from .symbols.constraint import Constraint
-from .symbols.context_variable import (
-    CategoricalContextVariable,
-    ContextVariable,
-    ContinuousContextVariable,
-    UniformCategoricalContextVariable,
-)
-from .symbols.index import (
+from .engine.frontend.graph import piecewise
+from .model import (
     ConstIndex,
+    Distribution,
     GenericIndex,
     Index,
     LognormDistIndex,
-    SymIndex,
+    Model,
     TimeseriesIndex,
     TriangDistIndex,
     UniformDistIndex,
 )
-from .symbols.presence_variable import PresenceVariable
+from .simulation import Ensemble, Evaluation, WeightedScenario
 
 __all__ = [
-    "AbstractModel",
-    "CategoricalContextVariable",
-    "Constraint",
     "ConstIndex",
-    "ContextVariable",
-    "ContinuousContextVariable",
+    "Distribution",
     "Ensemble",
     "Evaluation",
     "GenericIndex",
     "Index",
-    "InstantiatedModel",
     "LognormDistIndex",
-    "PresenceVariable",
-    "SymIndex",
+    "Model",
     "TimeseriesIndex",
     "TriangDistIndex",
-    "UniformCategoricalContextVariable",
     "UniformDistIndex",
+    "WeightedScenario",
+    "piecewise",
 ]

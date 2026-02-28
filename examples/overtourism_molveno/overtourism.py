@@ -2,25 +2,26 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from ... import (
-    AbstractModel,
-    CategoricalContextVariable,
-    Constraint,
-    Index,
-    LognormDistIndex,
-    PresenceVariable,
-    TriangDistIndex,
-    UniformCategoricalContextVariable,
-    UniformDistIndex,
-)
-from ...internal.sympyke import Eq, Piecewise, Symbol
-from .presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
+from civic_digital_twins.dt_model import piecewise
+from civic_digital_twins.dt_model.model.index import Index, LognormDistIndex, TriangDistIndex, UniformDistIndex
+try:
+    from .context_variable import CategoricalContextVariable, UniformCategoricalContextVariable
+    from .constraint import Constraint
+    from .model import OvertourismModel
+    from .presence_variable import PresenceVariable
+    from .presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
+except ImportError:
+    from context_variable import CategoricalContextVariable, UniformCategoricalContextVariable
+    from constraint import Constraint
+    from model import OvertourismModel
+    from presence_variable import PresenceVariable
+    from presence_stats import excursionist_presences_stats, season, tourist_presences_stats, weather, weekday
 
 # Context variables
 
-CV_weekday = UniformCategoricalContextVariable("weekday", [Symbol(v) for v in weekday])
-CV_season = CategoricalContextVariable("season", {Symbol(v): season[v] for v in season.keys()})
-CV_weather = CategoricalContextVariable("weather", {Symbol(v): weather[v] for v in weather.keys()})
+CV_weekday = UniformCategoricalContextVariable("weekday", list(weekday))
+CV_season = CategoricalContextVariable("season", {v: season[v] for v in season.keys()})
+CV_weather = CategoricalContextVariable("weather", {v: weather[v] for v in weather.keys()})
 
 # Presence variables
 
@@ -39,17 +40,15 @@ I_C_food = TriangDistIndex("food service capacity", loc=3000.0, scale=1000.0, c=
 I_U_tourists_parking = Index("tourist parking usage factor", 0.02)
 I_U_excursionists_parking = Index(
     "excursionist parking usage factor",
-    Piecewise((0.55, Eq(CV_weather.node, Symbol("bad"))), (0.80, True)),
-    cvs=[CV_weather],
+    piecewise((0.55, CV_weather == "bad"), (0.80, True)),
 )
 
 I_U_tourists_beach = Index(
-    "tourist beach usage factor", Piecewise((0.25, Eq(CV_weather.node, Symbol("bad"))), (0.50, True)), cvs=[CV_weather]
+    "tourist beach usage factor", piecewise((0.25, CV_weather == "bad"), (0.50, True))
 )
 I_U_excursionists_beach = Index(
     "excursionist beach usage factor",
-    Piecewise((0.35, Eq(CV_weather.node, Symbol("bad"))), (0.80, True)),
-    cvs=[CV_weather],
+    piecewise((0.35, CV_weather == "bad"), (0.80, True)),
 )
 
 I_U_tourists_accommodation = Index("tourist accommodation usage factor", 0.90)
@@ -57,8 +56,7 @@ I_U_tourists_accommodation = Index("tourist accommodation usage factor", 0.90)
 I_U_tourists_food = Index("tourist food service usage factor", 0.20)
 I_U_excursionists_food = Index(
     "excursionist food service usage factor",
-    Piecewise((0.80, Eq(CV_weather.node, Symbol("bad"))), (0.40, True)),
-    cvs=[CV_weather, CV_weekday],
+    piecewise((0.80, CV_weather == "bad"), (0.40, True)),
 )
 
 # Conversion indexes
@@ -87,47 +85,37 @@ I_P_excursionists_saturation_level = Index("excursionists saturation level", 100
 # Constraints
 
 C_parking = Constraint(
+    name="parking",
     usage=PV_tourists.node * I_U_tourists_parking.node / (I_Xa_tourists_per_vehicle.node * I_Xo_tourists_parking.node)
     + PV_excursionists.node
     * I_U_excursionists_parking.node
     / (I_Xa_excursionists_per_vehicle.node * I_Xo_excursionists_parking.node),
     capacity=I_C_parking,
-    name="parking",
 )
 
 C_beach = Constraint(
+    name="beach",
     usage=PV_tourists.node * I_U_tourists_beach.node / I_Xo_tourists_beach.node
     + PV_excursionists.node * I_U_excursionists_beach.node / I_Xo_excursionists_beach.node,
     capacity=I_C_beach,
-    name="beach",
 )
-
-# TODO: also capacity should be a formula
-# C_accommodation = Constraint(usage=PV_tourists * I_U_tourists_accommodation,
-#                              capacity=I_C_accommodation *  I_Xa_tourists_accommodation)
 
 C_accommodation = Constraint(
+    name="accommodation",
     usage=PV_tourists.node * I_U_tourists_accommodation.node / I_Xa_tourists_accommodation.node,
     capacity=I_C_accommodation,
-    name="accommodation",
 )
 
-# TODO: also capacity should be a formula
-# C_food = Constraint(usage=PV_tourists * I_U_tourists_food +
-#                              PV_excursionists * I_U_excursionists_food,
-#                     capacity=I_C_food * I_Xa_visitors_food * I_Xo_visitors_food)
 C_food = Constraint(
+    name="food",
     usage=(PV_tourists.node * I_U_tourists_food.node + PV_excursionists.node * I_U_excursionists_food.node)
     / (I_Xa_visitors_food.node * I_Xo_visitors_food.node),
     capacity=I_C_food,
-    name="food",
 )
 
-# Models
-# TODO: what is the better process to create a model? (e.g., adding elements incrementally)
+# Model
 
-# Base model
-M_Base = AbstractModel(
+M_Base = OvertourismModel(
     "base model",
     [CV_weekday, CV_season, CV_weather],
     [PV_tourists, PV_excursionists],

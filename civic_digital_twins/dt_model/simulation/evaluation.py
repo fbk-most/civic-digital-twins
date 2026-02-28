@@ -1,352 +1,150 @@
-"""Code to evaluate a model in specific conditions."""
+"""Generic model evaluation."""
 
-from functools import reduce
+from __future__ import annotations
+
+from typing import Any, Iterable
 
 import numpy as np
-from scipy import interpolate, ndimage, stats
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
-from ..internal.sympyke import symbol
-from ..model.instantiated_model import InstantiatedModel
-from ..symbols.context_variable import ContextVariable
-from ..symbols.index import Distribution, Index
+from ..model.model import Model
+from ..model.index import GenericIndex
+
+WeightedScenario = tuple[float, dict[GenericIndex, Any]]
+"""A weighted scenario maps each abstract index to a concrete value.
+
+The first element is the scenario weight (probability); the second is a
+mapping from each abstract index to its concrete value for this scenario.
+Together a list of ``WeightedScenario`` objects defines a discrete
+probability distribution over instantiations of an abstract model.
+"""
 
 
 class Evaluation:
-    """Evaluate a model in specific conditions."""
+    """Bridge between a :class:`~dt_model.model.model.Model` and the engine.
 
-    def __init__(self, inst: InstantiatedModel, ensemble):
-        self.inst = inst
-        self.ensemble = ensemble
-        self.index_vals = None
-        self.grid = None
-        self.field = None
-        self.field_elements = None
+    Given a model and a list of weighted scenarios, :meth:`evaluate` builds
+    the engine substitution dict, runs :func:`executor.evaluate_nodes`, and
+    returns the resulting :class:`executor.State`.
 
-    def evaluate_grid(self, grid):
-        """Evaluate the model according to the grid."""
-        if self.inst.values is None:
-            assignments = {}
+    This class knows nothing about grids, presence variables, sustainability,
+    or constraints — all domain-specific logic lives in subclasses or
+    vertical-specific wrappers.
+
+    Parameters
+    ----------
+    model:
+        The model to evaluate.
+    """
+
+    def __init__(self, model: Model) -> None:
+        self.model = model
+
+    def evaluate(
+        self,
+        scenarios: Iterable[WeightedScenario],
+        nodes_of_interest: list[graph.Node],
+        *,
+        axes: dict[GenericIndex, np.ndarray] | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+    ) -> executor.State:
+        """Evaluate *nodes_of_interest* over the given scenarios.
+
+        Parameters
+        ----------
+        scenarios:
+            An iterable of ``(weight, assignments)`` pairs.  When *axes* is
+            ``None``, every abstract index of the model must appear in every
+            ``assignments`` dict.  When *axes* is provided, indexes in *axes*
+            are excluded from this requirement — they are provided as grid
+            arrays instead.
+        nodes_of_interest:
+            Graph nodes to evaluate.  Transitive dependencies are resolved
+            automatically via :func:`linearize.forest`.
+        axes:
+            Optional grid axes for multi-dimensional evaluation.  Maps each
+            axis :class:`~dt_model.symbols.index.GenericIndex` to a 1-D
+            numpy array of values.  When provided:
+
+            * Each axis index ``idx`` at position ``i`` contributes a
+              substitution array of shape ``(1, …, N_i, …, 1, 1)`` where
+              ``N_i = arr.size`` and the non-unit dimension is at position
+              ``i`` (zero-indexed).
+            * Each non-axis abstract index contributes a substitution array
+              of shape ``(1, …, 1, S)`` where ``S`` is the number of
+              scenarios (the last dimension).
+            * Result arrays therefore broadcast to shape
+              ``(N_0, N_1, …, S)``; the caller marginalises over the last
+              dimension using :func:`numpy.tensordot`.
+        functions:
+            Optional user-defined functions passed to the executor.  Keys are
+            the names referenced by :class:`~graph.function_call` nodes;
+            values are :class:`~executor.Functor` callables.
+
+        Returns
+        -------
+        executor.State
+            The engine state after evaluation.  Node values can be retrieved
+            via ``state.values[node]``.
+
+        Raises
+        ------
+        ValueError
+            If any abstract index is not resolved in a scenario.
+        """
+        abstract = self.model.abstract_indexes()
+        scenarios_list = list(scenarios)
+
+        if axes is None:
+            # 1-D batch mode: every abstract index must be in every scenario.
+            for i, (_, assignments) in enumerate(scenarios_list):
+                unresolved = [idx for idx in abstract if idx not in assignments]
+                if unresolved:
+                    names = ", ".join(getattr(idx, "name", repr(idx)) for idx in unresolved)
+                    raise ValueError(
+                        f"Scenario {i}: abstract index(es) not resolved: {names}"
+                    )
+
+            # Build substitution dict: stack scenario values into batch arrays.
+            c_subs: dict[graph.Node, np.ndarray] = {}
+
+            # One row per scenario for each abstract index.
+            for idx in abstract:
+                values = [assignments[idx] for _, assignments in scenarios_list]
+                c_subs[idx.node] = np.asarray(values)
+
         else:
-            assignments = self.inst.values
+            # Grid mode: axis indexes are provided as dense arrays; all other
+            # abstract indexes come from scenarios.
+            n_axes = len(axes)
+            axis_set = set(axes.keys())
+            non_axis_abstract = [idx for idx in abstract if idx not in axis_set]
 
-        # [pre] extract the weights and the size of the ensemble
-        c_weight = np.array([c[0] for c in self.ensemble])
-        c_size = c_weight.shape[0]
+            # Validate: every non-axis abstract index must appear in each scenario.
+            for i, (_, assignments) in enumerate(scenarios_list):
+                unresolved = [idx for idx in non_axis_abstract if idx not in assignments]
+                if unresolved:
+                    names = ", ".join(getattr(idx, "name", repr(idx)) for idx in unresolved)
+                    raise ValueError(
+                        f"Scenario {i}: abstract index(es) not resolved: {names}"
+                    )
 
-        # [pre] create empty placeholders
-        c_subs: dict[graph.Node, np.ndarray] = {}
+            S = len(scenarios_list)
+            c_subs = {}
 
-        # [pre] add global unique symbols
-        for entry in symbol.symbol_table.values():
-            c_subs[entry.node] = np.array(entry.name)
+            # Axis indexes: shape (1, …, N_i, …, 1, 1) — N_i at position i.
+            for i, (idx, arr) in enumerate(axes.items()):
+                shape = [1] * (n_axes + 1)
+                shape[i] = arr.size
+                c_subs[idx.node] = arr.reshape(shape)
 
-        # [pre] add context variables
-        collector: dict[ContextVariable, list[float]] = {}
-        for _, entry in self.ensemble:
-            for cv, value in entry.items():
-                collector.setdefault(cv, []).append(value)
-        for key, values in collector.items():
-            c_subs[key.node] = np.asarray(values)
+            # Non-axis abstract indexes: shape (1, …, 1, S).
+            for idx in non_axis_abstract:
+                values = [assignments[idx] for _, assignments in scenarios_list]
+                shape = [1] * n_axes + [S]
+                c_subs[idx.node] = np.asarray(values).reshape(shape)
 
-        # [pre] evaluate the indexes depending on distributions
-        #
-        # TODO(bassosimone): the size used here is too small
-        # TODO(pistore): if index is in self.capacities AND type is Distribution,
-        #  there is no need to compute the sample, as the cdf of the distribution is directly
-        #  used in the constraint calculation below (unless index_vals is used)
-        for index in self.inst.abs.indexes + self.inst.abs.capacities:
-            if index.name in assignments:
-                value = assignments[index.name]
-                if isinstance(value, Distribution):
-                    c_subs[index.node] = np.asarray(value.rvs(size=c_size))
-                else:
-                    c_subs[index.node] = np.full(c_size, value)
-            else:
-                if isinstance(index.value, Distribution):
-                    c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
-                # else: not needed, covered by default placeholder behavior
-
-        # [eval] expand dimensions for all values computed thus far
-        for key in c_subs:
-            c_subs[key] = np.expand_dims(c_subs[key], axis=(0, 1))
-
-        # [eval] add presence variables and expand dimensions
-        assert len(self.inst.abs.pvs) == 2  # TODO: generalize
-        for i, pv in enumerate(self.inst.abs.pvs):
-            c_subs[pv.node] = np.expand_dims(grid[pv], axis=(i, 2))
-
-        # [eval] collect all the nodes to evaluate
-        all_nodes: list[graph.Node] = []
-        for constraint in self.inst.abs.constraints:
-            all_nodes.append(constraint.usage.node)
-            if not isinstance(constraint.capacity.value, Distribution):
-                all_nodes.append(constraint.capacity.node)
-        for index in self.inst.abs.indexes + self.inst.abs.capacities:
-            all_nodes.append(index.node)
-
-        # [eval] actually evaluate all the nodes
-        state = executor.State(c_subs)
-        executor.evaluate_nodes(state, *linearize.forest(*all_nodes))
-
-        # [fix] Ensure that we have the correct shape for operands
-        def _fix_shapes(value: np.ndarray) -> np.ndarray:
-            if value.ndim == 3 and value.shape[2] == 1:
-                return np.broadcast_to(value, value.shape[:2] + (c_size,))
-            return value
-
-        # [post] compute the sustainability field
-        grid_shape = (grid[self.inst.abs.pvs[0]].size, grid[self.inst.abs.pvs[1]].size)
-        field = np.ones(grid_shape)
-        field_elements = {}
-        for constraint in self.inst.abs.constraints:
-            # Get usage
-            usage = _fix_shapes(np.asarray(c_subs[constraint.usage.node]))
-
-            # Get capacity
-            capacity = constraint.capacity
-            if capacity.name in assignments:
-                capacity_value = assignments[capacity.name]
-            else:
-                capacity_value = capacity.value
-
-            if not isinstance(capacity_value, Distribution):
-                unscaled_result = usage <= _fix_shapes(np.asarray(c_subs[capacity.node]))
-            else:
-                unscaled_result = 1.0 - capacity_value.cdf(usage)
-
-            # Apply weights and store the result
-            result = np.broadcast_to(np.dot(unscaled_result, c_weight), grid_shape)
-            field_elements[constraint] = result
-            field *= result
-
-        # [post] store the results
-        self.index_vals = c_subs
-        self.grid = grid
-        self.field = field
-        self.field_elements = field_elements
-        return self.field
-
-    def evaluate_usage(self, presences):
-        """Evaluate the model according to the presence argument."""
-        if self.inst.values is None:
-            assignments = {}
-        else:
-            assignments = self.inst.values
-
-        # [pre] extract the weights and the size of the ensemble
-        c_weight = np.array([c[0] for c in self.ensemble])
-        c_size = c_weight.shape[0]
-
-        # [pre] create empty placeholders
-        c_subs: dict[graph.Node, np.ndarray] = {}
-
-        # [pre] add global unique symbols
-        for entry in symbol.symbol_table.values():
-            c_subs[entry.node] = np.array(entry.name)
-
-        # [pre] add context variables
-        collector: dict[ContextVariable, list[float]] = {}
-        for _, entry in self.ensemble:
-            for cv, value in entry.items():
-                collector.setdefault(cv, []).append(value)
-        for key, values in collector.items():
-            c_subs[key.node] = np.asarray(values)
-
-        # [pre] evaluate the indexes depending on distributions
-        #
-        # TODO(bassosimone): the size used here is too small
-        # TODO(pistore): if index is in self.capacities AND type is Distribution,
-        #  there is no need to compute the sample, as the cdf of the distribution is directly
-        #  used in the constraint calculation below (unless index_vals is used)
-        for index in self.inst.abs.indexes + self.inst.abs.capacities:
-            if index.name in assignments:
-                value = assignments[index.name]
-                if isinstance(value, Distribution):
-                    c_subs[index.node] = np.asarray(value.rvs(size=c_size))
-                else:
-                    c_subs[index.node] = np.full(c_size, value)
-            else:
-                if isinstance(index.value, Distribution):
-                    c_subs[index.node] = np.asarray(index.value.rvs(size=c_size))
-                # else: not needed, covered by default placeholder behavior
-
-        # [eval] expand dimensions for all values computed thus far
-        for key in c_subs:
-            c_subs[key] = np.expand_dims(c_subs[key], axis=0)  # CHANGED
-
-        # [eval] add presence variables and expand dimensions
-        assert len(self.inst.abs.pvs) == 2  # TODO: generalize
-        for i, pv in enumerate(self.inst.abs.pvs):
-            c_subs[pv.node] = np.expand_dims(presences[i], axis=1)  # CHANGED
-
-        # [eval] collect all the nodes to evaluate
-        all_nodes: list[graph.Node] = []
-        for constraint in self.inst.abs.constraints:
-            all_nodes.append(constraint.usage.node)
-            if not isinstance(constraint.capacity.value, Distribution):
-                all_nodes.append(constraint.capacity.node)
-        for index in self.inst.abs.indexes + self.inst.abs.capacities:
-            all_nodes.append(index.node)
-
-        # [eval] actually evaluate all the nodes
-        state = executor.State(c_subs)
-        executor.evaluate_nodes(state, *linearize.forest(*all_nodes))
-
-        # CHANGED FROM HERE
-        # [post] compute the usage map
-        usage_elements = {}
-        for constraint in self.inst.abs.constraints:
-            # Compute and store constraint usage
-            usage = np.asarray(c_subs[constraint.usage.node]).mean(axis=1)
-            usage_elements[constraint] = usage
-
-        # [post] return the results
-        return usage_elements
-
-    def get_index_value(self, i: Index) -> float:
-        """Get the value of the given index."""
-        assert self.index_vals is not None
-        return self.index_vals[i.node]
-
-    def get_index_mean_value(self, i: Index) -> float:
-        """Get the mean value of the given index."""
-        assert self.index_vals is not None
-        return np.average(self.index_vals[i.node])
-
-    def compute_sustainable_area(self) -> float:
-        """Compute the sustainable area."""
-        assert self.grid is not None
-        assert self.field is not None
-
-        grid = self.grid
-        field = self.field
-
-        return field.sum() * reduce(
-            lambda x, y: x * y, [axis.max() / (axis.size - 1) + 1 for axis in list(grid.values())]
-        )
-
-    # TODO: use evaluate_usage instead of evaluate_grid?
-    # TODO: change API - order of presence variables
-    def compute_sustainability_index(self, presences: list) -> float:
-        """Compute the sustainability index."""
-        assert self.grid is not None
-        grid = self.grid
-        field = self.field
-        # TODO: fill value
-        index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
-        return np.mean(index)  # type: ignore
-
-    def compute_sustainability_index_with_ci(self, presences: list, confidence: float = 0.9) -> (float, float):
-        """Compute the sustainability index with confidence value."""
-        assert self.grid is not None
-        grid = self.grid
-        field = self.field
-        # TODO: fill value
-        index = interpolate.interpn(grid.values(), field, np.array(presences), bounds_error=False, fill_value=0.0)
-        m, se = np.mean(index), stats.sem(index)
-        h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
-        return m, h  # type: ignore
-
-    def compute_sustainability_index_per_constraint(self, presences: list) -> dict:
-        """Compute the sustainability index per constraint."""
-        assert self.grid is not None
-        assert self.field_elements is not None
-
-        grid = self.grid
-        field_elements = self.field_elements
-        # TODO: fill value
-        indexes = {}
-        for c in self.inst.abs.constraints:
-            index = interpolate.interpn(
-                grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
-            )
-            indexes[c] = np.mean(index)
-        return indexes
-
-    def compute_sustainability_index_with_ci_per_constraint(self, presences: list, confidence: float = 0.9) -> dict:
-        """Compute the sustainability index with confidence value for each constraint."""
-        assert self.grid is not None
-        assert self.field_elements is not None
-
-        grid = self.grid
-        field_elements = self.field_elements
-        # TODO: fill value
-        indexes = {}
-        for c in self.inst.abs.constraints:
-            index = interpolate.interpn(
-                grid.values(), field_elements[c], np.array(presences), bounds_error=False, fill_value=0.0
-            )
-            m, se = np.mean(index), stats.sem(index)
-            h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
-            indexes[c] = (m, h)
-        return indexes
-
-    def compute_modal_line_per_constraint(self) -> dict:
-        """Compute the modal line per constraint."""
-        assert self.grid is not None
-        assert self.field_elements is not None
-
-        grid = self.grid
-        field_elements = self.field_elements
-        modal_lines = {}
-        for c in self.inst.abs.constraints:
-            fe = field_elements[c]
-            matrix = (fe <= 0.5) & (
-                (ndimage.shift(fe, (0, 1)) > 0.5)
-                | (ndimage.shift(fe, (0, -1)) > 0.5)
-                | (ndimage.shift(fe, (1, 0)) > 0.5)
-                | (ndimage.shift(fe, (-1, 0)) > 0.5)
-            )
-            (yi, xi) = np.nonzero(matrix)
-
-            # TODO: decide whether two regressions are really necessary
-            horizontal_regr = None
-            vertical_regr = None
-            try:
-                horizontal_regr = stats.linregress(grid[self.inst.abs.pvs[0]][xi], grid[self.inst.abs.pvs[1]][yi])
-            except ValueError:
-                pass
-            try:
-                vertical_regr = stats.linregress(grid[self.inst.abs.pvs[1]][yi], grid[self.inst.abs.pvs[0]][xi])
-            except ValueError:
-                pass
-
-            # TODO(pistore,bassosimone): find a better way to represent the lines (at the
-            # moment, we need to encode the endpoints
-            # TODO(pistore,bassosimone): even before we implement the previous TODO,
-            # avoid hardcoding of the length (10000)
-            # TODO(pistore): slopes whould be negative, otherwise th approach may not work
-
-            def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-                """Logic for computing the points with vertical regression."""
-                if regr.slope < 0.00:
-                    return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
-                else:
-                    return ((regr.intercept, regr.intercept), (0.0, 10000.0))
-
-            def _horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-                """Logic for computing the points with horizontal regression."""
-                if regr.slope < 0.0:
-                    return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
-                else:
-                    return ((0.0, 10000.0), (regr.intercept, regr.intercept))
-
-            if horizontal_regr and vertical_regr:
-                # Use regression with better fit (higher rvalue)
-                if vertical_regr.rvalue >= horizontal_regr.rvalue:
-                    modal_lines[c] = _vertical(vertical_regr)
-                else:
-                    modal_lines[c] = _horizontal(horizontal_regr)
-
-            elif horizontal_regr:
-                modal_lines[c] = _horizontal(horizontal_regr)
-
-            elif vertical_regr:
-                modal_lines[c] = _vertical(vertical_regr)
-
-            else:
-                pass  # No regression is possible (eg median not intersecting the grid)
-
-        return modal_lines
+        state = executor.State(c_subs, functions=functions or {})
+        executor.evaluate_nodes(state, *linearize.forest(*nodes_of_interest))
+        return state

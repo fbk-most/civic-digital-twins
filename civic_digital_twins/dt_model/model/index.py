@@ -9,7 +9,7 @@ be a constant, a distribution, or a symbolic expression.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 import numpy as np
 from scipy import stats
@@ -188,10 +188,8 @@ class Index(GenericIndex):
         self,
         name: str,
         value: graph.Scalar | Distribution | graph.Node | None,
-        cvs: list[Any] | None = None,
     ) -> None:
         self.name = name
-        self.cvs = cvs
 
         # We model a distribution index as a distribution to invoke when
         # scheduling the model and a placeholder to fill with the result
@@ -434,23 +432,6 @@ class ConstIndex(Index):
         return f"const_idx({self.v})"
 
 
-class SymIndex(Index):
-    """Class to represent an index as a symbolic value."""
-
-    def __init__(
-        self,
-        name: str,
-        value: graph.Node,
-        cvs: list[Any] | None = None,
-    ) -> None:
-        super().__init__(name, value, cvs)
-        self.sym_value = value
-
-    def __str__(self):
-        """Return a string representation of the symbolic index."""
-        return f"sympy_idx({self.value})"
-
-
 class TimeseriesIndex(Index):
     """Class to represent a time-indexed quantity.
 
@@ -474,12 +455,10 @@ class TimeseriesIndex(Index):
         self,
         name: str,
         values: np.ndarray | graph.Node | None = None,
-        cvs: list[Any] | None = None,
     ) -> None:
         # We bypass Index.__init__ and set attributes directly because
         # numpy arrays are not a recognised Index value type.
         self.name = name
-        self.cvs = cvs
         if isinstance(values, graph.Node):
             # Formula mode — same dispatch as Index for graph nodes.
             values.maybe_set_name(name)

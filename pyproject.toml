@@ -58,7 +58,12 @@ keywords = []
 requires-python = ">=3.11.0"
 
 # Runtime dependencies
-dependencies = ["numpy>=2.2.0", "pandas>=2.2.0", "scipy>=1.15.0"]
+dependencies = [
+    "numpy>=2.2.0",
+    "pandas>=2.2.0",
+    "scipy>=1.15.0",
+    "scipy-stubs~=1.16.0",
+]
 
 # Optional Dependencies (Dev)
 [dependency-groups]
@@ -91,6 +96,9 @@ testpaths = ["tests"]
 
 # Test file naming convention
 python_files = ["test_*.py"]
+
+# Add examples/ to sys.path so tests can import example packages (e.g. overtourism_molveno)
+pythonpath = ["examples"]
 
 # Coverage configuration (XML and terminal output)
 addopts = "--cov=civic_digital_twins --cov-report=xml --cov-report=term-missing"
