@@ -75,9 +75,21 @@ class EvaluationResult:
         """Broadcast *index*'s result to :attr:`full_shape` then contract with weights.
 
         Returns an array of shape ``(N_0, ..., N_k)`` — the scenario dimension
-        is contracted.  In 1-D mode (no axes) returns a scalar.
+        is contracted.  In 1-D mode (no axes) returns a scalar (or a timeseries
+        array of shape ``(T,)`` for timeseries indexes).
+
+        In 1-D mode the scenario dimension is axis 0; trailing size-1 dimensions
+        added by :class:`~.ensemble.DistributionEnsemble` (which wraps each
+        scalar sample as shape ``(1,)`` for timeseries broadcast compatibility)
+        are squeezed away so that the return value is a plain scalar.
         """
-        arr = np.broadcast_to(self._state.values[index.node], self.full_shape)
+        arr = self._state.values[index.node]
+        if not self._axes:
+            # 1-D mode: scenario dimension is always axis 0.
+            # Contract directly; squeeze trailing size-1 dims so scalar indexes
+            # return a scalar rather than a (1,) array.
+            return np.tensordot(arr, self._weights, axes=([0], [0])).squeeze()
+        arr = np.broadcast_to(arr, self.full_shape)
         return np.tensordot(arr, self._weights, axes=([-1], [0]))
 
 

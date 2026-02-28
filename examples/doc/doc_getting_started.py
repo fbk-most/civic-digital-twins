@@ -37,11 +37,8 @@ ensemble = DistributionEnsemble(model, size=1000)
 
 result = Evaluation(model).evaluate(ensemble)
 
-# TODO: shape will be (1000,) once the marginalize bug is fixed; currently (1000, 1)
-# because DistributionEnsemble wraps each sample as (1,) for timeseries compatibility.
-co2_samples = result[co2]            # np.ndarray, shape (1000, 1) — see bug note
-# TODO: replace workaround with result.marginalize(co2) once bug is fixed
-co2_mean = float(np.dot(result[co2].reshape(-1), result.weights))  # scalar
+co2_samples = result[co2]            # np.ndarray, shape (1000, 1)
+co2_mean = result.marginalize(co2)   # scalar
 
 assert co2_samples.shape == (1000, 1)
 # E[CO2] = E[distance / fuel_efficiency * 2.31]

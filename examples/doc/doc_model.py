@@ -84,10 +84,7 @@ ensemble2 = DistributionEnsemble(model2, size=200)
 result = Evaluation(model2).evaluate(ensemble2)
 
 # E[x2 + y2] = 5 + 5 = 10 (both U(0,10))
-# TODO: replace workaround with result.marginalize(z2) once the marginalize bug is fixed.
-# Bug: DistributionEnsemble wraps each sample as shape (1,), so stacked result is (S, 1)
-# but full_shape is (S,), causing broadcast_to to fail.
-mean_z2 = float(np.dot(result[z2].reshape(-1), result.weights))
+mean_z2 = result.marginalize(z2)
 assert 7.0 < mean_z2 < 13.0, f"Expected ~10, got {mean_z2}"
 
 
