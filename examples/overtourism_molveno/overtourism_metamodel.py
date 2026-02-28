@@ -29,11 +29,10 @@ from typing import Any, Callable
 import numpy as np
 from scipy import stats
 from scipy.stats import rv_continuous
+from scipy.stats._distn_infrastructure import rv_continuous_frozen
 
 from civic_digital_twins.dt_model.model.index import Distribution, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
-
 
 # ---------------------------------------------------------------------------
 # Context variables
@@ -142,10 +141,7 @@ class CategoricalContextVariable(ContextVariable):
 
         if force_sample or nr < size:
             assert nr > 0
-            return [
-                (1 / nr, r)
-                for r in random.choices(values, k=nr, weights=[self.distribution[v] for v in values])
-            ]
+            return [(1 / nr, r) for r in random.choices(values, k=nr, weights=[self.distribution[v] for v in values])]
 
         if subset is None:
             return [(self.distribution[v], v) for v in values]
@@ -158,7 +154,7 @@ class CategoricalContextVariable(ContextVariable):
 class ContinuousContextVariable(ContextVariable):
     """Continuous context variable backed by a scipy continuous distribution."""
 
-    def __init__(self, name: str, rvc: rv_continuous) -> None:
+    def __init__(self, name: str, rvc: rv_continuous | rv_continuous_frozen) -> None:
         super().__init__(name)
         self.rvc = rvc
 
@@ -266,8 +262,8 @@ class Constraint:
     """
 
     name: str
-    usage: Index      # formula-mode Index wrapping the usage expression
-    capacity: Index   # constant, distribution-backed, or formula-mode Index
+    usage: Index  # formula-mode Index wrapping the usage expression
+    capacity: Index  # constant, distribution-backed, or formula-mode Index
 
 
 # ---------------------------------------------------------------------------

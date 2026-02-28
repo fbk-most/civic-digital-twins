@@ -6,13 +6,6 @@ from civic_digital_twins.dt_model import piecewise
 from civic_digital_twins.dt_model.model.index import Index, LognormDistIndex, TriangDistIndex, UniformDistIndex
 
 try:
-    from .overtourism_metamodel import (
-        CategoricalContextVariable,
-        Constraint,
-        OvertourismModel,
-        PresenceVariable,
-        UniformCategoricalContextVariable,
-    )
     from .molveno_presence_stats import (
         excursionist_presences_stats,
         season,
@@ -20,20 +13,27 @@ try:
         weather,
         weekday,
     )
-except ImportError:
-    from overtourism_metamodel import (
+    from .overtourism_metamodel import (
         CategoricalContextVariable,
         Constraint,
         OvertourismModel,
         PresenceVariable,
         UniformCategoricalContextVariable,
     )
+except ImportError:
     from molveno_presence_stats import (
         excursionist_presences_stats,
         season,
         tourist_presences_stats,
         weather,
         weekday,
+    )
+    from overtourism_metamodel import (
+        CategoricalContextVariable,
+        Constraint,
+        OvertourismModel,
+        PresenceVariable,
+        UniformCategoricalContextVariable,
     )
 
 # Context variables
@@ -62,9 +62,7 @@ I_U_excursionists_parking = Index(
     piecewise((0.55, CV_weather == "bad"), (0.80, True)),
 )
 
-I_U_tourists_beach = Index(
-    "tourist beach usage factor", piecewise((0.25, CV_weather == "bad"), (0.50, True))
-)
+I_U_tourists_beach = Index("tourist beach usage factor", piecewise((0.25, CV_weather == "bad"), (0.50, True)))
 I_U_excursionists_beach = Index(
     "excursionist beach usage factor",
     piecewise((0.35, CV_weather == "bad"), (0.80, True)),

@@ -18,10 +18,10 @@ from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_model(*indexes):
     """Wrap indexes in a named model."""
@@ -97,9 +97,7 @@ def test_axes_single_axis_result_shape():
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(model).evaluate(
-        [(1.0, {})], axes={I_x: xs}
-    )
+    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
     assert result[I_x].shape == (3, 1)
 
 
@@ -111,9 +109,7 @@ def test_axes_two_axes_result_shape():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate(
-        [(1.0, {})], axes={I_x: xs, I_y: ys}
-    )
+    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs, I_y: ys})
     assert result[I_x].shape == (2, 1, 1)
     assert result[I_y].shape == (1, 3, 1)
 
@@ -146,9 +142,7 @@ def test_axes_single_axis_formula_values():
     model = _make_model(I_x, I_scale, I_result)
     xs = np.array([1.0, 2.0, 4.0])
 
-    result = Evaluation(model).evaluate(
-        [(1.0, {})], axes={I_x: xs}
-    )
+    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
     # shape (3, 1); marginalize: tensordot(..., [1.0], axes=([-1],[0])) → (3,)
     marginalised = result.marginalize(I_result)
     assert np.allclose(marginalised, [3.0, 6.0, 12.0])
@@ -163,9 +157,7 @@ def test_axes_two_axes_additive_formula():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate(
-        [(1.0, {})], axes={I_x: xs, I_y: ys}
-    )
+    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs, I_y: ys})
     marginalised = result.marginalize(I_result)
     # result[i, j] = xs[i] + ys[j]
     expected = xs[:, None] + ys[None, :]
@@ -202,9 +194,7 @@ def test_axes_raises_on_unresolved_non_axis_abstract():
     model = _make_model(I_x, I_missing)
 
     with pytest.raises(ValueError, match="abstract index"):
-        Evaluation(model).evaluate(
-            [(1.0, {})], axes={I_x: np.array([1.0])}
-        )
+        Evaluation(model).evaluate([(1.0, {})], axes={I_x: np.array([1.0])})
 
 
 def test_axes_axis_index_not_required_in_scenario():
@@ -213,7 +203,5 @@ def test_axes_axis_index_not_required_in_scenario():
     model = _make_model(I_x)
 
     # Should not raise — I_x is an axis, not required in scenario dict.
-    result = Evaluation(model).evaluate(
-        [(1.0, {})], axes={I_x: np.array([5.0, 10.0])}
-    )
+    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: np.array([5.0, 10.0])})
     assert result[I_x].shape == (2, 1)

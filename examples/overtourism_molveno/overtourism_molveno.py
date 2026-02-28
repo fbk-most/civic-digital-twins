@@ -19,7 +19,6 @@ from civic_digital_twins.dt_model.model.index import Distribution
 from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 
 try:
-    from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
     from overtourism_molveno.molveno_model import (
         CV_weather,
         I_P_excursionists_reduction_factor,
@@ -30,8 +29,8 @@ try:
         PV_excursionists,
         PV_tourists,
     )
+    from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
 except ImportError:
-    from overtourism_metamodel import OvertourismEnsemble
     from molveno_model import (
         CV_weather,
         I_P_excursionists_reduction_factor,
@@ -42,6 +41,7 @@ except ImportError:
         PV_excursionists,
         PV_tourists,
     )
+    from overtourism_metamodel import OvertourismEnsemble
 
 # Base situation
 S_Base = {}
@@ -63,6 +63,7 @@ ensemble_size = 20  # TODO: make configurable; may it be a CV parameter?
 # ---------------------------------------------------------------------------
 # Post-processing helpers (extracted from SustainabilityEvaluation)
 # ---------------------------------------------------------------------------
+
 
 def _compute_sustainable_area(field: np.ndarray, axes: dict) -> float:
     """Compute the sustainable area under the field."""
@@ -162,6 +163,7 @@ def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict
 # Plotting
 # ---------------------------------------------------------------------------
 
+
 def scale(p, v):
     """Scale a probability by a value."""
     return p * v
@@ -180,9 +182,7 @@ def evaluate_scenario(model, situation) -> tuple:
     is the list of :data:`~dt_model.simulation.evaluation.WeightedScenario`
     used (needed downstream for presence-sample generation).
     """
-    scenarios: list[WeightedScenario] = list(
-        OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
-    )
+    scenarios: list[WeightedScenario] = list(OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size))
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
     result = Evaluation(model).evaluate(scenarios, axes={PV_tourists: tt, PV_excursionists: ee})

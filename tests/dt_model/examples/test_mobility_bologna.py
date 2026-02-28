@@ -7,7 +7,6 @@ With a fixed random seed the KPI outputs must remain stable across changes.
 
 import numpy as np
 import pytest
-
 from mobility_bologna.mobility_bologna import BolognaModel, compute_kpis, evaluate
 
 # Ensemble size used in all tests. Small enough to be fast, large enough to

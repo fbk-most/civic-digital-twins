@@ -146,3 +146,11 @@ extend-select = ["W", "Q"]
 
 # Follow NumPy-style docstrings conventions
 convention = "numpy"
+
+# Pyright Configuration
+[tool.pyright]
+
+# Add examples/ to the search path so pyright can resolve example packages
+# (e.g. overtourism_molveno, mobility_bologna) the same way pytest does via
+# its pythonpath setting.
+extraPaths = ["examples"]

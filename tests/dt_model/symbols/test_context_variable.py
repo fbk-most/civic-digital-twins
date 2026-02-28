@@ -4,7 +4,6 @@
 
 import pytest
 import scipy
-
 from overtourism_molveno.overtourism_metamodel import (
     CategoricalContextVariable,
     ContinuousContextVariable,

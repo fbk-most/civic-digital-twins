@@ -1,4 +1,4 @@
-# Data for the Mobility Bologna example
+"""Data for the Mobility Bologna example."""
 
 import numpy as np
 

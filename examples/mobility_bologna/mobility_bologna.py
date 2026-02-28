@@ -19,12 +19,14 @@ from civic_digital_twins.dt_model import DistributionEnsemble, Index, Model, Tim
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+
 # from civic_digital_twins.dt_model.engine import compileflags
 
 try:
-    from .mobility_bologna_data import vehicle_inflow, vehicle_starting, euro_class_split, euro_class_emission
+    from .mobility_bologna_data import euro_class_emission, euro_class_split, vehicle_inflow, vehicle_starting
 except ImportError:
-    from mobility_bologna_data import vehicle_inflow, vehicle_starting, euro_class_split, euro_class_emission
+    from mobility_bologna_data import euro_class_emission, euro_class_split, vehicle_inflow, vehicle_starting
+
 
 def _ts_solve(ts: np.ndarray) -> np.ndarray:
     """Solve traffic with iterative method.
@@ -53,6 +55,7 @@ def _ts_solve(ts: np.ndarray) -> np.ndarray:
 
 
 # MODEL DEFINITION
+
 
 class BolognaModel(Model):
     """Model for the Bologna mobility example."""

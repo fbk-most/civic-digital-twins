@@ -6,8 +6,8 @@ import numpy as np
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
-from ..model.model import Model
 from ..model.index import GenericIndex
+from ..model.model import Model
 from .ensemble import Ensemble, WeightedScenario
 
 __all__ = ["EvaluationResult", "Evaluation"]

@@ -4,12 +4,11 @@
 
 from typing import cast
 
+import numpy as np
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
-import numpy as np
-
+from civic_digital_twins.dt_model.model.model import Model
 
 c1 = cast(Distribution, stats.norm(loc=2.0, scale=1.0))
 

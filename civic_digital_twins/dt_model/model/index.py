@@ -26,7 +26,7 @@ class Distribution(Protocol):
         x: float | np.ndarray,
         *args,
         **kwds,
-    ) -> float | np.ndarray:
+    ) -> np.ndarray:
         """Cumulative distribution function."""
         ...
 

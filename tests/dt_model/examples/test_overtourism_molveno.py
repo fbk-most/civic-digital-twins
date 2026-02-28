@@ -6,10 +6,6 @@ import random
 
 import numpy as np
 import pytest
-
-from civic_digital_twins.dt_model import Evaluation
-from civic_digital_twins.dt_model.model.index import Distribution
-from overtourism_molveno.overtourism_metamodel import Constraint, OvertourismEnsemble
 from overtourism_molveno.molveno_model import (
     CV_season,
     CV_weather,
@@ -18,11 +14,15 @@ from overtourism_molveno.molveno_model import (
     PV_excursionists,
     PV_tourists,
 )
+from overtourism_molveno.overtourism_metamodel import Constraint, ContextVariable, OvertourismEnsemble
 
+from civic_digital_twins.dt_model import Evaluation
+from civic_digital_twins.dt_model.model.index import Distribution
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def compute_field(model, scenarios, tt, ee):
     """Evaluate the sustainability field using Evaluation.evaluate(axes=...).
@@ -32,9 +32,7 @@ def compute_field(model, scenarios, tt, ee):
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(
-        scenarios, axes={PV_tourists: tt, PV_excursionists: ee}
-    )
+    result = Evaluation(model).evaluate(scenarios, axes={PV_tourists: tt, PV_excursionists: ee})
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}
@@ -72,10 +70,7 @@ def compare_constraint_results(
         actual_result = got_by_name[name]
 
         if expected_result.shape != actual_result.shape:
-            failures.append(
-                f"Shape mismatch for constraint '{name}': "
-                f"{expected_result.shape} vs {actual_result.shape}"
-            )
+            failures.append(f"Shape mismatch for constraint '{name}': {expected_result.shape} vs {actual_result.shape}")
             continue
 
         if not np.allclose(expected_result, actual_result, rtol=1e-5, atol=1e-8):
@@ -101,13 +96,16 @@ def compare_constraint_results(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def tourists():
+    """Tourist presence axis: low, medium, high."""
     return np.array([1000, 5000, 10000])
 
 
 @pytest.fixture
 def excursionists():
+    """Excursionist presence axis: low, medium, high."""
     return np.array([1000, 5000, 10000])
 
 
@@ -116,16 +114,22 @@ def good_weather_scenarios():
     """Single-member scenario list: good weather, monday, high season."""
     np.random.seed(0)
     random.seed(0)
-    return list(OvertourismEnsemble(M_Base, {
-        CV_weekday: ["monday"],
-        CV_season: ["high"],
-        CV_weather: ["good"],
-    }))
+    return list(
+        OvertourismEnsemble(
+            M_Base,
+            {
+                CV_weekday: ["monday"],
+                CV_season: ["high"],
+                CV_weather: ["good"],
+            },
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
 # Shape / range tests (replaces test_evaluation.py)
 # ---------------------------------------------------------------------------
+
 
 def test_evaluate_axes_returns_correct_shape(good_weather_scenarios, tourists, excursionists):
     """evaluate(axes=...) produces field with shape (tt.size, ee.size)."""
@@ -166,7 +170,7 @@ def test_ensemble_based_evaluation(tourists, excursionists):
     """OvertourismEnsemble-based evaluation produces a valid sustainability field."""
     np.random.seed(42)
     random.seed(42)
-    scenario = {CV_weather: ["good", "bad"]}
+    scenario: dict[ContextVariable, list] = {CV_weather: ["good", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=5)
     scenarios = list(ensemble)
 
@@ -184,6 +188,7 @@ def test_ensemble_based_evaluation(tourists, excursionists):
 # Expected values are the transposes of the original test_molveno.py values.
 # ---------------------------------------------------------------------------
 
+
 def test_fixed_ensemble():
     """Evaluate the model using a fixed single-member ensemble (seed regression)."""
     tourists = np.array([1000, 2000, 5000, 10000, 20000, 50000])
@@ -193,11 +198,14 @@ def test_fixed_ensemble():
     random.seed(4)
 
     # Build single-member scenarios with distribution-backed index samples.
-    ensemble = OvertourismEnsemble(M_Base, {
-        CV_weekday: ["monday"],
-        CV_season: ["high"],
-        CV_weather: ["good"],
-    })
+    ensemble = OvertourismEnsemble(
+        M_Base,
+        {
+            CV_weekday: ["monday"],
+            CV_season: ["high"],
+            CV_weather: ["good"],
+        },
+    )
     scenarios = list(ensemble)
 
     _, got, _ = compute_field(M_Base, scenarios, tourists, excursionists)
@@ -258,7 +266,7 @@ def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
     np.random.seed(0)
     random.seed(0)
-    scenario = {CV_weather: ["good", "bad"]}
+    scenario: dict[ContextVariable, list] = {CV_weather: ["good", "bad"]}
     ens = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=10)
     scenarios = list(ens)
 
@@ -276,7 +284,7 @@ def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
     np.random.seed(0)
     random.seed(0)
-    situation = {CV_weather: ["good", "unsettled", "bad"]}
+    situation: dict[ContextVariable, list] = {CV_weather: ["good", "unsettled", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, situation, cv_ensemble_size=20)
     scenarios = list(ensemble)
 

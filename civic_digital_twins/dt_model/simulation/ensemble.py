@@ -29,7 +29,9 @@ class Ensemble(Protocol):
     that enumerate context-variable combinations with associated weights).
     """
 
-    def __iter__(self) -> Iterator[WeightedScenario]: ...
+    def __iter__(self) -> Iterator[WeightedScenario]:
+        """Yield weighted scenarios."""
+        ...
 
 
 class DistributionEnsemble:
@@ -63,10 +65,7 @@ class DistributionEnsemble:
 
     def __init__(self, model: Model, size: int, rng: np.random.Generator | None = None) -> None:
         abstract = model.abstract_indexes()
-        non_dist = [
-            idx for idx in abstract
-            if not (isinstance(idx, Index) and isinstance(idx.value, Distribution))
-        ]
+        non_dist = [idx for idx in abstract if not (isinstance(idx, Index) and isinstance(idx.value, Distribution))]
         if non_dist:
             names = ", ".join(getattr(idx, "name", repr(idx)) for idx in non_dist)
             raise ValueError(
