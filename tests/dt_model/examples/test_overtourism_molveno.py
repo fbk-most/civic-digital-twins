@@ -9,9 +9,8 @@ import pytest
 
 from civic_digital_twins.dt_model import Evaluation
 from civic_digital_twins.dt_model.model.index import Distribution
-from overtourism_molveno.constraint import Constraint
-from overtourism_molveno.ensemble import OvertourismEnsemble
-from overtourism_molveno.overtourism import (
+from overtourism_molveno.overtourism_metamodel import Constraint, OvertourismEnsemble
+from overtourism_molveno.molveno_model import (
     CV_season,
     CV_weather,
     CV_weekday,
@@ -28,37 +27,30 @@ from overtourism_molveno.overtourism import (
 def compute_field(model, scenarios, tt, ee):
     """Evaluate the sustainability field using Evaluation.evaluate(axes=...).
 
-    Returns ``(field, field_elements, state)`` where:
+    Returns ``(field, field_elements, result)`` where:
     - ``field`` has shape ``(tt.size, ee.size)``
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
-    - ``state`` is the raw executor State
+    - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    weights = np.array([w for w, _ in scenarios])
-
-    nodes = [c.usage for c in model.constraints]
-
-    state = Evaluation(model).evaluate(
-        scenarios, nodes, axes={PV_tourists: tt, PV_excursionists: ee}
+    result = Evaluation(model).evaluate(
+        scenarios, axes={PV_tourists: tt, PV_excursionists: ee}
     )
-
-    S = len(scenarios)
-    full_shape = (tt.size, ee.size, S)
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}
     for c in model.constraints:
         # Broadcast to full shape in case the formula doesn't depend on all axes.
-        usage = np.broadcast_to(state.values[c.usage], full_shape)
+        usage = np.broadcast_to(result[c.usage], result.full_shape)
         if isinstance(c.capacity.value, Distribution):
             mask = (1.0 - c.capacity.value.cdf(usage)).astype(float)
         else:
-            cap = np.broadcast_to(state.values[c.capacity.node], full_shape)
+            cap = np.broadcast_to(result[c.capacity], result.full_shape)
             mask = (usage <= cap).astype(float)
-        field_elem = np.tensordot(mask, weights, axes=([-1], [0]))
+        field_elem = np.tensordot(mask, result.weights, axes=([-1], [0]))
         field_elements[c] = field_elem
         field *= field_elem
 
-    return field, field_elements, state
+    return field, field_elements, result
 
 
 def compare_constraint_results(

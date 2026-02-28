@@ -12,13 +12,15 @@ from .model import (
     TriangDistIndex,
     UniformDistIndex,
 )
-from .simulation import Ensemble, Evaluation, WeightedScenario
+from .simulation import DistributionEnsemble, Ensemble, Evaluation, EvaluationResult, WeightedScenario
 
 __all__ = [
     "ConstIndex",
     "Distribution",
+    "DistributionEnsemble",
     "Ensemble",
     "Evaluation",
+    "EvaluationResult",
     "GenericIndex",
     "Index",
     "LognormDistIndex",

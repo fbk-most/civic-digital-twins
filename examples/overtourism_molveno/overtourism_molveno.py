@@ -5,17 +5,6 @@ We include this model into the source tree as an illustrative example.
 
 # SPDX-License-Identifier: Apache-2.0
 
-# When run as a script (uv run python examples/…/overtourism_molveno.py), Python
-# adds this file's directory to sys.path rather than the examples/ parent.  Insert
-# the parent so that `overtourism_molveno` is importable as a package.
-import sys as _sys
-from pathlib import Path as _Path
-
-_examples_dir = str(_Path(__file__).parent.parent)
-if _examples_dir not in _sys.path:
-    _sys.path.insert(0, _examples_dir)
-del _sys, _Path, _examples_dir
-
 import time
 from functools import reduce
 
@@ -27,10 +16,11 @@ from scipy import interpolate, ndimage, stats
 
 from civic_digital_twins.dt_model import Evaluation
 from civic_digital_twins.dt_model.model.index import Distribution
+from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 
 try:
-    from overtourism_molveno.ensemble import OvertourismEnsemble
-    from overtourism_molveno.overtourism import (
+    from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
+    from overtourism_molveno.molveno_model import (
         CV_weather,
         I_P_excursionists_reduction_factor,
         I_P_excursionists_saturation_level,
@@ -41,8 +31,8 @@ try:
         PV_tourists,
     )
 except ImportError:
-    from ensemble import OvertourismEnsemble
-    from overtourism import (
+    from overtourism_metamodel import OvertourismEnsemble
+    from molveno_model import (
         CV_weather,
         I_P_excursionists_reduction_factor,
         I_P_excursionists_saturation_level,
@@ -182,44 +172,56 @@ def threshold(p, t):
     return min(p, t) + 0.05 / (1 + np.exp(-(p - t)))
 
 
-def plot_scenario(ax, model, situation, title):
-    """Plot a scenario."""
-    ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
-    scenarios = list(ensemble)
-    weights = np.array([w for w, _ in scenarios])
+def evaluate_scenario(model, situation) -> tuple:
+    """Evaluate the sustainability field for *situation*.
 
+    Returns ``(result, scenarios)`` where *result* is an
+    :class:`~dt_model.simulation.evaluation.EvaluationResult` and *scenarios*
+    is the list of :data:`~dt_model.simulation.evaluation.WeightedScenario`
+    used (needed downstream for presence-sample generation).
+    """
+    scenarios: list[WeightedScenario] = list(
+        OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
+    )
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
+    result = Evaluation(model).evaluate(scenarios, axes={PV_tourists: tt, PV_excursionists: ee})
+    return result, scenarios
 
-    # Nodes of interest: constraint usage formulas + helper index nodes.
-    nodes = [c.usage for c in model.constraints]
-    nodes += [
-        I_P_tourists_reduction_factor.node,
-        I_P_tourists_saturation_level.node,
-        I_P_excursionists_reduction_factor.node,
-        I_P_excursionists_saturation_level.node,
-    ]
 
-    state = Evaluation(model).evaluate(
-        scenarios, nodes, axes={PV_tourists: tt, PV_excursionists: ee}
-    )
+def plot_scenario(ax, model, result, scenarios, title):
+    """Render the sustainability field and KPIs onto *ax*.
+
+    Parameters
+    ----------
+    ax:
+        Matplotlib axes to draw on.
+    model:
+        The :class:`~overtourism_molveno.model.OvertourismModel` being plotted.
+    result:
+        :class:`~dt_model.simulation.evaluation.EvaluationResult` from
+        :func:`evaluate_scenario`.
+    scenarios:
+        The list of weighted scenarios used in the evaluation (needed for
+        presence-sample generation).
+    title:
+        Plot title prefix.
+    """
+    tt = result.axes[PV_tourists]
+    ee = result.axes[PV_excursionists]
 
     # Compute sustainability field.
     # field[t_idx, e_idx] = P(all constraints satisfied | tourists=tt[t_idx], excursionists=ee[e_idx])
-    S = len(scenarios)
-    full_shape = (tt.size, ee.size, S)
-
     field = np.ones((tt.size, ee.size))
     field_elements = {}
     for c in model.constraints:
-        # Broadcast to full shape in case the formula doesn't depend on all axes.
-        usage = np.broadcast_to(state.values[c.usage], full_shape)
+        usage = np.broadcast_to(result[c.usage], result.full_shape)
         if isinstance(c.capacity.value, Distribution):
             mask = (1.0 - c.capacity.value.cdf(usage)).astype(float)
         else:
-            cap = np.broadcast_to(state.values[c.capacity.node], full_shape)
+            cap = np.broadcast_to(result[c.capacity], result.full_shape)
             mask = (usage <= cap).astype(float)
-        field_elem = np.tensordot(mask, weights, axes=([-1], [0]))  # (N_t, N_e)
+        field_elem = np.tensordot(mask, result.weights, axes=([-1], [0]))  # (N_t, N_e)
         field_elements[c] = field_elem
         field *= field_elem
 
@@ -228,10 +230,10 @@ def plot_scenario(ax, model, situation, title):
         tmp = presence * reduction_factor
         return tmp * saturation_level / ((tmp**sharpness + saturation_level**sharpness) ** (1 / sharpness))
 
-    rf_t = float(np.mean(state.values[I_P_tourists_reduction_factor.node]))
-    sl_t = float(np.mean(state.values[I_P_tourists_saturation_level.node]))
-    rf_e = float(np.mean(state.values[I_P_excursionists_reduction_factor.node]))
-    sl_e = float(np.mean(state.values[I_P_excursionists_saturation_level.node]))
+    rf_t = float(np.mean(result[I_P_tourists_reduction_factor]))
+    sl_t = float(np.mean(result[I_P_tourists_saturation_level]))
+    rf_e = float(np.mean(result[I_P_excursionists_reduction_factor]))
+    sl_e = float(np.mean(result[I_P_excursionists_saturation_level]))
 
     sample_tourists = [
         presence_transformation(sample, rf_t, sl_t)
@@ -277,9 +279,12 @@ def plot_scenario(ax, model, situation, title):
 start_time = time.time()
 
 fig, axs = plt.subplots(1, 3, figsize=(18, 10), layout="constrained")
-plot_scenario(axs[0], M_Base, S_Base, "Base")
-plot_scenario(axs[1], M_Base, S_Good_Weather, "Good weather")
-plot_scenario(axs[2], M_Base, S_Bad_Weather, "Bad weather")
+result, scenarios = evaluate_scenario(M_Base, S_Base)
+plot_scenario(axs[0], M_Base, result, scenarios, "Base")
+result, scenarios = evaluate_scenario(M_Base, S_Good_Weather)
+plot_scenario(axs[1], M_Base, result, scenarios, "Good weather")
+result, scenarios = evaluate_scenario(M_Base, S_Bad_Weather)
+plot_scenario(axs[2], M_Base, result, scenarios, "Bad weather")
 fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
 fig.supxlabel("Tourists", fontsize=18)
 fig.supylabel("Excursionists", fontsize=18)

@@ -15,10 +15,10 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import FuncFormatter
 from scipy import stats
 
-from civic_digital_twins.dt_model import Index, Model, TimeseriesIndex, UniformDistIndex
+from civic_digital_twins.dt_model import DistributionEnsemble, Index, Model, TimeseriesIndex, UniformDistIndex
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, WeightedScenario
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 # from civic_digital_twins.dt_model.engine import compileflags
 
 try:
@@ -363,30 +363,22 @@ class BolognaModel(Model):
 def evaluate(model: BolognaModel, size: int = 1) -> dict:
     """Evaluate *model* over an ensemble of *size* samples.
 
-    Samples the distribution-backed index ``I_B_p50_cost``, builds
-    :data:`WeightedScenario` objects, calls the standard
-    :class:`~dt_model.simulation.evaluation.Evaluation` engine, and returns
-    a ``subs`` dict mapping each index to a 2-D array so that ``[0]``
+    Draws *size* samples from each distribution-backed abstract index via
+    :class:`~dt_model.simulation.ensemble.DistributionEnsemble`, runs the
+    standard :class:`~dt_model.simulation.evaluation.Evaluation` engine, and
+    returns a ``subs`` dict mapping each index to a 2-D array so that ``[0]``
     indexing and ``.mean(axis=0)`` work uniformly in the helpers below.
-
-    .. note::
-        ``subs`` can be dropped by rewriting :func:`compute_kpis` and
-        :func:`plot_field_graph` to access ``state.values[idx.node]`` directly.
     """
-    samples = model.I_B_p50_cost.value.rvs(size=size)
-    scenarios: list[WeightedScenario] = [
-        (1.0 / size, {model.I_B_p50_cost: np.array([s])}) for s in samples
-    ]
+    ensemble = DistributionEnsemble(model, size)
 
-    state = Evaluation(model).evaluate(
-        scenarios,
-        nodes_of_interest=[idx.node for idx in model.indexes],
+    result = Evaluation(model).evaluate(
+        ensemble,
         functions={"ts_solve": executor.LambdaAdapter(_ts_solve)},
     )
 
     subs = {}
     for idx in model.indexes:
-        val = state.values[idx.node]
+        val = result[idx]
         if val.ndim == 0:
             subs[idx] = np.full((size, 1), float(val))
         elif val.ndim == 1:

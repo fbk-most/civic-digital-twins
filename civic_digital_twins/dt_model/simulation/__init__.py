@@ -1,6 +1,6 @@
 """Scenario-based simulation and evaluation of digital twin models."""
 
-from .ensemble import Ensemble
-from .evaluation import Evaluation, WeightedScenario
+from .ensemble import DistributionEnsemble, Ensemble, WeightedScenario
+from .evaluation import Evaluation, EvaluationResult
 
-__all__ = ["Ensemble", "Evaluation", "WeightedScenario"]
+__all__ = ["DistributionEnsemble", "Ensemble", "Evaluation", "EvaluationResult", "WeightedScenario"]
