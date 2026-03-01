@@ -162,17 +162,16 @@ uv sync --upgrade
 
 1. Make sure the version number in `pyproject.toml` is correct.
 
-2. Make sure you are outside the virtual environment.
+2. Update `CHANGELOG.md`: set the release date on the current version section
+   and add a comparison link at the bottom.
 
-3. Make sure `python3-hatchling` is installed (`sudo apt install python3-hatchling`).
+3. Create and push a git tag: `git tag v<version> && git push origin v<version>`.
 
-4. Make sure `twine` is installed (`sudo apt install twine`).
+4. Build the package: `uv build`.
 
-5. Build the package using `python3 -m hatchling build`.
+5. Check the artifacts: `uv run --with twine twine check dist/*`.
 
-6. Check whether the package is okay using `twine check dist/*`.
-
-7. Upload the package to PyPI using `twine upload dist/*`.
+6. Upload to PyPI: `uv run --with twine twine upload dist/*`.
 
 ## Documentation
 
