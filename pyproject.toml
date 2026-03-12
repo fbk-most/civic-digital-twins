@@ -59,8 +59,11 @@ requires-python = ">=3.11.0"
 
 # Runtime dependencies
 dependencies = [
+    "dash>=4.0.0",
     "numpy>=2.2.0",
     "pandas>=2.2.0",
+    "plotly>=6.6.0",
+    "salib>=1.5.2",
     "scipy>=1.15.0",
     "scipy-stubs~=1.16.0",
 ]

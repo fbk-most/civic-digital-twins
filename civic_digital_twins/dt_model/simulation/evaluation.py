@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from ..engine.frontend import graph, linearize
@@ -120,6 +122,7 @@ class Evaluation:
         *,
         axes: dict[GenericIndex, np.ndarray] | None = None,
         functions: dict[str, executor.Functor] | None = None,
+        overrides: dict[GenericIndex, Any] | None = None,
     ) -> EvaluationResult:
         """Evaluate *nodes_of_interest* over the given scenarios.
 
@@ -151,6 +154,13 @@ class Evaluation:
             Optional user-defined functions passed to the executor.  Keys are
             the names referenced by :class:`~graph.function_call` nodes;
             values are :class:`~executor.Functor` callables.
+        overrides:
+            Optional index value overrides injected directly into the
+            executor substitution dict.  This allows overriding concrete
+            indexes (constants, distribution-backed) with alternate values
+            without modifying the model.  Overrides take precedence over
+            values computed from the graph (e.g. ``graph.constant`` nodes).
+            Values are converted via :func:`numpy.asarray`.
 
         Returns
         -------
@@ -196,6 +206,16 @@ class Evaluation:
             if n_axes > 0:
                 stacked = stacked.reshape([1] * n_axes + [S])
             c_subs[idx.node] = stacked
+
+        # User-provided overrides: inject directly into the substitution dict.
+        # This allows overriding constant nodes (which are not abstract) or
+        # replacing distribution-backed values with fixed scalars.  The
+        # executor checks state.values before computing any node, so an
+        # override for a graph.constant node will be used in place of the
+        # baked-in constant value.
+        if overrides:
+            for idx, val in overrides.items():
+                c_subs[idx.node] = np.asarray(val)
 
         weights = np.array([w for w, _ in scenarios_list])
         actual_nodes = [idx.node for idx in nodes_of_interest]
