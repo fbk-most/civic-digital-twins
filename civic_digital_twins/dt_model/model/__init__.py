@@ -3,23 +3,19 @@
 from .index import (
     ConstIndex,
     Distribution,
+    DistributionIndex,
     GenericIndex,
     Index,
-    LognormDistIndex,
     TimeseriesIndex,
-    TriangDistIndex,
-    UniformDistIndex,
 )
 from .model import Model
 
 __all__ = [
     "ConstIndex",
     "Distribution",
+    "DistributionIndex",
     "GenericIndex",
     "Index",
-    "LognormDistIndex",
     "Model",
     "TimeseriesIndex",
-    "TriangDistIndex",
-    "UniformDistIndex",
 ]

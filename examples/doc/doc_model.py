@@ -6,9 +6,9 @@ from scipy import stats
 from civic_digital_twins.dt_model import Evaluation, Model
 from civic_digital_twins.dt_model.model.index import (
     ConstIndex,
+    DistributionIndex,
     Index,
     TimeseriesIndex,
-    UniformDistIndex,
 )
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 
@@ -48,8 +48,8 @@ assert demand_ts.value is None
 # dd-cdt-model.md — Model: abstract_indexes / is_instantiated
 # ---------------------------------------------------------------------------
 
-x = UniformDistIndex("x", loc=0.0, scale=10.0)
-y = UniformDistIndex("y", loc=0.0, scale=10.0)
+x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z = Index("z", x + y)
 
 model = Model("demo", [x, y, z])
@@ -75,8 +75,8 @@ assert y in assignments
 # dd-cdt-model.md — End-to-End Example (1-D mode)
 # ---------------------------------------------------------------------------
 
-x2 = UniformDistIndex("x2", loc=0.0, scale=10.0)
-y2 = UniformDistIndex("y2", loc=0.0, scale=10.0)
+x2 = DistributionIndex("x2", stats.uniform, {"loc": 0.0, "scale": 10.0})
+y2 = DistributionIndex("y2", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z2 = Index("z2", x2 + y2)
 model2 = Model("demo2", [x2, y2, z2])
 

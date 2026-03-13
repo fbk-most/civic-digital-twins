@@ -2,8 +2,10 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+from scipy import stats
+
 from civic_digital_twins.dt_model import piecewise
-from civic_digital_twins.dt_model.model.index import Index, LognormDistIndex, TriangDistIndex, UniformDistIndex
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 
 try:
     from .molveno_presence_stats import (
@@ -49,10 +51,12 @@ PV_excursionists = PresenceVariable("excursionists", [CV_weekday, CV_season, CV_
 
 # Capacity indexes
 
-I_C_parking = UniformDistIndex("parking capacity", loc=350.0, scale=100.0)
-I_C_beach = UniformDistIndex("beach capacity", loc=6000.0, scale=1000.0)
-I_C_accommodation = LognormDistIndex("accommodation capacity", s=0.125, loc=0.0, scale=5000.0)
-I_C_food = TriangDistIndex("food service capacity", loc=3000.0, scale=1000.0, c=0.5)
+I_C_parking = DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0})
+I_C_beach = DistributionIndex("beach capacity", stats.uniform, {"loc": 6000.0, "scale": 1000.0})
+I_C_accommodation = DistributionIndex(
+    "accommodation capacity", stats.lognorm, {"s": 0.125, "loc": 0.0, "scale": 5000.0}
+)
+I_C_food = DistributionIndex("food service capacity", stats.triang, {"loc": 3000.0, "scale": 1000.0, "c": 0.5})
 
 # Usage indexes
 
@@ -83,7 +87,7 @@ I_Xa_excursionists_per_vehicle = Index("excursionists per vehicle allocation fac
 I_Xo_tourists_parking = Index("tourists in parking rotation factor", 1.02)
 I_Xo_excursionists_parking = Index("excursionists in parking rotation factor", 3.5)
 
-I_Xo_tourists_beach = UniformDistIndex("tourists on beach rotation factor", loc=1.0, scale=2.0)
+I_Xo_tourists_beach = DistributionIndex("tourists on beach rotation factor", stats.uniform, {"loc": 1.0, "scale": 2.0})
 I_Xo_excursionists_beach = Index("excursionists on beach rotation factor", 1.02)
 
 I_Xa_tourists_accommodation = Index("tourists per accommodation allocation factor", 1.05)

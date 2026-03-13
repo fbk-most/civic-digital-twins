@@ -15,7 +15,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import FuncFormatter
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionEnsemble, Index, Model, TimeseriesIndex, UniformDistIndex
+from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index, Model, TimeseriesIndex
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -83,7 +83,7 @@ class BolognaModel(Model):
 
         self.I_P_fraction_exempted = Index("exempted vehicles %", 0.15)
 
-        self.I_B_p50_cost = UniformDistIndex("cost 50% threshold", loc=4.00, scale=7.00)
+        self.I_B_p50_cost = DistributionIndex("cost 50% threshold", stats.uniform, {"loc": 4.00, "scale": 7.00})
         self.I_B_p50_anticipating = Index("anticipation 50% likelihood", 0.5)
         self.I_B_p50_anticipation = Index("anticipation distribution 50% threshold", 0.25)
         self.I_B_p50_postponing = Index("postponement 50% likelihood", 0.8)

@@ -84,12 +84,13 @@ dense range of visitor counts.
 ## 3 — Constraints
 
 ```python
+from scipy import stats
 from civic_digital_twins.dt_model import piecewise
-from civic_digital_twins.dt_model.model.index import Index, TriangDistIndex
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from overtourism_molveno.overtourism_metamodel import Constraint
 
 # Capacity with uncertainty
-I_C_beach = TriangDistIndex("beach_capacity", loc=3000.0, scale=2000.0, c=0.5)
+I_C_beach = DistributionIndex("beach_capacity", stats.triang, {"loc": 3000.0, "scale": 2000.0, "c": 0.5})
 
 # Usage factor: depends on context variable (bad weather reduces beach use)
 I_U_beach_visitors = Index(

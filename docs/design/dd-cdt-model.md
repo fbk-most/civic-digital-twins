@@ -57,9 +57,7 @@ defines all index types.  The class hierarchy is:
 ```
 GenericIndex  (ABC)
 ├── Index
-│   ├── UniformDistIndex
-│   ├── LognormDistIndex
-│   ├── TriangDistIndex
+│   ├── DistributionIndex
 │   └── ConstIndex
 └── TimeseriesIndex
 ```
@@ -92,12 +90,16 @@ determines the mode:
 | `None` | explicit placeholder (abstract) | `graph.placeholder` |
 
 ```python
-from civic_digital_twins.dt_model.model.index import (
-    Index, UniformDistIndex, ConstIndex
-)
 from scipy import stats
+from civic_digital_twins.dt_model.model.index import (
+    ConstIndex, DistributionIndex, Index
+)
 
 # Distribution-backed (abstract — must be resolved in each scenario)
+# Pass any scipy-compatible distribution callable and a params dict:
+cap_dist = DistributionIndex("capacity", stats.uniform, {"loc": 400.0, "scale": 200.0})
+
+# Or use Index directly with a pre-frozen distribution:
 mu = Index("mu", stats.norm(loc=0.5, scale=0.1))
 
 # Constant
@@ -110,10 +112,14 @@ load = Index("load", mu * cap)
 demand = Index("demand", None)
 ```
 
-The concrete subclasses `UniformDistIndex`, `LognormDistIndex`,
-`TriangDistIndex`, and `ConstIndex` are convenience wrappers that
-construct the appropriate `scipy.stats` frozen distribution or scalar
-constant and pass it to `Index.__init__`.
+`DistributionIndex(name, distribution, params)` accepts any callable that
+returns a `Distribution`-conformant object (e.g. any `scipy.stats`
+distribution) plus a `params` dict forwarded verbatim.  The `params`
+property supports full replacement (`idx.params = {...}`) and partial
+update via the Python dict-merge operator (`idx.params |= {"loc": 200}`).
+
+`ConstIndex` is a convenience wrapper that accepts a scalar constant and
+passes it to `Index.__init__`.
 
 ### TimeseriesIndex
 
@@ -157,11 +163,12 @@ can inspect which indexes are abstract.
 and are not returned.
 
 ```python
+from scipy import stats
 from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.model.index import UniformDistIndex, Index
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 
-x = UniformDistIndex("x", loc=0.0, scale=10.0)
-y = UniformDistIndex("y", loc=0.0, scale=10.0)
+x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z = Index("z", x + y)
 
 model = Model("demo", [x, y, z])
@@ -289,13 +296,14 @@ axes.
 
 ```python
 import numpy as np
+from scipy import stats
 from civic_digital_twins.dt_model import Evaluation, Model
-from civic_digital_twins.dt_model.model.index import UniformDistIndex, Index
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 
 # Define the model
-x = UniformDistIndex("x", loc=0.0, scale=10.0)
-y = UniformDistIndex("y", loc=0.0, scale=10.0)
+x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z = Index("z", x + y)
 model = Model("demo", [x, y, z])
 

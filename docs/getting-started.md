@@ -26,18 +26,18 @@ engine layer see [`docs/design/dd-cdt-engine.md`](design/dd-cdt-engine.md).)
 ## 1 — Define the model
 
 Define indexes as attributes of a `Model` subclass (or pass a list to
-`Model` directly).  Use `UniformDistIndex`, `LognormDistIndex`, or
-`TriangDistIndex` for uncertain parameters and plain `Index` for formulas
-and constants.
+`Model` directly).  Use `DistributionIndex` for uncertain parameters and
+plain `Index` for formulas and constants.
 
 ```python
 import numpy as np
+from scipy import stats
 from civic_digital_twins.dt_model import Model
-from civic_digital_twins.dt_model.model.index import Index, UniformDistIndex
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 
 # Two uncertain parameters
-fuel_efficiency = UniformDistIndex("fuel_efficiency_km_l", loc=10.0, scale=5.0)
-distance         = UniformDistIndex("distance_km",          loc=50.0, scale=30.0)
+fuel_efficiency = DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0})
+distance        = DistributionIndex("distance_km",          stats.uniform, {"loc": 50.0, "scale": 30.0})
 
 # Derived formula: litres consumed
 litres = Index("litres", distance / fuel_efficiency)
