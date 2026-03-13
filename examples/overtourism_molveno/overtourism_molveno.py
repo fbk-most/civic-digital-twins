@@ -261,8 +261,18 @@ def plot_scenario(ax, model, result, scenarios, title):
     # field has shape (N_t, N_e); pcolormesh expects (N_e, N_t) for meshgrid(tt, ee).
     xx, yy = np.meshgrid(tt, ee)
     ax.pcolormesh(xx, yy, field.T, cmap="coolwarm_r", vmin=0.0, vmax=1.0)
-    for modal in modals.values():
-        ax.plot(*modal, color="black", linewidth=2)
+    for key,modal in modals.items():
+        print(f"Modal line for {key.capacity.name}: {modal}")
+        if key.capacity.name == "parking capacity":
+            ax.plot(*modal, color="black", linewidth=2)
+        elif key.capacity.name == "beach capacity":
+            ax.plot(*modal, color="blue", linewidth=2)
+        elif key.capacity.name == "accommodation capacity":
+            ax.plot(*modal, color="orange", linewidth=2)
+        elif key.capacity.name == "food capacity":
+            ax.plot(*modal, color="green", linewidth=2)
+        else:
+            ax.plot(*modal, color="gray", linewidth=2)
     ax.scatter(sample_excursionists, sample_tourists, color="gainsboro", edgecolors="black")
     ax.set_title(
         f"{title}\n"

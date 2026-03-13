@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-N_TIMESTEPS    = 100
+N_SERIES_AXIS  = 100   # default number of points if series_axis is given as int
 N_SAMPLES      = 258
 N_REPLICAS     = 100
 CONFIDENCE_LVL = 0.95
@@ -48,12 +48,13 @@ MAX_DISPLAY      = 25
 # =============================================================================
 # USER-DEFINED SECTION
 # =============================================================================
-def weird1(params, n_timesteps, rng):
+def weird1(params, series_axis, rng):
     x0, x1, x2 = params["x0"], params["x1"], params["x2"]
-    Y = np.empty(n_timesteps); Y[0] = x0
-    for t in range(1, n_timesteps):
+    n = len(series_axis)
+    Y = np.empty(n); Y[0] = x0
+    for t in range(1, n):
         mean_t = x0 + (x1*t)/100 + (x1*x2*t**2)/10000
-        if t < n_timesteps//2:
+        if t < n//2:
             Y[t] = mean_t + rng.normal(scale=0.1)
         else:
             Y[t] = mean_t + rng.normal(scale=0.1*x1)
@@ -62,12 +63,13 @@ def weird1(params, n_timesteps, rng):
 problem_weird1 = {"num_vars":3, "names":["x0","x1","x2"],
                    "bounds":[[0,10],[0,5],[0,5]]}
 
-def weird2(params, n_timesteps, rng):
+def weird2(params, series_axis, rng):
     P0, P1, P2 = params["P0"], params["P1"], params["P2"]
-    Y = np.empty(n_timesteps)
+    n = len(series_axis)
+    Y = np.empty(n)
     Y[0] = P0 + P1*np.sin(0) + rng.normal(scale=0.1)
-    for t in range(1, n_timesteps):
-        if t < n_timesteps//2:
+    for t in range(1, n):
+        if t < n//2:
             Y[t] = P0 + P1*np.sin(0.1*t) + rng.normal(scale=0.1)
         else:
             Y[t] = P0 + P1*np.sin(0.1*t)*(P2*t**2)/10000 + rng.normal(scale=0.1*P1*P2)
@@ -93,14 +95,14 @@ problem_weird2_dists = {"num_vars":3, "names":["P0","P1","P2"],
 # =============================================================================
 # ENGINE  (threshold-independent — runs once)
 # =============================================================================
-def _sobol_at_each_timestep(problem, Y_matrix, n_timesteps, conf_level):
+def _sobol_at_each_timestep(problem, Y_matrix, n_points, conf_level):
     names = problem["names"]; num_vars = problem["num_vars"]
     pairs = list(combinations(range(num_vars), 2))
-    S1 = np.zeros((n_timesteps, num_vars)); ST = np.zeros_like(S1)
+    S1 = np.zeros((n_points, num_vars)); ST = np.zeros_like(S1)
     S1c = np.zeros_like(S1); STc = np.zeros_like(S1)
-    S2 = {(names[i],names[j]): np.zeros(n_timesteps) for i,j in pairs}
-    S2c = {(names[i],names[j]): np.zeros(n_timesteps) for i,j in pairs}
-    for t in range(n_timesteps):
+    S2 = {(names[i],names[j]): np.zeros(n_points) for i,j in pairs}
+    S2c = {(names[i],names[j]): np.zeros(n_points) for i,j in pairs}
+    for t in range(n_points):
         col = Y_matrix[:, t]
         if np.std(col) < 1e-15:
             continue
@@ -114,7 +116,7 @@ def _sobol_at_each_timestep(problem, Y_matrix, n_timesteps, conf_level):
                 S2c[(names[i],names[j])][t] = Si["S2_conf"][i,j]
         except (ValueError, TypeError, FloatingPointError):
             pass
-    ts = np.arange(n_timesteps)
+    ts = np.arange(n_points)
     return {"S1": pd.DataFrame(S1, columns=names, index=ts),
             "ST": pd.DataFrame(ST, columns=names, index=ts),
             "S1_conf": pd.DataFrame(S1c, columns=names, index=ts),
@@ -122,11 +124,11 @@ def _sobol_at_each_timestep(problem, Y_matrix, n_timesteps, conf_level):
             "S2": S2, "S2_conf": S2c}
 
 
-def _pawn_at_each_timestep(problem, X, Y_matrix, n_timesteps):
+def _pawn_at_each_timestep(problem, X, Y_matrix, n_points):
     names = problem["names"]; num_vars = problem["num_vars"]
-    med = np.zeros((n_timesteps, num_vars))
+    med = np.zeros((n_points, num_vars))
     mn = np.zeros_like(med); mx = np.zeros_like(med); cv = np.zeros_like(med)
-    for t in range(n_timesteps):
+    for t in range(n_points):
         col = Y_matrix[:, t]
         if np.std(col) < 1e-15:
             continue
@@ -136,7 +138,7 @@ def _pawn_at_each_timestep(problem, X, Y_matrix, n_timesteps):
             mx[t,:] = Si["maximum"]; cv[t,:] = Si["CV"]
         except Exception:
             pass
-    ts = np.arange(n_timesteps)
+    ts = np.arange(n_points)
     return {"median": pd.DataFrame(med, columns=names, index=ts),
             "minimum": pd.DataFrame(mn, columns=names, index=ts),
             "maximum": pd.DataFrame(mx, columns=names, index=ts),
@@ -258,10 +260,34 @@ def _heatmap_single_pair(param_samples, max_exceed, idx_i, idx_j,
             "n_samples": len(me)}
 
 
-def run_sensitivity_analysis(simulator_fn, problem, n_timesteps=N_TIMESTEPS,
+def run_sensitivity_analysis(simulator_fn, problem, series_axis=N_SERIES_AXIS,
                               n_samples=N_SAMPLES, n_replicas=N_REPLICAS,
-                              conf_level=CONFIDENCE_LVL, seed=SEED):
-    """Run simulations + Sobol/PAWN on mean and variance. Threshold-independent."""
+                              conf_level=CONFIDENCE_LVL, seed=SEED,
+                              model_type="piecewise"):
+    """Run simulations + Sobol/PAWN on mean and variance. Threshold-independent.
+
+    Parameters
+    ----------
+    series_axis : int | list | range | np.ndarray
+        Defines the x-axis of the output series.  If an int, treated as the
+        number of points (``np.arange(series_axis)``).  Otherwise used as-is
+        — the simulator receives the concrete array and must return an output
+        of the same length.
+    model_type : str
+        ``"piecewise"`` — each series_axis point can be evaluated
+        independently (e.g. a static capacity model).
+        ``"sequential"`` — the model has internal state that evolves over
+        time; it must be run as a single trajectory from 0 to max t.
+        Currently both modes pass the full series_axis to the simulator,
+        but the tag is stored in results for downstream use (e.g. the
+        dashboard or future optimisations that parallelise over points).
+    """
+    if isinstance(series_axis, (int, np.integer)):
+        series_axis = np.arange(int(series_axis))
+    else:
+        series_axis = np.asarray(series_axis)
+    n_points = len(series_axis)
+
     names = problem["names"]; num_vars = problem["num_vars"]
     print(f"Saltelli samples (N={n_samples}, D={num_vars}) ...")
     param_samples = sobol_sample.sample(problem, n_samples, calc_second_order=True)
@@ -269,23 +295,23 @@ def run_sensitivity_analysis(simulator_fn, problem, n_timesteps=N_TIMESTEPS,
     print(f"  {n_ps} parameter sets")
 
     print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs ...")
-    all_ts = np.empty((n_ps, n_replicas, n_timesteps))
+    all_ts = np.empty((n_ps, n_replicas, n_points))
     base_rng = np.random.default_rng(seed)
     for i in range(n_ps):
         p = {name: param_samples[i,j] for j,name in enumerate(names)}
         for r in range(n_replicas):
             rng = np.random.default_rng(base_rng.integers(0, 2**31))
-            all_ts[i,r,:] = simulator_fn(p, n_timesteps, rng)
+            all_ts[i,r,:] = simulator_fn(p, series_axis, rng)
         if (i+1) % max(1, n_ps//10) == 0:
             print(f"  {i+1}/{n_ps}")
 
     mean_ts = np.mean(all_ts, axis=1); var_ts = np.var(all_ts, axis=1)
     tv_mean = np.var(mean_ts, axis=0); tv_var = np.var(var_ts, axis=0)
 
-    print("Sobol on E[Y|theta] ..."); sm = _sobol_at_each_timestep(problem, mean_ts, n_timesteps, conf_level)
-    print("Sobol on Var[Y|theta] ..."); sv = _sobol_at_each_timestep(problem, var_ts, n_timesteps, conf_level)
-    print("PAWN on E[Y|theta] ..."); pm = _pawn_at_each_timestep(problem, param_samples, mean_ts, n_timesteps)
-    print("PAWN on Var[Y|theta] ..."); pv = _pawn_at_each_timestep(problem, param_samples, var_ts, n_timesteps)
+    print("Sobol on E[Y|theta] ..."); sm = _sobol_at_each_timestep(problem, mean_ts, n_points, conf_level)
+    print("Sobol on Var[Y|theta] ..."); sv = _sobol_at_each_timestep(problem, var_ts, n_points, conf_level)
+    print("PAWN on E[Y|theta] ..."); pm = _pawn_at_each_timestep(problem, param_samples, mean_ts, n_points)
+    print("PAWN on Var[Y|theta] ..."); pv = _pawn_at_each_timestep(problem, param_samples, var_ts, n_points)
 
     print("Done.")
     return {"param_samples": param_samples, "timeseries": all_ts,
@@ -293,8 +319,8 @@ def run_sensitivity_analysis(simulator_fn, problem, n_timesteps=N_TIMESTEPS,
             "total_var_of_mean": tv_mean, "total_var_of_var": tv_var,
             "sobol_mean": sm, "sobol_var": sv,
             "pawn_mean": pm, "pawn_var": pv,
-            "problem": problem, "n_timesteps": n_timesteps,
-            "n_replicas": n_replicas}
+            "problem": problem, "series_axis": series_axis,
+            "n_replicas": n_replicas, "model_type": model_type}
 
 
 def print_summary(results):
@@ -318,10 +344,11 @@ def print_summary(results):
 # =============================================================================
 def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
     prob = results["problem"]; names = prob["names"]
-    num_vars = prob["num_vars"]; n_ts = results["n_timesteps"]
+    num_vars = prob["num_vars"]; series_axis = results["series_axis"]
+    n_ts = len(series_axis)
     param_samples = results["param_samples"]; mean_ts = results["mean_ts"]
     all_ts = results["timeseries"]
-    timesteps = np.arange(n_ts)
+    timesteps = series_axis
     pair_keys = [(names[i],names[j]) for i in range(num_vars) for j in range(i+1,num_vars)]
     colors = ["#636EFA","#EF553B","#00CC96","#AB63FA",
               "#FFA15A","#19D3F3","#FF6692","#B6E880"]
@@ -969,7 +996,7 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
 if __name__ == "__main__":
     results = run_sensitivity_analysis(
         simulator_fn=weird2, problem=problem_weird2,
-        n_timesteps=N_TIMESTEPS, n_samples=N_SAMPLES,
+        series_axis=N_SERIES_AXIS, n_samples=N_SAMPLES,
         n_replicas=N_REPLICAS, seed=SEED)
     print_summary(results)
     app = build_dash_app(results, initial_threshold=THRESHOLD_INIT)
