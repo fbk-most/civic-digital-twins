@@ -46,53 +46,6 @@ MAX_DISPLAY      = 25
 
 
 # =============================================================================
-# USER-DEFINED SECTION
-# =============================================================================
-def weird1(params, series_axis, rng):
-    x0, x1, x2 = params["x0"], params["x1"], params["x2"]
-    n = len(series_axis)
-    Y = np.empty(n); Y[0] = x0
-    for t in range(1, n):
-        mean_t = x0 + (x1*t)/100 + (x1*x2*t**2)/10000
-        if t < n//2:
-            Y[t] = mean_t + rng.normal(scale=0.1)
-        else:
-            Y[t] = mean_t + rng.normal(scale=0.1*x1)
-    return Y
-
-problem_weird1 = {"num_vars":3, "names":["x0","x1","x2"],
-                   "bounds":[[0,10],[0,5],[0,5]]}
-
-def weird2(params, series_axis, rng):
-    P0, P1, P2 = params["P0"], params["P1"], params["P2"]
-    n = len(series_axis)
-    Y = np.empty(n)
-    Y[0] = P0 + P1*np.sin(0) + rng.normal(scale=0.1)
-    for t in range(1, n):
-        if t < n//2:
-            Y[t] = P0 + P1*np.sin(0.1*t) + rng.normal(scale=0.1)
-        else:
-            Y[t] = P0 + P1*np.sin(0.1*t)*(P2*t**2)/10000 + rng.normal(scale=0.1*P1*P2)
-    return Y
-
-problem_weird2 = {"num_vars":3, "names":["P0","P1","P2"],
-                   "bounds":[[0,10],[0,5],[0,5]]}
-
-# Example with non-uniform distributions.
-# When "dists" is present, "bounds" encodes distribution-specific parameters:
-#   "unif"      -> [lower, upper]
-#   "norm"      -> [mean, std]
-#   "truncnorm" -> [lower, upper, mean, std]
-#   "lognorm"   -> [ln-space mean, ln-space std]
-#   "triang"    -> [lower, upper, peak_fraction]
-#   "logunif"   -> [lower, upper]
-#   "weibull"   -> [shape, scale, location]
-problem_weird2_dists = {"num_vars":3, "names":["P0","P1","P2"],
-                        "bounds":[[5, 2], [0, 5], [0, 5, 0.3]],
-                        "dists": ["norm", "unif", "triang"]}
-
-
-# =============================================================================
 # ENGINE  (threshold-independent — runs once)
 # =============================================================================
 def _sobol_at_each_timestep(problem, Y_matrix, n_points, conf_level):
@@ -990,15 +943,3 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
     return app
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
-if __name__ == "__main__":
-    results = run_sensitivity_analysis(
-        simulator_fn=weird2, problem=problem_weird2,
-        series_axis=N_SERIES_AXIS, n_samples=N_SAMPLES,
-        n_replicas=N_REPLICAS, seed=SEED)
-    print_summary(results)
-    app = build_dash_app(results, initial_threshold=THRESHOLD_INIT)
-    print(f"\nDash at http://127.0.0.1:{PORT}")
-    app.run(debug=False, port=PORT)
