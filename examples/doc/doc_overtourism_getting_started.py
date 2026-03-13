@@ -10,9 +10,10 @@ if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
 import numpy as np
+from scipy import stats
 
 from civic_digital_twins.dt_model import Evaluation, piecewise
-from civic_digital_twins.dt_model.model.index import Distribution, Index, TriangDistIndex
+from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, Index
 from overtourism_molveno.overtourism_metamodel import (
     CategoricalContextVariable,
     Constraint,
@@ -68,7 +69,7 @@ assert PV_visitors.value is None  # placeholder (axis in grid evaluation)
 # ---------------------------------------------------------------------------
 
 # Capacity with uncertainty
-I_C_beach = TriangDistIndex("beach_capacity", loc=3000.0, scale=2000.0, c=0.5)
+I_C_beach = DistributionIndex("beach_capacity", stats.triang, {"loc": 3000.0, "scale": 2000.0, "c": 0.5})
 
 # Usage factor: depends on context variable (bad weather reduces beach use)
 I_U_beach_visitors = Index(

@@ -9,10 +9,9 @@ be a constant, a distribution, or a symbolic expression.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Protocol, cast, runtime_checkable
+from typing import Any, Callable, Protocol, cast, runtime_checkable
 
 import numpy as np
-from scipy import stats
 
 from ..engine.frontend import graph
 
@@ -231,176 +230,60 @@ class Index(GenericIndex):
         self._node = value
 
 
-class UniformDistIndex(Index):
-    """Class to represent an index as a uniform distribution."""
+class DistributionIndex(Index):
+    """Index backed by any scipy-compatible distribution.
+
+    Parameters
+    ----------
+    name:
+        Human-readable name for this index.
+    distribution:
+        A callable (e.g. ``scipy.stats.uniform``) that, when called with
+        ``**params``, returns a frozen ``Distribution``-conformant object.
+    params:
+        Keyword arguments forwarded verbatim to *distribution*.  scipy
+        validates the parameter values at construction time.
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> idx = DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0})
+    >>> idx.params |= {"loc": 400.0}   # partial update — scipy re-validates
+    """
 
     def __init__(
         self,
         name: str,
-        loc: float,
-        scale: float,
+        distribution: Callable[..., Any],
+        params: dict[str, Any],
     ) -> None:
-        super().__init__(
-            name,
-            cast(
-                Distribution,
-                stats.uniform(loc=loc, scale=scale),
-            ),
-        )
-        self._loc = loc
-        self._scale = scale
+        self._distribution = distribution
+        self._params = dict(params)
+        super().__init__(name, cast(Distribution, distribution(**params)))
 
     @property
-    def loc(self):
-        """Location parameter."""
-        return self._loc
-
-    @loc.setter
-    def loc(self, new_loc):
-        """Location parameter setter."""
-        if self._loc != new_loc:
-            self._loc = new_loc
-            self.value = stats.uniform(loc=self._loc, scale=self._scale)
+    def distribution(self) -> Callable[..., Any]:
+        """The callable used to create the frozen distribution."""
+        return self._distribution
 
     @property
-    def scale(self):
-        """Scale parameter."""
-        return self._scale
+    def params(self) -> dict[str, Any]:
+        """Copy of the parameters used to create the frozen distribution."""
+        return dict(self._params)
 
-    @scale.setter
-    def scale(self, new_scale):
-        """Scale parameter setter."""
-        if self._scale != new_scale:
-            self._scale = new_scale
-            self.value = stats.uniform(loc=self._loc, scale=self._scale)
+    @params.setter
+    def params(self, new_params: dict[str, Any]) -> None:
+        """Re-freeze the distribution with new params.
 
-    def __str__(self):
-        """Represent the index using a string."""
-        return f"uniform_dist_idx({self.loc}, {self.scale})"
+        scipy validates the parameter values; invalid params raise at
+        assignment time.  Supports full replacement or partial update via
+        the dict-merge operator::
 
-
-class LognormDistIndex(Index):
-    """Class to represent an index as a lognorm distribution."""
-
-    def __init__(
-        self,
-        name: str,
-        loc: float,
-        scale: float,
-        s: float,
-    ) -> None:
-        super().__init__(
-            name,
-            cast(
-                Distribution,
-                stats.lognorm(loc=loc, scale=scale, s=s),
-            ),
-        )
-        self._loc = loc
-        self._scale = scale
-        self._s = s
-
-    @property
-    def loc(self):
-        """Location parameter of the lognorm distribution."""
-        return self._loc
-
-    @loc.setter
-    def loc(self, new_loc):
-        """Set the location parameter of the lognorm distribution."""
-        if self._loc != new_loc:
-            self._loc = new_loc
-            self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self.s)
-
-    @property
-    def scale(self):
-        """Scale parameter of the lognorm distribution."""
-        return self._scale
-
-    @scale.setter
-    def scale(self, new_scale):
-        """Set the scale parameter of the lognorm distribution."""
-        if self._scale != new_scale:
-            self._scale = new_scale
-            self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self._s)
-
-    @property
-    def s(self):
-        """Shape parameter of the lognorm distribution."""
-        return self._s
-
-    @s.setter
-    def s(self, new_s):
-        """Set the shape parameter of the lognorm distribution."""
-        if self._s != new_s:
-            self._s = new_s
-            self.value = stats.lognorm(loc=self._loc, scale=self._scale, s=self._s)
-
-    def __str__(self):
-        """Represent the index using a string."""
-        return f"longnorm_dist_idx({self.loc}, {self.scale}, {self.s})"
-
-
-class TriangDistIndex(Index):
-    """Class to represent an index as a triangular distribution."""
-
-    def __init__(
-        self,
-        name: str,
-        loc: float,
-        scale: float,
-        c: float,
-    ) -> None:
-        super().__init__(
-            name,
-            cast(
-                Distribution,
-                stats.triang(loc=loc, scale=scale, c=c),
-            ),
-        )
-        self._loc = loc
-        self._scale = scale
-        self._c = c
-
-    @property
-    def loc(self):
-        """Location parameter of the triangular distribution."""
-        return self._loc
-
-    @loc.setter
-    def loc(self, new_loc):
-        """Set the location parameter of the triangular distribution."""
-        if self._loc != new_loc:
-            self._loc = new_loc
-            self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
-
-    @property
-    def scale(self):
-        """Scale parameter of the triangular distribution."""
-        return self._scale
-
-    @scale.setter
-    def scale(self, new_scale):
-        """Set the scale parameter of the triangular distribution."""
-        if self._scale != new_scale:
-            self._scale = new_scale
-            self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
-
-    @property
-    def c(self):
-        """Shape parameter of the triangular distribution."""
-        return self._c
-
-    @c.setter
-    def c(self, new_c):
-        """Set the shape parameter of the triangular distribution."""
-        if self._c != new_c:
-            self._c = new_c
-            self.value = stats.triang(loc=self._loc, scale=self._scale, c=self._c)
-
-    def __str__(self):
-        """Return a string representation of the triangular distribution index."""
-        return f"triang_dist_idx({self.loc}, {self.scale}, {self.c})"
+            idx.params = {"loc": 200.0, "scale": 100.0}  # full replacement
+            idx.params |= {"loc": 200.0}                 # partial update (Python 3.9+)
+        """
+        self._params = dict(new_params)
+        self.value = cast(Distribution, self._distribution(**self._params))
 
 
 class ConstIndex(Index):

@@ -1,18 +1,19 @@
 """Runnable snippets from docs/getting-started.md."""
 
 import numpy as np
+from scipy import stats
 
 from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation, Model
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex, UniformDistIndex
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index, TimeseriesIndex
 
 # ---------------------------------------------------------------------------
 # getting-started.md §1 — Define the model
 # ---------------------------------------------------------------------------
 
-fuel_efficiency = UniformDistIndex("fuel_efficiency_km_l", loc=10.0, scale=5.0)
-distance = UniformDistIndex("distance_km", loc=50.0, scale=30.0)
+fuel_efficiency = DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0})
+distance = DistributionIndex("distance_km", stats.uniform, {"loc": 50.0, "scale": 30.0})
 
 litres = Index("litres", distance / fuel_efficiency)
 co2_per_litre = Index("co2_per_litre", 2.31)
