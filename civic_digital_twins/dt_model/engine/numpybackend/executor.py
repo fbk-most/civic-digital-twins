@@ -117,10 +117,160 @@ def _reduce_mean(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.mean(x, axis=axis, keepdims=True)
 
 
+def _reduce_min(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Minimum along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the minimum
+
+    Returns
+    -------
+        Array with the specified axis reduced by minimum (keepdims=True)
+    """
+    return np.min(x, axis=axis, keepdims=True)
+
+
+def _reduce_max(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Maximum along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the maximum
+
+    Returns
+    -------
+        Array with the specified axis reduced by maximum (keepdims=True)
+    """
+    return np.max(x, axis=axis, keepdims=True)
+
+
+def _reduce_std(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Compute standard deviation along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the standard deviation
+
+    Returns
+    -------
+        Array with the specified axis reduced by standard deviation (keepdims=True)
+    """
+    return np.std(x, axis=axis, keepdims=True)
+
+
+def _reduce_var(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Variance along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the variance
+
+    Returns
+    -------
+        Array with the specified axis reduced by variance (keepdims=True)
+    """
+    return np.var(x, axis=axis, keepdims=True)
+
+
+def _reduce_median(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Median along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the median
+
+    Returns
+    -------
+        Array with the specified axis reduced by median (keepdims=True)
+    """
+    return np.median(x, axis=axis, keepdims=True)
+
+
+def _reduce_prod(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Product along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the product
+
+    Returns
+    -------
+        Array with the specified axis reduced by product (keepdims=True)
+    """
+    return np.prod(x, axis=axis, keepdims=True)
+
+
+def _reduce_any(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Logical OR along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the logical OR
+
+    Returns
+    -------
+        Array with the specified axis reduced by logical OR (keepdims=True)
+    """
+    return np.any(x, axis=axis, keepdims=True)
+
+
+def _reduce_all(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Logical AND along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the logical AND
+
+    Returns
+    -------
+        Array with the specified axis reduced by logical AND (keepdims=True)
+    """
+    return np.all(x, axis=axis, keepdims=True)
+
+
+def _reduce_count_nonzero(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+    """Count non-zero elements along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to count non-zero elements
+
+    Returns
+    -------
+        Array with the specified axis reduced by counting non-zero (keepdims=True)
+    """
+    return np.count_nonzero(x, axis=axis, keepdims=True)
+
+
+def _reduce_quantile(x: np.ndarray, axis: graph.Axis, q: float) -> np.ndarray:
+    """Quantile along the specified axis, keeping the reduced axis as size 1.
+
+    Args:
+        x: The input array to reduce
+        axis: The axis along which to compute the quantile
+        q: The quantile level in [0, 1]
+
+    Returns
+    -------
+        Array with the specified axis reduced by quantile (keepdims=True)
+    """
+    return np.quantile(x, q=q, axis=axis, keepdims=True)
+
+
 _axes_operations: dict[type[graph.AxisOp], _AxisOpFunc] = {
     graph.expand_dims: _expand_dims,
     graph.project_using_sum: _reduce_sum,
     graph.project_using_mean: _reduce_mean,
+    graph.project_using_min: _reduce_min,
+    graph.project_using_max: _reduce_max,
+    graph.project_using_std: _reduce_std,
+    graph.project_using_var: _reduce_var,
+    graph.project_using_median: _reduce_median,
+    graph.project_using_prod: _reduce_prod,
+    graph.project_using_any: _reduce_any,
+    graph.project_using_all: _reduce_all,
+    graph.project_using_count_nonzero: _reduce_count_nonzero,
 }
 """Maps an axis op in the graph domain to the corresponding numpy operation.
 
@@ -432,6 +582,8 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
 def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.AxisOp, node)
     operand = state.get_node_value(node.node)
+    if isinstance(node, graph.project_using_quantile):
+        return _reduce_quantile(operand, node.axis, node.q)
     try:
         return _axes_operations[type(node)](operand, node.axis)
     except KeyError:

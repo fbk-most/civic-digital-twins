@@ -69,8 +69,12 @@ GenericIndex  (ABC)
 - **`.node`** — the underlying `graph.Node`; all arithmetic and
   comparison operators on a `GenericIndex` delegate here, returning a
   new `graph.Node`.
-- **`.sum(axis=-1)` / `.mean(axis=-1)`** — convenience wrappers for
-  `graph.project_using_sum` / `graph.project_using_mean`.
+- **Axis reduction methods** — convenience wrappers for axis reduction operators:
+  `.sum(axis=-1)`, `.mean(axis=-1)`, `.min(axis=-1)`, `.max(axis=-1)`,
+  `.std(axis=-1)`, `.var(axis=-1)`, `.median(axis=-1)`, `.prod(axis=-1)`,
+  `.any(axis=-1)`, `.all(axis=-1)`, `.count_nonzero(axis=-1)`,
+  and `.quantile(q, axis=-1)`. These delegate to the corresponding
+  `graph.project_using_*` operators.
 - **Identity-based `__hash__`** — because `__eq__` is overridden to
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as

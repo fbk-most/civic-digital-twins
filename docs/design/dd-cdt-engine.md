@@ -376,25 +376,47 @@ the difference is purely in the shape of the resulting `np.ndarray`.
 
 ### Axis Management
 
-`graph.py` provides four operations for reshaping arrays produced by other
+`graph.py` provides axis reduction and reshaping operations for arrays produced by other
 nodes.  These are essential when combining values that live in different
 broadcast dimensions (e.g. scalar model parameters versus multi-dimensional
 evaluation grids).
 
+#### Axis Reduction Operators
+
+All axis reduction operators reduce `node` along `axis` with the reduced axis *preserved*
+as size 1 (keepdims semantics).
+
+| Operation | NumPy Equivalent | Description |
+| --------- | --------------- | ----------- |
+| `graph.project_using_sum(node, axis=-1)` | `np.sum(..., keepdims=True)` | Sum reduction |
+| `graph.project_using_mean(node, axis=-1)` | `np.mean(..., keepdims=True)` | Mean reduction |
+| `graph.project_using_min(node, axis=-1)` | `np.min(..., keepdims=True)` | Minimum reduction |
+| `graph.project_using_max(node, axis=-1)` | `np.max(..., keepdims=True)` | Maximum reduction |
+| `graph.project_using_std(node, axis=-1)` | `np.std(..., keepdims=True)` | Standard deviation |
+| `graph.project_using_var(node, axis=-1)` | `np.var(..., keepdims=True)` | Variance |
+| `graph.project_using_median(node, axis=-1)` | `np.median(..., keepdims=True)` | Median |
+| `graph.project_using_prod(node, axis=-1)` | `np.prod(..., keepdims=True)` | Product reduction |
+| `graph.project_using_any(node, axis=-1)` | `np.any(..., keepdims=True)` | Logical OR reduction |
+| `graph.project_using_all(node, axis=-1)` | `np.all(..., keepdims=True)` | Logical AND reduction |
+| `graph.project_using_count_nonzero(node, axis=-1)` | `np.count_nonzero(..., keepdims=True)` | Count non-zero elements |
+| `graph.project_using_quantile(node, axis=-1, q=0.5)` | `np.quantile(..., q, keepdims=True)` | Quantile (with q parameter) |
+
+#### Axis Reshaping Operators
+
 | Operation | Description |
 | --------- | ----------- |
-| `graph.project_using_sum(node, axis=-1)` | Reduce `node` along `axis` by summing; the reduced axis is *preserved* as size 1 (keepdims semantics). |
-| `graph.project_using_mean(node, axis=-1)` | Same as above but using the mean. |
 | `graph.expand_dims(node, axis)` | Insert a new size-1 axis at position `axis` (equivalent to `np.expand_dims`). |
 | `graph.squeeze(node, axis)` | Remove the size-1 axis at position `axis` (equivalent to `np.squeeze`). |
 
-`GenericIndex.sum(axis=-1)` and `GenericIndex.mean(axis=-1)` are convenience
-wrappers that delegate to `project_using_sum` and `project_using_mean`
-respectively, and are the recommended way to use these operations at the
-model layer.
+#### Index Methods (High-Level API)
 
-> **Note on `project_using_sum` / `project_using_mean` semantics.**
-> Both operations always preserve the reduced axis as a size-1 dimension.
+`GenericIndex` provides convenience wrapper methods for all axis reduction operators:
+`sum()`, `mean()`, `min()`, `max()`, `std()`, `var()`, `median()`, `prod()`,
+`any()`, `all()`, `count_nonzero()`, and `quantile(q)`. These are the recommended
+way to use axis reduction operations at the model layer.
+
+> **Note on keepdims semantics.**
+> All axis reduction operations always preserve the reduced axis as a size-1 dimension.
 > Callers that previously relied on axis *collapsing* (the 0.5.0 default)
 > must now use `np.squeeze` or `graph.squeeze` on the result.
 

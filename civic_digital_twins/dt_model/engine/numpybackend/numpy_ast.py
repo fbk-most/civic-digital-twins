@@ -67,6 +67,16 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.expand_dims: "expand_dims",
     graph.project_using_sum: "sum",
     graph.project_using_mean: "mean",
+    graph.project_using_min: "min",
+    graph.project_using_max: "max",
+    graph.project_using_std: "std",
+    graph.project_using_var: "var",
+    graph.project_using_median: "median",
+    graph.project_using_prod: "prod",
+    graph.project_using_any: "any",
+    graph.project_using_all: "all",
+    graph.project_using_count_nonzero: "count_nonzero",
+    graph.project_using_quantile: "quantile",
     # internal
     _InternalTestingNode: "_internal_testing",
 }
@@ -196,8 +206,33 @@ def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = 
     # 10. evaluate axis operations
     elif isinstance(node, graph.AxisOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
-        kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)])))
-        if isinstance(node, (graph.project_using_sum, graph.project_using_mean)):
+        if isinstance(node, graph.project_using_quantile):
+            # For quantile, the q parameter comes first
+            posargs.insert(0, ast.Constant(value=node.q))
+            kwargs.append(
+                ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)]))
+            )
+        else:
+            kwargs.append(
+                ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)]))
+            )
+        if isinstance(
+            node,
+            (
+                graph.project_using_sum,
+                graph.project_using_mean,
+                graph.project_using_min,
+                graph.project_using_max,
+                graph.project_using_std,
+                graph.project_using_var,
+                graph.project_using_median,
+                graph.project_using_prod,
+                graph.project_using_any,
+                graph.project_using_all,
+                graph.project_using_count_nonzero,
+                graph.project_using_quantile,
+            ),
+        ):
             kwargs.append(ast.keyword("keepdims", ast.Constant(value=True)))
 
     # 11. catch all for not implemented operations
