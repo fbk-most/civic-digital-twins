@@ -49,8 +49,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
-# Search keywords (empty for now)
-keywords = []
+# Search keywords for PyPI discoverability
+keywords = ["digital twin", "simulation", "urban", "sustainability", "civic", "modeling"]
 
 # Minimum required Python version
 #
@@ -80,7 +80,7 @@ dev = [
 # Project-specific URLs
 [project.urls]
 
-Homepage = "https://github.com/fbk-most/dt-model"
+Homepage = "https://github.com/fbk-most/civic-digital-twins"
 
 # Hatch Build Configuration
 [tool.hatch.build.targets.wheel]
