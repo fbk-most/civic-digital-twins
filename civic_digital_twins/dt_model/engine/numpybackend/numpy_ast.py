@@ -12,10 +12,12 @@ making it easy to inspect and verify graph construction.
 # SPDX-License-Identifier: Apache-2.0
 
 import ast
+import types
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from ..frontend import graph
+from ..frontend import forest, graph
 
 
 class UnsupportedNodeArguments(Exception):
@@ -215,3 +217,115 @@ def graph_node_to_numpy_code(node: graph.Node, value: np.ndarray | None = None) 
     exact NumPy call that would evaluate the given graph node.
     """
     return ast.unparse(graph_node_to_ast_stmt(node, value))
+
+
+# === Forest / JIT layer ===
+
+
+def _ast_generate_nodes(*nodes: graph.Node) -> list[ast.stmt]:
+    return [graph_node_to_ast_stmt(node) for node in nodes]
+
+
+def _ast_generate_tree_body(*nodes: graph.Node) -> list[ast.stmt]:
+    assert len(nodes) > 0
+    stmts = _ast_generate_nodes(*nodes)
+    root = nodes[-1]  # by definition of tree this is the root node
+    stmts.append(ast.Return(value=ast.Name(id=_node_name(root), ctx=ast.Load())))
+    return stmts
+
+
+def _tree_name(tree: forest.Tree) -> str:
+    return f"t{tree.root().id}"
+
+
+def forest_tree_to_ast_function_def(tree: forest.Tree) -> ast.FunctionDef:
+    """Transform a ``forest.Tree`` into an AST function definition.
+
+    Parameters
+    ----------
+    tree:
+        The tree to transform.
+
+    Returns
+    -------
+        An AST function definition whose arguments are the tree's inputs and
+        whose body evaluates the tree's nodes, returning the root value.
+    """
+    assert len(tree.body) > 0 and tree.root() is tree.body[-1]  # tree invariant
+    func = ast.FunctionDef(
+        _tree_name(tree),
+        args=ast.arguments(
+            posonlyargs=list(),
+            args=[ast.arg(f"n{x.id}", _np_attr_name("ndarray")) for x in tree.inputs],
+            vararg=None,
+            kwonlyargs=list(),
+            kw_defaults=list(),
+            kwarg=None,
+            defaults=list(),
+        ),
+        body=_ast_generate_tree_body(*tree.body),
+        decorator_list=list(),
+        returns=_np_attr_name("ndarray"),
+    )
+    ast.fix_missing_locations(func)
+    return func
+
+
+@runtime_checkable
+class State(Protocol):
+    """Read-only executor state protocol used by the JIT layer."""
+
+    def get_node_value(self, node: graph.Node) -> np.ndarray:
+        """Return the value associated with the node or raise an exception."""
+        ...  # pragma: no cover
+
+
+def _mod_compile(stmts: list[ast.stmt], filename: str) -> types.CodeType:
+    mod = ast.Module(body=stmts, type_ignores=list())
+    return compile(source=mod, filename=filename, mode="exec")
+
+
+def _python_compile_function(tree: forest.Tree, filename: str = "<generated>") -> types.FunctionType:
+    code = _mod_compile([forest_tree_to_ast_function_def(tree)], filename)
+    context: dict[str, Any] = {"np": np}
+    exec(code, context)
+    return context[_tree_name(tree)]  # type: ignore[return-value]
+
+
+def compile_function(tree: forest.Tree, filename: str = "<generated>") -> types.FunctionType:
+    """JIT-compile a ``forest.Tree`` using Numba.
+
+    Parameters
+    ----------
+    tree:
+        The tree to compile.
+    filename:
+        The filename to embed in the generated code object (for tracebacks).
+
+    Returns
+    -------
+        A Numba-JIT-compiled callable that accepts the tree's input arrays and
+        returns the root value.
+    """
+    import numba  # lazy import — numba is an optional dependency
+
+    return numba.njit(_python_compile_function(tree, filename))  # type: ignore[return-value]
+
+
+def call_function(state: State, tree: forest.Tree, func: types.FunctionType) -> np.ndarray:
+    """Call a JIT-compiled tree function using values from *state*.
+
+    Parameters
+    ----------
+    state:
+        An executor state that provides ``get_node_value`` for each input.
+    tree:
+        The tree whose inputs should be fetched from *state*.
+    func:
+        The compiled function returned by :func:`compile_function`.
+
+    Returns
+    -------
+        The computed root value.
+    """
+    return func(*[state.get_node_value(node) for node in tree.inputs])  # type: ignore[return-value]

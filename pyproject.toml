@@ -71,6 +71,7 @@ dependencies = [
 # Developer tools: testing, linting, type checking, visualization
 dev = [
     "matplotlib>=3.10.1",   # for plots and visual debugging
+    "numba>=0.61.2",        # JIT compiler (experimental; required for JIT tests)
     "pyright>=1.1.397",     # static type checker
     "pytest>=7.0.0",        # test runner
     "pytest-cov>=4.0.0",    # code coverage plugin for pytest

@@ -14,6 +14,7 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
+import types
 from dataclasses import dataclass, field
 from typing import (
     Callable,
@@ -26,7 +27,7 @@ from typing import (
 import numpy as np
 
 from .. import compileflags
-from ..frontend import graph
+from ..frontend import forest, graph, ir
 from . import numpy_ast
 
 # Type aliases for operation function signatures
@@ -236,6 +237,8 @@ class State:
             by default using the `DTMODEL_ENGINE_FLAGS` environement
             variable as documented by the `compileflags` package docs.
         functions: user-defined functions assignments.
+        jitted: cache of JIT-compiled tree functions; populated lazily when
+            ``compileflags.JIT`` is set.
 
     Notes
     -----
@@ -252,6 +255,7 @@ class State:
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
     functions: dict[str, Functor] = field(default_factory=dict)
+    jitted: dict[forest.Tree, types.FunctionType] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -477,3 +481,114 @@ def _evaluate(state: State, node: graph.Node) -> np.ndarray:
 
     # Otherwise, just bail
     raise UnsupportedNodeType(f"executor: unsupported node type: {type(node)}")
+
+
+# === Tree / DAG evaluation (experimental JIT layer) ===
+
+
+def _evaluate_single_tree_jit(state: State, tree: forest.Tree) -> np.ndarray:
+    root = tree.root()
+    if root in state.values:
+        return state.values[root]
+
+    flags = root.flags | state.flags
+    tracing = flags & compileflags.TRACE
+    if tracing:
+        _print_graph_node(root)
+
+    func = state.jitted.get(tree)
+    if not func:
+        func = numpy_ast.compile_function(tree)
+        state.jitted[tree] = func
+
+    result = numpy_ast.call_function(state, tree, func)
+
+    if tracing:
+        _print_evaluated_node(root, result)
+
+    if flags & compileflags.BREAK != 0:
+        input("# executor: press any key to continue...")
+        print("")
+
+    state.values[root] = result
+    return result
+
+
+def evaluate_single_tree(state: State, tree: forest.Tree) -> np.ndarray:
+    """Evaluate a ``forest.Tree`` using the current ``State``.
+
+    Constants embedded in the tree body are evaluated first so that their
+    values are available to the JIT-compiled function.  If ``compileflags.JIT``
+    is set *and* no user-defined functions are present, the tree is compiled
+    with Numba and called directly; otherwise the body nodes are evaluated
+    one-by-one via :func:`evaluate_single_node`.
+
+    Parameters
+    ----------
+    state:
+        Current executor state.
+    tree:
+        The tree to evaluate.
+
+    Returns
+    -------
+        The value of the tree's root node.
+    """
+    for node in tree.body:
+        if isinstance(node, graph.constant):
+            evaluate_single_node(state, node)
+
+    if not state.functions and state.flags & compileflags.JIT != 0:
+        return _evaluate_single_tree_jit(state, tree)
+
+    rv = _evaluate_nodes(state, *tree.body)
+    assert rv is not None  # tree body is non-empty by invariant
+    return rv
+
+
+def evaluate_trees(state: State, *trees: forest.Tree) -> np.ndarray | None:
+    """Evaluate a sequence of ``forest.Tree`` objects using the current ``State``.
+
+    Parameters
+    ----------
+    state:
+        Current executor state.
+    trees:
+        Trees to evaluate in topological order.
+
+    Returns
+    -------
+        The value of the last tree's root node, or ``None`` if no trees
+        were provided.
+    """
+    rv: np.ndarray | None = None
+    for tree in trees:
+        rv = evaluate_single_tree(state, tree)
+    return rv
+
+
+def evaluate_dag(state: State, dag: ir.DAG) -> np.ndarray | None:
+    """Evaluate an ``ir.DAG`` using the current ``State``.
+
+    Placeholders and constants in the DAG are evaluated first; the DAG
+    body (trees *or* flat nodes, never both) is evaluated next.
+
+    Parameters
+    ----------
+    state:
+        Current executor state.  Placeholder values must already be set.
+    dag:
+        The IR DAG to evaluate.
+
+    Returns
+    -------
+        The value of the last root node, or ``None`` for an empty DAG.
+    """
+    for node in dag.placeholders:
+        evaluate_single_node(state, node)
+    for node in dag.constants:
+        evaluate_single_node(state, node)
+
+    if dag.trees:
+        return evaluate_trees(state, *dag.trees)
+    return evaluate_nodes(state, *dag.nodes)

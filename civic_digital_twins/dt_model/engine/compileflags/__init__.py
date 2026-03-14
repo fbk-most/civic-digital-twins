@@ -11,7 +11,7 @@ of flag names before starting Python.  For example::
 
     export DTMODEL_ENGINE_FLAGS=trace
 
-Available flag names: ``trace``, ``dump``, ``break``.
+Available flag names: ``trace``, ``dump``, ``break``, ``jit``.
 """
 
 import os
@@ -37,9 +37,13 @@ Note that this flag does not mix well with TRACE since both emit
 valid Python code using the same names.
 """
 
+JIT = 1 << 3
+"""When possible use a JIT compiler (Numba)."""
+
 _flagnames: dict[str, int] = {
     "break": BREAK,
     "dump": DUMP,
+    "jit": JIT,
     "trace": TRACE,
 }
 """Maps the lowercase name of the flag to its value."""
