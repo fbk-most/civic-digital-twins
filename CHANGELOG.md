@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`idx.params = {"loc": 0, "scale": 1}`) and partial update via the Python
   dict-merge operator (`idx.params |= {"loc": 200}`).
 
+**Engine layer — axis reduction operators**
+
+- `project_using_min(node, axis)` — minimum value reduction along an axis.
+- `project_using_max(node, axis)` — maximum value reduction along an axis.
+- `project_using_std(node, axis)` — standard deviation reduction along an axis.
+- `project_using_var(node, axis)` — variance reduction along an axis.
+- `project_using_median(node, axis)` — median reduction along an axis.
+- `project_using_prod(node, axis)` — product reduction along an axis.
+- `project_using_any(node, axis)` — logical OR reduction along an axis.
+- `project_using_all(node, axis)` — logical AND reduction along an axis.
+- `project_using_count_nonzero(node, axis)` — count non-zero elements along an axis.
+- `project_using_quantile(node, q, axis)` — quantile/percentile reduction along an axis;
+  requires a quantile level `q` in the range [0, 1].
+
+**Model layer — convenience methods**
+
+All new axis reduction operators have corresponding convenience methods on `GenericIndex`:
+- `GenericIndex.min(axis=-1)`, `GenericIndex.max(axis=-1)`, `GenericIndex.std(axis=-1)`,
+  `GenericIndex.var(axis=-1)`, `GenericIndex.median(axis=-1)`, `GenericIndex.prod(axis=-1)`,
+  `GenericIndex.any(axis=-1)`, `GenericIndex.all(axis=-1)`, `GenericIndex.count_nonzero(axis=-1)`,
+  and `GenericIndex.quantile(q, axis=-1)`.
+
 ### Deprecated
 
 **Python versions**

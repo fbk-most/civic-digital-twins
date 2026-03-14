@@ -885,6 +885,192 @@ class project_using_mean(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
+class project_using_min(Generic[T], AxisOp[T]):
+    """Computes minimum of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.min(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to find the minimum.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_min(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_max(Generic[T], AxisOp[T]):
+    """Computes maximum of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.max(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to find the maximum.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_max(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_std(Generic[T], AxisOp[T]):
+    """Computes standard deviation of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.std(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to compute the standard deviation.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_std(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_var(Generic[T], AxisOp[T]):
+    """Computes variance of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.var(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to compute the variance.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_var(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_median(Generic[T], AxisOp[T]):
+    """Computes median of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.median(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to compute the median.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_median(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_prod(Generic[T], AxisOp[T]):
+    """Computes product of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.prod(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to compute the product.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_prod(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_any(Generic[T], AxisOp[T]):
+    """Computes logical OR of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.any(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to compute the logical OR.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_any(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_all(Generic[T], AxisOp[T]):
+    """Computes logical AND of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.all(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to compute the logical AND.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_all(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_count_nonzero(Generic[T], AxisOp[T]):
+    """Counts non-zero elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.count_nonzero(..., keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Axis along which to count non-zero elements.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_count_nonzero(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+
+
+class project_using_quantile(Generic[T], AxisOp[T]):
+    """Computes quantile/percentile of tensor elements along specified axes, preserving dimensions.
+
+    This projects the tensor to a lower-dimensional space.  The reduced axis
+    is always kept as size 1 (equivalent to ``np.quantile(..., q, keepdims=True)``),
+    so that the result broadcasts correctly against both plain timeseries
+    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        q: Quantile level in the range [0, 1]. For example, 0.5 for the median,
+           0.95 for the 95th percentile.
+        axis: Axis along which to compute the quantile.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, q: float, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.q = q
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.project_using_quantile(node=n{self.node.id}, q={self.q}, axis={self.axis}, name='{self.name}')"
+
+
 # User-defined functions
 
 

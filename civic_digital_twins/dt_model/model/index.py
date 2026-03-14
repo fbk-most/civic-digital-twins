@@ -179,6 +179,91 @@ class GenericIndex(ABC):
         """
         return graph.project_using_mean(self.node, axis)
 
+    def min(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the minimum of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_min(self.node, axis)
+
+    def max(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the maximum of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_max(self.node, axis)
+
+    def std(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the standard deviation of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_std(self.node, axis)
+
+    def var(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the variance of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_var(self.node, axis)
+
+    def median(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the median of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_median(self.node, axis)
+
+    def prod(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the product of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_prod(self.node, axis)
+
+    def any(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that tests if any elements of this index are True over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_any(self.node, axis)
+
+    def all(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that tests if all elements of this index are True over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_all(self.node, axis)
+
+    def count_nonzero(self, axis: int = -1) -> graph.Node:
+        """Return a graph node that counts non-zero elements of this index over the given axis.
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_count_nonzero(self.node, axis)
+
+    def quantile(self, q: float, axis: int = -1) -> graph.Node:
+        """Return a graph node that computes the quantile of this index over the given axis.
+
+        Args:
+            q: Quantile level in the range [0, 1]. For example, 0.5 for the median,
+               0.95 for the 95th percentile.
+            axis: Axis along which to compute the quantile (default: -1).
+
+        Same axis convention as :meth:`sum`; the reduced axis is always
+        preserved as size 1.
+        """
+        return graph.project_using_quantile(self.node, axis, q)
+
 
 class Index(GenericIndex):
     """Class to represent an index variable."""
