@@ -1044,7 +1044,10 @@ class project_using_count_nonzero(Generic[T], AxisOp[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_count_nonzero(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return (
+            f"n{self.id} = graph.project_using_count_nonzero("
+            f"node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        )
 
 
 class project_using_quantile(Generic[T], AxisOp[T]):
@@ -1068,7 +1071,10 @@ class project_using_quantile(Generic[T], AxisOp[T]):
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_quantile(node=n{self.node.id}, q={self.q}, axis={self.axis}, name='{self.name}')"
+        return (
+            f"n{self.id} = graph.project_using_quantile("
+            f"node=n{self.node.id}, q={self.q}, axis={self.axis}, name='{self.name}')"
+        )
 
 
 # User-defined functions

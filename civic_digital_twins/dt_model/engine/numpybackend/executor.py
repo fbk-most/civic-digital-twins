@@ -146,7 +146,7 @@ def _reduce_max(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
 
 
 def _reduce_std(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
-    """Standard deviation along the specified axis, keeping the reduced axis as size 1.
+    """Compute standard deviation along the specified axis, keeping the reduced axis as size 1.
 
     Args:
         x: The input array to reduce

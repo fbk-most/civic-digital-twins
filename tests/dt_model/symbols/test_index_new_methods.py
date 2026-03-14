@@ -5,7 +5,6 @@ and issue #117 (quantile).
 """
 
 import numpy as np
-import pytest
 
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -105,16 +104,16 @@ class TestGenericIndexNewMethods:
         """Test that default axis is -1 for all methods."""
         idx = Index("test", 5.0)
 
-        assert idx.min().axis == -1
-        assert idx.max().axis == -1
-        assert idx.std().axis == -1
-        assert idx.var().axis == -1
-        assert idx.median().axis == -1
-        assert idx.prod().axis == -1
-        assert idx.any().axis == -1
-        assert idx.all().axis == -1
-        assert idx.count_nonzero().axis == -1
-        assert idx.quantile(q=0.5).axis == -1
+        assert idx.min().axis == -1  # type: ignore[attr-defined]
+        assert idx.max().axis == -1  # type: ignore[attr-defined]
+        assert idx.std().axis == -1  # type: ignore[attr-defined]
+        assert idx.var().axis == -1  # type: ignore[attr-defined]
+        assert idx.median().axis == -1  # type: ignore[attr-defined]
+        assert idx.prod().axis == -1  # type: ignore[attr-defined]
+        assert idx.any().axis == -1  # type: ignore[attr-defined]
+        assert idx.all().axis == -1  # type: ignore[attr-defined]
+        assert idx.count_nonzero().axis == -1  # type: ignore[attr-defined]
+        assert idx.quantile(q=0.5).axis == -1  # type: ignore[attr-defined]
 
 
 class TestGenericIndexMethodsExecution:

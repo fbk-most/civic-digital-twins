@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
-import pytest
 
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -395,9 +394,7 @@ class TestAxisOperatorsCombinations:
         state = executor.State({x: x_val})
         executor.evaluate_nodes(state, *plan)
 
-        expected = np.quantile(
-            np.mean(x_val, axis=0, keepdims=True), 0.5, axis=1, keepdims=True
-        )
+        expected = np.quantile(np.mean(x_val, axis=0, keepdims=True), 0.5, axis=1, keepdims=True)
         assert np.allclose(state.values[quantile_result], expected)
 
     def test_any_of_all(self):
