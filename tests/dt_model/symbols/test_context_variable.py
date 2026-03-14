@@ -51,13 +51,82 @@ def continuous_cv():
 def test_cv(cv_fixture_name, sizes, values, request):
     """Test ContextVariable classes."""
     cv = request.getfixturevalue(cv_fixture_name)
-    print(f"Testing: {cv.name} (support size = {cv.support_size()})")
-    # TODO(bassosimone): turn these prints into assertions
+
+    # Test basic sample() functionality
+    # Behavior depends on whether the distribution is discrete or continuous
     for s in sizes:
-        print(f"    Size {s}: {cv.sample(s)}")
+        result = cv.sample(s)
+        # Verify returned list has expected length
+        assert isinstance(result, list), f"sample({s}) should return a list"
+
+        support_size = cv.support_size()
+
+        # For continuous distributions (support_size == -1): always returns nr samples
+        # For discrete distributions: returns min(s, support_size) items
+        if support_size == -1:
+            # Continuous distribution always returns exactly nr samples
+            assert len(result) == s, f"sample({s}) should return {s} items, got {len(result)}"
+        else:
+            # Discrete distribution returns min(s, support_size) items
+            expected_len = s if s < support_size else support_size
+            assert len(result) == expected_len, f"sample({s}) should return {expected_len} items, got {len(result)}"
+
+        # Verify each element is a (float, Any) tuple
+        for prob, value in result:
+            assert isinstance(prob, (int, float)), f"Probability should be numeric, got {type(prob)}"
+            assert prob > 0 and prob <= 1, f"Probability should be in (0, 1], got {prob}"
+        # Verify probabilities sum to approximately 1.0
+        prob_sum = sum(prob for prob, _ in result)
+        assert abs(prob_sum - 1.0) < 1e-9, f"Probabilities should sum to 1.0, got {prob_sum}"
+
+    # Test force_sample() always returns exactly nr samples
     for s in sizes:
-        print(f"    Size {s} - force_sample: {cv.sample(s, force_sample=True)}")
+        result = cv.sample(s, force_sample=True)
+        assert isinstance(result, list), f"sample({s}, force_sample=True) should return a list"
+        assert len(result) == s, f"sample({s}, force_sample=True) should return {s} items, got {len(result)}"
+        # Verify each element is a (float, Any) tuple
+        for prob, value in result:
+            assert isinstance(prob, (int, float)), f"Probability should be numeric, got {type(prob)}"
+            assert prob > 0, f"Probability should be positive, got {prob}"
+        # Verify probabilities sum to approximately 1.0
+        prob_sum = sum(prob for prob, _ in result)
+        assert abs(prob_sum - 1.0) < 1e-9, f"Probabilities should sum to 1.0, got {prob_sum}"
+
+    # Test sample() with subset parameter
     for s in sizes:
-        print(f"    Size {s} - subset {values}: {cv.sample(s, subset=values)}")
+        result = cv.sample(s, subset=values)
+        assert isinstance(result, list), f"sample({s}, subset={values}) should return a list"
+        subset_size = len(values)
+        # For continuous distributions with subset: samples from the subset
+        # For discrete with subset: min(s, subset_size) items from subset
+        support_size = cv.support_size()
+        if support_size == -1:
+            # Continuous: subset acts as evaluation points for PDF
+            assert len(result) <= s, f"sample({s}, subset={values}) should return at most {s} items"
+        else:
+            expected_len = s if s < subset_size else subset_size
+            assert len(result) == expected_len, (
+                f"sample({s}, subset={values}) should return {expected_len} items, got {len(result)}"
+            )
+        # Verify each element is a (float, Any) tuple
+        for prob, value in result:
+            assert isinstance(prob, (int, float)), f"Probability should be numeric, got {type(prob)}"
+            assert prob > 0, f"Probability should be positive, got {prob}"
+        # Verify probabilities sum to approximately 1.0
+        prob_sum = sum(prob for prob, _ in result)
+        assert abs(prob_sum - 1.0) < 1e-9, f"Probabilities should sum to 1.0, got {prob_sum}"
+
+    # Test force_sample() with subset parameter
     for s in sizes:
-        print(f"    Size {s} - subset {values} - force_sample: {cv.sample(s, subset=values, force_sample=True)}")
+        result = cv.sample(s, subset=values, force_sample=True)
+        assert isinstance(result, list), f"sample({s}, subset={values}, force_sample=True) should return a list"
+        assert len(result) == s, (
+            f"sample({s}, subset={values}, force_sample=True) should return {s} items, got {len(result)}"
+        )
+        # Verify each element is a (float, Any) tuple
+        for prob, value in result:
+            assert isinstance(prob, (int, float)), f"Probability should be numeric, got {type(prob)}"
+            assert prob > 0, f"Probability should be positive, got {prob}"
+        # Verify probabilities sum to approximately 1.0
+        prob_sum = sum(prob for prob, _ in result)
+        assert abs(prob_sum - 1.0) < 1e-9, f"Probabilities should sum to 1.0, got {prob_sum}"

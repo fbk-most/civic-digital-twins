@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`idx.params = {"loc": 0, "scale": 1}`) and partial update via the Python
   dict-merge operator (`idx.params |= {"loc": 200}`).
 
+### Deprecated
+
+**Python versions**
+
+- Python 3.11 is deprecated and will be removed in a future version. Please upgrade to Python 3.12 or later.
+
 ### Removed
 
 **Distribution indexes - Breaking changes**
@@ -27,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `UniformDistIndex` — use `DistributionIndex("x", scipy.stats.uniform, {"loc": 0, "scale": 1})`.
 - `LognormDistIndex` — use `DistributionIndex("x", scipy.stats.lognorm, {"loc": 0, "scale": 1, "s": 0.5})`.
 - `TriangDistIndex` — use `DistributionIndex("x", scipy.stats.triang, {"loc": 0, "scale": 1, "c": 0.5})`.
+
+**Engine layer — breaking changes**
+
+- `executor.evaluate` — use `executor.evaluate_single_node` or `executor.evaluate_nodes` as appropriate.
 
 ## [0.6.0] - 2026-03-01
 
@@ -131,6 +141,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - 2025-07-14
 
-[0.7.0]: https://github.com/fbk-most/dt-model/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/fbk-most/dt-model/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/fbk-most/dt-model/releases/tag/v0.5.0
+[0.7.0]: https://github.com/fbk-most/civic-digital-twins/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/fbk-most/civic-digital-twins/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/fbk-most/civic-digital-twins/releases/tag/v0.5.0
