@@ -385,51 +385,5 @@ def test_index_neg_evaluates_correctly():
 
 
 # ---------------------------------------------------------------------------
-# GenericIndex.sum / mean
-# ---------------------------------------------------------------------------
-
-
-def test_index_sum_returns_project_using_sum_node():
-    """sum() returns a project_using_sum graph node."""
-    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
-    node = ts.sum()
-    assert isinstance(node, graph.project_using_sum)
-
-
-def test_index_sum_evaluates_correctly():
-    """sum() over a 1-D timeseries returns the total."""
-    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
-    node = ts.sum()
-    result = _eval(node)
-    assert np.isclose(result, 6.0)
-
-
-def test_index_sum_batched():
-    """sum() over a (size, T) batched timeseries gives per-sample totals with keepdims.
-
-    The result is (size, 1) so it broadcasts correctly against timeseries
-    of shape (T,) or (size, T).
-    """
-    ts = TimeseriesIndex("ts")
-    node = ts.sum()
-    values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-    state = executor.State({ts.node: values})
-    executor.evaluate_nodes(state, *linearize.forest(node))
-    result = state.values[node]
-    assert result.shape == (2, 1)
-    assert np.allclose(result, [[6.0], [15.0]])
-
-
-def test_index_mean_returns_project_using_mean_node():
-    """mean() returns a project_using_mean graph node."""
-    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
-    node = ts.mean()
-    assert isinstance(node, graph.project_using_mean)
-
-
-def test_index_mean_evaluates_correctly():
-    """mean() over a 1-D timeseries returns the average."""
-    ts = TimeseriesIndex("ts", np.array([2.0, 4.0, 6.0]))
-    node = ts.mean()
-    result = _eval(node)
-    assert np.isclose(result, 4.0)
+# Index reduction methods (sum, mean, min, max, etc.) are comprehensively tested in
+# tests/dt_model/symbols/test_index_reduction_methods.py

@@ -300,31 +300,6 @@ def test_error_handling():
         executor.evaluate_single_node(state, y)  # Should fail, x not evaluated yet
 
 
-def test_reduction_operations():
-    """Test reduction operations with the executor."""
-    # Create nodes
-    x = graph.placeholder("x")
-    sum_node = graph.project_using_sum(x, axis=0)
-    mean_node = graph.project_using_mean(x, axis=1)
-
-    # Create execution plans
-    sum_plan = linearize.forest(sum_node)
-    mean_plan = linearize.forest(mean_node)
-
-    # Test data
-    x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
-
-    # Test sum reduction (keepdims=True: axis is preserved as size 1)
-    sum_state = executor.State({x: x_val})
-    executor.evaluate_nodes(sum_state, *sum_plan)
-    assert np.array_equal(sum_state.values[sum_node], np.sum(x_val, axis=0, keepdims=True))
-
-    # Test mean reduction (keepdims=True: axis is preserved as size 1)
-    mean_state = executor.State({x: x_val})
-    executor.evaluate_nodes(mean_state, *mean_plan)
-    assert np.array_equal(mean_state.values[mean_node], np.mean(x_val, axis=1, keepdims=True))
-
-
 def test_expand_dims_operation():
     """Test expand_dims operation with the executor."""
     # Create nodes
@@ -518,19 +493,19 @@ def test_unary_operations():
 
 
 def test_axis_operations():
-    """Test all supported axis operations and an unsupported one."""
+    """Test expand_dims and error handling for unsupported axis operations.
+
+    Reduction operations (sum, mean, min, max, etc.) are comprehensively tested in
+    tests/dt_model/engine/numpybackend/test_axis_reduction_operators.py
+    """
     # Create placeholder node
     x = graph.placeholder("x")
 
-    # Create various axis operation nodes
+    # Create expand_dims node
     expand_node = graph.expand_dims(x, axis=1)
-    sum_node = graph.project_using_sum(x, axis=0)
-    mean_node = graph.project_using_mean(x, axis=1)
 
-    # Create execution plans
+    # Create execution plan
     expand_plan = linearize.forest(expand_node)
-    sum_plan = linearize.forest(sum_node)
-    mean_plan = linearize.forest(mean_node)
 
     # Test data
     x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])  # 3x3
@@ -541,18 +516,6 @@ def test_axis_operations():
     expected_expand = np.expand_dims(x_val, axis=1)
     assert np.array_equal(expand_state.values[expand_node], expected_expand)
     assert expand_state.values[expand_node].shape == (3, 1, 3)
-
-    # Test project_using_sum (keepdims=True: axis preserved as size 1)
-    sum_state = executor.State({x: x_val})
-    executor.evaluate_nodes(sum_state, *sum_plan)
-    expected_sum = np.sum(x_val, axis=0, keepdims=True)
-    assert np.array_equal(sum_state.values[sum_node], expected_sum)
-
-    # Test project_using_mean (keepdims=True: axis preserved as size 1)
-    mean_state = executor.State({x: x_val})
-    executor.evaluate_nodes(mean_state, *mean_plan)
-    expected_mean = np.mean(x_val, axis=1, keepdims=True)
-    assert np.array_equal(mean_state.values[mean_node], expected_mean)
 
     # Test unsupported axis operation
     class UnsupportedAxisOp(graph.AxisOp):
