@@ -62,7 +62,6 @@ dependencies = [
     "numpy>=2.2.0",
     "pandas>=2.2.0",
     "scipy>=1.15.0",
-    "scipy-stubs~=1.16.0",
 ]
 
 # Optional Dependencies (Dev)
@@ -70,8 +69,8 @@ dependencies = [
 
 # Developer tools: testing, linting, type checking, visualization
 dev = [
-    "matplotlib>=3.10.1",   # for plots and visual debugging
-    "pyright>=1.1.397",     # static type checker
+    "matplotlib>=3.10.1",
+    "pyright>=1.1.408",     # static type checker
     "pytest>=7.0.0",        # test runner
     "pytest-cov>=4.0.0",    # code coverage plugin for pytest
     "ruff>=0.11.0",         # formatter + linter
