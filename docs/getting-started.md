@@ -1,5 +1,12 @@
 # Getting Started
 
+|              | Document data                                  |
+|--------------| ---------------------------------------------- |
+| Author       | [@pistore](https://github.com/pistore)        |
+| Last-Updated | 2026-03-13                                     |
+| Status       | Draft                                          |
+| Approved-By  | N/A                                            |
+
 This guide walks through the **direct pattern** of the
 `civic_digital_twins.dt_model` package: build a model entirely from
 built-in index types, sample uncertain parameters with

@@ -165,13 +165,22 @@ uv sync --upgrade
 2. Update `CHANGELOG.md`: set the release date on the current version section
    and add a comparison link at the bottom.
 
-3. Create and push a git tag: `git tag v<version> && git push origin v<version>`.
+3. Check that documentation Last-Updated dates are in sync with actual commit dates:
+   ```bash
+   git log -1 --format="%ai" -- docs/design/dd-cdt-engine.md
+   git log -1 --format="%ai" -- docs/design/dd-cdt-model.md
+   git log -1 --format="%ai" -- docs/getting-started.md
+   ```
+   Update any Last-Updated dates in the documentation headers if they don't match
+   the commit dates shown above.
 
-4. Build the package: `uv build`.
+4. Create and push a git tag: `git tag v<version> && git push origin v<version>`.
 
-5. Check the artifacts: `uv run --with twine twine check dist/*`.
+5. Build the package: `uv build`.
 
-6. Upload to PyPI: `uv run --with twine twine upload dist/*`.
+6. Check the artifacts: `uv run --with twine twine check dist/*`.
+
+7. Upload to PyPI: `uv run --with twine twine upload dist/*`.
 
 ## Documentation
 
