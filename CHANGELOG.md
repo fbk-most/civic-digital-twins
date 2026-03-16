@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Model I/O contract (`feat/model-io-contract`)**
+**Model I/O contract**
 
 - `Model.__init__` now accepts two optional keyword arguments, `inputs` and
   `outputs`, each a `list[GenericIndex]`.  Both default to `None` (empty),
   preserving full backward compatibility.
 - `IOProxy` — lightweight read-only proxy exposing declared inputs/outputs via
   attribute access, iteration, `len()`, and `in` membership tests.
+  `IOProxy` is internal to `civic_digital_twins.dt_model.model.model`; import it
+  from there if needed for type annotations.
 - **Three access levels**: CDT models follow a three-level access convention:
   1. `model.outputs.<attr>` / `model.inputs.<attr>` — the declared public
      interface.  Stable and contractual.
@@ -32,8 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute of the instance before `super().__init__()` is called.  Declaring
   the same attribute twice in the same list is also an error.  A descriptive
   `ValueError` is raised in all cases.
-- `IOProxy` is internal to `civic_digital_twins.dt_model.model.model`; import it
-  from there if needed for type annotations.
 
 ## [0.7.0] - 2026-03-15
 
