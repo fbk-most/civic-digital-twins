@@ -2,7 +2,7 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import cast
+import dataclasses
 
 import numpy as np
 import pytest
@@ -11,7 +11,7 @@ from scipy import stats
 from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import IOProxy, Model
 
-c1 = cast(Distribution, stats.norm(loc=2.0, scale=1.0))
+c1: Distribution = stats.norm(loc=2.0, scale=1.0)  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ def test_model_index_name_irrelevant_to_proxy():
     """index.name is a display label — it plays no role in proxy access."""
     m = _TwoIndexModel()
     # m.result has index.name == "Result B", but proxy key is "result"
-    assert cast(Index, m.outputs.result).name == "Result B"
+    assert m.outputs.result.name == "Result B"
     with pytest.raises(AttributeError):
         _ = m.outputs.Result_B  # type: ignore[attr-defined]
 
@@ -188,7 +188,7 @@ def test_model_index_name_irrelevant_to_proxy():
 def test_model_level2_index_directly_accessible():
     """Level-2 index (self.* but not in outputs) is directly accessible."""
     m = _TwoIndexModel()
-    assert cast(Index, m.internal).value == 1.0
+    assert m.internal.value == 1.0
 
 
 def test_model_level2_index_not_in_outputs():
@@ -201,7 +201,7 @@ def test_model_level3_index_in_indexes():
     """Level-3 (anonymous) index is in indexes but not reachable by name."""
     m = _TwoIndexModel()
     # The hidden index is in indexes (engine needs it) but has no attr on m.
-    hidden_values = [cast(Index, idx).value for idx in m.indexes if cast(Index, idx).value == 0.0]
+    hidden_values = [idx.value for idx in m.indexes if isinstance(idx, Index) and idx.value == 0.0]
     assert hidden_values == [0.0]
 
 
@@ -380,3 +380,233 @@ def test_submodel_outputs_are_subset_of_parent_indexes():
     index_ids = {id(idx) for idx in parent.indexes}
     for idx in parent.outputs:
         assert id(idx) in index_ids
+
+
+# ---------------------------------------------------------------------------
+# Legacy API — DeprecationWarning
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_indexes_triggers_deprecation_warning():
+    """Passing indexes= explicitly emits DeprecationWarning."""
+    a = Index("a", 1.0)
+    with pytest.warns(DeprecationWarning, match="indexes.*deprecated"):
+        Model("test", indexes=[a])
+
+
+# ---------------------------------------------------------------------------
+# New dataclass-based API
+# ---------------------------------------------------------------------------
+
+
+def test_dataclass_outputs_only():
+    """Model with only Outputs dataclass — inputs and expose are empty."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        traffic: Index
+
+    a = Index("traffic", 1.0)
+    m = Model("test", outputs=Outputs(traffic=a))
+    assert m.outputs.traffic is a
+    assert len(m.inputs) == 0
+    assert len(m.expose) == 0
+
+
+def test_dataclass_inputs_and_outputs():
+    """Inputs and Outputs both declared — accessible by field name."""
+
+    @dataclasses.dataclass
+    class Inputs:
+        inflow: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        traffic: Index
+
+    inflow = Index("inflow", None)
+    traffic = Index("traffic", inflow * 2.0)
+    m = Model("test", inputs=Inputs(inflow=inflow), outputs=Outputs(traffic=traffic))
+    assert m.inputs.inflow is inflow
+    assert m.outputs.traffic is traffic
+
+
+def test_dataclass_expose():
+    """Expose dataclass — accessible via m.expose."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        result: Index
+
+    @dataclasses.dataclass
+    class Expose:
+        ratio: Index
+
+    result = Index("result", 1.0)
+    ratio = Index("ratio", 0.5)
+    m = Model("test", outputs=Outputs(result=result), expose=Expose(ratio=ratio))
+    assert m.expose.ratio is ratio
+
+
+def test_dataclass_list_valued_field():
+    """List-valued output field is returned as a list."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        items: list[Index]
+
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    m = Model("test", outputs=Outputs(items=[a, b]))
+    result = m.outputs.items
+    assert isinstance(result, list)
+    assert result[0] is a
+    assert result[1] is b
+
+
+def test_dataclass_dict_valued_field():
+    """Dict-valued output field is returned as a dict."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        by_class: dict[str, Index]
+
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    m = Model("test", outputs=Outputs(by_class={"x": a, "y": b}))
+    result = m.outputs.by_class
+    assert isinstance(result, dict)
+    assert result["x"] is a
+    assert result["y"] is b
+
+
+def test_dataclass_indexes_derived_and_deduplicated():
+    """Indexes is derived from inputs/outputs/expose; duplicates removed."""
+
+    @dataclasses.dataclass
+    class Inputs:
+        inflow: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        traffic: Index
+
+    @dataclasses.dataclass
+    class Expose:
+        ratio: Index
+
+    inflow = Index("inflow", None)
+    traffic = Index("traffic", 1.0)
+    ratio = Index("ratio", 0.5)
+    m = Model(
+        "test",
+        inputs=Inputs(inflow=inflow),
+        outputs=Outputs(traffic=traffic),
+        expose=Expose(ratio=ratio),
+    )
+    assert set(id(i) for i in m.indexes) == {id(inflow), id(traffic), id(ratio)}
+    assert len(m.indexes) == 3
+
+
+def test_dataclass_indexes_dedup_shared_input():
+    """An index appearing in both inputs and outputs is listed only once."""
+
+    @dataclasses.dataclass
+    class Inputs:
+        x: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        x: Index
+
+    x = Index("x", None)
+    m = Model("test", inputs=Inputs(x=x), outputs=Outputs(x=x))
+    assert len(m.indexes) == 1
+    assert m.indexes[0] is x
+
+
+def test_dataclass_abstract_indexes():
+    """abstract_indexes() works correctly with the new API."""
+
+    @dataclasses.dataclass
+    class Inputs:
+        placeholder: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        result: Index
+
+    p = Index("p", None)
+    r = Index("r", 1.0)
+    m = Model("test", inputs=Inputs(placeholder=p), outputs=Outputs(result=r))
+    assert m.abstract_indexes() == [p]
+    assert not m.is_instantiated()
+
+
+def test_dataclass_proxy_iteration_flattens_list():
+    """Iterating over a proxy with a list field yields individual indexes."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        items: list[Index]
+
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    m = Model("test", outputs=Outputs(items=[a, b]))
+    assert list(m.outputs) == [a, b]
+
+
+def test_dataclass_proxy_iteration_flattens_dict():
+    """Iterating over a proxy with a dict field yields individual index values."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        by_class: dict[str, Index]
+
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    m = Model("test", outputs=Outputs(by_class={"x": a, "y": b}))
+    assert list(m.outputs) == [a, b]
+
+
+def test_dataclass_proxy_len_counts_scalars():
+    """len(proxy) counts individual scalars across list and scalar fields."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        scalar: Index
+        items: list[Index]
+
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    c = Index("c", 3.0)
+    m = Model("test", outputs=Outputs(scalar=a, items=[b, c]))
+    assert len(m.outputs) == 3
+
+
+def test_dataclass_proxy_contains_works_across_list():
+    """In operator finds indexes inside list-valued fields."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        items: list[Index]
+
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    outside = Index("x", 9.0)
+    m = Model("test", outputs=Outputs(items=[a, b]))
+    assert a in m.outputs
+    assert b in m.outputs
+    assert outside not in m.outputs
+
+
+def test_dataclass_proxy_unknown_attr_raises():
+    """Accessing an undeclared field name on a dataclass proxy raises AttributeError."""
+
+    @dataclasses.dataclass
+    class Outputs:
+        traffic: Index
+
+    m = Model("test", outputs=Outputs(traffic=Index("t", 1.0)))
+    with pytest.raises(AttributeError, match="No input/output"):
+        _ = m.outputs.nonexistent  # type: ignore[attr-defined]
