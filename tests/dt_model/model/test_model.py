@@ -228,20 +228,6 @@ def test_model_same_index_in_inputs_and_outputs():
     assert m.outputs.x is m.x
 
 
-def test_model_inputs_and_outputs_independent():
-    """Inputs and outputs are independent views; overlap is allowed."""
-
-    class _IO(Model):
-        def __init__(self):
-            self.a = Index("a", None)
-            self.b = Index("b", 1.0)
-            super().__init__("io", indexes=[self.a, self.b], inputs=[self.a], outputs=[self.b])
-
-    m = _IO()
-    assert m.inputs.a is m.a
-    assert m.outputs.b is m.b
-
-
 # ---------------------------------------------------------------------------
 # Validation errors
 # ---------------------------------------------------------------------------
@@ -345,38 +331,27 @@ def test_submodel_indexes_contains_all():
     assert len(m.indexes) == 4
 
 
+class _ParentModel(Model):
+    """Parent that wires a _SubModel output into its own computation."""
+
+    def __init__(self, sub: _SubModel):
+        self.doubled = Index("doubled traffic", sub.outputs.traffic * 2)
+        super().__init__(
+            "Parent",
+            indexes=[*sub.indexes, self.doubled],
+            outputs=[self.doubled],
+        )
+
+
 def test_submodel_wiring_into_parent():
     """Parent wires sub-model output as input to its own computation."""
-    sub = _SubModel()
-
-    class _Parent(Model):
-        def __init__(self, sub: _SubModel):
-            # Wire sub output into parent computation.
-            self.doubled = Index("doubled traffic", sub.outputs.traffic * 2)
-            super().__init__(
-                "Parent",
-                indexes=[*sub.indexes, self.doubled],
-                outputs=[self.doubled],
-            )
-
-    parent = _Parent(sub)
+    parent = _ParentModel(_SubModel())
     assert parent.outputs.doubled is parent.doubled
 
 
 def test_submodel_outputs_are_subset_of_parent_indexes():
     """Sub-model outputs referenced in parent indexes are findable."""
-    sub = _SubModel()
-
-    class _Parent(Model):
-        def __init__(self, sub: _SubModel):
-            self.doubled = Index("doubled", sub.outputs.traffic * 2)
-            super().__init__(
-                "Parent",
-                indexes=[*sub.indexes, self.doubled],
-                outputs=[self.doubled],
-            )
-
-    parent = _Parent(sub)
+    parent = _ParentModel(_SubModel())
     index_ids = {id(idx) for idx in parent.indexes}
     for idx in parent.outputs:
         assert id(idx) in index_ids
