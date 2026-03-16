@@ -180,7 +180,7 @@ def test_model_index_name_irrelevant_to_proxy():
     """index.name is a display label — it plays no role in proxy access."""
     m = _TwoIndexModel()
     # m.result has index.name == "Result B", but proxy key is "result"
-    assert m.outputs.result.name == "Result B"
+    assert cast(Index, m.outputs.result).name == "Result B"
     with pytest.raises(AttributeError):
         _ = m.outputs.Result_B  # type: ignore[attr-defined]
 
@@ -188,7 +188,7 @@ def test_model_index_name_irrelevant_to_proxy():
 def test_model_level2_index_directly_accessible():
     """Level-2 index (self.* but not in outputs) is directly accessible."""
     m = _TwoIndexModel()
-    assert m.internal.value == 1.0
+    assert cast(Index, m.internal).value == 1.0
 
 
 def test_model_level2_index_not_in_outputs():
@@ -201,7 +201,7 @@ def test_model_level3_index_in_indexes():
     """Level-3 (anonymous) index is in indexes but not reachable by name."""
     m = _TwoIndexModel()
     # The hidden index is in indexes (engine needs it) but has no attr on m.
-    hidden_values = [idx.value for idx in m.indexes if idx.value == 0.0]
+    hidden_values = [cast(Index, idx).value for idx in m.indexes if cast(Index, idx).value == 0.0]
     assert hidden_values == [0.0]
 
 
