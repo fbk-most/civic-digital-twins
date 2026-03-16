@@ -213,7 +213,7 @@ def _heatmap_single_pair(param_samples, max_exceed, idx_i, idx_j,
             "n_samples": len(me)}
 
 
-def run_sensitivity_analysis(simulator_fn, problem, series_axis=N_SERIES_AXIS,
+def run_sensitivity_analysis(simulator_fn, problem, series_axis: "int | list | range | np.ndarray" = N_SERIES_AXIS,
                               n_samples=N_SAMPLES, n_replicas=N_REPLICAS,
                               conf_level=CONFIDENCE_LVL, seed=SEED,
                               model_type="piecewise"):
@@ -223,17 +223,21 @@ def run_sensitivity_analysis(simulator_fn, problem, series_axis=N_SERIES_AXIS,
     ----------
     series_axis : int | list | range | np.ndarray
         Defines the x-axis of the output series.  If an int, treated as the
-        number of points (``np.arange(series_axis)``).  Otherwise used as-is
-        — the simulator receives the concrete array and must return an output
-        of the same length.
+        number of points (``np.arange(series_axis)``).  Otherwise used as-is.
+        The SA results and dashboard are indexed on these values.
     model_type : str
-        ``"piecewise"`` — each series_axis point can be evaluated
-        independently (e.g. a static capacity model).
-        ``"sequential"`` — the model has internal state that evolves over
-        time; it must be run as a single trajectory from 0 to max t.
-        Currently both modes pass the full series_axis to the simulator,
-        but the tag is stored in results for downstream use (e.g. the
-        dashboard or future optimisations that parallelise over points).
+        ``"piecewise"`` — each series_axis point is independent.  The
+        simulator receives ``series_axis`` directly and must return an array
+        of shape ``(len(series_axis),)``.
+
+        ``"sequential"`` — the model has internal state that must evolve
+        continuously from ``series_axis[0]`` to ``series_axis[-1]``.  The
+        framework builds the dense integer grid
+        ``np.arange(series_axis[0], series_axis[-1] + 1)`` and passes it to
+        the simulator (which must return a value for every step).  The
+        framework then extracts only the positions corresponding to
+        ``series_axis`` values and discards the rest.  ``series_axis`` values
+        must therefore be a subset of that integer grid.
     """
     if isinstance(series_axis, (int, np.integer)):
         series_axis = np.arange(int(series_axis))
@@ -241,20 +245,43 @@ def run_sensitivity_analysis(simulator_fn, problem, series_axis=N_SERIES_AXIS,
         series_axis = np.asarray(series_axis)
     n_points = len(series_axis)
 
+    # For sequential models build the dense run grid and the index mask used
+    # to extract only the series_axis positions from each simulator output.
+    if model_type == "sequential":
+        sa_min = int(np.round(series_axis[0]))
+        sa_max = int(np.round(series_axis[-1]))
+        dense_axis = np.arange(sa_min, sa_max + 1)
+        # Indices into dense_axis that correspond to each series_axis value.
+        series_axis_rounded = np.round(series_axis).astype(int)
+        extract_idx = series_axis_rounded - sa_min
+        if np.any(extract_idx < 0) or np.any(extract_idx >= len(dense_axis)):
+            raise ValueError(
+                "sequential model_type requires series_axis values to lie "
+                f"within [{sa_min}, {sa_max}].")
+        run_axis = dense_axis
+    else:
+        run_axis = series_axis
+        extract_idx = None
+
     names = problem["names"]; num_vars = problem["num_vars"]
     print(f"Saltelli samples (N={n_samples}, D={num_vars}) ...")
     param_samples = sobol_sample.sample(problem, n_samples, calc_second_order=True)
     n_ps = param_samples.shape[0]
     print(f"  {n_ps} parameter sets")
 
-    print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs ...")
+    if model_type == "sequential":
+        print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs "
+              f"(dense grid {run_axis[0]}..{run_axis[-1]}, extracting {n_points} points) ...")
+    else:
+        print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs ...")
     all_ts = np.empty((n_ps, n_replicas, n_points))
     base_rng = np.random.default_rng(seed)
     for i in range(n_ps):
         p = {name: param_samples[i,j] for j,name in enumerate(names)}
         for r in range(n_replicas):
             rng = np.random.default_rng(base_rng.integers(0, 2**31))
-            all_ts[i,r,:] = simulator_fn(p, series_axis, rng)
+            raw = simulator_fn(p, run_axis, rng)
+            all_ts[i, r, :] = raw[extract_idx] if extract_idx is not None else raw
         if (i+1) % max(1, n_ps//10) == 0:
             print(f"  {i+1}/{n_ps}")
 
@@ -456,8 +483,8 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
         fig.update_yaxes(title_text="ST",row=4,col=1)
         fig.update_yaxes(title_text="PAWN",row=5,col=1,range=[0,1.05])
         fig.update_yaxes(range=[0,1.05],row=5,col=2)
-        fig.update_xaxes(title_text="Timestep",row=5,col=1)
-        fig.update_xaxes(title_text="Timestep",row=5,col=2)
+        fig.update_xaxes(title_text="Series",row=5,col=1)
+        fig.update_xaxes(title_text="Series",row=5,col=2)
         return fig
 
     sobol_fig = _make_sobol_fig()
@@ -531,7 +558,7 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
             name="Threshold", visible=thr_vis, showlegend=thr_vis))
         fig.update_layout(title=f"Simulation \u2014 nearest: {lab}",
             yaxis=dict(range=y_range, title="Output"),
-            xaxis=dict(title="Timestep"), template="plotly_white", height=400,
+            xaxis=dict(title="Series"), template="plotly_white", height=400,
             margin=dict(t=50, b=40, l=60, r=30),
             legend=dict(orientation="h", y=-0.15, xanchor="center", x=0.5),
             uirevision="constant")
@@ -560,12 +587,14 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
                   style={"marginBottom":"5px", "minHeight":"380px"})
         for pidx in range(len(pair_keys))]
 
-    mark_step = max(1, n_ts // 5)
-    # Slider always uses 0-based integer indices; labels show the actual series_axis value
     def _fmt_axis(v):
         return str(int(v)) if float(v) == int(v) else f"{v:.4g}"
+
+    # Time-window slider uses integer indices (0..n_ts-1) for exact snapping;
+    # mark *labels* show the corresponding series_axis values.
+    mark_step = max(1, n_ts // 5)
     range_marks = {i: _fmt_axis(series_axis[i]) for i in range(0, n_ts, mark_step)}
-    range_marks[n_ts - 1] = _fmt_axis(series_axis[n_ts - 1])
+    range_marks[n_ts - 1] = _fmt_axis(series_axis[-1])
 
     # --- Conditioning RangeSliders ---
     cond_sliders = []
@@ -601,19 +630,21 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
                        style={"fontSize":"11px","color":"#888","marginLeft":"8px"}),
         ], style={"textAlign":"center","marginBottom":"10px"}),
 
+        html.Div([
+            html.Label("PRIM / Heatmap time window:",
+                       style={"fontWeight":"bold","fontSize":"13px","color":"#555"}),
+            dcc.RangeSlider(id="time-window-slider",
+                min=0, max=n_ts-1, step=1,
+                value=[0, n_ts-1],
+                marks=range_marks,
+                tooltip={"always_visible":True,"placement":"bottom"},
+                allowCross=False),
+        ], style={"padding":"8px 5px","margin":"5px 0 10px 0",
+                  "backgroundColor":"#fef8f8","borderRadius":"6px",
+                  "border":"1px solid #dcc"}),
+
         dcc.Loading(id="loading-threshold", type="circle", color="#B22222", children=[
             dcc.Graph(id="threshold-plot"),
-            html.Div([
-                html.Label("PRIM / Heatmap time window:",
-                           style={"fontWeight":"bold","fontSize":"13px","color":"#555"}),
-                dcc.RangeSlider(id="time-window-slider",
-                    min=0, max=n_ts-1, step=1, value=[0, n_ts-1],
-                    marks=range_marks,
-                    tooltip={"always_visible":True,"placement":"bottom"},
-                    allowCross=False),
-            ], style={"padding":"8px 5px","margin":"5px 0 10px 0",
-                      "backgroundColor":"#fef8f8","borderRadius":"6px",
-                      "border":"1px solid #dcc"}),
 
             html.Div(id="prim-text"),
 
@@ -722,7 +753,9 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
          Input("time-window-slider","value")] +
         [Input(f"cond-slider-{n}","value") for n in names])
     def update_threshold_panel(thr_value, time_range, *cond_ranges):
-        t_start, t_end = int(time_range[0]), int(time_range[1])
+        # Slider values are integer indices (0..n_ts-1).
+        t_start = max(0, min(int(time_range[0]), n_ts - 1))
+        t_end   = max(t_start, min(int(time_range[1]), n_ts - 1))
 
         # Parse conditioning ranges into dict: var_index -> (lo, hi)
         cond_bounds = {}
@@ -837,7 +870,7 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
                 ], font=dict(size=11),bgcolor="white",bordercolor="#ccc")])
         tfig.update_yaxes(title_text="P(Y>c)",row=1,col=1,range=[0,1.05])
         tfig.update_yaxes(title_text="PAWN median",row=2,col=1,range=[0,1.05])
-        tfig.update_xaxes(title_text="Timestep",row=2,col=1)
+        tfig.update_xaxes(title_text="Series",row=2,col=1)
 
         # --- Max-over-window exceedance (for heatmaps) ---
         window_exceed = et[:, t_start:t_end+1]
