@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**No notable changes yet**
+### Added
+
+**Model I/O contract (`feat/model-io-contract`)**
+
+- `Model.__init__` now accepts two optional keyword arguments, `inputs` and
+  `outputs`, each a `list[GenericIndex]`.  Both default to `None` (empty),
+  preserving full backward compatibility.
+- `IOProxy` — lightweight read-only proxy exposing declared inputs/outputs via
+  attribute access, iteration, `len()`, and `in` membership tests.
+- **Three access levels**: CDT models follow a three-level access convention:
+  1. `model.outputs.<attr>` / `model.inputs.<attr>` — the declared public
+     interface.  Stable and contractual.
+  2. `model.<attr>` — any index assigned to a `self.*` attribute but not
+     declared in `inputs` or `outputs`.  Inspectable but not contractual.
+  3. Local variables inside `__init__` — indexes known only to the evaluation
+     engine via `indexes`.  Fully internal; not accessible from outside.
+- **Attribute-name based access**: the key used to access an index via
+  `model.inputs` or `model.outputs` is the Python attribute name under which it
+  was assigned on the model instance (`self.<attr> = Index(...)`).  `index.name`
+  is a free-form display label and plays no role in proxy access.
+- **Construction-time validation**: every entry in `inputs` and `outputs` must
+  appear in `indexes` (identity check) and must be assigned to a `self.*`
+  attribute of the instance before `super().__init__()` is called.  Declaring
+  the same attribute twice in the same list is also an error.  A descriptive
+  `ValueError` is raised in all cases.
+- `IOProxy` is internal to `civic_digital_twins.dt_model.model.model`; import it
+  from there if needed for type annotations.
 
 ## [0.7.0] - 2026-03-15
 
