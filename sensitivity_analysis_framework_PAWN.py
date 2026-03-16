@@ -556,12 +556,16 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
         ], style={"marginBottom":"8px"}))
 
     heatmap_graphs = [
-        dcc.Graph(id=f"heatmap-{pidx}", style={"marginBottom":"5px"})
+        dcc.Graph(id=f"heatmap-{pidx}",
+                  style={"marginBottom":"5px", "minHeight":"380px"})
         for pidx in range(len(pair_keys))]
 
     mark_step = max(1, n_ts // 5)
-    range_marks = {int(t): str(int(t)) for t in range(0, n_ts, mark_step)}
-    range_marks[n_ts-1] = str(n_ts-1)
+    # Slider always uses 0-based integer indices; labels show the actual series_axis value
+    def _fmt_axis(v):
+        return str(int(v)) if float(v) == int(v) else f"{v:.4g}"
+    range_marks = {i: _fmt_axis(series_axis[i]) for i in range(0, n_ts, mark_step)}
+    range_marks[n_ts - 1] = _fmt_axis(series_axis[n_ts - 1])
 
     # --- Conditioning RangeSliders ---
     cond_sliders = []
@@ -736,7 +740,7 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
             no_msg = html.P("No threshold set.",
                 style={"textAlign":"center","color":"#999","padding":"20px"})
             empty_hm = go.Figure()
-            empty_hm.update_layout(height=100,template="plotly_white",
+            empty_hm.update_layout(height=380,template="plotly_white",
                 xaxis=dict(visible=False),yaxis=dict(visible=False))
             return [empty_fig, no_msg, ""] + [empty_hm]*len(pair_keys)
 
@@ -806,12 +810,17 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
                 showlegend=False,legendgroup=f"PE_{n}",hoverinfo="skip"),
                 row=2,col=1)
             ci_idx_thr.append(ci_k)
+        ts_start_val = float(timesteps[t_start])
+        ts_end_val   = float(timesteps[t_end])
+        _ts_lbl = lambda v: str(int(v)) if v == int(v) else f"{v:.4g}"
+        ts_start_lbl = _ts_lbl(ts_start_val)
+        ts_end_lbl   = _ts_lbl(ts_end_val)
         for row in [1, 2]:
-            tfig.add_vrect(x0=t_start,x1=t_end,
+            tfig.add_vrect(x0=ts_start_val, x1=ts_end_val,
                 fillcolor="rgba(178,34,34,0.08)",line_width=0,row=row,col=1)
-            tfig.add_vline(x=t_start,line_dash="dot",line_color="#B22222",
+            tfig.add_vline(x=ts_start_val, line_dash="dot", line_color="#B22222",
                            line_width=1,row=row,col=1)
-            tfig.add_vline(x=t_end,line_dash="dot",line_color="#B22222",
+            tfig.add_vline(x=ts_end_val, line_dash="dot", line_color="#B22222",
                            line_width=1,row=row,col=1)
         nt = len(tfig.data)
         va_t = [True]*nt; vn_t = [True]*nt
@@ -842,7 +851,7 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
         if prim_res is not None:
             box = prim_res["best_box"]
             prim_lines = [
-                f"PRIM Danger Zone  [t={t_start}\u2013{t_end}]  c={thr}"]
+                f"PRIM Danger Zone  [t={ts_start_lbl}\u2013{ts_end_lbl}]  c={thr}"]
             if cond_labels:
                 prim_lines.append(f"Conditioned: {', '.join(cond_labels)}")
             prim_lines.append(
@@ -865,11 +874,11 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
         else:
             box = None
             n_cond = n_global if cond_labels else len(param_samples)
-            prim_text = (f"PRIM  [t={t_start}\u2013{t_end}]  c={thr}: insufficient "
+            prim_text = (f"PRIM  [t={ts_start_lbl}\u2013{ts_end_lbl}]  c={thr}: insufficient "
                          f"exceedance to fit a box (n={n_cond} conditioned samples).")
 
         prim_div = html.Details([
-            html.Summary(f"PRIM Danger Zone  [t={t_start}\u2013{t_end}]",
+            html.Summary(f"PRIM Danger Zone  [t={ts_start_lbl}\u2013{ts_end_lbl}]",
                          style={"fontWeight":"bold","fontSize":"13px",
                                 "cursor":"pointer","color":"#B22222"}),
             html.Pre(prim_text, style={
@@ -932,7 +941,7 @@ def build_dash_app(results, initial_threshold=THRESHOLD_INIT):
                         line=dict(color="black",width=2,dash="dash"),
                         fillcolor="rgba(0,0,0,0)")
                 hfig.update_layout(
-                    title=f"P(exceed) \u2014 {ni} vs {nj}  [t={t_start}\u2013{t_end}]{subtitle}",
+                    title=f"P(exceed) \u2014 {ni} vs {nj}  [t={ts_start_lbl}\u2013{ts_end_lbl}]{subtitle}",
                     xaxis_title=ni, yaxis_title=nj,
                     template="plotly_white", height=380,
                     margin=dict(t=40,b=40,l=60,r=20))

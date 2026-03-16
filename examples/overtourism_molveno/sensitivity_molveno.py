@@ -167,7 +167,7 @@ from molveno_presence_stats import season, weather, weekday  # noqa: E402
 #            → 3000 tourists, 2000 excursionists
 
 RATIO_T = 1.0
-RATIO_E = 0.0
+RATIO_E = 1.0
 
 # Model type tag (stored in SA results for downstream use):
 #   "piecewise"  — each x-axis point is independent; the framework may
