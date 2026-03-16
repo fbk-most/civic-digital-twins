@@ -11,29 +11,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Model I/O contract**
 
-- `Model.__init__` now accepts two optional keyword arguments, `inputs` and
-  `outputs`, each a `list[GenericIndex]`.  Both default to `None` (empty),
-  preserving full backward compatibility.
-- `IOProxy` — lightweight read-only proxy exposing declared inputs/outputs via
-  attribute access, iteration, `len()`, and `in` membership tests.
-  `IOProxy` is internal to `civic_digital_twins.dt_model.model.model`; import it
-  from there if needed for type annotations.
-- **Three access levels**: CDT models follow a three-level access convention:
-  1. `model.outputs.<attr>` / `model.inputs.<attr>` — the declared public
-     interface.  Stable and contractual.
-  2. `model.<attr>` — any index assigned to a `self.*` attribute but not
-     declared in `inputs` or `outputs`.  Inspectable but not contractual.
-  3. Local variables inside `__init__` — indexes known only to the evaluation
-     engine via `indexes`.  Fully internal; not accessible from outside.
-- **Attribute-name based access**: the key used to access an index via
-  `model.inputs` or `model.outputs` is the Python attribute name under which it
-  was assigned on the model instance (`self.<attr> = Index(...)`).  `index.name`
-  is a free-form display label and plays no role in proxy access.
+- `Model.__init__` accepts `inputs=`, `outputs=`, and `expose=` keyword
+  arguments.  Each is an instance of an inner `@dataclass` (`Inputs`, `Outputs`,
+  `Expose`) declared on the subclass with typed fields.  `Model` inspects them
+  via `dataclasses.fields()` to build the proxies and derive `indexes`
+  automatically — no flat index list required.
+- **Three access levels**:
+  1. `model.outputs.<field>` / `model.inputs.<field>` — contractual interface,
+     declared via `Outputs` / `Inputs` inner dataclasses.  Stable across versions.
+  2. `model.expose.<field>` — inspectable but not contractual, declared via the
+     optional `Expose` inner dataclass.  May change between versions.
+  3. Local variables inside `__init__` — internal to the engine graph only;
+     not accessible from outside.
+- **List and dict field values**: dataclass fields may hold a single
+  `GenericIndex`, a `list[GenericIndex]`, or a `dict[str, GenericIndex]`.
+  Iteration, `len()`, and `in` flatten these to scalar indexes only, preserving
+  the existing engine contract.  Field access returns the raw value.
+- **`indexes` derived automatically**: the flat `model.indexes` list is built by
+  collecting and deduplicating all scalar `GenericIndex` values from `inputs`,
+  `outputs`, and `expose` (first-seen order).
 - **Construction-time validation**: every entry in `inputs` and `outputs` must
-  appear in `indexes` (identity check) and must be assigned to a `self.*`
-  attribute of the instance before `super().__init__()` is called.  Declaring
-  the same attribute twice in the same list is also an error.  A descriptive
-  `ValueError` is raised in all cases.
+  appear in `indexes` (identity check); declaring the same entry twice is an
+  error.  A descriptive `ValueError` is raised in all cases.
+- **Legacy `indexes=` path deprecated**: passing `indexes` explicitly emits a
+  `DeprecationWarning`.  The legacy path is preserved for backward compatibility
+  and will be removed in a future version.
+- **`IOProxy`** — read-only proxy exposing declared fields via attribute access,
+  iteration, `len()`, and `in` membership.  `IOProxy` is generic (`IOProxy[DC]`);
+  `__getattr__` returns `Any` so typed field access flows through to the caller's
+  expected type without `cast()`.
+
+**Bologna mobility example — modular rewrite**
+
+- `mobility_bologna.py` decomposed into three sub-models with explicit typed
+  interfaces:
+  - `InflowModel` — policy-modified inflow and payment statistics.
+  - `TrafficModel` — baseline and modified circulating traffic.
+  - `EmissionsModel` — baseline and modified NOx emissions.
+- `BolognaModel` wires the three sub-models via constructor arguments; `Expose`
+  collects all sub-model indexes for the engine plus named timeseries fields for
+  plotting.
+- `compute_kpis` updated to use `m.outputs.*`.
+- `__main__` updated to use `m.expose.*` for plot data; graphs saved via
+  `fig.savefig()` (headless-safe).
 
 ## [0.7.0] - 2026-03-15
 
