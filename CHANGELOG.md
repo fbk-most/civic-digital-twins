@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**ModelVariant — static and Index-selector variant switching (step 4 of the v0.8.0 modularity plan)**
+
+- `ModelVariant(name, variants, selector)` — selects among pre-constructed
+  :class:`Model` instances that share the same I/O contract.  The active
+  variant is resolved once at construction time and the ``ModelVariant``
+  then acts as a fully transparent proxy for it.
+- **Selector types supported**:
+  - String literal → selects the variant identified by that key.
+  - Concrete :class:`Index` → ``str(index.value)`` is used as the lookup key.
+  - :class:`Distribution` (or :class:`DistributionIndex`) → raises
+    :exc:`NotImplementedError` with a clear message pointing to
+    Branch 7 / Issue 3 (ensemble execution, out of scope for this release).
+- **Transparency**: ``inputs``, ``outputs``, ``expose``, ``indexes``,
+  ``abstract_indexes()``, ``is_instantiated()``, and arbitrary attribute
+  access all delegate to the active variant; a ``ModelVariant`` is usable
+  anywhere a ``Model`` is expected.
+- **`indexes` scope**: delegates to the active variant only — internal
+  indexes of inactive variants are not visible through ``model_variant.indexes``.
+  They remain accessible via ``model_variant.variants["key"].*``.
+- **Construction-time I/O contract validation**: ``inputs`` and ``outputs``
+  field names must be identical across all declared variants; a descriptive
+  :exc:`ValueError` is raised if they differ.
+- `ModelVariant` exported from `civic_digital_twins.dt_model` and
+  `civic_digital_twins.dt_model.model`.
+- Full test suite in `tests/dt_model/model/test_model_variant.py`.
+
 **Model I/O contract**
 
 - `Model.__init__` accepts `inputs=`, `outputs=`, and `expose=` keyword

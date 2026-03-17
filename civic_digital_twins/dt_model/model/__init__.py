@@ -9,6 +9,7 @@ from .index import (
     TimeseriesIndex,
 )
 from .model import Model
+from .model_variant import ModelVariant
 
 __all__ = [
     "ConstIndex",
@@ -17,5 +18,6 @@ __all__ = [
     "GenericIndex",
     "Index",
     "Model",
+    "ModelVariant",
     "TimeseriesIndex",
 ]
