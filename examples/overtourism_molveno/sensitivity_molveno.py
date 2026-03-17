@@ -202,23 +202,13 @@ from molveno_presence_stats import season, weather, weekday  # noqa: E402
 # is the x-axis: the range of total visitor counts that the simulator will
 # evaluate for every SA sample. RATIO_T and RATIO_E scale that total into the
 # tourist and excursionist sub-populations fed to the dt_model presence
-# variables (PV_tourists, PV_excursionists). MODEL_TYPE tells the SA framework
-# whether each x-axis point is evaluated independently ("piecewise") or must
-# be run as an ordered trajectory ("sequential") — this affects how the
-# framework parallelises and stores results.
+# variables (PV_tourists, PV_excursionists).
 #
 #   Example: 5000 total visitors, RATIO_T=0.6, RATIO_E=0.4
 #            → 3000 tourists, 2000 excursionists
 
 RATIO_T = 1.0
 RATIO_E = 1.0
-
-# Model type tag (stored in SA results for downstream use):
-#   "piecewise"  — each x-axis point is independent; the framework may
-#                  evaluate them in any order or in parallel.
-#   "sequential" — the model has internal state (e.g. a traffic sim);
-#                  must run as a single trajectory from 0 to max(x).
-MODEL_TYPE = "piecewise"
 
 # Series axis: the x-axis values (total visitors).
 SERIES_AXIS: int | list | range | np.ndarray = np.linspace(0, 10_000, 200)
@@ -442,7 +432,7 @@ def molveno_simulator(
         b) Draw a random context-variable combination (weekday, season, weather)
         c) Map all values into a substitution dict for the graph executor
         d) Linearize the target formula and evaluate the graph
-        e) Sample capacity once for this replica and return usage − capacity
+        e) Sample capacity once for this replica and return usage - capacity
 
     Parameters
     ----------
@@ -529,7 +519,7 @@ if __name__ == "__main__":
     if _repo not in sys.path:
         sys.path.insert(0, _repo)
 
-    from sensitivity_analysis_framework_PAWN import (  # noqa: E402
+    from sensitivity_analysis_framework import (  # noqa: E402
         build_dash_app,
         print_summary,
         run_sensitivity_analysis,
@@ -541,10 +531,9 @@ if __name__ == "__main__":
         series_axis=SERIES_AXIS,
         n_samples=512,
         n_replicas=100,
-        seed=42,
-        model_type=MODEL_TYPE,
+        seed=42
     )
     print_summary(results)
     app = build_dash_app(results)
-    print("\nDash at http://127.0.0.1:8000")
-    app.run(debug=False, port=8000)
+    print("\nDash at http://127.0.0.1:10000")
+    app.run(debug=False, port=10000)

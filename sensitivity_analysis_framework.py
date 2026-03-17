@@ -41,7 +41,6 @@ MIN_SAMPLES_HEATMAP = 30   # minimum conditioned samples to compute a heatmap
 
 THRESHOLD_INIT   = None   # initial value in dashboard (None for empty)
 
-PORT             = 8000
 MAX_DISPLAY      = 25
 
 
@@ -213,55 +212,30 @@ def _heatmap_single_pair(param_samples, max_exceed, idx_i, idx_j,
             "n_samples": len(me)}
 
 
-def run_sensitivity_analysis(simulator_fn, problem, series_axis: "int | list | range | np.ndarray" = N_SERIES_AXIS,
+def run_sensitivity_analysis(simulator_fn, problem, series_axis: "list | range | np.ndarray" = N_SERIES_AXIS,
                               n_samples=N_SAMPLES, n_replicas=N_REPLICAS,
-                              conf_level=CONFIDENCE_LVL, seed=SEED,
-                              model_type="piecewise"):
+                              conf_level=CONFIDENCE_LVL, seed=SEED):
     """Run simulations + Sobol/PAWN on mean and variance. Threshold-independent.
 
     Parameters
     ----------
-    series_axis : int | list | range | np.ndarray
-        Defines the x-axis of the output series.  If an int, treated as the
-        number of points (``np.arange(series_axis)``).  Otherwise used as-is.
-        The SA results and dashboard are indexed on these values.
-    model_type : str
-        ``"piecewise"`` — each series_axis point is independent.  The
-        simulator receives ``series_axis`` directly and must return an array
-        of shape ``(len(series_axis),)``.
-
-        ``"sequential"`` — the model has internal state that must evolve
-        continuously from ``series_axis[0]`` to ``series_axis[-1]``.  The
-        framework builds the dense integer grid
-        ``np.arange(series_axis[0], series_axis[-1] + 1)`` and passes it to
-        the simulator (which must return a value for every step).  The
-        framework then extracts only the positions corresponding to
-        ``series_axis`` values and discards the rest.  ``series_axis`` values
-        must therefore be a subset of that integer grid.
+    simulator_fn : function (params: dict, series_axis: np.ndarray, rng: np.random.Generator) -> np.ndarray
+        User-defined simulator function.  Must take a parameter dict, the series_axis array, and a random number generator, and return an array of shape (len(series_axis),) corresponding to the model evaluation at each point in the series_axis.
+    problem : dict
+        Problem definition containing parameter names and bounds. An example is
+        problem = {"num_vars":3, "names":["P0","P1","P2"], "bounds":[[0,10],[0,5],[0,5]]}
+        
+    series_axis : list | range | np.ndarray
+        Defines the x-axis of the output series.  The framework passes this
+        array directly to ``simulator_fn``, which must return an array of
+        shape ``(len(series_axis),)``.  Any dense-grid vs. sparse-axis logic
+        is the simulator's responsibility.
     """
-    if isinstance(series_axis, (int, np.integer)):
-        series_axis = np.arange(int(series_axis))
+    if series_axis is None or isinstance(series_axis, (int,np.integer)):
+        TypeError("series_axis must be a list, range, or np.ndarray of values, not an int.")
     else:
         series_axis = np.asarray(series_axis)
     n_points = len(series_axis)
-
-    # For sequential models build the dense run grid and the index mask used
-    # to extract only the series_axis positions from each simulator output.
-    if model_type == "sequential":
-        sa_min = int(np.round(series_axis[0]))
-        sa_max = int(np.round(series_axis[-1]))
-        dense_axis = np.arange(sa_min, sa_max + 1)
-        # Indices into dense_axis that correspond to each series_axis value.
-        series_axis_rounded = np.round(series_axis).astype(int)
-        extract_idx = series_axis_rounded - sa_min
-        if np.any(extract_idx < 0) or np.any(extract_idx >= len(dense_axis)):
-            raise ValueError(
-                "sequential model_type requires series_axis values to lie "
-                f"within [{sa_min}, {sa_max}].")
-        run_axis = dense_axis
-    else:
-        run_axis = series_axis
-        extract_idx = None
 
     names = problem["names"]; num_vars = problem["num_vars"]
     print(f"Saltelli samples (N={n_samples}, D={num_vars}) ...")
@@ -269,19 +243,14 @@ def run_sensitivity_analysis(simulator_fn, problem, series_axis: "int | list | r
     n_ps = param_samples.shape[0]
     print(f"  {n_ps} parameter sets")
 
-    if model_type == "sequential":
-        print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs "
-              f"(dense grid {run_axis[0]}..{run_axis[-1]}, extracting {n_points} points) ...")
-    else:
-        print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs ...")
+    print(f"Simulating {n_ps} x {n_replicas} = {n_ps*n_replicas} runs ...")
     all_ts = np.empty((n_ps, n_replicas, n_points))
     base_rng = np.random.default_rng(seed)
     for i in range(n_ps):
         p = {name: param_samples[i,j] for j,name in enumerate(names)}
         for r in range(n_replicas):
             rng = np.random.default_rng(base_rng.integers(0, 2**31))
-            raw = simulator_fn(p, run_axis, rng)
-            all_ts[i, r, :] = raw[extract_idx] if extract_idx is not None else raw
+            all_ts[i, r, :] = simulator_fn(p, series_axis, rng)
         if (i+1) % max(1, n_ps//10) == 0:
             print(f"  {i+1}/{n_ps}")
 
@@ -300,7 +269,7 @@ def run_sensitivity_analysis(simulator_fn, problem, series_axis: "int | list | r
             "sobol_mean": sm, "sobol_var": sv,
             "pawn_mean": pm, "pawn_var": pv,
             "problem": problem, "series_axis": series_axis,
-            "n_replicas": n_replicas, "model_type": model_type}
+            "n_replicas": n_replicas}
 
 
 def print_summary(results):
