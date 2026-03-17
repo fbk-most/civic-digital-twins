@@ -55,6 +55,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `__main__` updated to use `m.expose.*` for plot data; graphs saved via
   `fig.savefig()` (headless-safe).
 
+**Molveno overtourism example — modular rewrite**
+
+- `molveno_model.py` decomposed into five concern sub-models with explicit typed
+  interfaces: `PresenceModel` (CVs and PVs as `Outputs`), `ParkingModel`,
+  `BeachModel`, `AccommodationModel`, `FoodModel`.
+- Every `i_*` parameter — including uncertain `DistributionIndex` values — is an
+  `Input` to the sub-model that uses it; default values are created by
+  `MolvenoModel` and passed via constructors.
+- `MolvenoModel` wires the five sub-models and subclasses `OvertourismModel` so
+  that `OvertourismEnsemble` and `evaluate_scenario` work without modification.
+- All original module-level names (`M_Base`, `CV_*`, `PV_*`, `I_P_*`) preserved
+  as aliases — `overtourism_molveno.py` requires no changes.
+
+### Deprecated
+
+- **`indexes=` argument to `Model.__init__`**: passing a flat index list
+  explicitly emits a `DeprecationWarning`.  Use the dataclass-based
+  `inputs=` / `outputs=` / `expose=` API instead.  The legacy path will
+  be removed in a future version.
+
 ## [0.7.0] - 2026-03-15
 
 ### Added

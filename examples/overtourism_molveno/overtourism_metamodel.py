@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import itertools
 import random
+import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -312,7 +313,9 @@ class OvertourismModel(Model):
         # nodes_of_interest=None in Evaluation.evaluate covers them.
         usage_indexes: list[GenericIndex] = [c.usage for c in constraints]
         all_indexes: list[GenericIndex] = list(cvs) + list(pvs) + list(indexes) + list(capacities) + usage_indexes
-        super().__init__(name, all_indexes)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            super().__init__(name, all_indexes)
 
         self.cvs = cvs
         self.pvs = pvs
