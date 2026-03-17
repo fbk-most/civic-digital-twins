@@ -1,75 +1,232 @@
 """Core model definition."""
 
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
+import dataclasses
+import warnings
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from .index import Distribution, GenericIndex, Index
 
+_DC = TypeVar("_DC")
 
-class IOProxy:
-    """Read-only attribute-access proxy over a declared inputs or outputs list.
+# ---------------------------------------------------------------------------
+# IOProxy value types
+# ---------------------------------------------------------------------------
 
-    Each index is accessible by the Python attribute name under which it was
-    assigned on the model instance (e.g. ``self.inflow`` → ``proxy.inflow``).
-    ``index.name`` is treated as a free-form display label and plays no role
-    here.
+# A single proxy slot can hold a scalar index, a list of indexes, or a
+# dict mapping strings to indexes.
+_ProxyValue = GenericIndex | list[GenericIndex] | dict[str, GenericIndex]
+
+
+def _iter_scalars(value: _ProxyValue) -> Iterator[GenericIndex]:
+    """Yield all scalar :class:`~.index.GenericIndex` items from *value*.
+
+    Parameters
+    ----------
+    value:
+        A single :class:`~.index.GenericIndex`, a ``list`` of them, or a
+        ``dict`` mapping strings to them.
+
+    Yields
+    ------
+    GenericIndex
+        Each scalar index in declaration order.
+    """
+    if isinstance(value, dict):
+        yield from value.values()
+    elif isinstance(value, list):
+        yield from value
+    else:
+        yield value
+
+
+# ---------------------------------------------------------------------------
+# IOProxy
+# ---------------------------------------------------------------------------
+
+
+class IOProxy(Generic[_DC]):
+    """Read-only attribute-access proxy over a declared inputs, outputs, or expose mapping.
+
+    The class is generic over the dataclass type *_DC* it wraps.  When
+    constructed from a dataclass instance (the normal path), field access
+    ``proxy.field`` is typed as :data:`~typing.Any` by the type checker, which
+    means the declared field type on *_DC* flows through without any
+    :func:`~typing.cast` calls at the call site.
+
+    Each slot is accessible by the field name used to register it.  The slot
+    value may be a single :class:`~.index.GenericIndex`, a ``list`` of them,
+    or a ``dict`` mapping strings to them.
 
     Supports:
 
-    * Attribute access  — ``proxy.inflow``
-    * Iteration         — ``for idx in proxy``
-    * ``len(proxy)``
-    * ``idx in proxy``  — identity-based membership test
-    * ``repr(proxy)``
+    * Attribute access — ``proxy.field``  (returns the raw value: scalar, list, or dict)
+    * Iteration        — ``for idx in proxy`` — yields scalar indexes only
+      (lists and dict values are flattened).
+    * ``len(proxy)``   — counts scalar entries (same flattening).
+    * ``idx in proxy`` — identity-based membership test across all scalar entries.
+    * ``repr(proxy)``  — lists declared field names.
     """
 
-    def __init__(self, entries: list[tuple[str, GenericIndex]]) -> None:
-        # entries is an ordered list of (attr_name, index) pairs.
+    def __init__(self, entries: list[tuple[str, _ProxyValue]], dc: _DC | None = None) -> None:
+        # entries is an ordered list of (field_name, value) pairs.
+        # dc is the original dataclass instance (if any) — stored so that
+        # __getattr__ can delegate to it and return Any, giving callers precise
+        # field types without requiring cast().
         # We use object.__setattr__ throughout to avoid triggering our own
         # __setattr__ override.
         object.__setattr__(self, "_entries", entries)
-        object.__setattr__(self, "_map", {key: idx for key, idx in entries})
+        object.__setattr__(self, "_map", {key: val for key, val in entries})
+        object.__setattr__(self, "_dc", dc)
 
     # ------------------------------------------------------------------
     # Attribute access
     # ------------------------------------------------------------------
 
-    def __getattr__(self, name: str) -> GenericIndex:
-        """Return the index registered under *name*."""
-        mapping: dict[str, GenericIndex] = object.__getattribute__(self, "_map")
+    def __getattr__(self, name: str) -> Any:
+        """Return the value registered under *name*.
+
+        When the proxy was built from a dataclass instance the return type is
+        :data:`~typing.Any`, which allows the declared field type on the
+        dataclass to flow through at the call site without requiring
+        :func:`~typing.cast`.
+
+        Parameters
+        ----------
+        name:
+            The field name to look up.
+
+        Returns
+        -------
+        Any
+            The registered value (a scalar index, list, or dict in practice).
+
+        Raises
+        ------
+        AttributeError
+            If *name* is not a registered field.
+        """
+        mapping: dict[str, _ProxyValue] = object.__getattribute__(self, "_map")
         if name in mapping:
             return mapping[name]
         raise AttributeError(f"No input/output with attribute name {name!r}. Available: {list(mapping)}")
 
     def __setattr__(self, name: str, value: Any) -> None:
-        """Raise AttributeError — IOProxy is read-only."""
+        """Raise :class:`AttributeError` — :class:`IOProxy` is read-only."""
         raise AttributeError("IOProxy is read-only.")
 
     # ------------------------------------------------------------------
-    # Iteration / containment
+    # Iteration / containment / sizing — operate on flattened scalars
     # ------------------------------------------------------------------
 
     def __iter__(self) -> Iterator[GenericIndex]:
-        """Iterate over declared indexes in declaration order."""
-        entries: list[tuple[str, GenericIndex]] = object.__getattribute__(self, "_entries")
-        return (idx for _, idx in entries)
+        """Iterate over scalar :class:`~.index.GenericIndex` entries in declaration order.
+
+        Lists and dict values are flattened; only scalar indexes are yielded.
+        """
+        entries: list[tuple[str, _ProxyValue]] = object.__getattribute__(self, "_entries")
+        for _, val in entries:
+            yield from _iter_scalars(val)
 
     def __len__(self) -> int:
-        """Return the number of declared indexes."""
-        entries: list[tuple[str, GenericIndex]] = object.__getattribute__(self, "_entries")
-        return len(entries)
+        """Return the total count of scalar :class:`~.index.GenericIndex` entries.
+
+        Lists and dict values contribute their individual elements to the count.
+        """
+        entries: list[tuple[str, _ProxyValue]] = object.__getattribute__(self, "_entries")
+        return sum(1 for _, val in entries for _ in _iter_scalars(val))
 
     def __contains__(self, item: object) -> bool:
-        """Return True if *item* is one of the declared indexes (identity check)."""
-        entries: list[tuple[str, GenericIndex]] = object.__getattribute__(self, "_entries")
-        return any(idx is item for _, idx in entries)
+        """Return ``True`` if *item* is one of the scalar entries (identity check).
+
+        Parameters
+        ----------
+        item:
+            Object to test for membership.
+        """
+        entries: list[tuple[str, _ProxyValue]] = object.__getattribute__(self, "_entries")
+        return any(idx is item for _, val in entries for idx in _iter_scalars(val))
 
     def __repr__(self) -> str:
-        """Return a string representation listing the declared attribute names."""
-        entries: list[tuple[str, GenericIndex]] = object.__getattribute__(self, "_entries")
+        """Return a string representation listing the declared field names."""
+        entries: list[tuple[str, _ProxyValue]] = object.__getattribute__(self, "_entries")
         return f"IOProxy({[key for key, _ in entries]})"
+
+
+# ---------------------------------------------------------------------------
+# Proxy builders
+# ---------------------------------------------------------------------------
+
+
+def _proxy_from_dataclass(dc_instance: _DC) -> IOProxy[_DC]:
+    """Build an :class:`IOProxy` from a dataclass instance.
+
+    Each dataclass field becomes one slot in the proxy; its value may be a
+    scalar :class:`~.index.GenericIndex`, a ``list`` of them, or a ``dict``
+    mapping strings to them.
+
+    The original dataclass instance is stored on the proxy so that
+    :meth:`IOProxy.__getattr__` can delegate to it, allowing the precise field
+    type to flow through to callers without requiring :func:`~typing.cast`.
+
+    Parameters
+    ----------
+    dc_instance:
+        An instance of any dataclass.
+
+    Returns
+    -------
+    IOProxy[_DC]
+        Proxy whose attribute keys are the dataclass field names.
+    """
+    entries: list[tuple[str, _ProxyValue]] = []
+    for field in dataclasses.fields(dc_instance):  # type: ignore[arg-type]
+        val: _ProxyValue = getattr(dc_instance, field.name)
+        entries.append((field.name, val))
+    return IOProxy(entries, dc=dc_instance)
+
+
+def _collect_indexes(
+    inputs: Any | None,
+    outputs: Any | None,
+    expose: Any | None,
+) -> list[GenericIndex]:
+    """Collect and deduplicate all scalar indexes from dataclass instances.
+
+    Iterates over all fields of *inputs*, *outputs*, and *expose* (each may be
+    ``None`` or a dataclass instance), flattens list/dict values, and returns a
+    deduplicated list preserving first-seen order.
+
+    Parameters
+    ----------
+    inputs:
+        Dataclass instance or ``None``.
+    outputs:
+        Dataclass instance or ``None``.
+    expose:
+        Dataclass instance or ``None``.
+
+    Returns
+    -------
+    list[GenericIndex]
+        Deduplicated flat index list.
+    """
+    seen: set[int] = set()
+    result: list[GenericIndex] = []
+    for dc in (inputs, outputs, expose):
+        if dc is None:
+            continue
+        for field in dataclasses.fields(dc):  # type: ignore[arg-type]
+            val: _ProxyValue = getattr(dc, field.name)
+            for idx in _iter_scalars(val):
+                if id(idx) not in seen:
+                    seen.add(id(idx))
+                    result.append(idx)
+    return result
 
 
 def _build_proxy(
@@ -78,8 +235,8 @@ def _build_proxy(
     instance_dict: dict[str, Any],
     indexes: list[GenericIndex],
     model_name: str,
-) -> IOProxy:
-    """Build an :class:`IOProxy` for a declared inputs or outputs list.
+) -> IOProxy[Any]:
+    """Build an :class:`IOProxy` for a legacy flat inputs/outputs declaration.
 
     The attribute name used for proxy access is determined by looking up each
     declared index in the model instance's ``__dict__``: whichever attribute
@@ -126,7 +283,7 @@ def _build_proxy(
         if isinstance(val, GenericIndex) and id(val) not in id_to_attr:
             id_to_attr[id(val)] = attr
 
-    entries: list[tuple[str, GenericIndex]] = []
+    entries: list[tuple[str, _ProxyValue]] = []
     seen_attrs: dict[str, int] = {}  # attr_name -> position, for collision detection
 
     for idx in declarations:
@@ -157,130 +314,178 @@ def _build_proxy(
         seen_attrs[attr] = len(entries)
         entries.append((attr, idx))
 
-    return IOProxy(entries)
+    return IOProxy(entries, dc=None)
+
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
 
 
 class Model:
-    """A named collection of :class:`~.index.GenericIndex` objects.
+    """A named collection of :class:`~.index.GenericIndex` objects with an optional I/O contract.
 
-    Optionally carries a declared input/output interface.
+    Two APIs are supported:
 
-    A model is *abstract* if it contains indexes that need external values
-    before evaluation — placeholder nodes (``value is None``) or
-    distribution-backed indexes (``isinstance(value, Distribution)``).
-    It is *instantiated* when every index has a concrete, evaluable value.
+    **New dataclass-based API** (recommended)
+        Declare ``Inputs``, ``Outputs``, and/or ``Expose`` as inner
+        ``@dataclass`` classes on the subclass.  Construct instances of them
+        and pass to ``super().__init__()``::
+
+            from dataclasses import dataclass
+
+            class MyModel(Model):
+
+                @dataclass
+                class Inputs:
+                    inflow: TimeseriesIndex
+
+                @dataclass
+                class Outputs:
+                    traffic: TimeseriesIndex
+                    total:   Index
+
+                @dataclass
+                class Expose:
+                    ratio: Index   # inspectable but not contractual
+
+                def __init__(self, inflow: TimeseriesIndex) -> None:
+                    Inputs  = MyModel.Inputs
+                    Outputs = MyModel.Outputs
+                    Expose  = MyModel.Expose
+
+                    traffic = TimeseriesIndex("traffic", ...)
+                    total   = Index("total", traffic.sum())
+                    ratio   = Index("ratio", ...)
+
+                    super().__init__(
+                        "My Model",
+                        inputs=Inputs(inflow=inflow),
+                        outputs=Outputs(traffic=traffic, total=total),
+                        expose=Expose(ratio=ratio),
+                    )
+
+            m = MyModel(inflow_ts)
+            m.inputs.inflow    # the wired inflow index
+            m.outputs.traffic  # contractual output
+            m.expose.ratio     # inspectable, non-contractual
+
+        The local aliases (``Inputs = MyModel.Inputs``, etc.) avoid the
+        fully-qualified form inside ``__init__`` and keep the construction
+        calls concise.
+
+        ``Inputs`` and ``Outputs`` are plural because they name a *collection*
+        of fields.  ``Expose`` is a verb-derived noun (like ``Meta`` or
+        ``Config``) — "Exposes" would be grammatically wrong — so it stays
+        singular by design.
+
+        Dataclass fields may hold a single :class:`~.index.GenericIndex`, a
+        ``list`` of them, or a ``dict`` mapping strings to them.  The flat
+        ``indexes`` list is derived automatically by collecting and
+        deduplicating all scalar indexes from ``inputs``, ``outputs``, and
+        ``expose``.
+
+    **Legacy API** (deprecated)
+        Pass a flat ``indexes`` list directly, along with optional
+        ``inputs`` and ``outputs`` as plain ``list[GenericIndex]``::
+
+            super().__init__("My Model", indexes=[a, b, c], outputs=[b])
+
+        Every entry in ``inputs``/``outputs`` must be assigned to a
+        ``self.*`` attribute before ``super().__init__()`` is called.
+        A :class:`DeprecationWarning` is emitted when ``indexes`` is
+        provided explicitly.
 
     Parameters
     ----------
     name:
         Human-readable name for the model.
     indexes:
-        The complete flat list of indexes belonging to this model, used by
-        the evaluation engine to resolve transitive dependencies.  Includes
-        inputs, outputs, and all other indexes — whether assigned to
-        ``self.*`` attributes or held as local variables inside ``__init__``.
+        *Deprecated.* Explicit flat index list.  If omitted, the list is
+        derived from the dataclass arguments.
     inputs:
-        Optional declared subset of *indexes* that this model expects to be
-        provided from outside — either wired from a parent model or assigned
-        by the caller before evaluation.  Every entry must be assigned to a
-        ``self.*`` attribute of this instance before ``super().__init__()``
-        is called.  Accessible as ``model.inputs.<attr_name>``.
+        Dataclass instance (new API) or ``list[GenericIndex]`` (legacy).
     outputs:
-        Optional declared subset of *indexes* that this model exposes as its
-        public results — the values a parent model or caller should consume.
-        Same rules as *inputs*.  Accessible as ``model.outputs.<attr_name>``.
+        Dataclass instance (new API) or ``list[GenericIndex]`` (legacy).
+    expose:
+        Dataclass instance (new API) or ``None``.  Ignored in legacy mode.
 
     Notes
     -----
-    **Three access levels**
+    **Three access levels** (new API)
 
-    CDT models follow a three-level access convention:
-
-    1. ``model.outputs.<attr>`` / ``model.inputs.<attr>`` — the declared
-       public interface.  Stable, contractual.  Parent models and callers
-       should only rely on these.
-
-    2. ``model.<attr>`` — any index assigned to a ``self.*`` attribute but
-       not declared in *inputs* or *outputs*.  Inspectable from outside
-       (useful for debugging, visualisation, exploration) but not part of
-       the contractual interface.
-
-    3. Local variables inside ``__init__`` — indexes known only to the
-       evaluation engine via *indexes*.  Treated as fully internal
-       implementation details; not accessible from outside the model.
-
-    **Access keys**
-
-    The key used to access an index via ``model.inputs`` or ``model.outputs``
-    is the Python attribute name under which it was assigned on the model
-    instance (``self.<attr> = Index(...)``).  ``index.name`` is a free-form
-    display label (used in plots and reports) and plays no role here.
-
-    Example::
-
-        class MyModel(Model):
-            def __init__(self):
-                # Level 1 — declared output (contractual)
-                self.traffic = Index("Reference traffic", 200.0)
-                # Level 2 — named but not contracted (inspectable)
-                self.inflow  = Index("Total vehicle inflow", 100.0)
-                # Level 3 — anonymous (internal to engine only)
-                _base = Index("base", 50.0)
-
-                super().__init__(
-                    "My Model",
-                    indexes=[self.traffic, self.inflow, _base],
-                    outputs=[self.traffic],
-                )
-
-        m = MyModel()
-        m.outputs.traffic  # level 1 — contractual access
-        m.inflow           # level 2 — inspectable, not contracted
-        # _base is unreachable from outside
-
-    **Validation**
-
-    At construction time:
-
-    * Every entry in *inputs* and *outputs* must appear in *indexes*
-      (identity check).
-    * Every entry must be assigned to a ``self.*`` attribute of the instance
-      at the time ``super().__init__()`` is called.
-    * No two entries in the same list may map to the same attribute name.
+    1. ``model.outputs.<field>`` / ``model.inputs.<field>`` — declared
+       public interface.  Stable and contractual.
+    2. ``model.expose.<field>`` — inspectable but not contracted.
+    3. Purely local variables inside ``__init__`` — engine-internal only;
+       not accessible from outside.
     """
 
     def __init__(
         self,
         name: str,
-        indexes: list[GenericIndex],
+        indexes: list[GenericIndex] | None = None,
         *,
-        inputs: list[GenericIndex] | None = None,
-        outputs: list[GenericIndex] | None = None,
+        inputs: Any | None = None,
+        outputs: Any | None = None,
+        expose: Any | None = None,
     ) -> None:
         self.name = name
-        self.indexes = indexes
 
-        # Capture the instance __dict__ *before* we assign self.inputs /
-        # self.outputs, so that those names do not pollute the attr lookup.
-        instance_dict = dict(self.__dict__)
-        # Remove keys we have just set that are not index attributes.
-        instance_dict.pop("name", None)
-        instance_dict.pop("indexes", None)
+        if indexes is not None:
+            # ------------------------------------------------------------------
+            # Legacy path — explicit flat index list provided
+            # ------------------------------------------------------------------
+            warnings.warn(
+                "Passing 'indexes' explicitly is deprecated and will be removed in a future version. "
+                "Use the dataclass-based inputs/outputs/expose API instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            self.indexes: list[GenericIndex] = indexes
 
-        self.inputs: IOProxy = _build_proxy("inputs", inputs or [], instance_dict, indexes, name)
-        self.outputs: IOProxy = _build_proxy("outputs", outputs or [], instance_dict, indexes, name)
+            # Capture instance __dict__ before we assign self.inputs / self.outputs
+            # so those names do not pollute the attr lookup.
+            instance_dict = dict(self.__dict__)
+            instance_dict.pop("name", None)
+            instance_dict.pop("indexes", None)
+
+            # In legacy mode inputs/outputs are expected to be list[GenericIndex] | None.
+            legacy_inputs: list[GenericIndex] = inputs if isinstance(inputs, list) else []
+            legacy_outputs: list[GenericIndex] = outputs if isinstance(outputs, list) else []
+
+            self.inputs: IOProxy[Any] = _build_proxy("inputs", legacy_inputs, instance_dict, indexes, name)
+            self.outputs: IOProxy[Any] = _build_proxy("outputs", legacy_outputs, instance_dict, indexes, name)
+            self.expose: IOProxy[Any] = IOProxy([])
+
+        else:
+            # ------------------------------------------------------------------
+            # New dataclass-based path
+            # ------------------------------------------------------------------
+            self.indexes = _collect_indexes(inputs, outputs, expose)
+
+            self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]
+            self.outputs = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])  # type: ignore[assignment]
+            self.expose = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])  # type: ignore[assignment]
 
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that require external values before evaluation.
 
         An index is abstract when its ``value`` is ``None`` (explicit
-        placeholder) or a ``Distribution`` (needs sampling).  Constant and
-        formula-based indexes are concrete and are not returned here.
+        placeholder) or a :class:`~.index.Distribution` (needs sampling).
+        Constant and formula-based indexes are concrete and are not returned.
 
-        Note: ``inputs`` may include concrete indexes (e.g. a data timeseries
-        that a parent model wires in), and not every abstract index need be
-        declared as an input (e.g. a distribution-backed behavioral parameter
-        sampled internally by the ensemble).
+        Returns
+        -------
+        list[GenericIndex]
+            All abstract indexes belonging to this model.
+
+        Notes
+        -----
+        ``inputs`` may include concrete indexes (e.g. a data timeseries wired
+        in from a parent model), and not every abstract index need be declared
+        as an input (e.g. a distribution-backed behavioural parameter sampled
+        internally by the ensemble).
         """
         result = []
         for index in self.indexes:
@@ -290,5 +495,11 @@ class Model:
         return result
 
     def is_instantiated(self) -> bool:
-        """Return True when all indexes have concrete, evaluable values."""
+        """Return ``True`` when all indexes have concrete, evaluable values.
+
+        Returns
+        -------
+        bool
+            ``True`` if :meth:`abstract_indexes` is empty.
+        """
         return len(self.abstract_indexes()) == 0
