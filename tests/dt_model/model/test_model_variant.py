@@ -5,22 +5,14 @@
 import dataclasses
 
 import pytest
-from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import (
-    Distribution,
-    DistributionIndex,
-    Index,
-)
+from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 
 # ---------------------------------------------------------------------------
 # Shared fixtures — two concrete Model subclasses with the same I/O contract
 # ---------------------------------------------------------------------------
-
-#: A distribution used as a placeholder throughout the tests.
-_dist: Distribution = stats.norm(loc=0.0, scale=1.0)  # type: ignore[assignment]
 
 
 class _BikeModel(Model):
@@ -167,66 +159,14 @@ def test_static_selector_train_outputs():
 
 def test_static_selector_unknown_key_raises():
     """Unknown string selector key raises ValueError."""
-    with pytest.raises(ValueError, match="selector resolved to key"):
+    with pytest.raises(ValueError, match="does not match any"):
         ModelVariant("Transport", _make_variants(), selector="bus")
 
 
-# ===========================================================================
-# Index selector
-# ===========================================================================
-
-
-def test_index_selector_picks_correct_variant():
-    """Concrete Index selector resolves to the right variant."""
-    mode = Index("mode", "train")
-    mv = ModelVariant("Transport", _make_variants(), selector=mode)
-    assert mv.outputs.emissions.value == 50.0
-
-
-def test_index_selector_bike():
-    """Concrete Index selector 'bike' picks BikeModel."""
-    mode = Index("mode", "bike")
-    mv = ModelVariant("Transport", _make_variants(), selector=mode)
-    assert mv.outputs.emissions.value == 0.0
-
-
-def test_index_selector_unknown_value_raises():
-    """Index selector whose str(value) is not a variant key raises ValueError."""
-    mode = Index("mode", "bus")
-    with pytest.raises(ValueError, match="selector resolved to key"):
-        ModelVariant("Transport", _make_variants(), selector=mode)
-
-
-def test_index_selector_none_value_raises():
-    """Index selector with value=None (placeholder) raises ValueError."""
-    mode = Index("mode", None)
-    with pytest.raises(ValueError, match="no concrete value"):
-        ModelVariant("Transport", _make_variants(), selector=mode)
-
-
-def test_index_selector_distribution_value_raises():
-    """Index whose value is a Distribution raises NotImplementedError."""
-    mode = Index("mode", _dist)
-    with pytest.raises(NotImplementedError, match="out of scope"):
-        ModelVariant("Transport", _make_variants(), selector=mode)
-
-
-def test_distribution_index_selector_raises():
-    """DistributionIndex passed as selector raises NotImplementedError."""
-    dist_idx = DistributionIndex("mode", stats.norm, {"loc": 0, "scale": 1})
-    with pytest.raises(NotImplementedError, match="out of scope"):
-        ModelVariant("Transport", _make_variants(), selector=dist_idx)
-
-
-# ===========================================================================
-# Distribution selector (direct)
-# ===========================================================================
-
-
-def test_distribution_selector_raises():
-    """Passing a Distribution object directly as selector raises NotImplementedError."""
-    with pytest.raises(NotImplementedError, match="out of scope"):
-        ModelVariant("Transport", _make_variants(), selector=_dist)
+def test_non_string_selector_raises_value_error():
+    """Passing a value that does not match any key raises ValueError."""
+    with pytest.raises(ValueError, match="does not match any"):
+        ModelVariant("Transport", _make_variants(), selector=42)  # type: ignore[arg-type]
 
 
 # ===========================================================================
@@ -340,7 +280,7 @@ def test_direct_attribute_access_forwards_to_active_variant():
     mv = ModelVariant("Transport", {"bike": bike, "train": _TrainModel(Index("capacity", 500.0))}, selector="bike")
     # 'name' is defined directly on ModelVariant, not proxied.
     assert mv.name == "Transport"
-    # 'inputs' is a property on ModelVariant — check field-level forwarding via proxy.
+    # inputs is a property on ModelVariant — check field-level forwarding via proxy.
     assert mv.inputs.capacity is cap_bike
 
 
@@ -490,7 +430,7 @@ def test_expose_indexes_not_in_inactive_variant():
 
 
 # ===========================================================================
-# Export smoke test
+# Export smoke tests
 # ===========================================================================
 
 

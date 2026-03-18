@@ -9,18 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**ModelVariant — static and Index-selector variant switching (step 4 of the v0.8.0 modularity plan)**
+**ModelVariant — static string-selector variant switching (step 4 of the v0.8.0 modularity plan)**
 
 - `ModelVariant(name, variants, selector)` — selects among pre-constructed
   :class:`Model` instances that share the same I/O contract.  The active
-  variant is resolved once at construction time and the ``ModelVariant``
-  then acts as a fully transparent proxy for it.
-- **Selector types supported**:
-  - String literal → selects the variant identified by that key.
-  - Concrete :class:`Index` → ``str(index.value)`` is used as the lookup key.
-  - :class:`Distribution` (or :class:`DistributionIndex`) → raises
-    :exc:`NotImplementedError` with a clear message pointing to
-    Branch 7 / Issue 3 (ensemble execution, out of scope for this release).
+  variant is resolved once at construction time via a plain string key, and
+  the ``ModelVariant`` then acts as a fully transparent proxy for it.
+- **Selector**: a string literal identifying the active variant key.
+  Runtime selection (driven by an index value or a categorical distribution
+  per scenario) is out of scope for this release; it will be introduced in a
+  future version alongside ``CategoricalIndex`` support in the evaluation
+  layer.
 - **Transparency**: ``inputs``, ``outputs``, ``expose``, ``indexes``,
   ``abstract_indexes()``, ``is_instantiated()``, and arbitrary attribute
   access all delegate to the active variant; a ``ModelVariant`` is usable
