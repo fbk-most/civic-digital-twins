@@ -8,7 +8,7 @@ from .index import (
     Index,
     TimeseriesIndex,
 )
-from .model import Model
+from .model import InputsContractWarning, Model, ModelContractWarning
 from .model_variant import ModelVariant
 
 __all__ = [
@@ -17,7 +17,9 @@ __all__ = [
     "DistributionIndex",
     "GenericIndex",
     "Index",
+    "InputsContractWarning",
     "Model",
+    "ModelContractWarning",
     "ModelVariant",
     "TimeseriesIndex",
 ]

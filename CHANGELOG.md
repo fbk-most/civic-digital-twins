@@ -9,31 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**ModelVariant — static string-selector variant switching (step 4 of the v0.8.0 modularity plan)**
-
-- `ModelVariant(name, variants, selector)` — selects among pre-constructed
-  :class:`Model` instances that share the same I/O contract.  The active
-  variant is resolved once at construction time via a plain string key, and
-  the ``ModelVariant`` then acts as a fully transparent proxy for it.
-- **Selector**: a string literal identifying the active variant key.
-  Runtime selection (driven by an index value or a categorical distribution
-  per scenario) is out of scope for this release; it will be introduced in a
-  future version alongside ``CategoricalIndex`` support in the evaluation
-  layer.
-- **Transparency**: ``inputs``, ``outputs``, ``expose``, ``indexes``,
-  ``abstract_indexes()``, ``is_instantiated()``, and arbitrary attribute
-  access all delegate to the active variant; a ``ModelVariant`` is usable
-  anywhere a ``Model`` is expected.
-- **`indexes` scope**: delegates to the active variant only — internal
-  indexes of inactive variants are not visible through ``model_variant.indexes``.
-  They remain accessible via ``model_variant.variants["key"].*``.
-- **Construction-time I/O contract validation**: ``inputs`` and ``outputs``
-  field names must be identical across all declared variants; a descriptive
-  :exc:`ValueError` is raised if they differ.
-- `ModelVariant` exported from `civic_digital_twins.dt_model` and
-  `civic_digital_twins.dt_model.model`.
-- Full test suite in `tests/dt_model/model/test_model_variant.py`.
-
 **Model I/O contract**
 
 - `Model.__init__` accepts `inputs=`, `outputs=`, and `expose=` keyword
@@ -45,26 +20,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1. `model.outputs.<field>` / `model.inputs.<field>` — contractual interface,
      declared via `Outputs` / `Inputs` inner dataclasses.  Stable across versions.
   2. `model.expose.<field>` — inspectable but not contractual, declared via the
-     optional `Expose` inner dataclass.  May change between versions.
+     optional `Expose` inner dataclass.  `Expose` is for diagnostics
+     only and must not be used to wire indexes into sibling or parent models.
   3. Local variables inside `__init__` — internal to the engine graph only;
      not accessible from outside.
 - **List and dict field values**: dataclass fields may hold a single
   `GenericIndex`, a `list[GenericIndex]`, or a `dict[str, GenericIndex]`.
-  Iteration, `len()`, and `in` flatten these to scalar indexes only, preserving
-  the existing engine contract.  Field access returns the raw value.
+  Iteration, `len()`, and `in` flatten these to scalar indexes only.
+  Field access returns the raw value.
 - **`indexes` derived automatically**: the flat `model.indexes` list is built by
   collecting and deduplicating all scalar `GenericIndex` values from `inputs`,
   `outputs`, and `expose` (first-seen order).
 - **Construction-time validation**: every entry in `inputs` and `outputs` must
-  appear in `indexes` (identity check); declaring the same entry twice is an
-  error.  A descriptive `ValueError` is raised in all cases.
-- **Legacy `indexes=` path deprecated**: passing `indexes` explicitly emits a
-  `DeprecationWarning`.  The legacy path is preserved for backward compatibility
-  and will be removed in a future version.
+  appear in `indexes`; a descriptive `ValueError` is raised on violation.
 - **`IOProxy`** — read-only proxy exposing declared fields via attribute access,
   iteration, `len()`, and `in` membership.  `IOProxy` is generic (`IOProxy[DC]`);
-  `__getattr__` returns `Any` so typed field access flows through to the caller's
-  expected type without `cast()`.
+  `__getattr__` returns `Any` so typed field access flows through without `cast()`.
+- **Inputs contract convention and warnings**: every `GenericIndex` received as
+  a constructor parameter must be declared in `Inputs`.  Two new warning classes,
+  both exported from `civic_digital_twins.dt_model`, enforce this softly at
+  construction time:
+  - `ModelContractWarning` — `UserWarning` base for all Model I/O contract
+    warnings.  Use `warnings.filterwarnings("error", category=ModelContractWarning)`
+    to turn the whole family into errors; each subclass is independently filterable.
+  - `InputsContractWarning(ModelContractWarning)` — emitted when a constructor
+    parameter holds a `GenericIndex` (scalar, list, or dict) that is absent from
+    the declared `Inputs` dataclass.  Names the offending parameter precisely.
+- **Legacy `indexes=` path deprecated**: passing `indexes` explicitly emits a
+  `DeprecationWarning`.  The legacy path will be removed in a future version.
+
+**`ModelVariant` — switching between Model implementations**
+
+- `ModelVariant(name, variants, selector)` — selects among pre-constructed
+  `Model` instances that share the same I/O contract.  The active variant is
+  resolved once at construction time via a plain string key, and `ModelVariant`
+  then acts as a fully transparent proxy for it, usable anywhere a `Model` is
+  expected.
+- `inputs`, `outputs`, `expose`, `indexes`, `abstract_indexes()`,
+  `is_instantiated()`, and arbitrary attribute access all delegate to the active
+  variant.  Internal indexes of inactive variants are not visible through
+  `model_variant.indexes`; they remain accessible via
+  `model_variant.variants["key"].*`.
+- **Construction-time I/O contract validation**: `inputs` and `outputs` field
+  names must be identical across all declared variants; a descriptive `ValueError`
+  is raised if they differ.
+- Runtime selection (driven by an index value or a categorical distribution per
+  scenario) is out of scope for this release and will be introduced in a future
+  version alongside `CategoricalIndex` support.
+- `ModelVariant` exported from `civic_digital_twins.dt_model`.
 
 **Bologna mobility example — modular rewrite**
 

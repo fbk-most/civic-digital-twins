@@ -5,11 +5,54 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import warnings
 from collections.abc import Iterator
 from typing import Any, Generic, TypeVar
 
 from .index import Distribution, GenericIndex, Index
+
+
+class ModelContractWarning(UserWarning):
+    """Base class for all :class:`Model` I/O contract warnings.
+
+    Subclass this to introduce new contract-violation categories.  Using a
+    common base makes it easy to turn *all* contract warnings into errors in a
+    test suite with a single filter::
+
+        warnings.filterwarnings("error", category=ModelContractWarning)
+
+    or to silence them all in a legacy codebase::
+
+        warnings.filterwarnings("ignore", category=ModelContractWarning)
+
+    Each subclass remains independently filterable for fine-grained control.
+    """
+
+
+class InputsContractWarning(ModelContractWarning):
+    """Emitted when a :class:`Model` subclass receives an undeclared :class:`~.index.GenericIndex` parameter.
+
+    Specifically, this warning fires when a constructor parameter holds a
+    :class:`~.index.GenericIndex` value that is not declared in the ``Inputs``
+    dataclass.
+
+    The convention is that every :class:`~.index.GenericIndex` (or
+    ``list`` / ``dict`` thereof) passed into a :class:`Model` subclass
+    ``__init__`` must be stored in a field of the ``Inputs`` dataclass and
+    forwarded to ``super().__init__(inputs=...)``.  This makes the data-flow
+    contract explicit and enables the cross-variant consistency check performed
+    by :class:`~.model_variant.ModelVariant`.
+
+    ``Expose`` fields are intentionally excluded from this rule: they are
+    meant to surface purely internal intermediates and are not part of the
+    inter-model wiring contract.
+
+    To silence this warning for a specific model, override ``__init__`` and
+    suppress it with :func:`warnings.filterwarnings` before calling
+    ``super().__init__()``.
+    """
+
 
 _DC = TypeVar("_DC")
 
@@ -188,6 +231,75 @@ def _proxy_from_dataclass(dc_instance: _DC) -> IOProxy[_DC]:
         val: _ProxyValue = getattr(dc_instance, field.name)
         entries.append((field.name, val))
     return IOProxy(entries, dc=dc_instance)
+
+
+def _check_inputs_contract(
+    caller_frame: Any,
+    caller_cls: type,
+    inputs_proxy: IOProxy[Any],
+) -> None:
+    """Warn if any ``GenericIndex`` constructor parameter is absent from ``inputs``.
+
+    Walks the parameter list of *caller_cls*``.__init__`` (excluding ``self``),
+    looks up the corresponding value in *caller_frame*'s locals, and checks
+    that every scalar :class:`~.index.GenericIndex` found there is also
+    reachable via *inputs_proxy*.  Parameters whose values are not
+    :class:`~.index.GenericIndex` objects (e.g. ``str``, ``np.ndarray``,
+    ``pd.DataFrame``) are silently skipped.
+
+    A :class:`InputsContractWarning` is emitted for each violating parameter.
+
+    Parameters
+    ----------
+    caller_frame:
+        The ``f_back`` frame of ``Model.__init__`` — i.e. the frame of the
+        subclass ``__init__`` that called ``super().__init__()``.
+    caller_cls:
+        The concrete :class:`Model` subclass being constructed.
+    inputs_proxy:
+        The already-built ``self.inputs`` proxy to check against.
+    """
+    try:
+        sig = inspect.signature(caller_cls.__init__)
+    except (ValueError, TypeError):
+        return
+
+    local_vars: dict[str, Any] = caller_frame.f_locals
+
+    # Build the set of all GenericIndex node ids reachable through inputs.
+    inputs_ids: set[int] = {id(idx) for idx in inputs_proxy}
+
+    for param_name, param in sig.parameters.items():
+        if param_name == "self":
+            continue
+        value = local_vars.get(param_name, inspect.Parameter.empty)
+        if value is inspect.Parameter.empty:
+            continue
+
+        # Collect all scalar GenericIndex objects from this parameter value.
+        # Handles scalar, list[Index], and dict[str, Index] shapes.
+        missing: list[str] = []
+        if isinstance(value, GenericIndex):
+            if id(value) not in inputs_ids:
+                missing.append(param_name)
+        elif isinstance(value, list) and value and isinstance(value[0], GenericIndex):
+            for i, item in enumerate(value):
+                if isinstance(item, GenericIndex) and id(item) not in inputs_ids:
+                    missing.append(f"{param_name}[{i}]")
+        elif isinstance(value, dict):
+            for k, item in value.items():
+                if isinstance(item, GenericIndex) and id(item) not in inputs_ids:
+                    missing.append(f"{param_name}[{k!r}]")
+
+        for entry in missing:
+            warnings.warn(
+                f"{caller_cls.__name__}: parameter {entry!r} holds a GenericIndex "
+                f"that is not declared in Inputs.  "
+                f"Add it as a field of {caller_cls.__name__}.Inputs and include it "
+                f"in the inputs=... passed to super().__init__().",
+                InputsContractWarning,
+                stacklevel=4,
+            )
 
 
 def _collect_indexes(
@@ -417,8 +529,27 @@ class Model:
     1. ``model.outputs.<field>`` / ``model.inputs.<field>`` — declared
        public interface.  Stable and contractual.
     2. ``model.expose.<field>`` — inspectable but not contracted.
+       ``Expose`` is intended for purely diagnostic intermediates
+       and must **not** be used to wire indexes into sibling or parent
+       models.
     3. Purely local variables inside ``__init__`` — engine-internal only;
        not accessible from outside.
+
+    **Inputs contract convention**
+
+    Every :class:`~.index.GenericIndex` (or ``list`` / ``dict`` thereof)
+    received as a constructor parameter must be declared as a field of the
+    ``Inputs`` dataclass and forwarded via ``inputs=Inputs(...)`` to
+    ``super().__init__()``.  This rule makes the inter-model data-flow
+    contract explicit and enables the cross-variant consistency check
+    performed by :class:`~.model_variant.ModelVariant`.
+
+    At construction time, :class:`Model` checks this convention
+    automatically: if a constructor parameter holds a
+    :class:`~.index.GenericIndex` value that is absent from the declared
+    ``Inputs``, an :class:`InputsContractWarning` is emitted.  The warning
+    is a soft reminder rather than an error, so existing models continue to
+    work while the contract is incrementally tightened.
     """
 
     def __init__(
@@ -467,6 +598,18 @@ class Model:
             self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]
             self.outputs = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])  # type: ignore[assignment]
             self.expose = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])  # type: ignore[assignment]
+
+            # Convention check: every GenericIndex constructor parameter should
+            # be declared in Inputs.  We inspect the immediate caller's frame
+            # (the subclass __init__ that called super().__init__()) and warn
+            # for any parameter whose value is a GenericIndex not found in
+            # self.inputs.  The check is skipped for Model itself.
+            concrete_cls = type(self)
+            if concrete_cls is not Model:
+                frame = inspect.currentframe()
+                caller_frame = frame.f_back if frame is not None else None
+                if caller_frame is not None:
+                    _check_inputs_contract(caller_frame, concrete_cls, self.inputs)
 
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that require external values before evaluation.
