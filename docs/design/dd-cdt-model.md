@@ -3,7 +3,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)        |
-| Last-Updated | 2026-03-14                                     |
+| Last-Updated | 2026-03-20                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -152,7 +152,15 @@ demand_ts = TimeseriesIndex("demand_ts")
 
 ```python
 class Model:
-    def __init__(self, name: str, indexes: list[GenericIndex]) -> None: ...
+    def __init__(
+        self,
+        name: str,
+        indexes: list[GenericIndex] | None = None,  # deprecated
+        *,
+        inputs:  Any | None = None,   # dataclass instance (new API)
+        outputs: Any | None = None,   # dataclass instance (new API)
+        expose:  Any | None = None,   # dataclass instance (new API)
+    ) -> None: ...
     def abstract_indexes(self) -> list[GenericIndex]: ...
     def is_instantiated(self) -> bool: ...
 ```
@@ -166,6 +174,66 @@ can inspect which indexes are abstract.
 `Distribution`.  All other indexes (constants and formulas) are concrete
 and are not returned.
 
+### New dataclass-based API (recommended)
+
+Declare `Inputs`, `Outputs`, and optionally `Expose` as inner
+`@dataclass` classes on the subclass.  Construct instances of these
+dataclasses and pass them to `super().__init__()` via the keyword
+arguments `inputs=`, `outputs=`, and `expose=`.  `model.indexes` is
+derived automatically by collecting and deduplicating all scalar
+`GenericIndex` values found in `inputs`, `outputs`, and `expose` — no
+manual list needed.
+
+**Three access levels** define the visibility contract:
+
+1. `model.outputs.<field>` / `model.inputs.<field>` — **contractual,
+   stable**: these are the primary wiring points between models and the
+   evaluation layer.
+2. `model.expose.<field>` — **inspectable, not contracted**: useful for
+   debugging or visualisation, but `Expose` fields MUST NOT be used to
+   wire indexes between models.
+3. Local variables inside `__init__` — **internal, not accessible**
+   outside the constructor.
+
+**Inputs contract convention**: every `GenericIndex` that is passed as a
+constructor parameter must be declared as a field in `Inputs`.  If a
+`GenericIndex` parameter is absent from `Inputs`, an
+`InputsContractWarning` is emitted naming the offending parameter (see
+[Contract Warnings](#contract-warnings)).
+
+```python
+from dataclasses import dataclass
+from civic_digital_twins.dt_model import Model
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+from scipy import stats
+
+class DemoModel(Model):
+
+    @dataclass
+    class Outputs:
+        z: Index
+
+    def __init__(self) -> None:
+        x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+        y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
+        z = Index("z", x + y)
+
+        super().__init__(
+            "demo",
+            outputs=DemoModel.Outputs(z=z),
+        )
+
+m = DemoModel()
+print(m.abstract_indexes())   # [x, y]  — derived automatically
+print(m.is_instantiated())    # False
+```
+
+### Legacy `indexes=` API
+
+Passing a flat `list[GenericIndex]` via the positional `indexes`
+parameter still works but emits a `DeprecationWarning`.  New code should
+use the dataclass-based API above.
+
 ```python
 from scipy import stats
 from civic_digital_twins.dt_model.model.model import Model
@@ -175,14 +243,129 @@ x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
 y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z = Index("z", x + y)
 
-model = Model("demo", [x, y, z])
-print(model.abstract_indexes())   # [x, y]
-print(model.is_instantiated())    # False
+model = Model("demo", [x, y, z])   # DeprecationWarning
+print(model.abstract_indexes())    # [x, y]
+print(model.is_instantiated())     # False
 ```
 
 Models can be subclassed to add domain-specific structure (labeled
 subsets of indexes, constraint lists, etc.) while preserving the
 core contract.  See [Vertical Extension](#vertical-extension) below.
+
+## ModelVariant
+
+[`model/model.py`](../../civic_digital_twins/dt_model/model/model.py)
+
+```python
+class ModelVariant:
+    def __init__(
+        self,
+        name: str,
+        variants: Mapping[str, Model],
+        selector: str,
+    ) -> None: ...
+```
+
+`ModelVariant` selects among pre-constructed `Model` instances that
+share the same I/O contract (identical `Inputs` and `Outputs` field
+names).  The `selector` is a plain string key; the active variant is
+resolved once at construction time.
+
+`ModelVariant` acts as a **fully transparent proxy** for the active
+variant.  The following attributes and methods all delegate to the active
+`Model` instance:
+
+- `inputs`, `outputs`, `expose`
+- `indexes`, `abstract_indexes()`, `is_instantiated()`
+- Any other attribute accessed via `__getattr__`
+
+**Contract enforcement**: `inputs` and `outputs` field names must be
+identical across all variants.  A `ValueError` is raised at construction
+time if they differ.
+
+Inactive variants remain accessible for inspection via
+`mv.variants["key"].*` without affecting the active proxy.
+
+`ModelVariant` is exported from `civic_digital_twins.dt_model`.
+
+```python
+from civic_digital_twins.dt_model import ModelVariant
+
+mv = ModelVariant(
+    "TransportModel",
+    variants={"bike": BikeModel(), "train": TrainModel()},
+    selector="bike",
+)
+mv.outputs.emissions           # delegates to BikeModel
+mv.variants["train"].outputs   # inactive variant, accessible directly
+```
+
+## Contract Warnings
+
+[`model/model.py`](../../civic_digital_twins/dt_model/model/model.py)
+
+Both warning classes are exported from `civic_digital_twins.dt_model`.
+
+**`ModelContractWarning(UserWarning)`** — base class for all Model I/O
+contract warnings.  Use
+
+```python
+import warnings
+warnings.filterwarnings("error", category=ModelContractWarning)
+```
+
+to promote the entire family of contract warnings into hard errors,
+which is recommended in test suites.
+
+**`InputsContractWarning(ModelContractWarning)`** — emitted when a
+`GenericIndex` constructor parameter is absent from the declared
+`Inputs` dataclass.  The warning message names the offending parameter
+precisely so it can be located and added to `Inputs`.
+
+Example — the following model triggers an `InputsContractWarning`
+because `x` is a `GenericIndex` constructor parameter but is not
+declared in `Inputs`:
+
+```python
+from dataclasses import dataclass
+from civic_digital_twins.dt_model import Model
+from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+from scipy import stats
+
+class BadModel(Model):
+
+    @dataclass
+    class Outputs:
+        z: Index
+
+    def __init__(self, x: DistributionIndex) -> None:
+        # x is a GenericIndex parameter but not in Inputs — warns!
+        z = Index("z", x + x)
+        super().__init__("bad", outputs=BadModel.Outputs(z=z))
+```
+
+Declare an `Inputs` dataclass and pass an instance to silence the
+warning:
+
+```python
+class GoodModel(Model):
+
+    @dataclass
+    class Inputs:
+        x: DistributionIndex
+
+    @dataclass
+    class Outputs:
+        z: Index
+
+    def __init__(self, x: DistributionIndex) -> None:
+        z = Index("z", x + x)
+        super().__init__(
+            "good",
+            inputs=GoodModel.Inputs(x=x),
+            outputs=GoodModel.Outputs(z=z),
+        )
+```
 
 ## Ensemble and WeightedScenario
 
@@ -451,6 +634,19 @@ and `is_instantiated()`, and the concrete-value binding is done at the
 `Evaluation` call site via weighted scenarios.  This eliminates
 mutation-based model instantiation and makes the data flow explicit.
 
+The three-level access model (`inputs` / `outputs` / `expose`) was added
+in v0.8.0 to make the inter-model data-flow contract explicit.  The core
+`Model` class is extended by the dataclass path without breaking the
+existing flat-list path.
+
+### Why `ModelVariant` rather than subclassing?
+
+A subclass would fix the implementation at class-definition time.
+`ModelVariant` lets the same parent model choose among pre-constructed
+instances at construction time — the selector is a plain string.  This
+keeps variant switching visible at the call site and avoids deep
+inheritance hierarchies.
+
 ### Why a structural `Ensemble` Protocol?
 
 Making `Ensemble` a structural `Protocol` (rather than a base class)
@@ -488,9 +684,22 @@ evaluated.
 **Ensemble**: an iterable of `WeightedScenario` tuples that defines a
 discrete probability distribution over model instantiations.
 
+**Expose**: optional inner `@dataclass` on a `Model` subclass that
+holds inspectable but non-contractual intermediate indexes.  `Expose`
+fields are intended for debugging and visualisation only; they MUST NOT
+be used to wire indexes between models.
+
 **Grid mode**: the `axes=` keyword of `Evaluation.evaluate`; sweeps
 axis indexes over a dense grid while the ensemble provides the
 non-axis abstract index values.
+
+**InputsContractWarning**: a `ModelContractWarning` emitted when a
+`GenericIndex` constructor parameter is absent from the declared
+`Inputs` dataclass; the warning message names the offending parameter.
+
+**Inputs**: inner `@dataclass` on a `Model` subclass that declares the
+model's contractual constructor inputs (i.e., the `GenericIndex`
+instances passed in from outside).
 
 **Instantiated model**: a model in which `is_instantiated()` returns
 `True` — all indexes are concrete.
@@ -498,6 +707,15 @@ non-axis abstract index values.
 **Marginalize**: collapse the scenario dimension `S` by computing
 `tensordot(arr, weights, axes=([-1], [0]))`, returning the weighted
 expectation over scenarios.
+
+**ModelVariant**: a transparent proxy that selects among pre-constructed
+`Model` instances sharing the same I/O contract (`Inputs` / `Outputs`
+field names).  The active instance is chosen by a plain string
+`selector` at construction time.
+
+**Outputs**: inner `@dataclass` on a `Model` subclass that declares the
+model's contractual outputs — the indexes that downstream models or the
+evaluation layer may read.
 
 **Vertical extension**: the pattern of subclassing `Model` (and
 composing domain-specific `Index` subclasses) to add domain semantics

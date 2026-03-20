@@ -96,6 +96,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All original module-level names (`M_Base`, `CV_*`, `PV_*`, `I_P_*`) preserved
   as aliases — `overtourism_molveno.py` requires no changes.
 
+**Model modularity documentation**
+
+- New concept guide `docs/design/dd-cdt-modularity.md` — three-level access
+  model, constructor wiring, `Inputs` contract convention, `ModelVariant`,
+  decomposition axes, annotated Bologna worked example, API reference, and
+  design rationale.
+- `docs/design/dd-cdt-model.md` updated with dataclass-based `Model` API,
+  `ModelVariant`, and `InputsContractWarning` sections.
+- `docs/getting-started.md` and `README.md` updated.
+- New `examples/doc/doc_modularity.py` — runnable validation for the
+  modularity guide.
+
 ### Deprecated
 
 - **`indexes=` argument to `Model.__init__`**: passing a flat index list
