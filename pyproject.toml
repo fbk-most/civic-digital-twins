@@ -47,6 +47,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 # Search keywords for PyPI discoverability
@@ -61,7 +62,7 @@ requires-python = ">=3.11.0"
 dependencies = [
     "numpy>=2.2.0",
     "pandas>=2.2.0",
-    "scipy>=1.15.0",
+    "scipy>=1.17.1",
 ]
 
 # Optional Dependencies (Dev)
@@ -69,7 +70,7 @@ dependencies = [
 
 # Developer tools: testing, linting, type checking, visualization
 dev = [
-    "matplotlib>=3.10.1",
+    "matplotlib>=3.10.8",
     "pyright>=1.1.408",     # static type checker
     "pytest>=7.0.0",        # test runner
     "pytest-cov>=4.0.0",    # code coverage plugin for pytest

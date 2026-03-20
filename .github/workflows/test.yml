@@ -22,6 +22,7 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+          - "3.14"
 
     name: Test with Python ${{ matrix.python_version }}
 
@@ -65,6 +66,6 @@ jobs:
         uses: codecov/codecov-action@v5
         if: matrix['python_version'] == '3.11'
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}   # Add this token as a GitHub secret
-          file: ./coverage.xml                  # This is the default output file from pytest-cov
-          fail_ci_if_error: true                # Make the CI fail if the upload doesn't work
+          token: ${{ secrets.CODECOV_TOKEN }} # Add this token as a GitHub secret
+          file: ./coverage.xml # This is the default output file from pytest-cov
+          fail_ci_if_error: true # Make the CI fail if the upload doesn't work
