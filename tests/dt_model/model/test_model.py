@@ -9,7 +9,7 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
-from civic_digital_twins.dt_model.model.model import IOProxy, Model
+from civic_digital_twins.dt_model.model.model import InputsContractWarning, IOProxy, Model, ModelContractWarning
 
 c1: Distribution = stats.norm(loc=2.0, scale=1.0)  # type: ignore[assignment]
 
@@ -585,3 +585,146 @@ def test_dataclass_proxy_unknown_attr_raises():
     m = Model("test", outputs=Outputs(traffic=Index("t", 1.0)))
     with pytest.raises(AttributeError, match="No input/output"):
         _ = m.outputs.nonexistent  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# InputsContractWarning — convention check
+# ---------------------------------------------------------------------------
+
+
+def test_inputs_contract_warning_fires_for_undeclared_index():
+    """Warn when a scalar Index parameter is not in Inputs."""
+
+    class _Bad(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, received: Index) -> None:
+            result = Index("result", received + 1.0)
+            # received is NOT stored in any Inputs dataclass
+            super().__init__(
+                "Bad",
+                outputs=_Bad.Outputs(result=result),
+            )
+
+    received = Index("x", 1.0)
+    with pytest.warns(InputsContractWarning, match="'received'"):
+        _Bad(received)
+
+
+def test_inputs_contract_warning_fires_for_undeclared_timeseries():
+    """Warn when a TimeseriesIndex parameter is not in Inputs."""
+
+    class _Bad(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            out: Index
+
+        def __init__(self, ts: TimeseriesIndex) -> None:
+            out = Index("out", ts.sum())
+            super().__init__("Bad", outputs=_Bad.Outputs(out=out))
+
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    with pytest.warns(InputsContractWarning, match="'ts'"):
+        _Bad(ts)
+
+
+def test_inputs_contract_warning_fires_for_undeclared_list():
+    """Warn for each item in a list[Index] parameter not in Inputs."""
+
+    class _Bad(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            total: Index
+
+        def __init__(self, costs: list[Index]) -> None:
+            total = Index("total", costs[0] + costs[1])
+            super().__init__("Bad", outputs=_Bad.Outputs(total=total))
+
+    costs = [Index("c0", 1.0), Index("c1", 2.0)]
+    with pytest.warns(InputsContractWarning) as record:
+        _Bad(costs)
+    messages = [str(w.message) for w in record]
+    assert any("costs[0]" in m for m in messages)
+    assert any("costs[1]" in m for m in messages)
+
+
+def test_inputs_contract_no_warning_when_declared():
+    """No warning when all Index params are stored in Inputs."""
+
+    class _Good(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            received: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, received: Index) -> None:
+            inputs = _Good.Inputs(received=received)
+            result = Index("result", received + 1.0)
+            super().__init__(
+                "Good",
+                inputs=inputs,
+                outputs=_Good.Outputs(result=result),
+            )
+
+    received = Index("x", 1.0)
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InputsContractWarning)
+        _Good(received)  # must not raise
+
+
+def test_inputs_contract_no_warning_for_non_index_params():
+    """No warning for str, float, or ndarray constructor parameters."""
+
+    class _Good(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, label: str, scale: float, data: np.ndarray) -> None:
+            result = Index("result", scale)
+            super().__init__("Good", outputs=_Good.Outputs(result=result))
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InputsContractWarning)
+        _Good("hello", 3.14, np.array([1.0]))  # must not raise
+
+
+def test_inputs_contract_no_warning_for_base_model():
+    """No warning when constructing Model directly (only fires for subclasses)."""
+    import warnings
+
+    # Model itself has no __init__ parameter convention to check
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InputsContractWarning)
+        Model("base", outputs=None)  # must not raise
+
+
+def test_inputs_contract_warning_is_subclass_of_model_contract_warning():
+    """InputsContractWarning is a subclass of ModelContractWarning."""
+    assert issubclass(InputsContractWarning, ModelContractWarning)
+
+
+def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
+    """Filtering on ModelContractWarning catches InputsContractWarning."""
+
+    class _Bad(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, received: Index) -> None:
+            result = Index("result", received + 1.0)
+            super().__init__("Bad", outputs=_Bad.Outputs(result=result))
+
+    received = Index("x", 1.0)
+    with pytest.warns(ModelContractWarning):
+        _Bad(received)

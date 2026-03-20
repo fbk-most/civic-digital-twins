@@ -7,7 +7,10 @@ from .model import (
     DistributionIndex,
     GenericIndex,
     Index,
+    InputsContractWarning,
     Model,
+    ModelContractWarning,
+    ModelVariant,
     TimeseriesIndex,
 )
 from .simulation import DistributionEnsemble, Ensemble, Evaluation, EvaluationResult, WeightedScenario
@@ -22,7 +25,10 @@ __all__ = [
     "EvaluationResult",
     "GenericIndex",
     "Index",
+    "InputsContractWarning",
     "Model",
+    "ModelContractWarning",
+    "ModelVariant",
     "TimeseriesIndex",
     "WeightedScenario",
     "piecewise",
