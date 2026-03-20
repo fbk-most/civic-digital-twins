@@ -49,29 +49,38 @@ abstractions built on top of the engine:
 - **`Index`** / **`TimeseriesIndex`** — named wrappers around graph nodes.
   An index can be a constant, a distribution (sampled at evaluation time),
   or a formula.
-- **`Model`** — a named collection of `Index` objects.  A model is
-  *abstract* when some indexes are unbound (distributions or placeholders);
-  it becomes concrete once all indexes are resolved.
+- **`Model`** — a named collection of `Index` objects.  Declare `Inputs`,
+  `Outputs`, and `Expose` as inner dataclasses to make the inter-model
+  interface explicit.  Sub-models are wired via constructor arguments,
+  producing a composable pipeline.
+- **`ModelVariant`** — selects among pre-constructed `Model` implementations
+  sharing the same I/O contract.  The active variant is resolved at
+  construction time via a string key.
 - **`Evaluation`** — evaluates a model over a sequence of *weighted
   scenarios*, each of which maps every abstract index to a concrete value.
 - **`Ensemble`** / **`WeightedScenario`** — a protocol and type alias that
   define the scenario contract consumed by `Evaluation`.
 
 ```python
-from civic_digital_twins.dt_model import Evaluation, Model
-from civic_digital_twins.dt_model.model.index import Index, UniformDistIndex
+from civic_digital_twins.dt_model import Evaluation, Model, DistributionIndex
+from civic_digital_twins.dt_model.model.index import Index
+from scipy import stats
 
 # Two distribution-backed indexes
-x = UniformDistIndex("x", loc=0.0, scale=1.0)
-y = UniformDistIndex("y", loc=0.0, scale=1.0)
+x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 1.0})
 result = Index("result", x + y)
 
 model = Model("example", [x, y, result])
 ```
 
+See [docs/design/dd-cdt-model.md](docs/design/dd-cdt-model.md) for the full
+reference: index types, `Model` API, `ModelVariant`, `Evaluation`, and the
+vertical extension pattern.
+
 ### Usage patterns
 
-Two concrete usage patterns are illustrated in the `examples/` directory.
+Three concrete usage patterns are illustrated in the `examples/` directory.
 
 **Direct pattern** (`examples/mobility_bologna/`) — the model consists
 entirely of `Index` and `TimeseriesIndex` objects;
@@ -87,6 +96,14 @@ scenarios.  `Evaluation.evaluate(axes={pv: array, …})` evaluates the model
 on a multi-dimensional grid, returning arrays of shape `(N₀, …, Nₖ, S)`
 where `S` is the number of scenarios and each `Nᵢ` corresponds to one
 presence axis.
+
+**Model modularity** — for larger models, the dataclass-based I/O API
+(`Inputs`, `Outputs`, `Expose`) makes inter-model wiring explicit and
+machine-checkable.  `ModelVariant` enables swapping between alternative
+implementations at construction time.  Both the Bologna and Molveno examples
+are rewritten using this API.  See
+[docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md)
+for the full guide.
 
 ## Installation
 
@@ -189,6 +206,7 @@ uv sync --upgrade
 | [Getting Started](docs/getting-started.md) | Step-by-step guide covering the direct and vertical extension usage patterns. |
 | [dd-cdt-engine.md](docs/design/dd-cdt-engine.md) | DSL compiler engine — graph nodes, topological sorting, NumPy executor. |
 | [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model / simulation layer — `Model`, `Evaluation`, `WeightedScenario`, and the vertical extension pattern. |
+| [dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md) | Model modularity concept guide — dataclass I/O API, `ModelVariant`, decomposition patterns, and Bologna worked example. |
 
 ## License
 

@@ -3,7 +3,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)        |
-| Last-Updated | 2026-03-13                                     |
+| Last-Updated | 2026-03-20                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -36,6 +36,12 @@ Define indexes as attributes of a `Model` subclass (or pass a list to
 `Model` directly).  Use `DistributionIndex` for uncertain parameters and
 plain `Index` for formulas and constants.
 
+### Legacy flat-list API
+
+> **Note:** The flat-list constructor is still supported but emits a
+> `DeprecationWarning` as of v0.8.0.  Prefer the dataclass-based approach
+> shown below.
+
 ```python
 import numpy as np
 from scipy import stats
@@ -58,8 +64,63 @@ co2 = Index("co2_kg", litres * co2_per_litre)
 model = Model("co2_model", [fuel_efficiency, distance, litres, co2_per_litre, co2])
 ```
 
-The model is **abstract** because `fuel_efficiency` and `distance` are
-distribution-backed:
+### Dataclass-based API (v0.8.0+)
+
+The preferred approach declares `Inputs`, `Outputs`, and optionally `Expose`
+as inner `@dataclass` classes, making the inter-model interface explicit and
+machine-checkable.  Every `DistributionIndex` (or other `GenericIndex`)
+received as a constructor parameter — or created internally and needed by the
+ensemble — must be declared in `Inputs` so that `model.indexes` includes it
+and `DistributionEnsemble` can sample it:
+
+```python
+from dataclasses import dataclass
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
+from scipy import stats
+
+class Co2Model(Model):
+
+    @dataclass
+    class Inputs:
+        fuel_efficiency: DistributionIndex
+        distance:        DistributionIndex
+
+    @dataclass
+    class Outputs:
+        litres:        Index
+        co2_per_litre: Index
+        co2:           Index
+
+    def __init__(self) -> None:
+        Inputs  = Co2Model.Inputs
+        Outputs = Co2Model.Outputs
+
+        inputs = Inputs(
+            fuel_efficiency=DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0}),
+            distance=       DistributionIndex("distance_km",          stats.uniform, {"loc": 50.0, "scale": 30.0}),
+        )
+
+        litres        = Index("litres",        inputs.distance / inputs.fuel_efficiency)
+        co2_per_litre = Index("co2_per_litre", 2.31)
+        co2           = Index("co2_kg",        litres * co2_per_litre)
+
+        super().__init__(
+            "co2_model",
+            inputs=inputs,
+            outputs=Outputs(
+                litres=litres,
+                co2_per_litre=co2_per_litre,
+                co2=co2,
+            ),
+        )
+
+model = Co2Model()
+co2 = model.outputs.co2   # access via contractual output
+```
+
+`model.indexes` is derived automatically from `inputs` and `outputs` — no flat
+list required.  `abstract_indexes()` and `is_instantiated()` work identically
+regardless of which API was used:
 
 ```python
 print(model.abstract_indexes())   # [fuel_efficiency, distance]
@@ -133,6 +194,19 @@ result = Evaluation(model).evaluate(
 
 ---
 
+## 5 — Model modularity
+
+For larger models, split the computation into sub-models using the
+dataclass I/O API.  Each sub-model declares its `Inputs` and `Outputs` as
+inner `@dataclass` classes; the root model wires them by passing outputs of
+one sub-model into the constructor of the next.
+
+See [docs/design/dd-cdt-modularity.md](design/dd-cdt-modularity.md)
+for the full concept guide, including `ModelVariant`, decomposition
+patterns, and a step-by-step Bologna walkthrough.
+
+---
+
 ## Next Steps
 
 - Browse the full examples:
@@ -143,3 +217,4 @@ result = Evaluation(model).evaluate(
 - Read the reference documentation:
   - [Engine layer](design/dd-cdt-engine.md) — graph nodes, topological sorting, NumPy executor.
   - [Model / simulation layer](design/dd-cdt-model.md) — `Model`, `Evaluation`, `EvaluationResult`, vertical extension pattern, design rationale.
+  - [Model Modularity guide](design/dd-cdt-modularity.md) — sub-models, `ModelVariant`, and the dataclass I/O API.
