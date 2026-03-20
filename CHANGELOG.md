@@ -108,6 +108,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `examples/doc/doc_modularity.py` — runnable validation for the
   modularity guide.
 
+**Python versions**
+
+- Python 3.14 added to the CI test matrix and PyPI classifiers.
+
 ### Deprecated
 
 - **`indexes=` argument to `Model.__init__`**: passing a flat index list

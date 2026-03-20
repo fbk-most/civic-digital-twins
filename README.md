@@ -135,7 +135,7 @@ from civic_digital_twins import dt_model
 
 ## Minimum Python Version
 
-Python 3.11.
+Python 3.11. Tested against Python 3.11, 3.12, 3.13, and 3.14.
 
 ## API Stability Guarantees
 
