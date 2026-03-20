@@ -387,3 +387,103 @@ def test_index_neg_evaluates_correctly():
 # ---------------------------------------------------------------------------
 # Index reduction methods (sum, mean, min, max, etc.) are comprehensively tested in
 # tests/dt_model/symbols/test_index_reduction_methods.py
+
+
+# ---------------------------------------------------------------------------
+# DistributionIndex — properties and params setter
+# ---------------------------------------------------------------------------
+
+
+def test_distribution_index_distribution_property():
+    """DistributionIndex.distribution returns the callable used at construction."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import DistributionIndex
+
+    idx = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    assert idx.distribution is stats.uniform
+
+
+def test_distribution_index_params_property_returns_copy():
+    """DistributionIndex.params returns a copy of the params dict."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import DistributionIndex
+
+    idx = DistributionIndex("x", stats.uniform, {"loc": 1.0, "scale": 2.0})
+    p = idx.params
+    assert p == {"loc": 1.0, "scale": 2.0}
+    # Mutating the returned copy must not affect the stored params.
+    p["loc"] = 99.0
+    assert idx.params["loc"] == 1.0
+
+
+def test_distribution_index_params_setter_full_replacement():
+    """Assigning a new dict to .params re-freezes the distribution."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import DistributionIndex
+
+    idx = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    old_value = idx.value
+    idx.params = {"loc": 5.0, "scale": 2.0}
+    assert idx.params == {"loc": 5.0, "scale": 2.0}
+    # The frozen distribution object should have been replaced.
+    assert idx.value is not old_value
+
+
+def test_distribution_index_params_setter_partial_update():
+    """Partial update via |= re-freezes the distribution with merged params."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import DistributionIndex
+
+    idx = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    idx.params |= {"loc": 3.0}
+    assert idx.params["loc"] == 3.0
+    assert idx.params["scale"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# ConstIndex — v property, v setter, __str__
+# ---------------------------------------------------------------------------
+
+
+def test_const_index_v_property():
+    """ConstIndex.v returns the constant value."""
+    idx = ConstIndex("c", 42.0)
+    assert idx.v == 42.0
+
+
+def test_const_index_v_setter_changes_value():
+    """Setting ConstIndex.v to a new value updates the node."""
+    idx = ConstIndex("c", 1.0)
+    old_node = idx.node
+    idx.v = 2.0
+    assert idx.v == 2.0
+    assert idx.value == 2.0
+    # The graph node must have been replaced.
+    assert idx.node is not old_node
+
+
+def test_const_index_v_setter_same_value_noop():
+    """Setting ConstIndex.v to the same value does not replace the node."""
+    idx = ConstIndex("c", 7.0)
+    old_node = idx.node
+    idx.v = 7.0
+    assert idx.node is old_node
+
+
+def test_const_index_v_setter_evaluates_correctly():
+    """After updating v, the index evaluates to the new constant."""
+    idx = ConstIndex("c", 3.0)
+    idx.v = 10.0
+    state = executor.State({})
+    executor.evaluate_nodes(state, *linearize.forest(idx.node))
+    assert np.isclose(state.values[idx.node], 10.0)
+
+
+def test_const_index_str():
+    """ConstIndex.__str__ returns the expected representation."""
+    idx = ConstIndex("c", 5.0)
+    assert str(idx) == "const_idx(5.0)"

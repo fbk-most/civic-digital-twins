@@ -115,3 +115,11 @@ def test_no_arguments_handling_for_node():
     """Same as above but tests the case when there's no arguments handling code."""
     with pytest.raises(numpy_ast.UnsupportedNodeArguments):
         numpy_ast.graph_node_to_ast_stmt(numpy_ast._InternalTestingNode())
+
+
+def test_project_using_quantile_numpy_ast():
+    """project_using_quantile generates quantile call with q first, axis, and keepdims."""
+    k = graph.constant(10)
+    node = graph.project_using_quantile(k, axis=(0,), q=0.95)
+    code = numpy_ast.graph_node_to_numpy_code(node)
+    assert code == f"n{node.id} = np.quantile(0.95, n{k.id}, axis=(0,), keepdims=True)"
