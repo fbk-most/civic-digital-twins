@@ -728,3 +728,127 @@ def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
     received = Index("x", 1.0)
     with pytest.warns(ModelContractWarning):
         _Bad(received)
+
+
+# ---------------------------------------------------------------------------
+# _check_inputs_contract — dict-valued parameter path
+# ---------------------------------------------------------------------------
+
+
+def test_inputs_contract_warning_fires_for_undeclared_dict():
+    """InputsContractWarning names each missing key when the parameter is a dict."""
+    import warnings
+
+    class _Bad(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, mapping: dict) -> None:
+            result = Index("result", 1.0)
+            super().__init__("Bad", outputs=_Bad.Outputs(result=result))
+
+    x = Index("x", 1.0)
+    y = Index("y", 2.0)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _Bad(mapping={"a": x, "b": y})
+
+    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
+    assert len(contract_warnings) == 2
+    messages = [str(w.message) for w in contract_warnings]
+    assert any("mapping['a']" in m for m in messages)
+    assert any("mapping['b']" in m for m in messages)
+
+
+def test_inputs_contract_no_warning_for_declared_dict():
+    """No InputsContractWarning when all dict-valued GenericIndex entries are in Inputs."""
+    import warnings
+
+    class _Good(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            mapping: dict
+
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, mapping: dict) -> None:
+            inputs = _Good.Inputs(mapping=mapping)
+            result = Index("result", 1.0)
+            super().__init__("Good", inputs=inputs, outputs=_Good.Outputs(result=result))
+
+    x = Index("x", 1.0)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _Good(mapping={"a": x})
+
+    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
+    assert len(contract_warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# _check_inputs_contract — inspect.signature exception path
+# ---------------------------------------------------------------------------
+
+
+def test_inputs_contract_no_crash_when_signature_unavailable():
+    """_check_inputs_contract silently returns when inspect.signature raises."""
+    import unittest.mock
+    import warnings
+
+    class _Model(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, x: Index) -> None:
+            result = Index("result", x + 1.0)
+            super().__init__("M", outputs=_Model.Outputs(result=result))
+
+    x = Index("x", 1.0)
+    # Patch inspect.signature to raise TypeError, simulating a built-in or
+    # C-extension __init__ whose signature cannot be introspected.
+    with unittest.mock.patch("inspect.signature", side_effect=TypeError("no sig")):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            # Must not raise — the contract check should be silently skipped.
+            _Model(x)
+
+    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
+    assert len(contract_warnings) == 0
+
+
+def test_inputs_contract_skips_params_absent_from_locals():
+    """_check_inputs_contract silently skips parameters not present in f_locals.
+
+    This covers the ``value is inspect.Parameter.empty`` branch — hit when a
+    parameter declared in the signature has no corresponding entry in the
+    caller's local variables (e.g. a ``**kwargs`` catch-all or a parameter
+    whose name was shadowed before ``super().__init__()`` was called).
+    """
+    import warnings
+
+    class _ModelWithKwargs(Model):
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        # **kwargs is in the signature but will never appear as a named
+        # local variable, so its entry in f_locals is absent.
+        def __init__(self, x: Index, **kwargs) -> None:  # type: ignore[override]
+            result = Index("result", x + 1.0)
+            super().__init__("M", outputs=_ModelWithKwargs.Outputs(result=result))
+
+    x = Index("x", 1.0)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        # Must not raise even though 'kwargs' has no entry in f_locals.
+        _ModelWithKwargs(x)
+
+    # x is undeclared in Inputs so one InputsContractWarning fires for it,
+    # but no crash or extra warning for the absent **kwargs parameter.
+    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
+    assert len(contract_warnings) == 1
+    assert "x" in str(contract_warnings[0].message)

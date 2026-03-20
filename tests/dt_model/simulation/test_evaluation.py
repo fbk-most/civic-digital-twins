@@ -205,3 +205,100 @@ def test_axes_axis_index_not_required_in_scenario():
     # Should not raise — I_x is an axis, not required in scenario dict.
     result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: np.array([5.0, 10.0])})
     assert result[I_x].shape == (2, 1)
+
+
+# ---------------------------------------------------------------------------
+# EvaluationResult properties
+# ---------------------------------------------------------------------------
+
+
+def test_evaluation_result_weights_property():
+    """EvaluationResult.weights returns the scenario weight array."""
+    I_x = Index("x", None)
+    model = _make_model(I_x)
+
+    a0: dict[GenericIndex, Any] = {I_x: 1.0}
+    a1: dict[GenericIndex, Any] = {I_x: 2.0}
+    scenarios: list[WeightedScenario] = [(0.3, a0), (0.7, a1)]
+    result = Evaluation(model).evaluate(scenarios)
+
+    weights = result.weights
+    assert weights.shape == (2,)
+    assert np.isclose(weights[0], 0.3)
+    assert np.isclose(weights[1], 0.7)
+
+
+def test_evaluation_result_axes_property():
+    """EvaluationResult.axes returns the dict passed to evaluate()."""
+    I_x = Index("x", None)
+    model = _make_model(I_x)
+    xs = np.array([1.0, 2.0, 3.0])
+
+    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
+    axes = result.axes
+    assert I_x in axes
+    assert np.array_equal(axes[I_x], xs)
+
+
+def test_evaluation_result_axes_property_empty_in_1d_mode():
+    """EvaluationResult.axes is empty when no axes are passed."""
+    I_x = Index("x", 1.0)
+    model = _make_model(I_x)
+
+    result = Evaluation(model).evaluate([])
+    assert result.axes == {}
+
+
+def test_marginalize_1d_squeeze_scalar():
+    """Marginalize squeezes the trailing size-1 dim added by DistributionEnsemble."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model.model.index import DistributionIndex
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+    I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+    I_result = Index("result", I_x * I_x)
+    model = _make_model(I_x, I_result)
+
+    ensemble = DistributionEnsemble(model, size=50)
+    result = Evaluation(model).evaluate(ensemble)
+    marginalised = result.marginalize(I_result)
+    # Should be a plain scalar (0-d array), not shape (1,).
+    assert np.ndim(marginalised) == 0
+
+
+# ---------------------------------------------------------------------------
+# DistributionEnsemble — error and rng paths
+# ---------------------------------------------------------------------------
+
+
+def test_distribution_ensemble_raises_for_non_distribution_abstract():
+    """DistributionEnsemble raises ValueError when an abstract index has no distribution."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+    I_placeholder = Index("p", None)  # abstract but not distribution-backed
+    model = _make_model(I_placeholder)
+
+    with pytest.raises(ValueError, match="non-distribution"):
+        DistributionEnsemble(model, size=10)
+
+
+def test_distribution_ensemble_with_rng_is_reproducible():
+    """Passing an rng to DistributionEnsemble produces reproducible samples."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model.model.index import DistributionIndex
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+    I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    model = _make_model(I_x)
+
+    rng1 = np.random.default_rng(42)
+    rng2 = np.random.default_rng(42)
+
+    scenarios1 = list(DistributionEnsemble(model, size=5, rng=rng1))
+    scenarios2 = list(DistributionEnsemble(model, size=5, rng=rng2))
+
+    for (w1, a1), (w2, a2) in zip(scenarios1, scenarios2):
+        assert w1 == w2
+        assert np.array_equal(a1[I_x], a2[I_x])
