@@ -1,0 +1,83 @@
+# This workflow builds the package and publishes it to PyPI whenever a
+# GitHub Release is published.
+#
+# Typical flow:
+#   1. Push a version tag: git tag v<version> && git push origin v<version>
+#   2. GitHub auto-creates a draft release linked to the tag.
+#   3. Review / edit the release notes, then click "Publish release".
+#   4. This workflow fires, builds the sdist + wheel, and uploads to PyPI.
+#
+# Authentication uses PyPI's Trusted Publisher mechanism (OIDC), so no
+# long-lived API token is stored in GitHub secrets.  One-time setup on
+# PyPI is required — see the "Releasing" section of README.md.
+
+name: Publish to PyPI
+
+# Trigger: only when a GitHub Release is explicitly published.
+# This gives a human a review window between pushing the tag and
+# uploading to PyPI — delete the draft release to abort the publish.
+on:
+  release:
+    types: [published]
+
+# Top-level permissions: read-only by default; the publish job gets the
+# extra id-token permission it needs to authenticate with PyPI via OIDC.
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Build ────────────────────────────────────────────────────────────────
+  # Build the sdist + wheel and upload them as a workflow artifact so that
+  # the publish job can consume them without rebuilding.
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Build both a source distribution (sdist) and a wheel.
+      # uv places the artifacts under dist/ by default.
+      - name: Build sdist and wheel
+        run: uv build
+
+      # Sanity-check the artifacts before they leave this job.
+      - name: Check artifacts with twine
+        run: uv run --with twine twine check dist/*
+
+      # Make the built artifacts available to the next job.
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # ── 2. Publish ──────────────────────────────────────────────────────────────
+  # Download the artifacts produced above and push them to PyPI using the
+  # official pypa/gh-action-pypi-publish action with OIDC (Trusted Publisher).
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+
+    # The publish environment lets you add an optional manual-approval gate
+    # in the GitHub repository settings (Settings → Environments → publish).
+    environment: publish
+
+    # Required for PyPI's OIDC Trusted Publisher authentication.
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

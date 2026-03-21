@@ -177,27 +177,45 @@ uv sync --upgrade
 
 ## Releasing
 
+Per-release checklist (five manual steps):
+
 1. Make sure the version number in `pyproject.toml` is correct.
 
-2. Update `CHANGELOG.md`: set the release date on the current version section
-   and add a comparison link at the bottom.
+2. Regenerate the lockfile to record the new version:
+   ```bash
+   uv lock
+   ```
 
-3. Check that documentation Last-Updated dates are in sync with actual commit dates:
+3. Update `CHANGELOG.md`: promote the `[Unreleased]` heading to
+   `[<version>] - <date>` and add the corresponding comparison link at the bottom.
+
+4. Check that documentation `Last-Updated` dates are in sync with actual commit
+   dates:
    ```bash
    git log -1 --format="%ai" -- docs/design/dd-cdt-engine.md
    git log -1 --format="%ai" -- docs/design/dd-cdt-model.md
+   git log -1 --format="%ai" -- docs/design/dd-cdt-modularity.md
    git log -1 --format="%ai" -- docs/getting-started.md
    ```
-   Update any Last-Updated dates in the documentation headers if they don't match
-   the commit dates shown above.
+   Update any `Last-Updated` fields that are out of date.
 
-4. Create and push a git tag: `git tag v<version> && git push origin v<version>`.
+5. Commit the changes above, then create and push a version tag:
+   ```bash
+   git add pyproject.toml uv.lock CHANGELOG.md docs/
+   git commit -m "chore: prepare v<version> release"
+   git tag v<version> && git push origin main v<version>
+   ```
 
-5. Build the package: `uv build`.
+After the tag is pushed, go to the repository's **Releases** page, review the
+auto-created draft, write release notes, and click **Publish release**.  This
+triggers the [`publish.yml`](.github/workflows/publish.yml) workflow, which
+builds the sdist + wheel, runs `twine check`, and publishes to PyPI via OIDC —
+no manual build or upload step is needed.
 
-6. Check the artifacts: `uv run --with twine twine check dist/*`.
-
-7. Upload to PyPI: `uv run --with twine twine upload dist/*`.
+> **Precondition:** PyPI's Trusted Publisher must be configured for this
+> repository before the first release.  See the
+> [PyPI Trusted Publishers documentation](https://docs.pypi.org/trusted-publishers/)
+> for setup instructions.
 
 ## Documentation
 
