@@ -433,13 +433,13 @@ For a model with abstract indexes `[x, y]` and `S` scenarios:
 
 1. For each abstract index `idx`, collect its values across all
    scenarios: `values = [assignments[idx] for _, assignments in scenarios]`.
-2. Stack: `stacked = np.asarray(values)`, shape `(S,)` for scalars or
+2. Stack: `stacked = np.asarray(values)`, shape `(S, 1)` for scalars or
    `(S, T)` for timeseries-shaped values (shape `(1,)` per scenario
    → `(S, 1)` after stacking, which broadcasts with shape `(T,)`).
 3. Build the engine substitution dict: `{idx.node: stacked, …}`.
 4. Run `executor.evaluate_nodes`.
 
-Result arrays have shape `(S,)` for scalar formulas or `(S, T)` for
+Result arrays have shape `(S, 1)` for scalar formulas or `(S, T)` for
 timeseries formulas.  Use `result.marginalize(idx)` to compute the
 weighted mean over `S`.
 

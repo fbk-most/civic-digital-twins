@@ -125,7 +125,9 @@ smoothed = TimeseriesIndex(
 )
 
 # Build a small model that uses the timeseries indexes
-ts_model = Model("ts_model", [demand_ts, smoothed])
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    ts_model = Model("ts_model", [demand_ts, smoothed])
 
 # Single scenario with no abstract indexes
 ts_result = Evaluation(ts_model).evaluate(

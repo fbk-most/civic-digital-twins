@@ -1,5 +1,7 @@
 """Runnable snippets from docs/design/dd-cdt-model.md."""
 
+import warnings
+
 import numpy as np
 from scipy import stats
 
@@ -52,7 +54,9 @@ x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
 y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z = Index("z", x + y)
 
-model = Model("demo", [x, y, z])
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    model = Model("demo", [x, y, z])
 assert len(model.abstract_indexes()) == 2     # x and y
 assert model.is_instantiated() is False
 
@@ -78,7 +82,9 @@ assert y in assignments
 x2 = DistributionIndex("x2", stats.uniform, {"loc": 0.0, "scale": 10.0})
 y2 = DistributionIndex("y2", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z2 = Index("z2", x2 + y2)
-model2 = Model("demo2", [x2, y2, z2])
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    model2 = Model("demo2", [x2, y2, z2])
 
 ensemble2 = DistributionEnsemble(model2, size=200)
 result = Evaluation(model2).evaluate(ensemble2)

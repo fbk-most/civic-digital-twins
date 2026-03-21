@@ -147,12 +147,12 @@ result = Evaluation(model).evaluate(ensemble)
 ```
 
 `result` is an `EvaluationResult`.  Use `result[idx]` for the raw array
-(shape `(S,)` here, one value per scenario) and `result.marginalize(idx)`
+(shape `(S, 1)` here, one value per scenario) and `result.marginalize(idx)`
 for the weighted expectation:
 
 ```python
 # Distribution of CO2 across 1000 scenarios
-co2_samples = result[co2]          # np.ndarray, shape (1000,)
+co2_samples = result[co2]          # np.ndarray, shape (1000, 1)
 
 # Expected (mean) CO2
 co2_mean = result.marginalize(co2) # scalar
@@ -168,7 +168,7 @@ time.
 
 ```python
 import numpy as np
-from civic_digital_twins.dt_model.model.index import TimeseriesIndex, Index
+from civic_digital_twins.dt_model.model.index import TimeseriesIndex
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
@@ -180,6 +180,9 @@ smoothed = TimeseriesIndex(
     "smoothed_demand",
     graph.function_call("smooth", demand_ts.node),
 )
+
+model    = ...  # define a suitable model that includes demand_ts and smoothed
+ensemble = ...  # define a suitable ensemble (or pass [(1.0, {})] if there are no abstract indexes)
 
 # Register the implementation at evaluation time
 result = Evaluation(model).evaluate(
