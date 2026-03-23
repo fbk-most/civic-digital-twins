@@ -2,10 +2,12 @@
 marp: true
 theme: default
 paginate: true
+breaks: false
 style: |
   section {
     font-size: 1.5rem;
     font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+    padding: 50px 70px;
   }
   section.lead {
     text-align: center;
@@ -78,8 +80,7 @@ Fondazione Bruno Kessler — FBK MOST
 - Higher-polluting vehicles pay more → expected to reduce entries
 - Some drivers *anticipate* (enter before the window), some *postpone*
 
-**Question:** given the pricing parameters, what are the effects on
-traffic volume and NOx emissions?
+**Question:** given the pricing parameters, what are the effects on traffic volume and NOx emissions?
 
 ---
 
@@ -97,13 +98,9 @@ Three families of KPIs:
 
 <br>
 
-All KPIs depend on **behavioural parameters** that are not known precisely:
-price-elasticity, anticipation probability, postponement duration.
+All KPIs depend on **behavioural parameters** that are not known precisely: price-elasticity, anticipation probability, postponement duration.
 
-In this example, we model the **price-elasticity threshold** as a random
-variable (uniform over [4 €, 11 €]) and run the model over an **ensemble
-of scenarios** sampled from that distribution.
-Other parameters could be made uncertain in the same way.
+In this example, we model the **price-elasticity threshold** as a random variable (uniform over [4 €, 11 €]) and run the model over an **ensemble of scenarios** sampled from that distribution. Other parameters could be made uncertain in the same way.
 
 ---
 
@@ -159,7 +156,7 @@ Each stage of the computation becomes its own sub-model:
   ├──────────────────────────────────────────────────────┤
   │  Simulation layer                                    │
   │  DistributionEnsemble · Evaluation · EvaluationResult│
-  │  → sample → evaluate → aggregate                    │
+  │  → sample → evaluate → aggregate                     │
   ├──────────────────────────────────────────────────────┤
   │  Engine layer                                        │
   │  computation graph · topological sort · NumPy        │
@@ -167,8 +164,7 @@ Each stage of the computation becomes its own sub-model:
   └──────────────────────────────────────────────────────┘
 ```
 
-As a modeller you work almost entirely in the **model** and
-**simulation** layers. The engine is largely invisible.
+As a modeller you work almost entirely in the **model** and **simulation** layers. The engine is largely invisible.
 
 ---
 
@@ -195,8 +191,7 @@ cost_threshold = DistributionIndex(
 )
 ```
 
-Arithmetic operators (`+`, `*`, `/`, …) build a **lazy computation
-graph**. Nothing is evaluated until `Evaluation.evaluate()` is called.
+Arithmetic operators (`+`, `*`, `/`, …) build a **lazy computation graph**. Nothing is evaluated until `Evaluation.evaluate()` is called.
 
 ---
 
@@ -204,12 +199,9 @@ graph**. Nothing is evaluated until `Evaluation.evaluate()` is called.
 
 ## Uncertain parameters: `DistributionIndex`
 
-Some parameters are **not known precisely** — they are estimated from
-surveys, field data, or expert judgment.
+Some parameters are **not known precisely** — they are estimated from surveys, field data, or expert judgment.
 
-A `DistributionIndex` represents such a parameter as a **probability
-distribution**. Instead of a single model run, we draw many samples
-and run a scenario for each one.
+A `DistributionIndex` represents such a parameter as a **probability distribution**. Instead of a single model run, we draw many samples and run a scenario for each one.
 
 ```python
 # Price-elasticity threshold: we believe it lies between 4 € and 11 €
@@ -219,12 +211,7 @@ cost_threshold = DistributionIndex(
 )
 ```
 
-The result of the simulation is no longer a single number — it is a
-**distribution of outcomes**, one per scenario. The final KPI is the
-**expected value** (weighted mean) across all scenarios.
-
-Any `Index` formula that depends on `cost_threshold` automatically
-inherits its uncertainty.
+The result of the simulation is no longer a single number — it is a **distribution of outcomes**, one per scenario. The final KPI is the **expected value** (weighted mean) across all scenarios. Any `Index` formula that depends on `cost_threshold` automatically inherits its uncertainty.
 
 ---
 
@@ -246,14 +233,13 @@ result = Evaluation(model).evaluate(ensemble)
 #    result.marginalize(idx) → expected value (weighted mean)
 
 emissions = result[model.outputs.total_emissions]
-# emissions is a timeseries of 200 values, one per scenario
+# emissions is a collection of 200 values, one per scenario
 
 expected_emissions = result.marginalize(model.outputs.total_emissions)
 # expected_emissions is a single number: E[NOx emissions]
 ```
 
-The same `evaluate()` call handles both certain and uncertain
-parameters — no special casing needed.
+The same `evaluate()` call handles both certain and uncertain parameters — no special casing needed.
 
 ---
 
@@ -272,9 +258,7 @@ parameters — no special casing needed.
 
 <br>
 
-Reporting only the mean would hide the fact that the NOx reduction
-estimate spans a **2× range** depending on the unknown
-price-elasticity parameter.
+Reporting only the mean would hide the fact that the NOx reduction estimate spans a **2× range** depending on the unknown price-elasticity parameter.
 
 ---
 
@@ -319,8 +303,7 @@ model = Model("Bologna", [
 
 ## From flat lists to structured interfaces
 
-Declare **what a sub-model needs** and **what it produces** as inner
-`@dataclass` classes:
+Declare **what a sub-model needs** and **what it produces** as inner `@dataclass` classes:
 
 ```python
 class InflowModel(Model):
@@ -334,15 +317,14 @@ class InflowModel(Model):
 
     @dataclass
     class Outputs:
-        modified_inflow:  Index   # inflow after policy effect
+        modified_inflow:   Index   # inflow after policy effect
         modified_starting: Index
-        total_paying:     Index   # number of paying vehicles
-        avg_cost:         Index   # average fee paid
+        total_paying:      Index   # number of paying vehicles
+        avg_cost:          Index   # average fee paid
         ...
 ```
 
-`model.indexes` is derived **automatically** from `Inputs` and `Outputs`
-— no flat list to maintain.
+`model.indexes` is derived **automatically** from `Inputs` and `Outputs` — no flat list to maintain.
 
 ---
 
@@ -366,11 +348,11 @@ modified_fleet_mix = [
 ]
 
 # Modified inflow: rigid + vehicles that were anticipating / postponing
-modified_inflow  = Index("modified inflow",  ...)
+modified_inflow   = Index("modified inflow",   ...)
 modified_starting = Index("modified starting", ...)
 
 # Payment statistics
-total_paying = Index("total paying vehicles", ...)
+total_paying = Index("total paying vehicles",    ...)
 avg_cost     = Index("average cost per vehicle", ...)
 ```
 
@@ -394,9 +376,9 @@ def __init__(self, inflow, starting, entry_fee, cost_threshold, ...) -> None:
     )
 
     # Step 2 — build the computation graph (lazy; not evaluated yet)
-    fraction_rigid   = Index("rigid fraction", ...)
-    modified_inflow  = Index("modified inflow", ...)
-    total_paying     = Index("total paying", ...)
+    fraction_rigid  = Index("rigid fraction", ...)
+    modified_inflow = Index("modified inflow", ...)
+    total_paying    = Index("total paying", ...)
     ...
 
     # Step 3 — declare the stable public contract
@@ -427,8 +409,7 @@ def __init__(self, inflow, starting, entry_fee, cost_threshold, ...) -> None:
 
 **Level 1** is the interface contract — the only safe wiring point.
 
-**Level 2** (`Expose`) surfaces intermediate quantities useful for
-plotting or debugging, without making them part of the contract.
+**Level 2** (`Expose`) surfaces intermediate quantities useful for plotting or debugging, without making them part of the contract.
 
 **Level 3** exists only inside the engine graph — invisible from outside.
 
@@ -457,8 +438,7 @@ frac = inflow.expose.fraction_anticipating
 bad = TrafficModel(anticipating=inflow.expose.fraction_anticipating)
 ```
 
-The rule is simple: **`Expose` is for reading, never for wiring.**
-Field names in `Expose` may change between versions without notice.
+The rule is simple: **`Expose` is for reading, never for wiring.** Field names in `Expose` may change between versions without notice.
 
 ---
 
@@ -466,8 +446,7 @@ Field names in `Expose` may change between versions without notice.
 
 ## `InputsContractWarning` — catching wiring mistakes
 
-Every `GenericIndex` passed as a constructor argument **must** appear
-in `Inputs`. If it does not, a warning fires at construction time:
+Every `GenericIndex` passed as a constructor argument **must** appear in `Inputs`. If it does not, a warning fires at construction time:
 
 ```
 InputsContractWarning: InflowModel: parameter 'cost_threshold'
@@ -476,8 +455,7 @@ of InflowModel.Inputs and include it in inputs=... passed to
 super().__init__().
 ```
 
-The warning is **soft** — execution continues — so existing models can
-be migrated incrementally. Harden it in CI with one line:
+The warning is **soft** — execution continues — so existing models can be migrated incrementally. Harden it in CI with one line:
 
 ```python
 warnings.filterwarnings("error", category=ModelContractWarning)
@@ -489,25 +467,18 @@ warnings.filterwarnings("error", category=ModelContractWarning)
 
 ## What IO contracts give you
 
-- **Clarity** — the `Inputs` / `Outputs` dataclasses *are* the
-  documentation. A reader understands the interface without
-  tracing through the formula definitions.
+- **Clarity** — the `Inputs` / `Outputs` dataclasses *are* the documentation. A reader understands the interface without tracing through the formula definitions.
 
-- **Safety** — wiring mistakes (`Expose` used as input,
-  undeclared parameter, broken cross-variant contract) are caught
-  at **construction time**, not at evaluation time.
+- **Safety** — wiring mistakes (`Expose` used as input, undeclared parameter, broken cross-variant contract) are caught at **construction time**, not at evaluation time.
 
-- **Testability** — each sub-model is a plain Python object.
-  Build
- it with stub indexes, inspect its outputs directly:
+- **Testability** — each sub-model is a plain Python object. Build it with stub indexes and inspect its outputs directly:
 
 ```python
-in
-flow = InflowModel(inflow=stub_ts, entry_fee=fixed_fees,
+inflow = InflowModel(inflow=stub_ts, entry_fee=fixed_fees,
                      cost_threshold=DistributionIndex(...), ...)
 
-assert inflow.outputs.modified_inflow  is not None
-assert inflow.outputs.total_paying     is not None
+assert inflow.outputs.modified_inflow is not None
+assert inflow.outputs.total_paying    is not None
 assert inflow.is_instantiated() is False   # cost_threshold is still abstract
 ```
 
@@ -527,16 +498,11 @@ assert inflow.is_instantiated() is False   # cost_threshold is still abstract
 
 A monolithic `__init__` with 60+ indexes is:
 
-- **Unreadable** — no screen fits it; boundaries between concerns
-  are invisible
-- **Untestable** — the traffic computation cannot be isolated
-  from the inflow computation
-- **Rigid** — replacing the emissions formula means reading and
-  modifying hundreds of lines
+- **Unreadable** — no screen fits it; boundaries between concerns are invisible
+- **Untestable** — the traffic computation cannot be isolated from the inflow computation
+- **Rigid** — replacing the emissions formula means reading and modifying hundreds of lines
 
-The solution: each **conceptual stage** becomes its own `Model`
-subclass, receiving its upstream results as **typed constructor
-arguments**.
+The solution: each **conceptual stage** becomes its own `Model` subclass, receiving its upstream results as **typed constructor arguments**.
 
 ---
 
@@ -544,9 +510,7 @@ arguments**.
 
 ## Constructor wiring — the pattern
 
-Sub-models are constructed **inside the root's `__init__`** and
-never stored on `self`. Only their **output index objects** are
-threaded forward.
+Sub-models are constructed **inside the root's `__init__`** and never stored on `self`. Only their **output index objects** are threaded forward.
 
 ```python
 class BolognaModel(Model):
@@ -563,15 +527,15 @@ class BolognaModel(Model):
         # Stage 2 — wired to Stage 1 outputs
         _traffic = TrafficModel(
             inflow=inflow,
-            modified_inflow=_inflow.outputs.modified_inflow,    # ← Level-1
+            modified_inflow=_inflow.outputs.modified_inflow,     # ← Level-1
             modified_starting=_inflow.outputs.modified_starting, # ← Level-1
         )
 
         # Stage 3 — wired to outputs of both Stage 1 and Stage 2
         _emissions = EmissionsModel(
-            traffic=_traffic.outputs.traffic,                    # ← Level-1
-            modified_traffic=_traffic.outputs.modified_traffic,  # ← Level-1
-            modified_fleet_mix=_inflow.outputs.modified_fleet_mix,# ← Level-1
+            traffic=_traffic.outputs.traffic,                     # ← Level-1
+            modified_traffic=_traffic.outputs.modified_traffic,   # ← Level-1
+            modified_fleet_mix=_inflow.outputs.modified_fleet_mix, # ← Level-1
             ...
         )
 ```
@@ -582,8 +546,7 @@ class BolognaModel(Model):
 
 ## `TrafficModel`
 
-Receives the policy-modified inflow from `InflowModel` and computes
-steady-state circulating traffic for both the base and modified scenarios.
+Receives the policy-modified inflow from `InflowModel` and computes steady-state circulating traffic for both the base and modified scenarios.
 
 ```python
 class TrafficModel(Model):
@@ -620,7 +583,7 @@ class TrafficModel(Model):
 
 ```python
 _emissions = EmissionsModel(
-    traffic=_traffic.outputs.traffic,                  # ← from TrafficModel
+    traffic=_traffic.outputs.traffic,                   # ← from TrafficModel
     modified_traffic=_traffic.outputs.modified_traffic, # ← from TrafficModel
 
     modified_fleet_mix=_inflow.outputs.modified_fleet_mix,
@@ -629,10 +592,7 @@ _emissions = EmissionsModel(
 )
 ```
 
-`EmissionsModel.Inputs` declares all of these fields — the contract
-is explicit. Swapping `TrafficModel` for a different implementation
-(say, a linear approximation) requires no changes to `EmissionsModel`
-as long as the `Outputs` field names stay the same.
+`EmissionsModel.Inputs` declares all of these fields — the contract is explicit. Swapping `TrafficModel` for a different implementation (say, a linear approximation) requires no changes to `EmissionsModel` as long as the `Outputs` field names stay the same.
 
 ---
 
@@ -644,23 +604,23 @@ as long as the `Outputs` field names stay the same.
 super().__init__(
     "Bologna mobility",
     outputs=Outputs(
-        total_base_inflow         = _inflow.outputs.total_base_inflow,
-        total_modified_inflow     = _inflow.outputs.total_modified_inflow,
-        total_shifted             = _inflow.outputs.total_shifted,
-        total_paying              = _inflow.outputs.total_paying,
-        avg_cost                  = _inflow.outputs.avg_cost,
-        total_emissions           = _emissions.outputs.total_emissions,
-        total_modified_emissions  = _emissions.outputs.total_modified_emissions,
+        total_base_inflow        = _inflow.outputs.total_base_inflow,
+        total_modified_inflow    = _inflow.outputs.total_modified_inflow,
+        total_shifted            = _inflow.outputs.total_shifted,
+        total_paying             = _inflow.outputs.total_paying,
+        avg_cost                 = _inflow.outputs.avg_cost,
+        total_emissions          = _emissions.outputs.total_emissions,
+        total_modified_emissions = _emissions.outputs.total_modified_emissions,
     ),
     expose=Expose(
         # Named timeseries for plotting
-        traffic          = _traffic.outputs.traffic,
-        modified_traffic = _traffic.outputs.modified_traffic,
-        emissions        = _emissions.outputs.emissions,
+        traffic           = _traffic.outputs.traffic,
+        modified_traffic  = _traffic.outputs.modified_traffic,
+        emissions         = _emissions.outputs.emissions,
         # All sub-model indexes so the engine can reach every graph node
-        inflow_indexes   = list(_inflow.indexes),
-        traffic_indexes  = list(_traffic.indexes),
-        emissions_indexes= list(_emissions.indexes),
+        inflow_indexes    = list(_inflow.indexes),
+        traffic_indexes   = list(_traffic.indexes),
+        emissions_indexes = list(_emissions.indexes),
     ),
 )
 ```
@@ -687,10 +647,7 @@ def compute_kpis(model: BolognaModel, result: EvaluationResult) -> dict:
     }
 ```
 
-All access goes through `model.outputs.*` — the contract.
-No index is addressed by name string or by list position.
-Renaming an output field inside the model is a **breaking change**
-flagged in `CHANGELOG.md`.
+All access goes through `model.outputs.*` — the contract. No index is addressed by name string or by list position. Renaming an output field inside the model is a **breaking change** flagged in `CHANGELOG.md`.
 
 ---
 
@@ -705,18 +662,17 @@ flagged in `CHANGELOG.md`.
      │  inflow ──► InflowModel ──► modified_inflow  │
      │                 │                │           │
      │                 │          modified_starting │
+     │                 │          modified_fleet_mix│
      │                 │                │           │
      │                 ▼                ▼           │
      │           TrafficModel ◄─────────┘           │
      │                 │                            │
+     │          traffic│modified_traffic             │
      │                 ▼                            │
-     │     ┌─── modified_traffic                    │
-     │     │                                        │
-     │     └──► EmissionsModel ◄── modified_fleet_mix
-     │                 │           (from InflowModel)│
+     │           EmissionsModel ◄── modified_fleet_mix
+     │                 │                            │
      │                 ▼                            │
-     │           total_emissions                    │
-     │           total_modified_emissions  ◄── Outputs
+     │    total_emissions · total_modified_emissions │
      └──────────────────────────────────────────────┘
 ```
 
@@ -736,24 +692,15 @@ Each arrow is a **Level-1 wire** — a named field in an `Inputs` dataclass.
 
 ## Motivation: swapping implementations
 
-`TrafficModel` computes circulating traffic with `ts_solve` — an
-iterative steady-state solver. Two natural questions:
+`TrafficModel` computes circulating traffic with `ts_solve` — an iterative steady-state solver. Two natural questions:
 
-**a) Can we use a different model formulation?**
-A simpler linear approximation for fast exploration, or a more
-refined formula for higher accuracy — same phenomenon,
-different mathematical description.
+**a) Can we use a different model formulation?** A simpler linear approximation for fast exploration, or a more refined formula for higher accuracy — same phenomenon, different mathematical description.
 
-**b) Can we plug in an external simulator?**
-Real deployments may need to call an external traffic simulator
-(e.g. SUMO) rather than the built-in Python solver — same data
-flow, different computation engine.
+**b) Can we plug in an external simulator?** Real deployments may need to call an external traffic simulator (e.g. SUMO) rather than the built-in Python solver — same data flow, different computation engine.
 
 <br>
 
-Both cases share the **same `Inputs` / `Outputs` interface**.
-`ModelVariant` makes the swap explicit, validated, and reversible
-at construction time.
+Both cases share the **same `Inputs` / `Outputs` interface**. `ModelVariant` makes the swap explicit, validated, and reversible at construction time.
 
 ---
 
@@ -782,8 +729,7 @@ class SimpleTrafficModel(Model):
 #   traffic = ts_solve(inflow + starting)   ← 50-iteration feedback loop
 ```
 
-*Same interface. Different formula. Downstream code is unaware
-of the choice.*
+*Same interface. Different formula. Downstream code is unaware of the choice.*
 
 ---
 
@@ -800,8 +746,8 @@ class ExternalSimulatorTrafficModel(Model):
 
     def __init__(self, inflow, starting, modified_inflow, modified_starting):
         ...
-        # inflow and starting are passed as separate inputs to the
-        # simulator — the CDT graph does not pre-combine them.
+        # inflow and starting are passed as separate inputs to the simulator
+        # — the CDT graph does not pre-combine them.
         traffic = TimeseriesIndex("traffic",
             graph.function_call("sumo_simulate",
                                 inflow.node, starting.node))
@@ -812,8 +758,7 @@ class ExternalSimulatorTrafficModel(Model):
         ...
 ```
 
-At evaluation time `"sumo_simulate"` is registered with a
-`LambdaAdapter` that calls the external process.
+At evaluation time `"sumo_simulate"` is registered with a `LambdaAdapter` that calls the external process.
 
 ---
 
@@ -836,8 +781,7 @@ traffic = ModelVariant(
 )
 ```
 
-`traffic` behaves **exactly** like the active `Model` instance —
-downstream code needs no changes:
+`traffic` behaves **exactly** like the active `Model` instance — downstream code needs no changes:
 
 ```python
 _emissions = EmissionsModel(
@@ -853,8 +797,7 @@ _emissions = EmissionsModel(
 
 ## Contract enforcement across variants
 
-`ModelVariant` validates at construction time that all variants share
-**identical `Inputs` and `Outputs` field names**:
+`ModelVariant` validates at construction time that all variants share **identical `Inputs` and `Outputs` field names**:
 
 ```python
 # ❌ Raises ValueError immediately
@@ -873,8 +816,8 @@ ModelVariant(
 Inactive variants remain accessible for inspection:
 
 ```python
-traffic.variants["simple"].outputs.traffic    # SimpleTrafficModel output
-traffic.variants["sumo"].is_instantiated()    # SUMO variant state
+traffic.variants["simple"].outputs.traffic   # SimpleTrafficModel output
+traffic.variants["sumo"].is_instantiated()   # SUMO variant state
 ```
 
 ---
@@ -883,11 +826,9 @@ traffic.variants["sumo"].is_instantiated()    # SUMO variant state
 
 ## Future: dynamic (runtime) variant selection
 
-**Current:** `selector` is a static string resolved at construction
-time — the active variant does not change across scenarios.
+**Current:** `selector` is a static string resolved at construction time — the active variant does not change across scenarios.
 
-**Future:** select a variant *per scenario*, driven by a
-categorical random variable.
+**Future:** select a variant *per scenario*, driven by a categorical random variable.
 
 ```python
 # Conceptual — not yet implemented
@@ -903,8 +844,7 @@ traffic = ModelVariant(
 )
 ```
 
-This requires a `CategoricalIndex` type and evaluation-layer support.
-Tracked as a future roadmap item.
+This requires a `CategoricalIndex` type and evaluation-layer support. Tracked as a future roadmap item.
 
 ---
 
@@ -935,8 +875,7 @@ Tracked as a future roadmap item.
   └─────────────────────────────────┴────────────┴──────────────────┘
 ```
 
-A ~9 % NOx reduction — but with a **2× uncertainty range**.
-The single `DistributionIndex` propagates through the full pipeline.
+A ~9 % NOx reduction — but with a **2× uncertainty range**. The single `DistributionIndex` propagates through the full pipeline.
 
 ---
 
@@ -955,8 +894,7 @@ The single `DistributionIndex` propagates through the full pipeline.
 
 <br>
 
-The same pattern scales from a 5-index toy model to the full
-60-index Bologna model — and to any other civic domain.
+The same pattern scales from a 5-index toy model to the full 60-index Bologna model — and to any other civic domain.
 
 ---
 
@@ -984,14 +922,11 @@ The same pattern scales from a 5-index toy model to the full
 
 <br>
 
-**Companion code**
-`docs/seminar/seminar_bologna.py`
+**Companion code** — `docs/seminar/seminar_bologna.py`
 
-**Documentation**
-`docs/getting-started.md` · `docs/design/dd-cdt-modularity.md`
+**Documentation** — `docs/getting-started.md` · `docs/design/dd-cdt-modularity.md`
 
-**Source**
-`examples/mobility_bologna/mobility_bologna.py`
+**Source** — `examples/mobility_bologna/mobility_bologna.py`
 
 <br>
 
