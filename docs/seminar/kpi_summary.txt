@@ -1,0 +1,11 @@
+Bologna ZTL pricing — KPI summary
+200-scenario ensemble · cost_threshold ~ Uniform(4 €, 11 €)
+==================================================================
+KPI                                   Mean        5th – 95th pct
+──────────────────────────────────────────────────────────────────
+Base inflow                  168,139 veh/d                     —
+Modified inflow              139,720 veh/d         126 k – 148 k
+Shifted inflow                 5,620 veh/d             4 k – 8 k
+Paying vehicles               75,532 veh/d           60 k – 85 k
+Fees collected                 288,608 €/d       228 k – 325 k €
+NOx reduction                  108,857 g/d     81.0 – 152.6 kg/d

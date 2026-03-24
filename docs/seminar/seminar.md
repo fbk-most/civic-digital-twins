@@ -54,19 +54,61 @@ style: |
 <!-- _paginate: false -->
 
 # Civic Digital Twins
-## Modelling Urban Mobility with Typed Sub-Models
+## The CDT Modelling Framework
 
 *IO Contracts · Modularity · Model Variants*
 
 <br>
 
-Fondazione Bruno Kessler — FBK MOST
+**Marco Pistore** · MOST · Fondazione Bruno Kessler
+**Claude Sonnet 4.6** · Anthropic
 
 ---
 
-<!-- _footer: "Section 1 — Context" -->
+<!-- _footer: "Introduction" -->
 
-## The Bologna mobility challenge
+## What this seminar covers
+
+The **Civic Digital Twins (CDT)** library is a Python framework for building structured, modular models of civic systems.
+
+**Goal:** show how to define models that are *typed*, *composable*, and *easy to swap*.
+
+Four key concepts:
+- **Indexes** — typed, lazily-evaluated quantities: constants, formulas, timeseries, probability distributions
+- **IO Contracts** — typed interfaces between sub-models (`Inputs`, `Outputs`, `Expose`)
+- **Modularity** — each conceptual stage is an independent, testable sub-model
+- **Model Variants** — swap formulations or computation engines without touching downstream code
+
+All concepts are illustrated through a single running example: **Bologna city-centre road pricing (ZTL)**.
+The framework generalises to any civic domain — mobility, energy, water, healthcare.
+
+---
+
+<!-- _footer: "Introduction" -->
+
+## Outline
+
+| | Part | Topics |
+|---|---|---|
+| **0** | Motivating example | Bologna scenario, KPIs, model pipeline |
+| **1** | CDT Framework Basics | Indexes, distributions, simulation |
+| **2** | IO Contracts | Inputs, Outputs, Expose, warnings |
+| **3** | Modularity | Constructor wiring, sub-models |
+| **4** | Model Variants | Formulations, engines, `ModelVariant` |
+| **5** | Putting it all together | Results, summary, roadmap |
+
+---
+
+<!-- _class: section-header -->
+
+# Part 0 — Motivating Example
+## Bologna City-Centre Road Pricing
+
+---
+
+<!-- _footer: "Part 0 — Motivating Example" -->
+
+## The Bologna mobility example
 
 **Setting:** Bologna city centre — a *Zona a Traffico Limitato* (ZTL)
 
@@ -74,9 +116,9 @@ Fondazione Bruno Kessler — FBK MOST
 - Fleet composed of Euro 0 – Euro 6 vehicles
 - Each Euro class carries a different NOx emission factor
 
-**Policy under study:** road pricing
+**Hypothetical policy under study:** road pricing
 
-- Vehicles pay a per-entry fee, graduated by Euro class
+- Vehicles pay a per-entry fee (as in London or Milan), graduated by Euro class
 - Higher-polluting vehicles pay more → expected to reduce entries
 - Some drivers *anticipate* (enter before the window), some *postpone*
 
@@ -84,7 +126,7 @@ Fondazione Bruno Kessler — FBK MOST
 
 ---
 
-<!-- _footer: "Section 1 — Context" -->
+<!-- _footer: "Part 0 — Motivating Example" -->
 
 ## What we want to compute
 
@@ -104,7 +146,7 @@ In this example, we model the **price-elasticity threshold** as a random variabl
 
 ---
 
-<!-- _footer: "Section 1 — Context" -->
+<!-- _footer: "Part 0 — Motivating Example" -->
 
 ## How we will model it
 
@@ -249,16 +291,25 @@ The same `evaluate()` call handles both certain and uncertain parameters — no 
 
 *200-scenario ensemble; price-elasticity threshold ~ Uniform(4 €, 11 €)*
 
-| KPI | Mean | Std dev | 5th – 95th pct |
-|-----|------|---------|----------------|
-| Base inflow | 396 482 veh/d | — | — |
-| Modified inflow | 368 714 veh/d | ± 12 300 | 349 k – 390 k |
-| Shifted inflow | 27 768 veh/d | ± 4 100 | 21 k – 34 k |
-| NOx reduction | 2 013 g/d | ± 412 | 1 340 – 2 680 |
+<div class="columns">
+<div>
 
-<br>
+| KPI | Mean | 5th – 95th pct |
+|-----|------|----------------|
+| Base inflow     | 168 139 veh/d |  —              |
+| Modified inflow | 139 720 veh/d |  126 k – 148 k  |
+| Shifted inflow  |   5 620 veh/d |    4 k –   8 k  |
+| NOx reduction   | 108 857 g/d   |   81 – 153 kg/d |
 
-Reporting only the mean would hide the fact that the NOx reduction estimate spans a **2× range** depending on the unknown price-elasticity parameter.
+Reporting only the mean would hide the fact that the NOx reduction estimate spans a **~2× range** depending on the unknown price-elasticity parameter.
+
+</div>
+<div>
+
+![width:520px](kpi_uncertainty.png)
+
+</div>
+</div>
 
 ---
 
@@ -324,7 +375,7 @@ class InflowModel(Model):
         ...
 ```
 
-`model.indexes` is derived **automatically** from `Inputs` and `Outputs` — no flat list to maintain.
+The model's index list is derived **automatically** from `Inputs` and `Outputs` — no flat list to maintain.
 
 ---
 
@@ -527,15 +578,15 @@ class BolognaModel(Model):
         # Stage 2 — wired to Stage 1 outputs
         _traffic = TrafficModel(
             inflow=inflow,
-            modified_inflow=_inflow.outputs.modified_inflow,     # ← Level-1
-            modified_starting=_inflow.outputs.modified_starting, # ← Level-1
+            modified_inflow=_inflow.outputs.modified_inflow,     # ← contractual output
+            modified_starting=_inflow.outputs.modified_starting, # ← contractual output
         )
 
         # Stage 3 — wired to outputs of both Stage 1 and Stage 2
         _emissions = EmissionsModel(
-            traffic=_traffic.outputs.traffic,                     # ← Level-1
-            modified_traffic=_traffic.outputs.modified_traffic,   # ← Level-1
-            modified_fleet_mix=_inflow.outputs.modified_fleet_mix, # ← Level-1
+            traffic=_traffic.outputs.traffic,                     # ← contractual output
+            modified_traffic=_traffic.outputs.modified_traffic,   # ← contractual output
+            modified_fleet_mix=_inflow.outputs.modified_fleet_mix, # ← contractual output
             ...
         )
 ```
@@ -568,8 +619,10 @@ class TrafficModel(Model):
 
     def __init__(self, inflow, starting, modified_inflow, modified_starting):
         ...
-        traffic          = TimeseriesIndex("traffic",          ts_solve(inflow + starting))
-        modified_traffic = TimeseriesIndex("modified traffic", ts_solve(modified_inflow + modified_starting))
+        traffic          = TimeseriesIndex("traffic",
+                               inflow + starting)           # simplified: direct sum — wrong approximation
+        modified_traffic = TimeseriesIndex("modified traffic",
+                               modified_inflow + modified_starting)  # simplified: same
         ...
 ```
 
@@ -592,7 +645,7 @@ _emissions = EmissionsModel(
 )
 ```
 
-`EmissionsModel.Inputs` declares all of these fields — the contract is explicit. Swapping `TrafficModel` for a different implementation (say, a linear approximation) requires no changes to `EmissionsModel` as long as the `Outputs` field names stay the same.
+`EmissionsModel.Inputs` declares all of these fields — the contract is explicit. Swapping `TrafficModel` for a different implementation (say, a better approximation) requires no changes to `EmissionsModel` as long as the `Outputs` field names stay the same.
 
 ---
 
@@ -613,14 +666,10 @@ super().__init__(
         total_modified_emissions = _emissions.outputs.total_modified_emissions,
     ),
     expose=Expose(
-        # Named timeseries for plotting
-        traffic           = _traffic.outputs.traffic,
-        modified_traffic  = _traffic.outputs.modified_traffic,
-        emissions         = _emissions.outputs.emissions,
-        # All sub-model indexes so the engine can reach every graph node
-        inflow_indexes    = list(_inflow.indexes),
-        traffic_indexes   = list(_traffic.indexes),
-        emissions_indexes = list(_emissions.indexes),
+        # Named timeseries for plotting and inspection
+        traffic          = _traffic.outputs.traffic,
+        modified_traffic = _traffic.outputs.modified_traffic,
+        emissions        = _emissions.outputs.emissions,
     ),
 )
 ```
@@ -667,16 +716,16 @@ All access goes through `model.outputs.*` — the contract. No index is addresse
      │                 ▼                ▼           │
      │           TrafficModel ◄─────────┘           │
      │                 │                            │
-     │          traffic│modified_traffic             │
+     │          traffic · modified_traffic          │
      │                 ▼                            │
-     │           EmissionsModel ◄── modified_fleet_mix
+     │         EmissionsModel ◄── modified_fleet_mix│
      │                 │                            │
      │                 ▼                            │
-     │    total_emissions · total_modified_emissions │
+     │    total_emissions · total_modified_emissions│
      └──────────────────────────────────────────────┘
 ```
 
-Each arrow is a **Level-1 wire** — a named field in an `Inputs` dataclass.
+Each arrow carries a **contractual output** — a named field in an `Inputs` dataclass.
 
 ---
 
@@ -692,11 +741,11 @@ Each arrow is a **Level-1 wire** — a named field in an `Inputs` dataclass.
 
 ## Motivation: swapping implementations
 
-`TrafficModel` computes circulating traffic with `ts_solve` — an iterative steady-state solver. Two natural questions:
+`TrafficModel` as introduced in Part 3 uses a direct sum — an explicit simplification. Two natural questions arise:
 
-**a) Can we use a different model formulation?** A simpler linear approximation for fast exploration, or a more refined formula for higher accuracy — same phenomenon, different mathematical description.
+**a) Can we use a better model formulation?** An iterative steady-state solver for higher accuracy — same phenomenon, different mathematical description.
 
-**b) Can we plug in an external simulator?** Real deployments may need to call an external traffic simulator (e.g. SUMO) rather than the built-in Python solver — same data flow, different computation engine.
+**b) Can we plug in an external simulator?** Real deployments may need to call FTS (FBK's Fast Traffic Simulator) rather than the built-in Python solver — same data flow, different computation engine.
 
 <br>
 
@@ -709,27 +758,62 @@ Both cases share the **same `Inputs` / `Outputs` interface**. `ModelVariant` mak
 ## Case a — same phenomenon, two formulations
 
 ```python
-# Variant A: linear approximation (fast; useful for exploration)
-class SimpleTrafficModel(Model):
-
+# Variant A: TrafficModel from Part 3 — direct sum (our baseline)
+class TrafficModel(Model):
     Inputs  = TrafficModel.Inputs   # identical interface
     Outputs = TrafficModel.Outputs
-
     def __init__(self, inflow, starting, modified_inflow, modified_starting):
         ...
-        # Direct sum — no iterative solver
         traffic          = TimeseriesIndex("traffic",
-                               inflow + starting)
+                               inflow + starting)           # direct sum
         modified_traffic = TimeseriesIndex("modified traffic",
                                modified_inflow + modified_starting)
         ...
 
-
-# Variant B: iterative steady-state (the existing TrafficModel)
-#   traffic = ts_solve(inflow + starting)   ← 50-iteration feedback loop
+# Variant B: iterative steady-state solver (better approximation)
+class SolverTrafficModel(Model):
+    Inputs  = TrafficModel.Inputs
+    Outputs = TrafficModel.Outputs
+    def __init__(self, inflow, starting, modified_inflow, modified_starting):
+        ...
+        # ts_solve is a registered function resolved at evaluation time:
+        #   functions={"ts_solve": LambdaAdapter(_ts_solve)}
+        traffic          = TimeseriesIndex("traffic",
+                               graph.function_call("ts_solve", inflow + starting))
+        modified_traffic = TimeseriesIndex("modified traffic",
+                               graph.function_call("ts_solve",
+                                   modified_inflow + modified_starting))
+        ...
 ```
 
-*Same interface. Different formula. Downstream code is unaware of the choice.*
+*Same interface. Better formula. Downstream code is unaware of the choice.*
+
+---
+
+<!-- _footer: "Part 4 — Model Variants" -->
+
+## Registered functions
+
+`graph.function_call("name", ...)` inserts a **named node** into the lazy computation graph. The node carries no implementation in the model — it is resolved at evaluation time.
+
+```python
+# The implementation: a plain Python/NumPy function
+def _ts_solve(ts):
+    traffic = ts
+    for _ in range(50):                             # iterate to convergence
+        mu      = 1.0 + 3.0 * traffic.sum() / total_capacity
+        alfa    = (mu - 1.0) / mu
+        traffic = ts + np.roll(traffic, 1) * alfa
+    return traffic
+
+# Registration: supplied to the engine, not to the model
+result = Evaluation(model).evaluate(
+    ensemble,
+    functions={"ts_solve": LambdaAdapter(_ts_solve)},
+)
+```
+
+This decoupling means: the model definition never imports the implementation; the same model can be evaluated with a stub in tests; external simulators plug in through the same mechanism (`"fts_simulate"` in Case b).
 
 ---
 
@@ -738,27 +822,27 @@ class SimpleTrafficModel(Model):
 ## Case b — same structure, different engine
 
 ```python
-# Variant C: delegate to an external traffic simulator (e.g. SUMO)
-class ExternalSimulatorTrafficModel(Model):
+# Variant C: delegate to FTS — FBK's Fast Traffic Simulator
+class FtsTrafficModel(Model):
 
     Inputs  = TrafficModel.Inputs   # identical interface
     Outputs = TrafficModel.Outputs
 
     def __init__(self, inflow, starting, modified_inflow, modified_starting):
         ...
-        # inflow and starting are passed as separate inputs to the simulator
-        # — the CDT graph does not pre-combine them.
+        # inflow and starting are passed as separate inputs to FTS —
+        # the CDT graph does not pre-combine them.
         traffic = TimeseriesIndex("traffic",
-            graph.function_call("sumo_simulate",
+            graph.function_call("fts_simulate",
                                 inflow.node, starting.node))
 
         modified_traffic = TimeseriesIndex("modified traffic",
-            graph.function_call("sumo_simulate",
+            graph.function_call("fts_simulate",
                                 modified_inflow.node, modified_starting.node))
         ...
 ```
 
-At evaluation time `"sumo_simulate"` is registered with a `LambdaAdapter` that calls the external process.
+At evaluation time `"fts_simulate"` is registered with a `LambdaAdapter` that calls the external FTS process.
 
 ---
 
@@ -770,14 +854,14 @@ At evaluation time `"sumo_simulate"` is registered with a `LambdaAdapter` that c
 traffic = ModelVariant(
     "TrafficModel",
     variants={
-        "simple":    SimpleTrafficModel(
+        "linear":    TrafficModel(
                          inflow=inflow, modified_inflow=..., ...),
-        "iterative": TrafficModel(
+        "solver":    SolverTrafficModel(
                          inflow=inflow, modified_inflow=..., ...),
-        "sumo":      ExternalSimulatorTrafficModel(
+        "fts":       FtsTrafficModel(
                          inflow=inflow, modified_inflow=..., ...),
     },
-    selector="iterative",   # resolved once at construction time
+    selector="solver",      # resolved once at construction time
 )
 ```
 
@@ -804,21 +888,23 @@ _emissions = EmissionsModel(
 ModelVariant(
     "TrafficModel",
     variants={
-        "iterative": TrafficModel(...),
-        "wrong":     WrongModel(...),   # Outputs has 'result' not 'traffic'
+        "solver":    SolverTrafficModel(...),
+        "wrong":     WrongModel(...),      # Outputs has 'result' not 'traffic'
     },
-    selector="iterative",
+    selector="solver",
 )
-# ValueError: variants 'iterative' and 'wrong' have different
+# ValueError: variants 'solver' and 'wrong' have different
 #             outputs field names
 ```
 
-Inactive variants remain accessible for inspection:
+All variants are fully constructed when `ModelVariant(...)` is called — their output **Index objects** (graph nodes) are accessible regardless of which variant is selected:
 
 ```python
-traffic.variants["simple"].outputs.traffic   # SimpleTrafficModel output
-traffic.variants["sumo"].is_instantiated()   # SUMO variant state
+traffic.variants["linear"].outputs.traffic   # Index object from TrafficModel
+traffic.variants["solver"].outputs.traffic   # Index object from SolverTrafficModel
 ```
+
+Numerical values are only available for the active variant after `Evaluation.evaluate()`.
 
 ---
 
@@ -860,22 +946,47 @@ This requires a `CategoricalIndex` type and evaluation-layer support. Tracked as
 
 ## Bologna: what the model tells us
 
+Note: model and outcomes are not realistic!
+
 *200-scenario ensemble; price-elasticity threshold ~ Uniform(4 €, 11 €)*
 
 ```
-  ┌─────────────────────────────────┬────────────┬──────────────────┐
-  │ KPI                             │ Mean       │ 5th – 95th pct   │
-  ├─────────────────────────────────┼────────────┼──────────────────┤
-  │ Base inflow                     │ 396 482    │ —                │
-  │ Modified inflow                 │ 368 714    │ 349 k – 390 k    │
-  │ Shifted inflow                  │  27 768    │  21 k –  34 k    │
-  │ Paying vehicles                 │ 270 593    │ 221 k – 318 k    │
-  │ Fees collected                  │ 954 127 €  │ 732 k – 1.18 M € │
-  │ NOx reduction                   │  2 013 g/d │  1.3 – 2.7 kg/d  │
-  └─────────────────────────────────┴────────────┴──────────────────┘
+  ┌─────────────────────────────────┬───────────────┬───────────────────┐
+  │ KPI                             │ Mean          │ 5th – 95th pct    │
+  ├─────────────────────────────────┼───────────────┼───────────────────┤
+  │ Base inflow                     │ 168 139 veh/d │ —                 │
+  │ Modified inflow                 │ 139 720 veh/d │ 126 k – 148 k     │
+  │ Shifted inflow                  │   5 620 veh/d │   4 k –   8 k     │
+  │ Paying vehicles                 │  75 532 veh/d │  60 k –  85 k     │
+  │ Fees collected                  │ 288 608 €/d   │ 228 k – 325 k €   │
+  │ NOx reduction                   │ 108 857 g/d   │  81 k – 153 kg/d  │
+  └─────────────────────────────────┴───────────────┴───────────────────┘
 ```
 
-A ~9 % NOx reduction — but with a **2× uncertainty range**. The single `DistributionIndex` propagates through the full pipeline.
+A ~17 % reduction in traffic and NOx — but with a **~2× uncertainty range**. The single `DistributionIndex` propagates through the full pipeline.
+
+---
+
+<!-- _footer: "Part 5 — Summary" -->
+
+## Bologna: traffic and emissions under the policy
+
+<div class="columns">
+<div>
+
+![width:560px](kpi_traffic_ts.png)
+
+**Circulating traffic** — dashed = baseline, solid = policy mean, heatmap = ensemble spread. Reduction is visible throughout ZTL hours (07:30–19:30).
+
+</div>
+<div>
+
+![width:560px](kpi_emissions_ts.png)
+
+**NOx emissions** — the ensemble spread is tighter here because emissions are nearly linear in traffic at any given time step.
+
+</div>
+</div>
 
 ---
 

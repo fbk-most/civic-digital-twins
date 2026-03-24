@@ -2,11 +2,11 @@
 
 Sections mirror the slide deck (docs/seminar/seminar.md):
 
-  §1  A first end-to-end run            (CDT basics)
+  §1  A first end-to-end run             (CDT basics)
   §2  IO Contracts                       (Inputs / Outputs / Expose)
-  §3  Modularity                         (constructor wiring, pipeline)
-  §4a ModelVariant — model formulation   (SimpleTrafficModel vs IterativeTrafficModel)
-  §4b ModelVariant — engine variant      (IterativeTrafficModel vs ExternalSimulatorModel)
+  §3  Modularity                         (Constructor wiring, pipeline)
+  §4a ModelVariant — model formulation   (LinearTrafficModel vs SolverTrafficModel)
+  §4b ModelVariant — engine variant      (SolverTrafficModel vs FtsTrafficModel)
 
 Run from the repo root:
 
@@ -46,6 +46,8 @@ from mobility_bologna.mobility_bologna import (
     _ts_solve,
     compute_kpis,
     evaluate,
+    plot_field_graph,
+    roundup,
 )
 from mobility_bologna.mobility_bologna_data import vehicle_inflow, vehicle_starting
 
@@ -110,6 +112,124 @@ out = _SEMINAR_DIR / "kpi_inflow.png"
 fig.savefig(out, dpi=150)
 print(f"\nPlot saved → {out}")
 plt.close(fig)
+
+# ── Per-scenario statistics ──────────────────────────────────────────────────
+_nox_reduction = evals[model.outputs.total_emissions][:, 0] - evals[model.outputs.total_modified_emissions][:, 0]
+
+_scalar_kpis = [
+    ("Base inflow", evals[model.outputs.total_base_inflow][:, 0], "veh/day", True),
+    ("Modified inflow", evals[model.outputs.total_modified_inflow][:, 0], "veh/day", False),
+    ("Shifted inflow", evals[model.outputs.total_shifted][:, 0], "veh/day", False),
+    ("Paying vehicles", evals[model.outputs.total_paying][:, 0], "veh/day", False),
+    ("Fees collected", evals[model.outputs.total_payed][:, 0], "EUR/day", False),
+    ("NOx reduction", _nox_reduction, "g/day", False),
+]
+
+print("\nKPI statistics (mean, std, 5th–95th percentile):")
+_col = "  {:<22s}  {:>10s}  {:>8s}  {:>10s}  {:>10s}  {}"
+print(_col.format("KPI", "Mean", "Std", "5th pct", "95th pct", "Unit"))
+print("  " + "─" * 75)
+_kpi_stats = []
+for label, arr, unit, no_uncertainty in _scalar_kpis:
+    mean = float(arr.mean())
+    std = float(arr.std())
+    p5, p95 = (float(x) for x in np.percentile(arr, [5, 95]))
+    print(_col.format(label, f"{mean:,.0f}", f"{std:,.0f}", f"{p5:,.0f}", f"{p95:,.0f}", unit))
+    _kpi_stats.append((label, mean, std, p5, p95, unit, no_uncertainty))
+
+
+# ── Write kpi_summary.txt (slide-ready format) ───────────────────────────────
+def _slide_fmt(mean: float, p5: float, p95: float, unit: str, no_uncertainty: bool) -> tuple[str, str]:
+    """Format mean and range as they appear in the slide's KPI table."""
+    if unit == "veh/day":
+        mean_s = f"{mean:,.0f} veh/d"
+        range_s = "—" if no_uncertainty else f"{p5 / 1000:.0f} k – {p95 / 1000:.0f} k"
+    elif unit == "g/day":
+        mean_s = f"{mean:,.0f} g/d"
+        range_s = "—" if no_uncertainty else f"{p5 / 1000:.1f} – {p95 / 1000:.1f} kg/d"
+    elif unit == "EUR/day":
+        mean_s = f"{mean:,.0f} €/d"
+        range_s = "—" if no_uncertainty else f"{p5 / 1000:.0f} k – {p95 / 1000:.0f} k €"
+    else:
+        mean_s = f"{mean:,.0f} {unit}"
+        range_s = "—" if no_uncertainty else f"{p5:,.0f} – {p95:,.0f}"
+    return mean_s, range_s
+
+
+_summary_path = _SEMINAR_DIR / "kpi_summary.txt"
+with open(_summary_path, "w") as _fh:
+    _fh.write("Bologna ZTL pricing — KPI summary\n")
+    _fh.write("200-scenario ensemble · cost_threshold ~ Uniform(4 €, 11 €)\n")
+    _fh.write("=" * 66 + "\n")
+    _fh.write(f"{'KPI':<24}  {'Mean':>16}  {'5th – 95th pct':>20}\n")
+    _fh.write("─" * 66 + "\n")
+    for label, mean, std, p5, p95, unit, no_unc in _kpi_stats:
+        mean_s, range_s = _slide_fmt(mean, p5, p95, unit, no_unc)
+        _fh.write(f"{label:<24}  {mean_s:>16}  {range_s:>20}\n")
+print(f"\nKPI summary written → {_summary_path}")
+print("  (copy these numbers into the 'Bologna: what the model tells us' slide before the PR)")
+
+# ── Uncertainty range chart (kpi_uncertainty.png) ────────────────────────────
+_t_stats = [(l, m, s, p5, p95, u) for l, m, s, p5, p95, u, no_u in _kpi_stats if u == "veh/day" and not no_u]
+_n_stats = [(l, m, s, p5, p95, u) for l, m, s, p5, p95, u, no_u in _kpi_stats if u == "g/day"]
+
+fig2, (ax_t, ax_n) = plt.subplots(1, 2, figsize=(11, 3.5))
+
+_colors_t = ["#55A868", "#DD8452", "#C44E52"]
+for i, (label, mean, std, p5, p95, unit) in enumerate(_t_stats):
+    ax_t.barh(i, mean, color=_colors_t[i % len(_colors_t)], alpha=0.75, height=0.55)
+    ax_t.errorbar(mean, i, xerr=[[mean - p5], [p95 - mean]], fmt="none", color="#333333", capsize=5, linewidth=1.5)
+ax_t.set_yticks(range(len(_t_stats)))
+ax_t.set_yticklabels([s[0] for s in _t_stats])
+ax_t.set_xlabel("vehicles / day")
+ax_t.set_title("Traffic KPIs")
+ax_t.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x / 1000:.0f} k"))
+
+label, mean, std, p5, p95, unit = _n_stats[0]
+ax_n.barh(0, mean, color="#8172B2", alpha=0.75, height=0.55)
+ax_n.errorbar(mean, 0, xerr=[[mean - p5], [p95 - mean]], fmt="none", color="#333333", capsize=5, linewidth=1.5)
+ax_n.set_yticks([0])
+ax_n.set_yticklabels(["NOx reduction"])
+ax_n.set_xlabel("g / day")
+ax_n.set_title("Emissions KPI")
+
+fig2.suptitle(
+    "Bologna ZTL pricing — KPI uncertainty  (200 scenarios, whiskers = 5th–95th percentile)",
+    fontsize=9,
+)
+fig2.tight_layout()
+out_u = _SEMINAR_DIR / "kpi_uncertainty.png"
+fig2.savefig(out_u, dpi=150)
+print(f"Uncertainty plot saved → {out_u}")
+plt.close(fig2)
+
+# ── Timeseries uncertainty plots ─────────────────────────────────────────────
+_ts_traffic = evals[model.expose.traffic]
+_ts_mod_traffic = evals[model.expose.modified_traffic]
+_ts_emissions = evals[model.expose.emissions]
+
+fig_t = plot_field_graph(
+    _ts_mod_traffic,
+    "Time of day",
+    "Circulating traffic (veh)",
+    vertical_size=roundup(float(np.max(_ts_traffic))),
+    reference_line=_ts_traffic.mean(axis=0),
+)
+out_tt = _SEMINAR_DIR / "kpi_traffic_ts.png"
+fig_t.savefig(out_tt, dpi=150)
+print(f"Traffic timeseries plot saved → {out_tt}")
+plt.close(fig_t)
+
+fig_e = plot_field_graph(
+    _ts_emissions,
+    "Time of day",
+    "NOx emissions (g)",
+    vertical_size=roundup(float(np.max(_ts_emissions))),
+)
+out_et = _SEMINAR_DIR / "kpi_emissions_ts.png"
+fig_e.savefig(out_et, dpi=150)
+print(f"Emissions timeseries plot saved → {out_et}")
+plt.close(fig_e)
 
 # ===========================================================================
 # §2  IO CONTRACTS
@@ -238,8 +358,8 @@ print(f"  InflowModel built  — {len(list(_inflow.indexes))} indexes")
 _traffic = TrafficModel(
     ts_inflow=ts_inflow,
     ts_starting=ts_starting,
-    modified_inflow=_inflow.outputs.modified_inflow,  # ← Level-1 wire
-    modified_starting=_inflow.outputs.modified_starting,  # ← Level-1 wire
+    modified_inflow=_inflow.outputs.modified_inflow,  # ← contractual output
+    modified_starting=_inflow.outputs.modified_starting,  # ← contractual output
 )
 print(f"  TrafficModel built — {len(list(_traffic.indexes))} indexes")
 
@@ -247,9 +367,9 @@ _emissions = EmissionsModel(
     ts=ts,
     i_p_start_time=i_p_start_time,
     i_p_end_time=i_p_end_time,
-    traffic=_traffic.outputs.traffic,  # ← Level-1 wire
-    modified_traffic=_traffic.outputs.modified_traffic,  # ← Level-1 wire
-    modified_euro_class_split=_inflow.outputs.modified_euro_class_split,  # ← Level-1 wire
+    traffic=_traffic.outputs.traffic,  # ← contractual output
+    modified_traffic=_traffic.outputs.modified_traffic,  # ← contractual output
+    modified_euro_class_split=_inflow.outputs.modified_euro_class_split,  # ← contractual output
 )
 print(f"  EmissionsModel built — {len(list(_emissions.indexes))} indexes")
 
@@ -263,19 +383,21 @@ print(f"  emissions.outputs.total_emissions.name = {_emissions.outputs.total_emi
 # ===========================================================================
 _section("§4a  ModelVariant — case a: same phenomenon, two model formulations")
 
-# ── SimpleTrafficModel: direct sum, no iterative solver ─────────────────────
+# ── LinearTrafficModel: direct sum, no iterative solver ──────────────────────
+# NOTE: in the slides this class is called TrafficModel for simplicity;
+# it is renamed here to avoid shadowing the imported Bologna TrafficModel.
 
 
-class SimpleTrafficModel(Model):
-    """Approximation: traffic ≈ inflow + starting (no iterative solve).
+class LinearTrafficModel(Model):
+    """Approximation: traffic ≈ inflow + starting (direct sum, no iterative solve).
 
-    Fast to evaluate; useful for sensitivity sweeps where solver accuracy
-    is less important than speed.
+    Corresponds to the TrafficModel shown in Part 3 of the slides.
+    Used here as Variant A (the baseline) in the ModelVariant demo.
     """
 
     @dataclass
     class Inputs:
-        """Inputs of :class:`SimpleTrafficModel` — identical to :class:`TrafficModel`."""
+        """Inputs of :class:`LinearTrafficModel` — identical to :class:`TrafficModel`."""
 
         ts_inflow: TimeseriesIndex
         ts_starting: TimeseriesIndex
@@ -284,7 +406,7 @@ class SimpleTrafficModel(Model):
 
     @dataclass
     class Outputs:
-        """Outputs of :class:`SimpleTrafficModel` — identical to :class:`TrafficModel`."""
+        """Outputs of :class:`LinearTrafficModel` — identical to :class:`TrafficModel`."""
 
         traffic: TimeseriesIndex
         modified_traffic: TimeseriesIndex
@@ -300,8 +422,8 @@ class SimpleTrafficModel(Model):
         modified_inflow: Index,
         modified_starting: Index,
     ) -> None:
-        Inputs = SimpleTrafficModel.Inputs
-        Outputs = SimpleTrafficModel.Outputs
+        Inputs = LinearTrafficModel.Inputs
+        Outputs = LinearTrafficModel.Outputs
 
         inputs = Inputs(
             ts_inflow=ts_inflow,
@@ -320,7 +442,7 @@ class SimpleTrafficModel(Model):
         traffic_ratio = Index("ratio modified/base traffic", traffic / modified_traffic)
 
         super().__init__(
-            "SimpleTraffic",
+            "LinearTraffic",
             inputs=inputs,
             outputs=Outputs(
                 traffic=traffic,
@@ -335,14 +457,15 @@ class SimpleTrafficModel(Model):
 
 # ── Build both variants and wrap in a ModelVariant ───────────────────────────
 
-_simple_traffic = SimpleTrafficModel(
+_linear_traffic = LinearTrafficModel(
     ts_inflow=ts_inflow,
     ts_starting=ts_starting,
     modified_inflow=_inflow.outputs.modified_inflow,
     modified_starting=_inflow.outputs.modified_starting,
 )
 
-_iterative_traffic = TrafficModel(
+# SolverTrafficModel in the slides = the real Bologna TrafficModel (uses ts_solve)
+_solver_traffic = TrafficModel(
     ts_inflow=ts_inflow,
     ts_starting=ts_starting,
     modified_inflow=_inflow.outputs.modified_inflow,
@@ -352,18 +475,18 @@ _iterative_traffic = TrafficModel(
 traffic_variant_a = ModelVariant(
     "TrafficModel",
     variants={
-        "simple": _simple_traffic,
-        "iterative": _iterative_traffic,
+        "linear": _linear_traffic,
+        "solver": _solver_traffic,
     },
-    selector="iterative",
+    selector="solver",
 )
 
-print(f"\nModelVariant selector = 'iterative'")
+print(f"\nModelVariant selector = 'solver'")
 print(f"  active traffic output  : {traffic_variant_a.outputs.traffic.name!r}")
-print(f"  inactive (simple) reachable via variants dict:")
+print(f"  inactive (linear) reachable via variants dict:")
 print(
-    f"    traffic_variant_a.variants['simple'].outputs.traffic.name = "
-    f"{traffic_variant_a.variants['simple'].outputs.traffic.name!r}"
+    f"    traffic_variant_a.variants['linear'].outputs.traffic.name = "
+    f"{traffic_variant_a.variants['linear'].outputs.traffic.name!r}"
 )
 
 # Demonstrate contract enforcement
@@ -383,8 +506,8 @@ class _WrongOutputsModel(Model):
 try:
     ModelVariant(
         "Bad",
-        variants={"iterative": _iterative_traffic, "wrong": _WrongOutputsModel()},
-        selector="iterative",
+        variants={"solver": _solver_traffic, "wrong": _WrongOutputsModel()},
+        selector="solver",
     )
 except ValueError as exc:
     print(f"  ✅ ValueError caught: {exc}")
@@ -396,18 +519,18 @@ except ValueError as exc:
 _section("§4b  ModelVariant — case b: same interface, different engine")
 
 
-class ExternalSimulatorTrafficModel(Model):
-    """Traffic model that delegates to an external simulator.
+class FtsTrafficModel(Model):
+    """Traffic model that delegates to FTS — FBK's Fast Traffic Simulator.
 
     The computation graph passes the raw inflow and starting timeseries
-    directly to the 'sumo_simulate' function node, which is registered at
+    directly to the 'fts_simulate' function node, which is registered at
     evaluation time.  The CDT engine does not perform the iterative
     convergence internally — the external process handles it entirely.
     """
 
     @dataclass
     class Inputs:
-        """Inputs — identical to :class:`TrafficModel`."""
+        """Inputs of :class:`FtsTrafficModel` — identical to :class:`TrafficModel`."""
 
         ts_inflow: TimeseriesIndex
         ts_starting: TimeseriesIndex
@@ -416,7 +539,7 @@ class ExternalSimulatorTrafficModel(Model):
 
     @dataclass
     class Outputs:
-        """Outputs — identical to :class:`TrafficModel`."""
+        """Outputs of :class:`FtsTrafficModel` — identical to :class:`TrafficModel`."""
 
         traffic: TimeseriesIndex
         modified_traffic: TimeseriesIndex
@@ -432,8 +555,8 @@ class ExternalSimulatorTrafficModel(Model):
         modified_inflow: Index,
         modified_starting: Index,
     ) -> None:
-        Inputs = ExternalSimulatorTrafficModel.Inputs
-        Outputs = ExternalSimulatorTrafficModel.Outputs
+        Inputs = FtsTrafficModel.Inputs
+        Outputs = FtsTrafficModel.Outputs
 
         inputs = Inputs(
             ts_inflow=ts_inflow,
@@ -442,16 +565,16 @@ class ExternalSimulatorTrafficModel(Model):
             modified_starting=modified_starting,
         )
 
-        # Raw inflow and starting are passed to the external simulator as
-        # separate arguments — the simulator combines them internally.
+        # Raw inflow and starting are passed to FTS as separate arguments —
+        # the simulator combines them internally.
         # .node extracts the underlying graph.Node from each GenericIndex.
         traffic = TimeseriesIndex(
             "reference traffic",
-            graph.function_call("sumo_simulate", inputs.ts_inflow.node, inputs.ts_starting.node),
+            graph.function_call("fts_simulate", inputs.ts_inflow.node, inputs.ts_starting.node),
         )
         modified_traffic = TimeseriesIndex(
             "modified traffic",
-            graph.function_call("sumo_simulate", inputs.modified_inflow.node, inputs.modified_starting.node),
+            graph.function_call("fts_simulate", inputs.modified_inflow.node, inputs.modified_starting.node),
         )
 
         total_modified_traffic = Index("total modified traffic", modified_traffic.sum())
@@ -460,7 +583,7 @@ class ExternalSimulatorTrafficModel(Model):
         traffic_ratio = Index("ratio modified/base traffic", traffic / modified_traffic)
 
         super().__init__(
-            "ExternalSimulatorTraffic",
+            "FtsTraffic",
             inputs=inputs,
             outputs=Outputs(
                 traffic=traffic,
@@ -473,17 +596,17 @@ class ExternalSimulatorTrafficModel(Model):
         )
 
 
-def _sumo_simulate_stub(inflow: np.ndarray, starting: np.ndarray) -> np.ndarray:
-    """Stand-in for a real SUMO call.
+def _fts_simulate_stub(inflow: np.ndarray, starting: np.ndarray) -> np.ndarray:
+    """Stand-in for a real FTS (FBK's Fast Traffic Simulator) call.
 
-    In production this would serialize the arrays, invoke the SUMO process,
+    In production this would serialize the arrays, invoke the FTS process,
     and deserialize the result.  Here we reuse the same iterative solver so
     the output is numerically identical to the built-in variant.
     """
     return _ts_solve(inflow + starting)
 
 
-_external_traffic = ExternalSimulatorTrafficModel(
+_fts_traffic = FtsTrafficModel(
     ts_inflow=ts_inflow,
     ts_starting=ts_starting,
     modified_inflow=_inflow.outputs.modified_inflow,
@@ -493,19 +616,19 @@ _external_traffic = ExternalSimulatorTrafficModel(
 traffic_variant_b = ModelVariant(
     "TrafficModel",
     variants={
-        "builtin": _iterative_traffic,
-        "external": _external_traffic,
+        "solver": _solver_traffic,
+        "fts": _fts_traffic,
     },
-    selector="builtin",
+    selector="solver",
 )
 
-print(f"\nModelVariant selector = 'builtin'")
-print(f"  proxy delegates to : {traffic_variant_b.variants['builtin'].__class__.__name__}")
-print(f"  external variant   : {traffic_variant_b.variants['external'].__class__.__name__}")
+print(f"\nModelVariant selector = 'solver'")
+print(f"  proxy delegates to : {traffic_variant_b.variants['solver'].__class__.__name__}")
+print(f"  fts variant        : {traffic_variant_b.variants['fts'].__class__.__name__}")
 print(f"  same Outputs field names? ", end="")
-builtin_fields = set(TrafficModel.Outputs.__dataclass_fields__)
-external_fields = set(ExternalSimulatorTrafficModel.Outputs.__dataclass_fields__)
-print("✅ yes" if builtin_fields == external_fields else f"❌ differ: {builtin_fields ^ external_fields}")
+solver_fields = set(TrafficModel.Outputs.__dataclass_fields__)
+fts_fields = set(FtsTrafficModel.Outputs.__dataclass_fields__)
+print("✅ yes" if solver_fields == fts_fields else f"❌ differ: {solver_fields ^ fts_fields}")
 
 # ── Evaluate both variants and compare results ───────────────────────────────
 print("\nEvaluating both variants (size=50) and comparing total_modified_traffic …")
@@ -558,18 +681,18 @@ def _run_variant(traffic_mv: ModelVariant, functions: dict) -> float:
     return float(result[root.outputs.total_modified_traffic].mean())
 
 
-builtin_functions = {"ts_solve": executor.LambdaAdapter(_ts_solve)}
-external_functions = {"sumo_simulate": executor.LambdaAdapter(_sumo_simulate_stub)}
+solver_functions = {"ts_solve": executor.LambdaAdapter(_ts_solve)}
+fts_functions = {"fts_simulate": executor.LambdaAdapter(_fts_simulate_stub)}
 
-mean_builtin = _run_variant(traffic_variant_b, builtin_functions)
-mean_external = _run_variant(
-    ModelVariant("T", variants={"external": _external_traffic, "builtin": _iterative_traffic}, selector="external"),
-    external_functions,
+mean_solver = _run_variant(traffic_variant_b, solver_functions)
+mean_fts = _run_variant(
+    ModelVariant("T", variants={"fts": _fts_traffic, "solver": _solver_traffic}, selector="fts"),
+    fts_functions,
 )
 
-print(f"  builtin  variant — mean total modified traffic : {mean_builtin:,.0f} veh")
-print(f"  external variant — mean total modified traffic : {mean_external:,.0f} veh")
-print(f"  difference (stub ≈ builtin, so should be ~0)  : {abs(mean_builtin - mean_external):,.0f} veh")
+print(f"  solver variant — mean total modified traffic : {mean_solver:,.0f} veh")
+print(f"  fts    variant — mean total modified traffic : {mean_fts:,.0f} veh")
+print(f"  difference (stub ≈ solver, so should be ~0)  : {abs(mean_solver - mean_fts):,.0f} veh")
 
 
 # ===========================================================================
