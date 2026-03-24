@@ -1,4 +1,9 @@
-# Byte-compiled / optimized / DLL files
+# Node.js (e.g. local Marp CLI installation)
+node_modules/
+package.json
+package-lock.json
+
+# Byte-compiled / optimized / .pyc files
 __pycache__/
 *.py[cod]
 *$py.class
