@@ -1,6 +1,7 @@
 """Model and index types for digital twin models."""
 
 from .index import (
+    CategoricalIndex,
     ConstIndex,
     Distribution,
     DistributionIndex,
@@ -12,6 +13,7 @@ from .model import InputsContractWarning, Model, ModelContractWarning
 from .model_variant import ModelVariant
 
 __all__ = [
+    "CategoricalIndex",
     "ConstIndex",
     "Distribution",
     "DistributionIndex",
