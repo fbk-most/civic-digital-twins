@@ -279,7 +279,7 @@ def test_distribution_ensemble_raises_for_non_distribution_abstract():
     I_placeholder = Index("p", None)  # abstract but not distribution-backed
     model = _make_model(I_placeholder)
 
-    with pytest.raises(ValueError, match="non-distribution"):
+    with pytest.raises(ValueError, match="unsupported indexes"):
         DistributionEnsemble(model, size=10)
 
 
