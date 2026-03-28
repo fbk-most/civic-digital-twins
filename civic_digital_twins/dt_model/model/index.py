@@ -27,7 +27,7 @@ class Distribution(Protocol):
         **kwds,
     ) -> np.ndarray:
         """Cumulative distribution function."""
-        ...
+        ...  # pragma: no cover
 
     def rvs(
         self,
@@ -35,15 +35,15 @@ class Distribution(Protocol):
         **kwargs,
     ) -> float | np.ndarray:
         """Random variable sampling."""
-        ...
+        ...  # pragma: no cover
 
     def mean(self, *args, **kwds) -> float | np.ndarray:
         """Random variable mean."""
-        ...
+        ...  # pragma: no cover
 
     def std(self, *args, **kwds) -> float | np.ndarray:
         """Random variable standard deviation."""
-        ...
+        ...  # pragma: no cover
 
 
 class GenericIndex(ABC):

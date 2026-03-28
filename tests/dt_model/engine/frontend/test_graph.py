@@ -700,3 +700,52 @@ def test_piecewise_empty_raises():
 
     with pytest.raises(ValueError):
         graph.piecewise()
+
+
+# ===========================================================================
+# variant_selector and exclusive_multi_clause_where repr
+# ===========================================================================
+
+
+def test_variant_selector_repr():
+    """variant_selector.__repr__ includes the class name and node ids."""
+    sel_node = graph.placeholder("mode")
+    branch_a = graph.constant(1.0)
+    branch_b = graph.constant(2.0)
+    merge_a = graph.placeholder("out_a")
+    vs = graph.variant_selector(
+        selector_node=sel_node,
+        branch_map={"a": [branch_a], "b": [branch_b]},
+        merge_nodes=[merge_a],
+        name="vs:test",
+    )
+    r = repr(vs)
+    assert "variant_selector" in r
+    assert f"n{sel_node.id}" in r
+    assert f"n{merge_a.id}" in r
+
+
+def test_exclusive_multi_clause_where_repr():
+    """exclusive_multi_clause_where.__repr__ includes the class name and node ids."""
+    sel_node = graph.placeholder("mode")
+    branch_a = graph.constant(1.0)
+    branch_b = graph.constant(2.0)
+    cond_a = graph.equal(sel_node, graph.constant("a"))
+    cond_b = graph.equal(sel_node, graph.constant("b"))
+    default = graph.constant(float("nan"))
+    vs = graph.variant_selector(
+        selector_node=sel_node,
+        branch_map={"a": [branch_a], "b": [branch_b]},
+        merge_nodes=[],
+        name="vs:test",
+    )
+    mcw = graph.exclusive_multi_clause_where(
+        clauses=[(cond_a, branch_a), (cond_b, branch_b)],
+        default_value=default,
+        companion=vs,
+        name="mcw:test",
+    )
+    r = repr(mcw)
+    assert "exclusive_multi_clause_where" in r
+    assert f"n{vs.id}" in r
+    assert f"n{default.id}" in r

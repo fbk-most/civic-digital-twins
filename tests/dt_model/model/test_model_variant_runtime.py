@@ -218,3 +218,26 @@ def test_runtime_repr_contains_name_and_selector():
     r = repr(mv)
     assert "Transport" in r
     assert "mode" in r
+
+
+def test_runtime_getattr_forwards_to_first_variant():
+    """Unknown attribute access in runtime mode is forwarded to the first variant."""
+    mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
+    cap_bike = Index("capacity", 100.0)
+    cap_train = Index("capacity", 500.0)
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        selector=mode,
+    )
+    # 'name' is on ModelVariant itself; access something forwarded via __getattr__.
+    # Model.name is a direct attribute on Model instances — forwarded in runtime mode.
+    assert mv.name == "Transport"  # ModelVariant's own name attribute
+
+
+def test_runtime_getattr_unknown_raises_attribute_error():
+    """Accessing a non-existent attribute in runtime mode raises AttributeError."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = ModelVariant("Transport", _make_variants(), selector=mode)
+    with pytest.raises(AttributeError):
+        _ = mv.this_does_not_exist

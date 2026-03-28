@@ -31,7 +31,7 @@ class Ensemble(Protocol):
 
     def __iter__(self) -> Iterator[WeightedScenario]:
         """Yield weighted scenarios."""
-        ...
+        ...  # pragma: no cover
 
 
 class DistributionEnsemble:

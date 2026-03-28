@@ -821,34 +821,39 @@ def test_inputs_contract_no_crash_when_signature_unavailable():
 
 
 def test_inputs_contract_skips_params_absent_from_locals():
-    """_check_inputs_contract silently skips parameters not present in f_locals.
+    """_check_inputs_contract silently skips parameters deleted before super().__init__().
 
     This covers the ``value is inspect.Parameter.empty`` branch — hit when a
-    parameter declared in the signature has no corresponding entry in the
-    caller's local variables (e.g. a ``**kwargs`` catch-all or a parameter
-    whose name was shadowed before ``super().__init__()`` was called).
+    parameter declared in the signature is removed from local scope (via ``del``)
+    before ``super().__init__()`` is called.
     """
     import warnings
 
-    class _ModelWithKwargs(Model):
+    class _ModelWithDeletedParam(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+
         @dataclasses.dataclass
         class Outputs:
             result: Index
 
-        # **kwargs is in the signature but will never appear as a named
-        # local variable, so its entry in f_locals is absent.
-        def __init__(self, x: Index, **kwargs) -> None:  # type: ignore[override]
+        def __init__(self, x: Index, y: Index) -> None:  # type: ignore[override]
             result = Index("result", x + 1.0)
-            super().__init__("M", outputs=_ModelWithKwargs.Outputs(result=result))
+            del y  # y is now absent from f_locals when super().__init__ inspects
+            super().__init__(
+                "M",
+                inputs=_ModelWithDeletedParam.Inputs(x=x),
+                outputs=_ModelWithDeletedParam.Outputs(result=result),
+            )
 
     x = Index("x", 1.0)
+    y = Index("y", 2.0)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        # Must not raise even though 'kwargs' has no entry in f_locals.
-        _ModelWithKwargs(x)
+        # Must not raise even though 'y' is absent from f_locals.
+        _ModelWithDeletedParam(x, y)
 
-    # x is undeclared in Inputs so one InputsContractWarning fires for it,
-    # but no crash or extra warning for the absent **kwargs parameter.
+    # No warning fires: x is declared in Inputs; y was deleted before inspection.
     contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
-    assert len(contract_warnings) == 1
-    assert "x" in str(contract_warnings[0].message)
+    assert len(contract_warnings) == 0
