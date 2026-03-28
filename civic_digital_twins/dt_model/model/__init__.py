@@ -9,10 +9,11 @@ from .index import (
     Index,
     TimeseriesIndex,
 )
-from .model import InputsContractWarning, Model, ModelContractWarning
+from .model import AbstractIndexNotInInputsWarning, InputsContractWarning, Model, ModelContractWarning
 from .model_variant import ModelVariant
 
 __all__ = [
+    "AbstractIndexNotInInputsWarning",
     "CategoricalIndex",
     "ConstIndex",
     "Distribution",
