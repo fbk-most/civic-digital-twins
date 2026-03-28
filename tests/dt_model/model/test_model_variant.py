@@ -164,8 +164,8 @@ def test_static_selector_unknown_key_raises():
 
 
 def test_non_string_selector_raises_value_error():
-    """Passing a value that does not match any key raises ValueError."""
-    with pytest.raises(ValueError, match="does not match any"):
+    """Passing an invalid selector type raises ValueError."""
+    with pytest.raises(ValueError, match="selector must be a str"):
         ModelVariant("Transport", _make_variants(), selector=42)  # type: ignore[arg-type]
 
 
