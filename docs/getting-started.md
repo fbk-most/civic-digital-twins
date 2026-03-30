@@ -3,7 +3,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)        |
-| Last-Updated | 2026-03-20                                     |
+| Last-Updated | 2026-03-30                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -129,8 +129,10 @@ print(model.is_instantiated())    # False
 
 ## 2 — Build an ensemble
 
-`DistributionEnsemble` draws `size` independent samples from every
-distribution-backed abstract index and yields equally-weighted scenarios:
+`DistributionEnsemble` draws `size` independent samples from every abstract
+index and yields equally-weighted scenarios.  Two kinds of abstract index are
+supported: `DistributionIndex` (sampled via its `scipy.stats` distribution) and
+`CategoricalIndex` (sampled from its probability-weighted string outcomes):
 
 ```python
 from civic_digital_twins.dt_model import DistributionEnsemble
@@ -207,6 +209,14 @@ one sub-model into the constructor of the next.
 See [docs/design/dd-cdt-modularity.md](design/dd-cdt-modularity.md)
 for the full concept guide, including `ModelVariant`, decomposition
 patterns, and a step-by-step Bologna walkthrough.
+
+`ModelVariant` supports two selection modes:
+
+* **Static mode** (`selector: str`) — the active sub-model is fixed at
+  construction time.
+* **Runtime mode** (`selector: CategoricalIndex | graph.Node`) — a merged
+  computation graph is built so variant dispatch happens at evaluation time,
+  enabling probabilistic selection via `DistributionEnsemble`.
 
 ---
 
