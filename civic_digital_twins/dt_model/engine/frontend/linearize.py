@@ -156,12 +156,27 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
     if isinstance(node, graph.where):
         return [node.condition, node.then, node.otherwise]
 
-    if isinstance(node, graph.multi_clause_where):
+    if isinstance(node, graph.exclusive_multi_clause_where):
         deps: list[graph.Node] = []
         for cond, value in node.clauses:
             deps.append(cond)
             deps.append(value)
         deps.append(node.default_value)
+        deps.append(node.companion)
+        return deps
+
+    if isinstance(node, graph.MultiClauseOp):
+        deps: list[graph.Node] = []
+        for cond, value in node.clauses:
+            deps.append(cond)
+            deps.append(value)
+        deps.append(node.default_value)
+        return deps
+
+    if isinstance(node, graph.variant_selector):
+        deps: list[graph.Node] = [node.selector_node]
+        for branch_nodes in node.branch_map.values():
+            deps.extend(branch_nodes)
         return deps
 
     if isinstance(node, graph.AxisOp):

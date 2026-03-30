@@ -12,12 +12,14 @@ This module provides:
 4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
 5. Logical operations (and, or, xor, not)
 6. Mathematical operations (exp, log)
-7. Conditional operations (where, multi_clause_where, piecewise)
-8. Shape manipulation operations (expand_dims, squeeze)
-9. Reduction operations (sum, mean)
-10. Support for user-defined functions.
-11. Built-in debug operations (tracepoint, breakpoint)
-12. Support for infix and unary operators (e.g., `a + b`, `~a`).
+7. Conditional operations (where, MultiClauseOp, multi_clause_where,
+   exclusive_multi_clause_where, piecewise)
+8. Variant selection (variant_selector)
+9. Shape manipulation operations (expand_dims, squeeze)
+10. Reduction operations (sum, mean)
+11. Support for user-defined functions.
+12. Built-in debug operations (tracepoint, breakpoint)
+13. Support for infix and unary operators (e.g., `a + b`, `~a`).
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
@@ -718,23 +720,146 @@ class where(Generic[C, T], Node[T]):
         return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"  # noqa: E501
 
 
-class multi_clause_where(Generic[C, T], Node[T]):
-    """Selects elements from tensors based on multiple conditions.
+class MultiClauseOp(Generic[C, T], Node[T]):
+    """Abstract base class for multi-clause conditional nodes.
+
+    Holds the shared structure — a sequence of ``(condition, value)`` clause
+    pairs and a default value.
 
     Args:
-        clauses: List of (condition, value) pairs
-        default_value: Value to use when no condition is met
+        clauses: Ordered sequence of ``(condition, value)`` pairs evaluated
+            left-to-right; the first matching condition selects the value.
+        default_value: Value returned when no condition matches.
+        name: Optional node name for debugging.
     """
 
-    def __init__(self, clauses: Sequence[tuple[Node[C], Node[T]]], default_value: Node[T], name="") -> None:
+    def __init__(self, clauses: Sequence[tuple[Node[C], Node[T]]], default_value: Node[T], name: str = "") -> None:
         super().__init__(name)
         self.clauses = clauses
         self.default_value = default_value
+
+
+class multi_clause_where(MultiClauseOp[C, T]):
+    """Selects elements from tensors based on multiple conditions.
+
+    Backed by ``np.select``; both branches always evaluated (eager).
+    Concrete subclass of :class:`MultiClauseOp`.
+
+    Args:
+        clauses: List of ``(condition, value)`` pairs to evaluate.
+        default_value: Value to use when no condition matches.
+        name: Optional node name for debugging.
+    """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         clauses = ", ".join(f"(n{condition.id}, n{then.id})" for condition, then in self.clauses)
         return f"n{self.id} = graph.multi_clause_where(clauses=[{clauses}], default_value=n{self.default_value.id}, name='{self.name}')"  # noqa: E501
+
+
+class variant_selector(Node):
+    """Structural node describing a runtime conditional split over named branches.
+
+    Carries the full split topology — selector, branch output nodes, and merge
+    nodes — so that all components of the split are reachable from output nodes
+    via normal :func:`~linearize.forest` traversal without side-channel
+    attribute reads.
+
+    Listed as a dependency of each companion
+    :class:`exclusive_multi_clause_where` node.  ``linearize._get_dependencies``
+    returns ``[selector_node] + all branch output nodes``, placing this node
+    after shared pre-nodes and branch nodes but before the merge nodes in
+    topological order.
+
+    Produces no value at execution time — the executor stores a sentinel
+    ``np.array([])`` so the node is marked as evaluated and skipped on any
+    subsequent encounter.
+
+    Args:
+        selector_node: Node that produces a branch-key string per scenario.
+        branch_map: Maps each branch key to the list of that branch's output
+            nodes (one per merge field), in field declaration order.
+        merge_nodes: The companion :class:`exclusive_multi_clause_where` nodes
+            (one per merge field).  May be populated after construction once all
+            companion nodes are built.
+        name: Optional node name for debugging.
+    """
+
+    def __init__(
+        self,
+        selector_node: Node,
+        branch_map: dict[str, list[Node]],
+        merge_nodes: list[Node],
+        name: str = "",
+    ) -> None:
+        super().__init__(name)
+        self.selector_node = selector_node
+        self.branch_map = branch_map
+        self.merge_nodes = merge_nodes
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        branch_repr = (
+            "{"
+            + ", ".join(
+                f'"{k}": [' + ", ".join(f"n{n.id}" for n in nodes) + "]" for k, nodes in self.branch_map.items()
+            )
+            + "}"
+        )
+        merge_repr = "[" + ", ".join(f"n{n.id}" for n in self.merge_nodes) + "]"
+        return (
+            f"n{self.id} = graph.variant_selector("
+            f"selector_node=n{self.selector_node.id}, "
+            f"branch_map={branch_repr}, "
+            f"merge_nodes={merge_repr}, "
+            f"name='{self.name}')"
+        )
+
+
+class exclusive_multi_clause_where(MultiClauseOp[C, T]):
+    """Like :class:`multi_clause_where` but declares branches as mutually exclusive.
+
+    Receives a :class:`variant_selector` companion at construction time and
+    lists it as an additional graph dependency so that the companion is
+    reachable from output nodes via normal :func:`~linearize.forest` traversal.
+
+    The executor evaluates this node identically to :class:`multi_clause_where`
+    (``np.select`` over all branches, eager) — mutual exclusivity is a
+    semantic guarantee provided by the caller, not enforced by the executor.
+
+    **Changelog**: user code that performs
+    ``isinstance(node, graph.multi_clause_where)`` to detect *any*
+    multi-clause node will silently miss ``exclusive_multi_clause_where``
+    nodes.  Update such checks to ``isinstance(node, graph.MultiClauseOp)``.
+
+    Args:
+        clauses: Ordered list of ``(condition, value)`` pairs.  Conditions
+            should be mutually exclusive; the first matching one is selected.
+        default_value: Sentinel value used when no condition matches.
+        companion: The :class:`variant_selector` node for this split.
+        name: Optional node name for debugging.
+    """
+
+    def __init__(
+        self,
+        clauses: Sequence[tuple[Node[C], Node[T]]],
+        default_value: Node[T],
+        companion: variant_selector,
+        name: str = "",
+    ) -> None:
+        super().__init__(clauses, default_value, name)
+        self.companion = companion
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        clauses = ", ".join(f"(n{condition.id}, n{then.id})" for condition, then in self.clauses)
+        return (  # noqa: E501
+            f"n{self.id} = graph.exclusive_multi_clause_where("
+            f"clauses=[{clauses}], "
+            f"default_value=n{self.default_value.id}, "
+            f"companion=n{self.companion.id}, "
+            f"name='{self.name}')"
+        )
 
 
 # TODO(python3.12): replace inline annotations below with generic type aliases:

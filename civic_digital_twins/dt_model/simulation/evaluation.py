@@ -8,6 +8,7 @@ from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..model.index import GenericIndex
 from ..model.model import Model
+from ..model.model_variant import ModelVariant
 from .ensemble import Ensemble, WeightedScenario
 
 __all__ = ["EvaluationResult", "Evaluation"]
@@ -110,7 +111,7 @@ class Evaluation:
         The model to evaluate.
     """
 
-    def __init__(self, model: Model) -> None:
+    def __init__(self, model: Model | ModelVariant) -> None:
         self.model = model
 
     def evaluate(

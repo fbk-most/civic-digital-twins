@@ -2,6 +2,8 @@
 
 from .engine.frontend.graph import piecewise
 from .model import (
+    AbstractIndexNotInInputsWarning,
+    CategoricalIndex,
     ConstIndex,
     Distribution,
     DistributionIndex,
@@ -16,6 +18,8 @@ from .model import (
 from .simulation import DistributionEnsemble, Ensemble, Evaluation, EvaluationResult, WeightedScenario
 
 __all__ = [
+    "AbstractIndexNotInInputsWarning",
+    "CategoricalIndex",
     "ConstIndex",
     "Distribution",
     "DistributionEnsemble",

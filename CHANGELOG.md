@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**`CategoricalIndex` — probabilistic runtime model selection**
+
+- `CategoricalIndex(name, outcomes)` — a new `Index` subclass backed by a
+  finite string-keyed probability distribution.  Always abstract (placeholder
+  mode).
+  Raises `ValueError` at construction if `outcomes` is empty, any probability
+  is non-positive, or the probabilities do not sum to 1.0.
+  - `support` — ordered list of outcome keys.
+  - `outcomes` — dict copy of the probability mapping.
+  - `sample(rng=None)` — draw one key proportional to declared probabilities.
+  - Exported from `civic_digital_twins.dt_model`.
+
+**`ModelVariant` — runtime mode**
+
+- `ModelVariant` now supports two additional selector types:
+  - **`CategoricalIndex` selector** — all variants are preserved in the graph.
+    A `variant_selector` node and one `exclusive_multi_clause_where` node per
+    output field are built at construction time.  The ensemble samples the
+    `CategoricalIndex` per scenario; the executor selects the correct branch
+    value via `numpy.select`.
+  - **`graph.Node` selector** — arbitrary boolean guard expression built with
+    `ModelVariant.guards_to_selector([(key, condition), ...])`, which wraps
+    `graph.piecewise`.  Guards are evaluated left-to-right; place the most
+    specific guard first.
+- `mv.outputs.<field>` in runtime mode returns an `Index` backed by an
+  `exclusive_multi_clause_where` node.
+- `mv.inputs` in runtime mode returns fields whose names appear in
+  **any** variants' inputs (union by field name).
+- `mv.expose` in runtime mode returns only fields whose names appear in
+  **all** variants' expose proxies (intersection by field name).
+- `mv._selector_index` — thin `Index` wrapping `_selector_node`; use
+  `result[mv._selector_index]` from an `EvaluationResult` to retrieve a
+  `(S, 1)` string array of the active variant key per scenario.
+
+**Engine layer — `MultiClauseOp`, `variant_selector`, `exclusive_multi_clause_where`**
+
+- `MultiClauseOp(Generic[C, T], Node[T])` — new abstract base class for
+  multi-clause conditional nodes, following the `BinaryOp` / `UnaryOp` pattern.
+  `multi_clause_where` is now a thin subclass.
+
+  > **Note**: the `multi_clause_where` class hierarchy changed.  Code that
+  > checks `isinstance(node, graph.multi_clause_where)` still works; code that
+  > relied on `multi_clause_where` being a direct `Node` subclass may need to
+  > be updated.
+
+- `variant_selector(selector_node, branch_map, merge_nodes)` — first-class
+  graph node carrying structural metadata for the runtime variant dispatch.
+  Listed as a dependency of `exclusive_multi_clause_where` so it is reached by
+  `linearize.forest` via normal graph traversal.  Evaluated as a no-op (empty
+  sentinel array) by the executor.
+
+- `exclusive_multi_clause_where(MultiClauseOp)` — peer of `multi_clause_where`
+  under `MultiClauseOp`.  Has an additional `companion: variant_selector` field
+  listed as a graph dependency.  Semantics: branches are mutually exclusive by
+  construction (one per variant key); in v0.8.x evaluation is still eager
+  (same as `multi_clause_where`).
+
+**`AbstractIndexNotInInputsWarning`**
+
+- `AbstractIndexNotInInputsWarning(ModelContractWarning)` — new soft warning
+  emitted at `Model` construction (dataclass-based path only) when an abstract
+  index returned by `abstract_indexes()` is not declared in `Inputs`.  Abstract
+  indexes receive their values from outside the model and are semantically inputs.
+  Exported from `civic_digital_twins.dt_model`.
+
+**`DistributionEnsemble` — `CategoricalIndex` support**
+
+- `DistributionEnsemble` now accepts models whose abstract indexes are a mix of
+  `Distribution`-backed `Index` values and `CategoricalIndex` objects.
+  `CategoricalIndex` entries are sampled via `CategoricalIndex.sample(rng)` and
+  stored as `(S, 1)` object arrays of string keys, matching the stacking
+  convention used for scalar index samples.
+
+### Changed
+
+- `multi_clause_where` is now a subclass of `MultiClauseOp` rather than a
+  direct subclass of `Node`.  `isinstance(node, graph.multi_clause_where)` is
+  unaffected; `isinstance(node, graph.MultiClauseOp)` is now the preferred
+  check for code that handles both conditional node types.
+- `ModelVariant` no longer requires variants to share identical `inputs` field
+  names.  Only `outputs` field names must be identical (required to build the
+  merge graph).  `inputs` may differ across variants; `mv.inputs` exposes their
+  union.
+
 ## [0.8.0] - 2026-03-21
 
 ### Added
@@ -64,9 +152,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Construction-time I/O contract validation**: `inputs` and `outputs` field
   names must be identical across all declared variants; a descriptive `ValueError`
   is raised if they differ.
-- Runtime selection (driven by an index value or a categorical distribution per
-  scenario) is out of scope for this release and will be introduced in a future
-  version alongside `CategoricalIndex` support.
+- Static mode only in this release; runtime selection via `CategoricalIndex` or
+  `graph.Node` selector was added in the subsequent unreleased version.
 - `ModelVariant` exported from `civic_digital_twins.dt_model`.
 
 **Bologna mobility example — modular rewrite**

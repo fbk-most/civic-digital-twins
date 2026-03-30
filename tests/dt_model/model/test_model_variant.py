@@ -107,25 +107,26 @@ class _OtherOutputsModel(Model):
         )
 
 
-class _OtherInputsModel(Model):
-    """Model whose inputs field names differ from _BikeModel / _TrainModel."""
+class _ExtraInputModel(Model):
+    """Model with an additional input field not present in _BikeModel / _TrainModel."""
 
     @dataclasses.dataclass
     class Inputs:
-        volume: Index  # renamed field
+        capacity: Index
+        bonus: Index  # extra field absent from _BikeModel / _TrainModel
 
     @dataclasses.dataclass
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, volume: Index) -> None:
-        Inputs = _OtherInputsModel.Inputs
-        Outputs = _OtherInputsModel.Outputs
+    def __init__(self, capacity: Index, bonus: Index) -> None:
+        Inputs = _ExtraInputModel.Inputs
+        Outputs = _ExtraInputModel.Outputs
 
         super().__init__(
-            "OtherInputsModel",
-            inputs=Inputs(volume=volume),
+            "ExtraInputModel",
+            inputs=Inputs(capacity=capacity, bonus=bonus),
             outputs=Outputs(throughput=Index("t", 1.0), emissions=Index("e", 0.0)),
         )
 
@@ -164,8 +165,8 @@ def test_static_selector_unknown_key_raises():
 
 
 def test_non_string_selector_raises_value_error():
-    """Passing a value that does not match any key raises ValueError."""
-    with pytest.raises(ValueError, match="does not match any"):
+    """Passing an invalid selector type raises ValueError."""
+    with pytest.raises(ValueError, match="selector must be a str"):
         ModelVariant("Transport", _make_variants(), selector=42)  # type: ignore[arg-type]
 
 
@@ -329,18 +330,42 @@ def test_mismatched_outputs_raises_value_error():
         )
 
 
-def test_mismatched_inputs_raises_value_error():
-    """Variants with different inputs field names raise ValueError."""
-    cap = Index("capacity", 100.0)
-    with pytest.raises(ValueError, match="inputs.*field names differ"):
-        ModelVariant(
-            "Transport",
-            {
-                "bike": _BikeModel(cap),
-                "other": _OtherInputsModel(Index("volume", 200.0)),
-            },
-            selector="bike",
-        )
+def test_mismatched_inputs_is_allowed():
+    """Variants with different inputs field names are allowed; inputs union is exposed."""
+    cap_bike = Index("capacity", 100.0)
+    cap_extra = Index("capacity", 200.0)
+    bonus = Index("bonus", 5.0)
+    mv = ModelVariant(
+        "Transport",
+        {
+            "bike": _BikeModel(cap_bike),
+            "extra": _ExtraInputModel(cap_extra, bonus),
+        },
+        selector="bike",
+    )
+    assert mv is not None
+
+
+def test_runtime_inputs_union_includes_all_variant_fields():
+    """Runtime mode inputs proxy exposes the union of all variants' input fields."""
+    from civic_digital_twins.dt_model.model.index import CategoricalIndex
+
+    cap_bike = Index("capacity", 100.0)
+    cap_extra = Index("capacity", 200.0)
+    bonus = Index("bonus", 5.0)
+    mode = CategoricalIndex("mode", {"bike": 0.5, "extra": 0.5})
+    mv = ModelVariant(
+        "Transport",
+        {
+            "bike": _BikeModel(cap_bike),
+            "extra": _ExtraInputModel(cap_extra, bonus),
+        },
+        selector=mode,
+    )
+    # IOProxy iterates scalar indexes; check by index identity instead.
+    input_indexes = list(mv.inputs)
+    assert cap_bike in input_indexes
+    assert bonus in input_indexes
 
 
 def test_empty_variants_raises_value_error():

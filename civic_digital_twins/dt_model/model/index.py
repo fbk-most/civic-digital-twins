@@ -27,7 +27,7 @@ class Distribution(Protocol):
         **kwds,
     ) -> np.ndarray:
         """Cumulative distribution function."""
-        ...
+        ...  # pragma: no cover
 
     def rvs(
         self,
@@ -35,15 +35,15 @@ class Distribution(Protocol):
         **kwargs,
     ) -> float | np.ndarray:
         """Random variable sampling."""
-        ...
+        ...  # pragma: no cover
 
     def mean(self, *args, **kwds) -> float | np.ndarray:
         """Random variable mean."""
-        ...
+        ...  # pragma: no cover
 
     def std(self, *args, **kwds) -> float | np.ndarray:
         """Random variable standard deviation."""
-        ...
+        ...  # pragma: no cover
 
 
 class GenericIndex(ABC):
@@ -473,3 +473,86 @@ class TimeseriesIndex(Index):
         if self._values is not None:
             return f"timeseries_idx({self._values.tolist()!r})"
         return f"timeseries_idx({self.value})"
+
+
+class CategoricalIndex(Index):
+    """Index backed by a finite string-keyed probability distribution.
+
+    Always abstract (placeholder mode): the underlying node is a
+    ``graph.placeholder``, equivalent to ``Index(name, value=None)``.
+    The declared probabilities describe how the index should be sampled;
+    they do not affect graph evaluation directly.
+
+    Because :class:`GenericIndex.__eq__` returns a ``graph.equal`` node,
+    a ``CategoricalIndex`` can be used as a guard in ``graph.piecewise``::
+
+        mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+        factor = Index("factor", graph.piecewise(
+            (0.0,   mode == "electric"),
+            (1.2,   True),
+        ))
+
+    Parameters
+    ----------
+    name:
+        Human-readable name.
+    outcomes:
+        Maps each outcome key to its probability.  All values must be
+        strictly positive and sum to 1.0 (validated within a small
+        tolerance at construction time).
+
+    Raises
+    ------
+    ValueError
+        If *outcomes* is empty, any probability is non-positive, or the
+        probabilities do not sum to 1.0.
+    """
+
+    def __init__(self, name: str, outcomes: dict[str, float]) -> None:
+        if not outcomes:
+            raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
+        non_positive = [k for k, p in outcomes.items() if p <= 0]
+        if non_positive:
+            raise ValueError(
+                f"CategoricalIndex {name!r}: all probabilities must be strictly positive; "
+                f"non-positive keys: {non_positive}."
+            )
+        total = sum(outcomes.values())
+        if not np.isclose(total, 1.0):
+            raise ValueError(f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}.")
+        self._outcomes = dict(outcomes)
+        super().__init__(name, None)  # placeholder mode
+
+    @property
+    def outcomes(self) -> dict[str, float]:
+        """Outcome probabilities, in declaration order."""
+        return dict(self._outcomes)
+
+    @property
+    def support(self) -> list[str]:
+        """Ordered list of outcome keys."""
+        return list(self._outcomes)
+
+    def sample(self, rng: np.random.Generator | None = None) -> str:
+        """Draw one key proportional to outcome probabilities.
+
+        Parameters
+        ----------
+        rng:
+            Optional :class:`numpy.random.Generator` for reproducibility.
+            When ``None``, the global NumPy random state is used.
+
+        Returns
+        -------
+        str
+            One of the keys from :attr:`support`.
+        """
+        keys = self.support
+        probs = [self._outcomes[k] for k in keys]
+        if rng is not None:
+            return rng.choice(keys, p=probs)  # type: ignore[return-value]
+        return np.random.choice(keys, p=probs)  # type: ignore[return-value]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the categorical index."""
+        return f"CategoricalIndex({self.name!r}, {self._outcomes!r})"

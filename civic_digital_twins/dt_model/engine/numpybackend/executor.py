@@ -605,6 +605,16 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
     return function(*args, **kwargs)
 
 
+def _eval_variant_selector_noop(_state: State, _node: graph.Node) -> np.ndarray:
+    """No-op evaluator for variant_selector nodes.
+
+    variant_selector carries structural metadata for _build_plan() and
+    produces no runtime value.  The executor stores a sentinel empty array
+    so the node is marked as evaluated and skipped if encountered again.
+    """
+    return np.array([])
+
+
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
@@ -615,7 +625,8 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.BinaryOp, _eval_binary_op),
     (graph.UnaryOp, _eval_unary_op),
     (graph.where, _eval_where_op),
-    (graph.multi_clause_where, _eval_multi_clause_where_op),
+    (graph.MultiClauseOp, _eval_multi_clause_where_op),
+    (graph.variant_selector, _eval_variant_selector_noop),
     (graph.AxisOp, _eval_axis_op),
     (graph.function_call, _eval_function),
 )

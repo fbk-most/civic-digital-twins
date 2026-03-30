@@ -2,8 +2,8 @@
 
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
-| Author       | [@pistore](https://github.com/pistore)        |
-| Last-Updated | 2026-03-20                                     |
+| Author       | [@pistore](https://github.com/pistore)         |
+| Last-Updated | 2026-03-30                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -58,7 +58,8 @@ defines all index types.  The class hierarchy is:
 GenericIndex  (ABC)
 ├── Index
 │   ├── DistributionIndex
-│   └── ConstIndex
+│   ├── ConstIndex
+│   └── CategoricalIndex
 └── TimeseriesIndex
 ```
 
@@ -83,15 +84,10 @@ GenericIndex  (ABC)
 
 ### Index
 
-`Index(name, value)` is the workhorse class.  The `value` argument
-determines the mode:
-
-| `value` type | Mode | graph node created |
-| ------------ | ---- | ------------------ |
-| `Distribution` | distribution-backed (abstract) | `graph.placeholder` |
-| `float` / `int` / `str` / `bool` | constant | `graph.constant` |
-| `graph.Node` | formula | the node itself |
-| `None` | explicit placeholder (abstract) | `graph.placeholder` |
+`Index(name, value)` is the base concrete index class.  In most cases you will use one of the
+dedicated subclasses (`DistributionIndex`, `ConstIndex`, `CategoricalIndex`) rather than
+`Index` directly.  `Index` itself is appropriate when passing a pre-frozen distribution or a
+`graph.Node` formula as the value:
 
 ```python
 from scipy import stats
@@ -124,6 +120,29 @@ update via the Python dict-merge operator (`idx.params |= {"loc": 200}`).
 
 `ConstIndex` is a convenience wrapper that accepts a scalar constant and
 passes it to `Index.__init__`.
+
+### CategoricalIndex
+
+`CategoricalIndex(name, outcomes)` is a placeholder `Index` whose per-scenario values are strings
+drawn from a finite named set.  It extends `Index` with `value=None`, so it is automatically
+abstract and must be resolved in every scenario.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `str` | Human-readable name. |
+| `outcomes` | `dict[str, float]` | Maps outcome key to probability.  Values must be positive and sum to 1.0. |
+
+```python
+from civic_digital_twins.dt_model import CategoricalIndex
+
+mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
+```
+
+Because the full `GenericIndex` algebra protocol is inherited, `mode == "bike"` produces a
+`graph.equal` node usable in formulas and `graph.piecewise` guards.
+
+For the usage pattern and integration with `ModelVariant`, see
+[`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection).
 
 ### TimeseriesIndex
 
@@ -254,7 +273,7 @@ core contract.  See [Vertical Extension](#vertical-extension) below.
 
 ## ModelVariant
 
-[`model/model.py`](../../civic_digital_twins/dt_model/model/model.py)
+[`model/model_variant.py`](../../civic_digital_twins/dt_model/model/model_variant.py)
 
 ```python
 class ModelVariant:
@@ -262,42 +281,40 @@ class ModelVariant:
         self,
         name: str,
         variants: Mapping[str, Model],
-        selector: str,
+        selector: str | CategoricalIndex | graph.Node,
     ) -> None: ...
+
+    @staticmethod
+    def guards_to_selector(
+        guards: list[tuple[str, graph.Node | bool]],
+    ) -> graph.Node: ...
 ```
 
-`ModelVariant` selects among pre-constructed `Model` instances that
-share the same I/O contract (identical `Inputs` and `Outputs` field
-names).  The `selector` is a plain string key; the active variant is
-resolved once at construction time.
+`ModelVariant` selects among pre-constructed `Model` instances that share the same `outputs` field
+names.  It operates in two modes:
 
-`ModelVariant` acts as a **fully transparent proxy** for the active
-variant.  The following attributes and methods all delegate to the active
-`Model` instance:
+**Static mode** (`selector: str`) — the active variant is resolved once at construction time.
+`ModelVariant` acts as a fully transparent proxy for the active variant; all attribute access
+delegates to it.  `outputs` field names must be identical across all variants.
 
-- `inputs`, `outputs`, `expose`
-- `indexes`, `abstract_indexes()`, `is_instantiated()`
-- Any other attribute accessed via `__getattr__`
-
-**Contract enforcement**: `inputs` and `outputs` field names must be
-identical across all variants.  A `ValueError` is raised at construction
-time if they differ.
-
-Inactive variants remain accessible for inspection via
-`mv.variants["key"].*` without affecting the active proxy.
+**Runtime mode** (`selector: CategoricalIndex | graph.Node`) — the active variant is determined
+per scenario at evaluation time.  `ModelVariant` builds a merged computation graph at construction:
+`mv.outputs.x` is a real `Index` backed by a `exclusive_multi_clause_where` node, usable in parent
+model formulas.  `inputs` may differ across variants (they are surfaced as a union); `outputs`
+names must be identical.  See [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection)
+for full usage documentation.
 
 `ModelVariant` is exported from `civic_digital_twins.dt_model`.
 
 ```python
-from civic_digital_twins.dt_model import ModelVariant
+from civic_digital_twins.dt_model import CategoricalIndex, ModelVariant
 
-mv = ModelVariant(
-    "TransportModel",
-    variants={"bike": BikeModel(), "train": TrainModel()},
-    selector="bike",
-)
-mv.outputs.emissions           # delegates to BikeModel
-mv.variants["train"].outputs   # inactive variant, accessible directly
+# Static
+mv = ModelVariant("T", variants={"bike": BikeModel(), "train": TrainModel()}, selector="bike")
+
+# Runtime — probabilistic
+mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
+mv = ModelVariant("T", variants={"bike": BikeModel(), "train": TrainModel()}, selector=mode)
 ```
 
 ## Contract Warnings
@@ -321,6 +338,13 @@ which is recommended in test suites.
 `GenericIndex` constructor parameter is absent from the declared
 `Inputs` dataclass.  The warning message names the offending parameter
 precisely so it can be located and added to `Inputs`.
+
+**`AbstractIndexNotInInputsWarning(ModelContractWarning)`** — emitted when
+an abstract index (one whose value is `None` or a `Distribution`) is not
+reachable via `self.inputs`.  Abstract indexes receive their values from
+outside the model and are therefore inputs by definition.  Currently a soft
+warning for backwards compatibility; planned for promotion to an error in a
+future release.
 
 Example — the following model triggers an `InputsContractWarning`
 because `x` is a `GenericIndex` constructor parameter but is not
@@ -402,8 +426,12 @@ scenarios = list(ensemble)
 # Each scenario: (0.01, {x: array([...]), y: array([...])})
 ```
 
-`DistributionEnsemble` raises `ValueError` at construction if any
-abstract index of the model is not distribution-backed.
+`DistributionEnsemble` also handles `CategoricalIndex` abstract indexes automatically —
+each categorical index is sampled proportional to its outcome weights, yielding a `(1,)` string
+array per scenario.  
+
+A `ValueError` is raised at construction if any abstract index is neither
+distribution-backed nor a `CategoricalIndex`.
 
 ## Evaluation
 
