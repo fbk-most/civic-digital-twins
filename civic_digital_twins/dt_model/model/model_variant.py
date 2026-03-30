@@ -173,9 +173,7 @@ class ModelVariant:
                     f"Known keys: {list(variants_dict)}."
                 )
 
-        selector_node: graph.Node = (
-            selector.node if isinstance(selector, GenericIndex) else selector
-        )
+        selector_node: graph.Node = selector.node if isinstance(selector, GenericIndex) else selector
 
         # Build branch_map: key → [output_field_node, ...] in field order.
         output_field_names = _io_field_names(next(iter(variants_dict.values())).outputs)
@@ -197,8 +195,7 @@ class ModelVariant:
         merge_nodes: list[graph.Node] = []
         for field in output_field_names:
             clauses = [
-                (selector_node == key, getattr(model.outputs, field).node)
-                for key, model in variants_dict.items()
+                (selector_node == key, getattr(model.outputs, field).node) for key, model in variants_dict.items()
             ]
             mcw = graph.exclusive_multi_clause_where(
                 clauses=clauses,
@@ -322,11 +319,7 @@ class ModelVariant:
         for v in variant_list[1:]:
             common &= set(_io_field_names(v.expose))
         first_expose = variant_list[0].expose
-        entries = [
-            (field, getattr(first_expose, field))
-            for field in _io_field_names(first_expose)
-            if field in common
-        ]
+        entries = [(field, getattr(first_expose, field)) for field in _io_field_names(first_expose) if field in common]
         return IOProxy(entries)
 
     @property

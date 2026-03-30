@@ -519,9 +519,7 @@ class CategoricalIndex(Index):
             )
         total = sum(outcomes.values())
         if not np.isclose(total, 1.0):
-            raise ValueError(
-                f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}."
-            )
+            raise ValueError(f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}.")
         self._outcomes = dict(outcomes)
         super().__init__(name, None)  # placeholder mode
 

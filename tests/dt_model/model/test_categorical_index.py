@@ -8,7 +8,6 @@ import pytest
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.model.index import CategoricalIndex
 
-
 # ===========================================================================
 # Construction
 # ===========================================================================
@@ -28,13 +27,13 @@ def test_node_is_placeholder():
 
 
 def test_support_returns_keys_in_order():
-    """support returns outcome keys in insertion order."""
+    """Support returns outcome keys in insertion order."""
     ci = CategoricalIndex("mode", {"bike": 0.3, "train": 0.5, "bus": 0.2})
     assert ci.support == ["bike", "train", "bus"]
 
 
 def test_outcomes_returns_copy():
-    """outcomes property returns a copy (mutation does not affect internal state)."""
+    """Outcomes property returns a copy (mutation does not affect internal state)."""
     ci = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     d = ci.outcomes
     d["bike"] = 0.0
@@ -48,7 +47,7 @@ def test_is_abstract():
 
 
 def test_repr():
-    """repr includes name and outcomes dict."""
+    """Repr includes name and outcomes dict."""
     ci = CategoricalIndex("x", {"p": 0.6, "q": 0.4})
     r = repr(ci)
     assert "CategoricalIndex" in r

@@ -11,7 +11,6 @@ from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import IOProxy, Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 
-
 # ---------------------------------------------------------------------------
 # Shared test models (same I/O contract)
 # ---------------------------------------------------------------------------
@@ -174,20 +173,24 @@ def test_categorical_selector_bad_key_raises():
 def test_guards_to_selector_returns_node():
     """guards_to_selector returns a graph.Node."""
     cost = Index("cost", graph.placeholder("cost"))
-    selector = ModelVariant.guards_to_selector([
-        ("train", cost.node > graph.constant(5.0)),
-        ("bike", True),
-    ])
+    selector = ModelVariant.guards_to_selector(
+        [
+            ("train", cost.node > graph.constant(5.0)),
+            ("bike", True),
+        ]
+    )
     assert isinstance(selector, graph.Node)
 
 
 def test_node_selector_runtime_mode():
     """A graph.Node selector creates runtime mode."""
     cost = Index("cost", graph.placeholder("cost"))
-    selector = ModelVariant.guards_to_selector([
-        ("train", cost.node > graph.constant(5.0)),
-        ("bike", True),
-    ])
+    selector = ModelVariant.guards_to_selector(
+        [
+            ("train", cost.node > graph.constant(5.0)),
+            ("bike", True),
+        ]
+    )
     mv = ModelVariant("Transport", _make_variants(), selector=selector)
     assert isinstance(mv.outputs.throughput.node, graph.exclusive_multi_clause_where)
 
@@ -195,10 +198,12 @@ def test_node_selector_runtime_mode():
 def test_node_selector_abstract_indexes_does_not_include_selector_node():
     """A graph.Node selector does not add a new abstract index — its deps are variants'."""
     cost = Index("cost", graph.placeholder("cost"))
-    selector = ModelVariant.guards_to_selector([
-        ("train", cost.node > graph.constant(5.0)),
-        ("bike", True),
-    ])
+    selector = ModelVariant.guards_to_selector(
+        [
+            ("train", cost.node > graph.constant(5.0)),
+            ("bike", True),
+        ]
+    )
     mv = ModelVariant("Transport", _make_variants(), selector=selector)
     # The node selector itself is not a GenericIndex so it cannot appear.
     # abstract_indexes should be the union of the variants' own abstract indexes.

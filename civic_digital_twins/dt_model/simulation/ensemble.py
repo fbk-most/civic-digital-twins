@@ -8,6 +8,7 @@ import numpy as np
 
 from ..model.index import CategoricalIndex, Distribution, GenericIndex, Index
 from ..model.model import Model
+from ..model.model_variant import ModelVariant
 
 WeightedScenario = tuple[float, dict[GenericIndex, Any]]
 """A weighted scenario maps each abstract index to a concrete value.
@@ -84,13 +85,13 @@ class DistributionEnsemble:
     Carlo budget and the categorical dimension cannot be separated out.
     """
 
-    def __init__(self, model: Model, size: int, rng: np.random.Generator | None = None) -> None:
+    def __init__(self, model: Model | ModelVariant, size: int, rng: np.random.Generator | None = None) -> None:
         abstract = model.abstract_indexes()
         non_samplable = [
-            idx for idx in abstract
+            idx
+            for idx in abstract
             if not (
-                (isinstance(idx, CategoricalIndex))
-                or (isinstance(idx, Index) and isinstance(idx.value, Distribution))
+                (isinstance(idx, CategoricalIndex)) or (isinstance(idx, Index) and isinstance(idx.value, Distribution))
             )
         ]
         if non_samplable:

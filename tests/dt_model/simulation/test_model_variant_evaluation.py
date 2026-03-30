@@ -10,9 +10,8 @@ import pytest
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble, WeightedScenario
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
-
 
 # ---------------------------------------------------------------------------
 # Simple models with known output values
@@ -145,7 +144,7 @@ def test_evaluation_mixed_modes_weighted_average():
     # Build a deterministic 4-scenario ensemble: 2 bike, 2 train.
     bike_val = np.array(["bike"])
     train_val = np.array(["train"])
-    manual_scenarios = [
+    manual_scenarios: list[WeightedScenario] = [
         (0.25, {mode: bike_val}),
         (0.25, {mode: train_val}),
         (0.25, {mode: bike_val}),
