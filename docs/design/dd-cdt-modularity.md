@@ -2,8 +2,8 @@
 
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
-| Author       | [@pistore](https://github.com/pistore)        |
-| Last-Updated | 2026-03-20                                     |
+| Author       | [@pistore](https://github.com/pistore)         |
+| Last-Updated | 2026-03-30                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -362,7 +362,7 @@ mv = ModelVariant(
 - `selector` is a plain string literal resolved once at construction time.  The active variant does not
   change after construction.
 - `ModelVariant` raises `ValueError` immediately if `selector` is not a key in `variants`, if
-  `variants` is empty, or if the `inputs` / `outputs` field names differ across variants.
+  `variants` is empty, or if the `outputs` field names differ across variants.
 
 ### Transparent proxy
 
@@ -391,27 +391,124 @@ mv.variants["train"].indexes             # index list of TrainModel only
 
 ### Interface contract
 
-The `inputs` and `outputs` field *names* must be identical across all variants.  The index *objects*
-inside those fields may differ — each variant owns its own instances.  This constraint is what makes
-`ModelVariant` a true drop-in replacement: downstream code that reads `mv.outputs.emissions` works
-regardless of which variant is active.
+The `outputs` field *names* must be identical across all variants — this is what makes `ModelVariant`
+a true drop-in replacement: downstream code that reads `mv.outputs.emissions` works regardless of
+which variant is active.  `inputs` field names may differ across variants — in static mode
+`mv.inputs` delegates to the active variant, in runtime mode all variants' inputs are surfaced
+as a union.
 
 ```civic-digital-twins/civic_digital_twins/dt_model/model/model_variant.py#L260-310
-# Both BikeModel and TrainModel must declare identically-named fields, e.g.:
+# Both BikeModel and TrainModel must declare identically-named Outputs fields, e.g.:
 #
 #   class Outputs:
 #       emissions:      Index   ← same name in both; different object
 #       total_distance: Index   ← same name in both; different object
 #
-# A mismatch in field names raises ValueError at ModelVariant construction time.
+# A mismatch in Outputs field names raises ValueError at ModelVariant construction time.
 ```
 
 ### Runtime variant selection
 
-Selecting a variant per evaluation scenario (e.g. sampling from a categorical distribution of transport
-modes) is **out of scope** for the current release.  It requires `CategoricalIndex` and
-evaluation-layer support, which will be introduced in a future version.  The current `selector` is
-always a static string resolved at construction time.
+`selector` can be a **`CategoricalIndex`** or a **`graph.Node`** to make the active variant
+per-scenario rather than fixed for the entire run.
+
+#### `CategoricalIndex` selector — probabilistic, independent choice
+
+A `CategoricalIndex` encodes a finite probability distribution over variant keys.
+`DistributionEnsemble` samples it automatically: each scenario receives one variant key drawn
+proportional to the declared weights.
+
+```python
+from civic_digital_twins.dt_model import CategoricalIndex, ModelVariant
+
+mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
+
+mv = ModelVariant(
+    "TransportModel",
+    variants={
+        "bike":  BikeModel(),
+        "train": TrainModel(),
+    },
+    selector=mode,
+)
+```
+
+`CategoricalIndex` is added to the model's abstract indexes and must be assigned a value in every
+scenario.  `DistributionEnsemble` handles this automatically.  At construction time `ModelVariant`
+validates that every key in `mode.support` has a matching entry in `variants`; a `ValueError` is
+raised immediately if any outcome key is unknown.
+
+#### `graph.Node` selector — derived from model parameters
+
+When the variant choice is a deterministic function of other model parameters, pass a `graph.Node`
+directly.  Use `ModelVariant.guards_to_selector` to build one from a list of `(key, predicate)` pairs:
+
+```python
+from scipy import stats
+from civic_digital_twins.dt_model import DistributionIndex, ModelVariant
+
+cost_threshold = DistributionIndex("cost_threshold", stats.uniform, {"loc": 3.0, "scale": 8.0})
+
+mv = ModelVariant(
+    "TransportModel",
+    variants={"bike": BikeModel(), "train": TrainModel(), "metro": MetroModel()},
+    selector=ModelVariant.guards_to_selector([
+        ("metro", (cost_threshold > 5.0) & (hour >= 8.0)),  # most-specific first
+        ("train", cost_threshold > 5.0),
+        ("bike",  True),                                     # fallback
+    ]),
+)
+```
+
+Guards are evaluated top-to-bottom (like `if / elif / else`): **place the most-specific condition
+first**.  The last entry should use `True` as its predicate.  No new abstract index is introduced —
+the variant selection emerges from existing sampled parameters.
+
+| | `CategoricalIndex` | `graph.Node` |
+|---|---|---|
+| Variant choice | **independent** of model params | **derived** from model params |
+| New abstract index | Yes | No |
+| Sampled by | `DistributionEnsemble` (extended) | existing sampling pipeline |
+| Typical use | "30 % bike / 70 % train" | "if cost > threshold → train" |
+
+#### Runtime mode — what changes
+
+In runtime mode `ModelVariant` builds a **merged computation graph** at construction time.
+`mv.outputs.x` is always a real `Index` backed by a real graph node, usable in parent model
+formulas regardless of which variant will be active per scenario.
+
+| Property | Static mode | Runtime mode |
+|---|---|---|
+| `mv.inputs` | proxied from active variant | **union** of all variants' input fields |
+| `mv.outputs.x` | proxied from active variant | `Index` backed by a merged graph node |
+| `mv.expose` | proxied from active variant | **intersection** of field names across all variants |
+| `mv.abstract_indexes()` | active variant only | **union** across all variants + selector (if `CategoricalIndex`) |
+| `mv.indexes` | active variant only | union of all variants' indexes + selector + merged output indexes |
+| `mv.is_instantiated()` | delegates to active | always `False` |
+
+`mv._selector_index` is a thin `Index` wrapping the selector node.  After evaluation,
+`result[mv._selector_index]` returns a `(S, 1)` string array of the active variant key per
+scenario — useful for post-evaluation analysis.
+
+#### `CategoricalIndex` as a formula guard (standalone)
+
+`CategoricalIndex` is a first-class `Index` and can be used in any model formula, not only as a
+`ModelVariant` selector:
+
+```python
+season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25,
+                                      "autumn": 0.25, "winter": 0.25})
+
+peak_factor = Index("peak_factor", graph.piecewise(
+    (1.8, season == "summer"),
+    (1.2, season == "spring"),
+    (1.0, season == "autumn"),
+    (0.7, True),              # winter — default
+))
+```
+
+`season == "summer"` produces a `graph.equal` node that the engine evaluates as a boolean mask
+per scenario; this broadcasts correctly against scalar or timeseries formula branches.
 
 ---
 
@@ -708,7 +805,7 @@ class EmissionsModel(Model):
 
     @dataclass
     class Outputs:
-        average_emissions:        Index           # fleet-weighted baseline factor
+        average_emissions:        Index            # fleet-weighted baseline factor
         emissions:                TimeseriesIndex  # baseline timeseries
         modified_emissions:       Index            # policy-modified total
         total_emissions:          Index
@@ -1004,10 +1101,15 @@ class ModelVariant:
         self,
         name: str,
         variants: Mapping[str, Model],
-        selector: str,
+        selector: str | CategoricalIndex | graph.Node,
     ) -> None: ...
 
-    # Read-only properties — proxied from active variant
+    @staticmethod
+    def guards_to_selector(
+        guards: list[tuple[str, graph.Node | bool]],
+    ) -> graph.Node: ...
+
+    # Read-only properties — behaviour differs by mode (see tables below)
     @property
     def inputs(self)  -> IOProxy[Any]: ...
     @property
@@ -1020,7 +1122,7 @@ class ModelVariant:
     def abstract_indexes(self) -> list[GenericIndex]: ...
     def is_instantiated(self)  -> bool: ...
 
-    # Fall-through: any other attribute is forwarded to the active variant
+    # Fall-through: any other attribute is forwarded to the active variant (static mode only)
     def __getattr__(self, name: str) -> Any: ...
 ```
 
@@ -1030,15 +1132,17 @@ class ModelVariant:
 |-----------|------|-------------|
 | `name` | `str` | Human-readable name for the variant group. |
 | `variants` | `Mapping[str, Model]` | Non-empty mapping from string key to constructed `Model` instance. |
-| `selector` | `str` | Key of the variant to activate.  Must be present in `variants`. |
+| `selector` | `str` | *(Static mode)* Key of the variant to activate.  Resolved once at construction time. |
+| `selector` | `CategoricalIndex` | *(Runtime mode)* Probabilistic selector; sampled per scenario by `DistributionEnsemble`. |
+| `selector` | `graph.Node` | *(Runtime mode)* Derived selector; must produce a string matching a variant key per scenario. |
 
 **Raises at construction**
 
 | Exception | When |
 |-----------|------|
 | `ValueError` | `variants` is empty. |
-| `ValueError` | `selector` is not a key in `variants`. |
-| `ValueError` | `inputs` field names differ across variants. |
+| `ValueError` | *(static)* `selector` string is not a key in `variants`. |
+| `ValueError` | *(runtime, `CategoricalIndex`)* any outcome key in `selector.support` is not in `variants`. |
 | `ValueError` | `outputs` field names differ across variants. |
 
 **Instance attributes**
@@ -1048,7 +1152,7 @@ class ModelVariant:
 | `name` | `str` | Name passed at construction. |
 | `variants` | `dict[str, Model]` | Full mapping of all variants (active and inactive). |
 
-**Proxy attributes** (delegate to the active variant)
+**Proxy attributes — static mode** (delegate to the active variant)
 
 | Attribute / Method | Delegates to |
 |--------------------|--------------|
@@ -1057,8 +1161,71 @@ class ModelVariant:
 | `expose` | `active.expose` |
 | `indexes` | `active.indexes` |
 | `abstract_indexes()` | `active.abstract_indexes()` |
-| `is_instantiated()` | `active.is_instantiated()` |
+| `is_instantiated()` | always `False` |
 | Any other attribute | `getattr(active, name)` |
+
+**Proxy attributes — runtime mode**
+
+| Attribute / Method | Returns |
+|--------------------|---------|
+| `inputs` | `IOProxy` over the **union** of all variants' input fields (first-seen wins on name collision) |
+| `outputs` | `IOProxy` where each field is an `Index` backed by a merged `exclusive_multi_clause_where` graph node |
+| `expose` | `IOProxy` over the **intersection** of field names present in all variants |
+| `indexes` | deduplicated union of all variants' `indexes` + selector (if `CategoricalIndex`) + merged output indexes |
+| `abstract_indexes()` | union of all variants' `abstract_indexes()` + selector (if `CategoricalIndex`) |
+| `is_instantiated()` | always `False` |
+| `_selector_index` | thin `Index` wrapping the selector node; `result[mv._selector_index]` → `(S, 1)` variant-key string array |
+
+**`guards_to_selector(guards)`**
+
+Convenience static method that wraps `graph.piecewise` to build a string-valued selector node from
+a list of `(key, predicate)` pairs.  Guards are evaluated top-to-bottom; the last entry should use
+`True` as its predicate (unconditional fallback).  Place the most-specific condition first.
+
+---
+
+### `CategoricalIndex`
+
+```civic-digital-twins/civic_digital_twins/dt_model/model/index.py
+class CategoricalIndex(Index):
+
+    def __init__(self, name: str, outcomes: dict[str, float]) -> None: ...
+
+    @property
+    def support(self) -> list[str]: ...
+
+    def sample(self, rng: np.random.Generator | None = None) -> str: ...
+```
+
+A placeholder `Index` whose per-scenario values are strings drawn from a finite set of named
+outcomes.  Extends `Index` with `value=None`, so it is automatically identified as abstract by
+`Model.abstract_indexes()` and must be assigned a concrete string value in every scenario.
+`DistributionEnsemble` handles this automatically when a model contains a `CategoricalIndex`.
+
+**Constructor parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `str` | Human-readable name. |
+| `outcomes` | `dict[str, float]` | Maps outcome key to probability.  All values must be positive and sum to 1.0 (validated at construction). |
+
+**Raises at construction**
+
+| Exception | When |
+|-----------|------|
+| `ValueError` | `outcomes` is empty. |
+| `ValueError` | Any probability is ≤ 0, or the values do not sum to 1.0 within tolerance. |
+
+**Methods**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `support` | `list[str]` | Ordered list of outcome keys. |
+| `sample(rng)` | `str` | Draw one key proportional to outcome probabilities. |
+
+Because `CategoricalIndex` inherits the full `GenericIndex` algebra protocol, comparison operators
+produce graph nodes: `mode == "bike"` yields `graph.equal(mode.node, constant("bike"))`, a valid
+boolean-per-scenario node usable in `graph.piecewise` or any formula.
 
 ---
 
@@ -1116,11 +1283,14 @@ class ModelContractWarning(UserWarning):
 
 class InputsContractWarning(ModelContractWarning):
     """Emitted when a constructor parameter holds a GenericIndex not declared in Inputs."""
+
+class AbstractIndexNotInInputsWarning(ModelContractWarning):
+    """Emitted when an abstract index is not reachable via the model's Inputs."""
 ```
 
-Both are subclasses of `UserWarning`.  `InputsContractWarning` is additionally a subclass of
-`ModelContractWarning`, so a single filter on the base class covers all present and future
-contract-violation categories:
+All three are subclasses of `UserWarning`.  Both concrete warnings are additionally subclasses of
+`ModelContractWarning`, so a single filter on the base class covers all contract-violation
+categories:
 
 ```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L16-30
 import warnings
@@ -1193,21 +1363,33 @@ The result is three sub-models with clean, symmetric interfaces:
 # Same computation; three cohesive units instead of four.
 ```
 
-### Why does `ModelVariant` resolve the selector at construction time?
+### Why does `ModelVariant` have both a static and a runtime selector mode?
 
-Runtime variant selection (per-scenario) requires the evaluation layer to know which indexes belong to
-which branch of a conditional.  That is the `CategoricalIndex` problem — selecting among a discrete
-set of index graphs based on a sampled value — and it is non-trivial to implement correctly.
+Static mode (`selector: str`) is a zero-overhead proxy: the inactive variants do not appear in the
+computation graph at all.  This covers the common case of choosing between implementations before a
+run (e.g. different transport assumptions for different cities).
 
-Resolving at construction time is simple, unambiguous, and covers the common case: choosing between
-model implementations before a run (e.g. different transport assumptions for different cities) rather
-than within a run.
+Runtime mode (`selector: CategoricalIndex | graph.Node`) builds a full merged graph at construction
+time so that `mv.outputs.x` is always a real `Index` node that can be wired into parent model
+formulas.  At evaluation time the engine uses a stratified split-dispatch-merge path that evaluates
+each variant in isolation with only its own scenario slice — zero wasted computation.  The two modes
+are deliberately separate code paths in v0.8.x.  Post-0.8.x, when the engine gains constant-folding,
+the static case could become an optimised degenerate case of the runtime representation.
 
-### Why are `inputs` and `outputs` field names validated across `ModelVariant` members?
+### Why are only `outputs` field names required to match across variants?
 
-`ModelVariant` is a transparent proxy.  Code that reads `mv.outputs.emissions` must work regardless
-of which variant is active.  If `BikeModel` declares `Outputs.emissions` but `TrainModel` declares
-`Outputs.co2`, the proxy is broken for one variant.  Early validation at construction time surfaces
-this error immediately, before any downstream code has a chance to silently mis-wire indexes.
+Only `outputs` names must be identical: the merge graph (runtime mode) and the transparent proxy
+(static mode) both expose `mv.outputs.x` to downstream code, so a name mismatch would break that
+access for one variant.  `inputs` names are free to differ — in static mode `mv.inputs` delegates
+to the active variant only, and in runtime mode all variants' inputs are surfaced as a union, so
+there is no ambiguity in either case.
+
+### Why the merged graph rather than split-evaluate-merge?
+
+The alternative (split scenarios by variant key, evaluate each group separately, merge results) was
+considered and rejected.  It breaks scenario ordering, makes `mv.outputs.x` a dead placeholder
+rather than a real graph node (preventing use in parent model formulas), and requires a new
+`VariantEvaluationResult` type.  The merged-graph approach keeps `EvaluationResult` unchanged and
+lets a `ModelVariant` be composed freely inside a larger model.
 
 ---

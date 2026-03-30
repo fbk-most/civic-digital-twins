@@ -4,7 +4,7 @@
 |--------------|------------------------------------------------|
 | Author       | [@bassosimone](https://github.com/bassosimone) |
 | Co-authors   | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-03-15                                     |
+| Last-Updated | 2026-03-30                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -206,7 +206,7 @@ e = graph.power(a, c) * 144
 ```
 
 This DAG that combines input placeholders (`a` and `b`) and operations (`+`,
-`*`, `/`, `graph.exp`, and `graph.power`) to produce specific outputs
+`-`, `*`, `/`, `graph.exp`, and `graph.power`) to produce specific outputs
 (`c`, `d`, and `e`). Please, feel encouraged to create a file named
 `examples/design.py` to try for yourself the examples in this tutorial. To
 run the file, use `uv run python examples/design.py`.
@@ -342,6 +342,36 @@ def reduce(c: np.ndarray, d: np.ndarray, e: np.ndarray) -> np.ndarray: ...
 
 In the next section, we will start to play around to understand
 what is the structure of this DAG that we have created.
+
+### Conditional and Variant Nodes
+
+`graph.py` provides operations for multi-branch conditional computation and runtime
+variant dispatch.
+
+**`multi_clause_where`**
+
+`graph.multi_clause_where` is an N-way conditional node backed by `np.select`.  It accepts a
+sequence of `(condition_node, value_node)` clause pairs and a `default_value` node; the executor
+evaluates all branches eagerly and returns the first-matching value per element.
+`graph.piecewise` is syntactic sugar over `multi_clause_where`.
+
+**`exclusive_multi_clause_where` and `variant_selector`**
+
+From the executor's point of view, `exclusive_multi_clause_where` is **identical** to 
+`multi_clause_where`: it evaluates all branches eagerly via `np.select` and returns the 
+first-matching value.  The difference is semantic — it declares that its branches are mutually 
+exclusive (at most one condition is `True` per element).  The evaluation layer exploits this 
+contract to skip branch evaluation when it already knows which branch is active; the executor 
+itself remains oblivious.
+
+`variant_selector` is a no-op node from the executor's perspective: it stores a sentinel value and
+is otherwise skipped.  Its purpose is to make the split point of a conditional evaluation visible
+to graph traversal — it carries the selector node, the branch output nodes, and the merge nodes as
+explicit graph dependencies, so `linearize.forest` can reach the full structure.
+
+These three nodes are used by the model layer to implement runtime `ModelVariant` dispatch.  See
+[`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection) for the model-layer
+perspective.
 
 ### Timeseries Nodes
 
