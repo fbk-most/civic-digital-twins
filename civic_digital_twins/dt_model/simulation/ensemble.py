@@ -70,6 +70,18 @@ class DistributionEnsemble:
         If any abstract index of *model* is neither
         :class:`~model.index.Distribution`-backed nor a
         :class:`~model.index.CategoricalIndex`.
+
+    Notes
+    -----
+    **Known limitation — categorical sampling overhead**
+
+    When the model has only :class:`~model.index.CategoricalIndex` abstract
+    indexes, it would be possible to enumerate outcomes exactly — yielding one
+    scenario per outcome key weighted by its declared probability — eliminating
+    Monte Carlo noise entirely.  This optimisation is not implemented because
+    it does not compose with :class:`~model.index.Distribution`-backed indexes:
+    once sampling is required for any index, all indexes share the same Monte
+    Carlo budget and the categorical dimension cannot be separated out.
     """
 
     def __init__(self, model: Model, size: int, rng: np.random.Generator | None = None) -> None:

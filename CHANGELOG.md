@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `CategoricalIndex(name, outcomes)` — a new `Index` subclass backed by a
   finite string-keyed probability distribution.  Always abstract (placeholder
-  mode); its value is assigned per scenario by `DistributionEnsemble`.
+  mode).
   Raises `ValueError` at construction if `outcomes` is empty, any probability
   is non-positive, or the probabilities do not sum to 1.0.
   - `support` — ordered list of outcome keys.
@@ -35,18 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     specific guard first.
 - `mv.outputs.<field>` in runtime mode returns an `Index` backed by an
   `exclusive_multi_clause_where` node.
-- `mv.abstract_indexes()` in runtime mode returns the deduplicated union of
-  all variants' abstract indexes plus the `CategoricalIndex` selector
-  (if applicable).
+- `mv.inputs` in runtime mode returns fields whose names appear in
+  **any** variants' inputs (union by field name).
 - `mv.expose` in runtime mode returns only fields whose names appear in
   **all** variants' expose proxies (intersection by field name).
 - `mv._selector_index` — thin `Index` wrapping `_selector_node`; use
   `result[mv._selector_index]` from an `EvaluationResult` to retrieve a
   `(S, 1)` string array of the active variant key per scenario.
-- Construction-time validation: when `selector` is a `CategoricalIndex`,
-  every outcome key must be present in `variants`; raises `ValueError` otherwise.
-- Invalid selector type (not `str`, `CategoricalIndex`, or `graph.Node`) raises
-  `ValueError` immediately.
 
 **Engine layer — `MultiClauseOp`, `variant_selector`, `exclusive_multi_clause_where`**
 
@@ -93,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direct subclass of `Node`.  `isinstance(node, graph.multi_clause_where)` is
   unaffected; `isinstance(node, graph.MultiClauseOp)` is now the preferred
   check for code that handles both conditional node types.
+- `ModelVariant` no longer requires variants to share identical `inputs` field
+  names.  Only `outputs` field names must be identical (required to build the
+  merge graph).  `inputs` may differ across variants; `mv.inputs` exposes their
+  union.
 
 ## [0.8.0] - 2026-03-21
 

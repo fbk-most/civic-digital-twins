@@ -36,8 +36,8 @@ class ModelVariant:
         Human-readable name for the variant group.
     variants:
         Mapping from string key to an already-constructed :class:`Model`
-        instance.  All variants must share the same ``inputs`` and
-        ``outputs`` field names.
+        instance.  All variants must share the same ``outputs`` field names.
+        ``inputs`` may differ across variants.
     selector:
         * ``str`` — static: the named variant is activated immediately.
         * :class:`~.index.CategoricalIndex` — runtime: per-scenario
@@ -58,7 +58,7 @@ class ModelVariant:
         If *selector* is a :class:`~.index.CategoricalIndex` and any
         outcome key is not present in *variants*.
     ValueError
-        If the ``inputs`` or ``outputs`` field names differ across variants.
+        If the ``outputs`` field names differ across variants.
 
     Notes
     -----
@@ -274,12 +274,23 @@ class ModelVariant:
         """Inputs proxy.
 
         Static: proxies the active variant.
-        Runtime: proxies the first variant (field names are identical across
-        all variants by the I/O contract).
+        Runtime: returns the union of all variants' input fields (deduplicated
+        by field name, first-seen wins).  Because all branch graphs are live
+        simultaneously, every variant's inputs must be reachable — consistent
+        with :meth:`abstract_indexes` returning the union of all variants'
+        abstract indexes.
         """
         if object.__getattribute__(self, "_is_static"):
             return object.__getattribute__(self, "_active").inputs
-        return next(iter(object.__getattribute__(self, "variants").values())).inputs
+        variants: dict[str, Model] = object.__getattribute__(self, "variants")
+        seen_fields: set[str] = set()
+        entries: list[tuple[str, Any]] = []
+        for v in variants.values():
+            for field in _io_field_names(v.inputs):
+                if field not in seen_fields:
+                    seen_fields.add(field)
+                    entries.append((field, getattr(v.inputs, field)))
+        return IOProxy(entries)  # type: ignore[arg-type]
 
     @property
     def outputs(self) -> IOProxy[Any]:
@@ -438,7 +449,11 @@ def _io_field_names(proxy: IOProxy[Any]) -> list[str]:
 
 
 def _validate_io_contract(variant_group_name: str, variants: Mapping[str, Model]) -> None:
-    """Ensure all variants share identical ``inputs`` and ``outputs`` field names.
+    """Ensure all variants share identical ``outputs`` field names.
+
+    Inputs may differ across variants — in runtime mode all variant graphs
+    are live simultaneously, so the union of their inputs is exposed via
+    :attr:`ModelVariant.inputs`.
 
     Parameters
     ----------
@@ -450,23 +465,14 @@ def _validate_io_contract(variant_group_name: str, variants: Mapping[str, Model]
     Raises
     ------
     ValueError
-        If any variant's ``inputs`` or ``outputs`` field names differ from
-        the first variant's.
+        If any variant's ``outputs`` field names differ from the first
+        variant's.
     """
     items = list(variants.items())
     ref_key, ref_model = items[0]
-    ref_input_names = _io_field_names(ref_model.inputs)
     ref_output_names = _io_field_names(ref_model.outputs)
 
     for key, model in items[1:]:
-        input_names = _io_field_names(model.inputs)
-        if input_names != ref_input_names:
-            raise ValueError(
-                f"ModelVariant {variant_group_name!r}: 'inputs' field names differ "
-                f"between variants {ref_key!r} and {key!r}.  "
-                f"Expected {ref_input_names}, got {input_names}."
-            )
-
         output_names = _io_field_names(model.outputs)
         if output_names != ref_output_names:
             raise ValueError(

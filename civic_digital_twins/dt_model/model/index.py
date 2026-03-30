@@ -478,24 +478,19 @@ class TimeseriesIndex(Index):
 class CategoricalIndex(Index):
     """Index backed by a finite string-keyed probability distribution.
 
-    A ``CategoricalIndex`` is always abstract (placeholder mode): its value
-    is not known at construction time and must be assigned per scenario by
-    :class:`~dt_model.simulation.ensemble.DistributionEnsemble` (extended)
-    or a custom ensemble.  It behaves like ``Index(name, value=None)`` from
-    the graph perspective — the underlying node is a ``graph.placeholder``.
+    Always abstract (placeholder mode): the underlying node is a
+    ``graph.placeholder``, equivalent to ``Index(name, value=None)``.
+    The declared probabilities describe how the index should be sampled;
+    they do not affect graph evaluation directly.
 
-    Because :class:`GenericIndex.__eq__` returns a ``graph.equal`` node, a
-    ``CategoricalIndex`` can be used as a guard in ``graph.piecewise``::
+    Because :class:`GenericIndex.__eq__` returns a ``graph.equal`` node,
+    a ``CategoricalIndex`` can be used as a guard in ``graph.piecewise``::
 
         mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
         factor = Index("factor", graph.piecewise(
             (0.0,   mode == "electric"),
             (1.2,   True),
         ))
-
-    Per-scenario assignment value must be ``np.array([key])`` — shape ``(1,)``
-    string array — matching the ``(S, 1)`` stacking convention used by
-    :class:`~dt_model.simulation.ensemble.DistributionEnsemble`.
 
     Parameters
     ----------

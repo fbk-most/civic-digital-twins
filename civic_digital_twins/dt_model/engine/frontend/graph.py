@@ -724,15 +724,7 @@ class MultiClauseOp(Generic[C, T], Node[T]):
     """Abstract base class for multi-clause conditional nodes.
 
     Holds the shared structure — a sequence of ``(condition, value)`` clause
-    pairs and a default value — following the same pattern as
-    :class:`BinaryOp`, :class:`UnaryOp`, and :class:`AxisOp`.
-
-    Concrete subclasses:
-
-    * :class:`multi_clause_where` — standard N-way conditional (``np.select``).
-    * :class:`exclusive_multi_clause_where` — same semantics, but annotates
-      branches as mutually exclusive for use with runtime :class:`variant_selector`
-      nodes and the layered evaluation plan.
+    pairs and a default value.
 
     Args:
         clauses: Ordered sequence of ``(condition, value)`` pairs evaluated
@@ -754,8 +746,9 @@ class multi_clause_where(MultiClauseOp[C, T]):
     Concrete subclass of :class:`MultiClauseOp`.
 
     Args:
-        clauses: List of (condition, value) pairs
-        default_value: Value to use when no condition is met
+        clauses: List of ``(condition, value)`` pairs to evaluate.
+        default_value: Value to use when no condition matches.
+        name: Optional node name for debugging.
     """
 
     def __repr__(self) -> str:
@@ -765,29 +758,30 @@ class multi_clause_where(MultiClauseOp[C, T]):
 
 
 class variant_selector(Node):
-    """First-class graph node carrying the full split description for a runtime ModelVariant.
+    """Structural node describing a runtime conditional split over named branches.
 
-    Created by ``ModelVariant`` at construction time alongside the
-    :class:`exclusive_multi_clause_where` merge nodes.  Listed as a dependency
-    of each companion ``exclusive_multi_clause_where`` node so that it is
-    reachable from output nodes via normal :func:`~linearize.forest` traversal —
-    no side-channel attribute reads required.
+    Carries the full split topology — selector, branch output nodes, and merge
+    nodes — so that all components of the split are reachable from output nodes
+    via normal :func:`~linearize.forest` traversal without side-channel
+    attribute reads.
 
-    ``linearize._get_dependencies`` returns ``[selector_node] + all branch
-    output nodes``, placing this node after pre and branch nodes but before
-    merge nodes in topological order.
+    Listed as a dependency of each companion
+    :class:`exclusive_multi_clause_where` node.  ``linearize._get_dependencies``
+    returns ``[selector_node] + all branch output nodes``, placing this node
+    after shared pre-nodes and branch nodes but before the merge nodes in
+    topological order.
 
     Produces no value at execution time — the executor stores a sentinel
-    ``np.array([])`` so the node is marked as evaluated and skipped if
-    encountered again.
+    ``np.array([])`` so the node is marked as evaluated and skipped on any
+    subsequent encounter.
 
     Args:
-        selector_node: The node that produces a variant-key string per scenario.
-        branch_map: Maps each variant key to the list of that variant's output
-            nodes (one per output field), in field declaration order.
-        merge_nodes: The :class:`exclusive_multi_clause_where` nodes (one per
-            output field).  Populated by ``ModelVariant`` immediately after
-            constructing all companion ``exclusive_multi_clause_where`` nodes.
+        selector_node: Node that produces a branch-key string per scenario.
+        branch_map: Maps each branch key to the list of that branch's output
+            nodes (one per merge field), in field declaration order.
+        merge_nodes: The companion :class:`exclusive_multi_clause_where` nodes
+            (one per merge field).  May be populated after construction once all
+            companion nodes are built.
         name: Optional node name for debugging.
     """
 
@@ -808,8 +802,7 @@ class variant_selector(Node):
         branch_repr = (
             "{"
             + ", ".join(
-                f'"{k}": [' + ", ".join(f"n{n.id}" for n in nodes) + "]"
-                for k, nodes in self.branch_map.items()
+                f'"{k}": [' + ", ".join(f"n{n.id}" for n in nodes) + "]" for k, nodes in self.branch_map.items()
             )
             + "}"
         )
@@ -824,19 +817,15 @@ class variant_selector(Node):
 
 
 class exclusive_multi_clause_where(MultiClauseOp[C, T]):
-    """Like :class:`multi_clause_where` but marks branches as mutually exclusive.
+    """Like :class:`multi_clause_where` but declares branches as mutually exclusive.
 
-    One node is created per output field per runtime ``ModelVariant``.
     Receives a :class:`variant_selector` companion at construction time and
     lists it as an additional graph dependency so that the companion is
     reachable from output nodes via normal :func:`~linearize.forest` traversal.
 
     The executor evaluates this node identically to :class:`multi_clause_where`
-    (``np.select`` over all branches, eager).  In the layered execution path
-    the merged output values are injected directly into the state by the
-    evaluation layer — the executor never evaluates this node in practice.
-    It exists in the graph so that parent model formulas can reference
-    ``mv.outputs.x`` as a real graph node.
+    (``np.select`` over all branches, eager) — mutual exclusivity is a
+    semantic guarantee provided by the caller, not enforced by the executor.
 
     **Changelog**: user code that performs
     ``isinstance(node, graph.multi_clause_where)`` to detect *any*
@@ -844,10 +833,10 @@ class exclusive_multi_clause_where(MultiClauseOp[C, T]):
     nodes.  Update such checks to ``isinstance(node, graph.MultiClauseOp)``.
 
     Args:
-        clauses: List of (condition, value) pairs — one per variant key.
-        default_value: Sentinel value (typically ``NaN``) used when no
-            condition matches (should not occur if variants are exhaustive).
-        companion: The :class:`variant_selector` node for this ``ModelVariant``.
+        clauses: Ordered list of ``(condition, value)`` pairs.  Conditions
+            should be mutually exclusive; the first matching one is selected.
+        default_value: Sentinel value used when no condition matches.
+        companion: The :class:`variant_selector` node for this split.
         name: Optional node name for debugging.
     """
 

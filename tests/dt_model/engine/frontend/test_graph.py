@@ -708,7 +708,7 @@ def test_piecewise_empty_raises():
 
 
 def test_variant_selector_repr():
-    """variant_selector.__repr__ includes the class name and node ids."""
+    """variant_selector.__repr__ includes the class name and references all node ids."""
     sel_node = graph.placeholder("mode")
     branch_a = graph.constant(1.0)
     branch_b = graph.constant(2.0)
@@ -722,11 +722,13 @@ def test_variant_selector_repr():
     r = repr(vs)
     assert "variant_selector" in r
     assert f"n{sel_node.id}" in r
+    assert f"n{branch_a.id}" in r
+    assert f"n{branch_b.id}" in r
     assert f"n{merge_a.id}" in r
 
 
 def test_exclusive_multi_clause_where_repr():
-    """exclusive_multi_clause_where.__repr__ includes the class name and node ids."""
+    """exclusive_multi_clause_where.__repr__ includes the class name and references all node ids."""
     sel_node = graph.placeholder("mode")
     branch_a = graph.constant(1.0)
     branch_b = graph.constant(2.0)
@@ -747,5 +749,35 @@ def test_exclusive_multi_clause_where_repr():
     )
     r = repr(mcw)
     assert "exclusive_multi_clause_where" in r
-    assert f"n{vs.id}" in r
+    assert f"n{cond_a.id}" in r
+    assert f"n{cond_b.id}" in r
     assert f"n{default.id}" in r
+    assert f"n{vs.id}" in r
+
+
+def test_variant_selector_repr_after_merge_nodes_populated():
+    """variant_selector repr is stable after merge_nodes is set post-construction."""
+    sel_node = graph.placeholder("mode")
+    branch_a = graph.constant(1.0)
+    branch_b = graph.constant(2.0)
+    cond_a = graph.equal(sel_node, graph.constant("a"))
+    cond_b = graph.equal(sel_node, graph.constant("b"))
+    default = graph.constant(float("nan"))
+    vs = graph.variant_selector(
+        selector_node=sel_node,
+        branch_map={"a": [branch_a], "b": [branch_b]},
+        merge_nodes=[],
+        name="vs:test",
+    )
+    mcw = graph.exclusive_multi_clause_where(
+        clauses=[(cond_a, branch_a), (cond_b, branch_b)],
+        default_value=default,
+        companion=vs,
+        name="mcw:test",
+    )
+    vs.merge_nodes = [mcw]  # type: ignore[list-item]  # populate as done in real construction
+
+    r = repr(vs)
+    assert f"n{mcw.id}" in r
+    # The companion back-reference creates a cross-reference, not a cycle in repr.
+    assert f"n{vs.id}" in repr(mcw)
