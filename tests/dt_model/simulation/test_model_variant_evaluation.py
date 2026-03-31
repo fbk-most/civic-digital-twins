@@ -262,10 +262,12 @@ def test_grid_mode_node_selector_from_axis():
     Single dummy scenario (no non-axis abstract indexes).
     """
     presence = Index("presence", None)
-    selector = ModelVariant.guards_to_selector([
-        ("train", presence.node > 150.0),
-        ("bike", True),
-    ])
+    selector = ModelVariant.guards_to_selector(
+        [
+            ("train", presence.node > 150.0),
+            ("bike", True),
+        ]
+    )
     mv = ModelVariant(
         "Transport",
         {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
