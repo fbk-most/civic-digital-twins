@@ -194,3 +194,91 @@ def test_selector_index_accessible_in_result():
     # Should be shape (S, 1) with all entries "bike"
     assert arr.shape == (3, 1)
     assert all(v == "bike" for v in arr.ravel())
+
+
+# ===========================================================================
+# Grid mode (axes) — runtime variant with numeric axis
+# ===========================================================================
+
+
+def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
+    """ModelVariant where both sub-models scale a shared presence axis."""
+    presence = Index("presence", None)
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        selector=mode,
+    )
+    return presence, mv
+
+
+def test_grid_mode_categorical_selector_all_bike():
+    """CategoricalIndex selector (all-bike) + numeric axis: throughput = presence * 1."""
+    mode = CategoricalIndex("mode", {"bike": 1.0})
+    presence, mv = _make_presence_mv(mode)
+    xs = np.array([100.0, 200.0, 300.0])
+
+    # mode is a non-axis abstract; presence is the axis → single scenario needs mode assignment.
+    manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
+    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], axes={presence: xs})
+
+    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 1.0)
+
+
+def test_grid_mode_categorical_selector_all_train():
+    """CategoricalIndex selector (all-train) + numeric axis: throughput = presence * 10."""
+    mode = CategoricalIndex("mode", {"train": 1.0})
+    presence, mv = _make_presence_mv(mode)
+    xs = np.array([100.0, 200.0, 300.0])
+
+    manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
+    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], axes={presence: xs})
+
+    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 10.0)
+
+
+def test_grid_mode_categorical_selector_mixed_scenarios():
+    """CategoricalIndex selector, two equal-weight scenarios + numeric axis.
+
+    Weighted mean throughput = presence * (0.5*1 + 0.5*10) = presence * 5.5.
+    """
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    presence, mv = _make_presence_mv(mode)
+    xs = np.array([100.0, 200.0, 300.0])
+
+    manual_scenarios: list[WeightedScenario] = [
+        (0.5, {mode: np.array(["bike"])}),
+        (0.5, {mode: np.array(["train"])}),
+    ]
+    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], axes={presence: xs})
+
+    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 5.5)
+
+
+def test_grid_mode_node_selector_from_axis():
+    """graph.Node selector derived from numeric axis.
+
+    Selector: presence > 150 → 'train', else 'bike'.
+    Single dummy scenario (no non-axis abstract indexes).
+    """
+    presence = Index("presence", None)
+    selector = ModelVariant.guards_to_selector(
+        [
+            ("train", presence.node > 150.0),
+            ("bike", True),
+        ]
+    )
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        selector=selector,
+    )
+    xs = np.array([100.0, 200.0, 300.0])
+
+    # presence is the only abstract index and it is the axis → no assignments needed.
+    result = Evaluation(mv).evaluate([(1.0, {})], [mv.outputs.throughput], axes={presence: xs})
+
+    # presence=100 → bike → 100*1=100
+    # presence=200 → train → 200*10=2000
+    # presence=300 → train → 300*10=3000
+    assert np.allclose(result.marginalize(mv.outputs.throughput), [100.0, 2000.0, 3000.0])
