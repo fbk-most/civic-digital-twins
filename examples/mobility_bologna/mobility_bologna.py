@@ -23,8 +23,7 @@ from scipy import stats
 from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index, Model, TimeseriesIndex
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.model.index import GenericIndex
-from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, EvaluationResult
 
 try:
     from .mobility_bologna_data import euro_class_emission, euro_class_split, vehicle_inflow, vehicle_starting
@@ -560,8 +559,8 @@ class BolognaModel(Model):
     * :class:`TrafficModel` — baseline and modified circulating traffic.
     * :class:`EmissionsModel` — baseline and modified emissions.
 
-    KPI outputs are declared on ``outputs``; all sub-model indexes are
-    collected automatically.
+    KPI outputs are declared on ``outputs``; timeseries used by plotting
+    helpers are surfaced via ``expose``.
     """
 
     @dataclass
@@ -579,11 +578,11 @@ class BolognaModel(Model):
 
     @dataclass
     class Expose:
-        """All sub-model indexes, exposed so the engine can reach every node.
+        """Inspectable timeseries and behavioral parameters.
 
-        The first six fields are named timeseries used by :func:`__main__` for
-        plotting; the last three collect all sub-model indexes so the engine can
-        reach every node in the computation graph.
+        The timeseries fields are used by plotting helpers; ``i_b_p50_cost``
+        is surfaced here so that :class:`~dt_model.simulation.ensemble.DistributionEnsemble`
+        can discover and sample it.
         """
 
         ts_inflow: TimeseriesIndex
@@ -592,9 +591,7 @@ class BolognaModel(Model):
         modified_traffic: TimeseriesIndex
         emissions: TimeseriesIndex
         modified_emissions: Index
-        inflow_indexes: list[GenericIndex]
-        traffic_indexes: list[GenericIndex]
-        emissions_indexes: list[GenericIndex]
+        i_b_p50_cost: DistributionIndex
 
     def __init__(self) -> None:
         Outputs = BolognaModel.Outputs
@@ -675,9 +672,7 @@ class BolognaModel(Model):
                 modified_traffic=_traffic.outputs.modified_traffic,
                 emissions=_emissions.outputs.emissions,
                 modified_emissions=_emissions.outputs.modified_emissions,
-                inflow_indexes=list(_inflow.indexes),
-                traffic_indexes=list(_traffic.indexes),
-                emissions_indexes=list(_emissions.indexes),
+                i_b_p50_cost=i_b_p50_cost,
             ),
         )
 
@@ -687,14 +682,12 @@ class BolognaModel(Model):
 # ---------------------------------------------------------------------------
 
 
-def evaluate(model: BolognaModel, size: int = 1) -> dict:
+def evaluate(model: BolognaModel, size: int = 1) -> EvaluationResult:
     """Evaluate *model* over an ensemble of *size* samples.
 
     Draws *size* samples from each distribution-backed abstract index via
-    :class:`~dt_model.simulation.ensemble.DistributionEnsemble`, runs the
-    standard :class:`~dt_model.simulation.evaluation.Evaluation` engine, and
-    returns a ``subs`` dict mapping each index to a 2-D array so that ``[0]``
-    indexing and ``.mean(axis=0)`` work uniformly in the helpers below.
+    :class:`~dt_model.simulation.ensemble.DistributionEnsemble` and runs the
+    standard :class:`~dt_model.simulation.evaluation.Evaluation` engine.
 
     Parameters
     ----------
@@ -705,26 +698,15 @@ def evaluate(model: BolognaModel, size: int = 1) -> dict:
 
     Returns
     -------
-    dict
-        Mapping of :class:`~dt_model.model.index.GenericIndex` to 2-D arrays.
+    EvaluationResult
+        Use ``result[idx]`` for the raw ``(S, 1)`` or ``(S, T)`` array and
+        ``result.marginalize(idx)`` for the weighted mean.
     """
     ensemble = DistributionEnsemble(model, size)
-
-    result = Evaluation(model).evaluate(
+    return Evaluation(model).evaluate(
         ensemble,
         functions={"ts_solve": executor.LambdaAdapter(_ts_solve)},
     )
-
-    subs = {}
-    for idx in model.indexes:
-        val = result[idx]
-        if val.ndim == 0:
-            subs[idx] = np.full((size, 1), float(val))
-        elif val.ndim == 1:
-            subs[idx] = np.expand_dims(val, axis=0)
-        else:
-            subs[idx] = val
-    return subs
 
 
 def distribution(field, size=10000, num=100):
@@ -795,7 +777,7 @@ def plot_field_graph(
     return fig
 
 
-def compute_kpis(m: BolognaModel, evals: dict) -> dict:
+def compute_kpis(m: BolognaModel, evals: EvaluationResult) -> dict:
     """Compute the KPIs for the mobility example.
 
     Parameters
