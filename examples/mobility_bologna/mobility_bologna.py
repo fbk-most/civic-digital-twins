@@ -7,6 +7,7 @@ We include this model into the source tree as an illustrative example.
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import matplotlib
 
@@ -866,11 +867,8 @@ def roundup(val):
     return round(v / 10**s) * 10**s
 
 
-if __name__ == "__main__":
-    # ── Reference scenario (default parameters) ──────────────────────────────
-    m = BolognaModel(**BolognaModel.default_inputs())
-    result = evaluate(m, 20)
-
+def _save_scenario_plots(label: str, m: BolognaModel, result: EvaluationResult, out: Path) -> None:
+    """Save inflow, traffic and emissions field graphs for one scenario."""
     fig = plot_field_graph(
         result[m.expose.modified_inflow],
         horizontal_label="Time",
@@ -879,7 +877,7 @@ if __name__ == "__main__":
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
         reference_line=result[m.expose.ts_inflow],
     )
-    fig.savefig("bologna_inflow.png", dpi=150)
+    fig.savefig(out / f"{label}_inflow.png", dpi=150)
     plt.close(fig)
 
     fig = plot_field_graph(
@@ -889,7 +887,7 @@ if __name__ == "__main__":
         vertical_size=15000,
         reference_line=result[m.expose.traffic],
     )
-    fig.savefig("bologna_traffic.png", dpi=150)
+    fig.savefig(out / f"{label}_traffic.png", dpi=150)
     plt.close(fig)
 
     fig = plot_field_graph(
@@ -900,8 +898,18 @@ if __name__ == "__main__":
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
         reference_line=result[m.expose.emissions],
     )
-    fig.savefig("bologna_emissions.png", dpi=150)
+    fig.savefig(out / f"{label}_emissions.png", dpi=150)
     plt.close(fig)
+
+
+if __name__ == "__main__":
+    _out = Path(__file__).parent / "output"
+    _out.mkdir(exist_ok=True)
+
+    # ── Reference scenario (default parameters) ──────────────────────────────
+    m = BolognaModel(**BolognaModel.default_inputs())
+    result = evaluate(m, 20)
+    _save_scenario_plots("reference", m, result, _out)
 
     print("Reference scenario:")
     for k, v in compute_kpis(m, result).items():
@@ -915,6 +923,7 @@ if __name__ == "__main__":
         "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
     })
     result_strict = evaluate(m_strict, 20)
+    _save_scenario_plots("strict", m_strict, result_strict, _out)
 
     print("\nStricter pricing scenario (euro_0: 8.00 €, euro_6: 5.00 €):")
     for k, v in compute_kpis(m_strict, result_strict).items():
