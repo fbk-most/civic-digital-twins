@@ -918,10 +918,12 @@ if __name__ == "__main__":
     # ── Stricter pricing scenario ─────────────────────────────────────────────
     # Higher fees with a steeper Euro-class gradient: older/more polluting
     # vehicles pay substantially more, incentivising fleet-mix shifts.
-    m_strict = BolognaModel(**{
-        **BolognaModel.default_inputs(),
-        "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
-    })
+    m_strict = BolognaModel(
+        **{
+            **BolognaModel.default_inputs(),
+            "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
+        }
+    )
     result_strict = evaluate(m_strict, 20)
     _save_scenario_plots("strict", m_strict, result_strict, _out)
 
