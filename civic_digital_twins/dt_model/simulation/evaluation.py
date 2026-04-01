@@ -100,7 +100,7 @@ class EvaluationResult:
                 # Known fragility: if S == T for a timeseries-shaped result
                 # this check would incorrectly treat the timeseries dimension
                 # as the scenario dimension.  This will be addressed when typed
-                # axes are introduced in v0.9.0 (see GitHub issue #<TBD>).
+                # axes are introduced in v0.9.0 (see GitHub issue #142).
                 arr = np.broadcast_to(arr.reshape((1,) + arr.shape), (S,) + arr.shape)
             # 1-D mode: scenario dimension is always axis 0.
             # Contract directly; squeeze trailing size-1 dims so scalar indexes
