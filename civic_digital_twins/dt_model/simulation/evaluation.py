@@ -84,8 +84,24 @@ class EvaluationResult:
         scalar sample as shape ``(1,)`` for timeseries broadcast compatibility)
         are squeezed away so that the return value is a plain scalar.
         """
-        arr = self._state.values[index.node]
+        arr = np.asarray(self._state.values[index.node])
         if not self._axes:
+            S = self._weights.size
+            # If the array has no scenario dimension (constant index, or an
+            # index whose evaluation did not broadcast over scenarios), inject
+            # a scenario dimension before contracting.
+            if arr.ndim == 0 or arr.shape[0] != S:
+                # Heuristic: if the leading dimension does not equal S, the
+                # array has no scenario dimension (constant node, or a sum
+                # projection that collapses T→1 regardless of scenarios).
+                # Inject a broadcast scenario dimension so the tensordot below
+                # can contract it.
+                #
+                # Known fragility: if S == T for a timeseries-shaped result
+                # this check would incorrectly treat the timeseries dimension
+                # as the scenario dimension.  This will be addressed when typed
+                # axes are introduced in v0.9.0 (see GitHub issue #142).
+                arr = np.broadcast_to(arr.reshape((1,) + arr.shape), (S,) + arr.shape)
             # 1-D mode: scenario dimension is always axis 0.
             # Contract directly; squeeze trailing size-1 dims so scalar indexes
             # return a scalar rather than a (1,) array.

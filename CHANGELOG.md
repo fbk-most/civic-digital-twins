@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `EvaluationResult.marginalize()` raised a shape mismatch when called on an
+  index whose value does not depend on any scenario-varying input (e.g. a
+  constant index or a timeseries whose sum collapses to shape `(1,)` regardless
+  of the number of scenarios).  The fix detects arrays with no scenario
+  dimension and broadcasts one in before contracting with the weights.
+  A shape heuristic is used (`arr.shape[0] != S`); the known fragility when
+  `S == T` is documented and tracked in #142.
+
 ### Added
 
 **`CategoricalIndex` — probabilistic runtime model selection**
