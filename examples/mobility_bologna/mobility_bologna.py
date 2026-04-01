@@ -559,9 +559,28 @@ class BolognaModel(Model):
     * :class:`TrafficModel` — baseline and modified circulating traffic.
     * :class:`EmissionsModel` — baseline and modified emissions.
 
+    All policy parameters (``i_p_*``) and behavioural parameters (``i_b_*``)
+    are declared in ``Inputs`` and can be overridden at construction time.
     KPI outputs are declared on ``outputs``; timeseries used by plotting
     helpers are surfaced via ``expose``.
     """
+
+    @dataclass
+    class Inputs:
+        """Policy and behavioural parameters of :class:`BolognaModel`."""
+
+        # Policy parameters
+        i_p_start_time: Index
+        i_p_end_time: Index
+        i_p_cost: list[Index]
+        i_p_fraction_exempted: Index
+        # Behavioural parameters
+        i_b_p50_cost: DistributionIndex
+        i_b_p50_anticipating: Index
+        i_b_p50_anticipation: Index
+        i_b_p50_postponing: Index
+        i_b_p50_postponement: Index
+        i_b_starting_modified_factor: Index
 
     @dataclass
     class Outputs:
@@ -578,12 +597,7 @@ class BolognaModel(Model):
 
     @dataclass
     class Expose:
-        """Inspectable timeseries and behavioral parameters.
-
-        The timeseries fields are used by plotting helpers; ``i_b_p50_cost``
-        is surfaced here so that :class:`~dt_model.simulation.ensemble.DistributionEnsemble`
-        can discover and sample it.
-        """
+        """Inspectable timeseries used by plotting helpers."""
 
         ts_inflow: TimeseriesIndex
         modified_inflow: Index
@@ -591,11 +605,61 @@ class BolognaModel(Model):
         modified_traffic: TimeseriesIndex
         emissions: TimeseriesIndex
         modified_emissions: Index
-        i_b_p50_cost: DistributionIndex
 
-    def __init__(self) -> None:
+    @classmethod
+    def default_inputs(cls) -> dict:
+        """Return the reference-scenario input parameters as a keyword-argument dict.
+
+        Pass directly to :class:`BolognaModel` or override individual entries::
+
+            m = BolognaModel(**BolognaModel.default_inputs())
+            m_alt = BolognaModel(**{**BolognaModel.default_inputs(), "i_p_cost": [...]})
+        """
+        return {
+            "i_p_start_time": Index(
+                "start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds()
+            ),
+            "i_p_end_time": Index("end time", (pd.Timestamp("19:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
+            "i_p_cost": [Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)],
+            "i_p_fraction_exempted": Index("exempted vehicles %", 0.15),
+            "i_b_p50_cost": DistributionIndex("cost 50% threshold", stats.uniform, {"loc": 4.00, "scale": 7.00}),
+            "i_b_p50_anticipating": Index("anticipation 50% likelihood", 0.5),
+            "i_b_p50_anticipation": Index("anticipation distribution 50% threshold", 0.25),
+            "i_b_p50_postponing": Index("postponement 50% likelihood", 0.8),
+            "i_b_p50_postponement": Index("postponement distribution 50% threshold", 0.50),
+            "i_b_starting_modified_factor": Index("starting modified factor", 1.00),
+        }
+
+    def __init__(
+        self,
+        *,
+        i_p_start_time: Index,
+        i_p_end_time: Index,
+        i_p_cost: list[Index],
+        i_p_fraction_exempted: Index,
+        i_b_p50_cost: DistributionIndex,
+        i_b_p50_anticipating: Index,
+        i_b_p50_anticipation: Index,
+        i_b_p50_postponing: Index,
+        i_b_p50_postponement: Index,
+        i_b_starting_modified_factor: Index,
+    ) -> None:
+        Inputs = BolognaModel.Inputs
         Outputs = BolognaModel.Outputs
         Expose = BolognaModel.Expose
+
+        inputs = Inputs(
+            i_p_start_time=i_p_start_time,
+            i_p_end_time=i_p_end_time,
+            i_p_cost=i_p_cost,
+            i_p_fraction_exempted=i_p_fraction_exempted,
+            i_b_p50_cost=i_b_p50_cost,
+            i_b_p50_anticipating=i_b_p50_anticipating,
+            i_b_p50_anticipation=i_b_p50_anticipation,
+            i_b_p50_postponing=i_b_p50_postponing,
+            i_b_p50_postponement=i_b_p50_postponement,
+            i_b_starting_modified_factor=i_b_starting_modified_factor,
+        )
 
         ts = TimeseriesIndex(
             "time range",
@@ -608,18 +672,6 @@ class BolognaModel(Model):
         )
         ts_inflow = TimeseriesIndex("inflow", vehicle_inflow)
         ts_starting = TimeseriesIndex("staring", vehicle_starting)
-
-        i_p_start_time = Index("start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds())
-        i_p_end_time = Index("end time", (pd.Timestamp("19:30:00") - pd.Timestamp("00:00:00")).total_seconds())
-        i_p_cost = [Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)]
-        i_p_fraction_exempted = Index("exempted vehicles %", 0.15)
-
-        i_b_p50_cost = DistributionIndex("cost 50% threshold", stats.uniform, {"loc": 4.00, "scale": 7.00})
-        i_b_p50_anticipating = Index("anticipation 50% likelihood", 0.5)
-        i_b_p50_anticipation = Index("anticipation distribution 50% threshold", 0.25)
-        i_b_p50_postponing = Index("postponement 50% likelihood", 0.8)
-        i_b_p50_postponement = Index("postponement distribution 50% threshold", 0.50)
-        i_b_starting_modified_factor = Index("starting modified factor", 1.00)
 
         _inflow = InflowModel(
             ts_inflow=ts_inflow,
@@ -655,6 +707,7 @@ class BolognaModel(Model):
 
         super().__init__(
             "Bologna mobility",
+            inputs=inputs,
             outputs=Outputs(
                 total_base_inflow=_inflow.outputs.total_base_inflow,
                 total_modified_inflow=_inflow.outputs.total_modified_inflow,
@@ -672,7 +725,6 @@ class BolognaModel(Model):
                 modified_traffic=_traffic.outputs.modified_traffic,
                 emissions=_emissions.outputs.emissions,
                 modified_emissions=_emissions.outputs.modified_emissions,
-                i_b_p50_cost=i_b_p50_cost,
             ),
         )
 
@@ -777,15 +829,16 @@ def plot_field_graph(
     return fig
 
 
-def compute_kpis(m: BolognaModel, evals: EvaluationResult) -> dict:
+def compute_kpis(m: BolognaModel, result: EvaluationResult) -> dict:
     """Compute the KPIs for the mobility example.
 
     Parameters
     ----------
     m:
         A :class:`BolognaModel` instance.
-    evals:
-        The subs dict returned by :func:`evaluate`.
+    result:
+        The :class:`~dt_model.simulation.evaluation.EvaluationResult` returned
+        by :func:`evaluate`.
 
     Returns
     -------
@@ -793,16 +846,16 @@ def compute_kpis(m: BolognaModel, evals: EvaluationResult) -> dict:
         Mapping of KPI label strings to integer values.
     """
     return {
-        "Base inflow [veh/day]": int(evals[m.outputs.total_base_inflow].mean()),
-        "Modified inflow [veh/day]": int(evals[m.outputs.total_modified_inflow].mean()),
-        "Shifted inflow [veh/day]": int(evals[m.outputs.total_shifted].mean()),
+        "Base inflow [veh/day]": int(result.marginalize(m.outputs.total_base_inflow)),
+        "Modified inflow [veh/day]": int(result.marginalize(m.outputs.total_modified_inflow)),
+        "Shifted inflow [veh/day]": int(result.marginalize(m.outputs.total_shifted)),
         "Paying inflow [veh/day]": (
-            int(evals[m.outputs.total_paying].mean()) if evals[m.outputs.avg_cost].mean() > 0 else 0
+            int(result.marginalize(m.outputs.total_paying)) if result.marginalize(m.outputs.avg_cost) > 0 else 0
         ),
-        "Collected fees [€/day]": int(evals[m.outputs.total_payed].mean()),
-        "Emissions [NOx gr/day]": int(evals[m.outputs.total_modified_emissions].mean()),
-        "Modified emissions [NOx gr/day]": int(evals[m.outputs.total_emissions].mean())
-        - int(evals[m.outputs.total_modified_emissions].mean()),
+        "Collected fees [€/day]": int(result.marginalize(m.outputs.total_payed)),
+        "Emissions [NOx gr/day]": int(result.marginalize(m.outputs.total_modified_emissions)),
+        "Modified emissions [NOx gr/day]": int(result.marginalize(m.outputs.total_emissions))
+        - int(result.marginalize(m.outputs.total_modified_emissions)),
     }
 
 
@@ -814,40 +867,55 @@ def roundup(val):
 
 
 if __name__ == "__main__":
-    m = BolognaModel()
-    subs = evaluate(m, 20)
+    # ── Reference scenario (default parameters) ──────────────────────────────
+    m = BolognaModel(**BolognaModel.default_inputs())
+    result = evaluate(m, 20)
 
     fig = plot_field_graph(
-        subs[m.expose.modified_inflow],
+        result[m.expose.modified_inflow],
         horizontal_label="Time",
         vertical_label="Flow (vehicles/hour)",
         vertical_size=1600,
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
-        reference_line=subs[m.expose.ts_inflow][0],
+        reference_line=result[m.expose.ts_inflow],
     )
     fig.savefig("bologna_inflow.png", dpi=150)
     plt.close(fig)
 
     fig = plot_field_graph(
-        subs[m.expose.modified_traffic],
+        result[m.expose.modified_traffic],
         horizontal_label="Time",
         vertical_label="Traffic (circulating vehicles)",
         vertical_size=15000,
-        reference_line=subs[m.expose.traffic][0],
+        reference_line=result[m.expose.traffic],
     )
     fig.savefig("bologna_traffic.png", dpi=150)
     plt.close(fig)
 
     fig = plot_field_graph(
-        subs[m.expose.modified_emissions],
+        result[m.expose.modified_emissions],
         horizontal_label="Time",
         vertical_label="Emissions (NOx gr/h)",
         vertical_size=4000,
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
-        reference_line=subs[m.expose.emissions][0],
+        reference_line=result[m.expose.emissions],
     )
     fig.savefig("bologna_emissions.png", dpi=150)
     plt.close(fig)
 
-    for k, v in compute_kpis(m, subs).items():
-        print(f"{k} - {v:,}")
+    print("Reference scenario:")
+    for k, v in compute_kpis(m, result).items():
+        print(f"  {k} - {v:,}")
+
+    # ── Stricter pricing scenario ─────────────────────────────────────────────
+    # Higher fees with a steeper Euro-class gradient: older/more polluting
+    # vehicles pay substantially more, incentivising fleet-mix shifts.
+    m_strict = BolognaModel(**{
+        **BolognaModel.default_inputs(),
+        "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
+    })
+    result_strict = evaluate(m_strict, 20)
+
+    print("\nStricter pricing scenario (euro_0: 8.00 €, euro_6: 5.00 €):")
+    for k, v in compute_kpis(m_strict, result_strict).items():
+        print(f"  {k} - {v:,}")
