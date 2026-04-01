@@ -249,6 +249,15 @@ def test_evaluation_result_axes_property_empty_in_1d_mode():
     assert result.axes == {}
 
 
+def test_marginalize_constant_index():
+    """Marginalize on an index with no abstract dependency returns the constant."""
+    I_c = Index("c", 42.0)
+    model = _make_model(I_c)
+    result = Evaluation(model).evaluate([(1.0, {})])
+    marginalised = result.marginalize(I_c)
+    assert float(marginalised) == pytest.approx(42.0)
+
+
 def test_marginalize_1d_squeeze_scalar():
     """Marginalize squeezes the trailing size-1 dim added by DistributionEnsemble."""
     from scipy import stats
