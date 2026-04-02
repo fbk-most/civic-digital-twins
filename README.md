@@ -177,7 +177,7 @@ uv sync --upgrade
 
 ## Releasing
 
-Per-release checklist (five manual steps):
+Per-release checklist (six manual steps):
 
 1. Make sure the version number in `pyproject.toml` is correct.
 
@@ -199,7 +199,17 @@ Per-release checklist (five manual steps):
    ```
    Update any `Last-Updated` fields that are out of date.
 
-5. Commit the changes above, then create and push a version tag:
+5. Verify that the runnable doc scripts in `examples/doc/` are in sync with
+   the code snippets in the corresponding documentation files, and that they
+   all execute without errors:
+   ```bash
+   uv run python examples/doc/doc_engine.py
+   uv run python examples/doc/doc_model.py
+   uv run python examples/doc/doc_modularity.py
+   uv run python examples/doc/doc_getting_started.py
+   ```
+
+6. Commit the changes above, then create and push a version tag:
    ```bash
    git add pyproject.toml uv.lock CHANGELOG.md docs/
    git commit -m "chore: prepare v<version> release"
