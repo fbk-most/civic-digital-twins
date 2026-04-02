@@ -17,7 +17,7 @@ _ENSEMBLE_SIZE = 5
 @pytest.fixture(scope="module")
 def model():
     """Shared BolognaModel instance (graph construction is the expensive part)."""
-    return BolognaModel()
+    return BolognaModel(**BolognaModel.default_inputs())
 
 
 @pytest.fixture

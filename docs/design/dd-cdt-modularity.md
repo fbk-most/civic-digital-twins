@@ -3,7 +3,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-03-30                                     |
+| Last-Updated | 2026-04-01                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -25,7 +25,7 @@ and optionally `Expose` — and receives its upstream dependencies as typed cons
 output indexes from one sub-model into the constructor of the next.  `ModelVariant` lets the root
 choose among alternative implementations at construction time without changing the downstream wiring.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L364-439
+```python
 class TrafficModel(Model):
 
     @dataclass
@@ -74,7 +74,7 @@ class TrafficModel(Model):
 
 The root model wires sub-models by passing outputs of one as constructor arguments to the next:
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L635-660
+```python
 _inflow  = InflowModel(ts_inflow=ts_inflow, ...)
 _traffic = TrafficModel(
     ts_inflow=ts_inflow,
@@ -136,7 +136,7 @@ control.
 Parent models and callers may depend on these field names across library versions.  Renaming or removing
 a field is a breaking change and must be flagged in `CHANGELOG.md`.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L392-439
+```python
 traffic = TrafficModel(...)
 ts      = traffic.outputs.traffic           # contractual output — stable
 mod     = traffic.outputs.modified_traffic  # contractual output — stable
@@ -153,7 +153,7 @@ debugging but are not part of the stable interface**.  Callers *may* read them, 
 them into sibling or parent models.  Field names and the set of exposed indexes may change between
 versions without a breaking-change notice.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L66-127
+```python
 inflow = InflowModel(...)
 
 # Acceptable — diagnostic read
@@ -171,7 +171,7 @@ Indexes bound only to local variables inside `__init__` are engine-internal.  Th
 computation graph (because other indexes reference their nodes) but are not accessible from outside
 the constructor.  No naming convention is required — use whatever makes the implementation readable.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L471-546
+```python
 def __init__(self, ...) -> None:
     ...
     # i_modified_average_emissions is a local — never promoted to Outputs or Expose.
@@ -205,7 +205,7 @@ indexes from one to the next.
 
 ### Pattern
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L437-648
+```python
 class PipelineModel(Model):
 
     @dataclass
@@ -256,12 +256,12 @@ class PipelineModel(Model):
    stores a reference to the same `Index` object that lives inside `InflowModel`.  The evaluation
    engine operates on object identity, so no duplication or aliasing occurs.
 
-4. **Collect sub-model indexes in `Expose` for engine visibility.**  When the root has no `Inputs` of
-   its own, some leaf-level indexes (e.g. distribution parameters deep inside a sub-model) would be
-   invisible to the engine unless explicitly reachable from the root's proxy fields.  The idiomatic
-   solution is to add `list(sub_model.indexes)` into a named field of the root's `Expose`.  See
-   [Why list the sub-model indexes in the root Expose?](#why-list-the-sub-model-indexes-in-the-root-expose)
-   in the design rationale section.
+4. **Declare all constructor-received indexes in `Inputs` for engine visibility.**  The engine
+   traverses `model.indexes`, which is derived from `inputs`, `outputs`, and `expose`.  Every index
+   received as a constructor argument — including abstract parameters such as `DistributionIndex` —
+   must be declared in `Inputs` so the engine can reach it.  Root models follow the same rule as
+   sub-models: all policy and behavioural parameters belong in `Inputs`.  See
+   "Why declare all parameters in root `Inputs`?" in the [Design Rationale](#design-rationale) section.
 
 ---
 
@@ -277,7 +277,7 @@ This rule exists because `Inputs` is the only place where the inter-model wiring
 as inspectable metadata.  `ModelVariant`'s cross-variant consistency check reads `model.inputs` field
 names — if an index is received but not declared in `Inputs`, the check is blind to it.
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L555-612
+```python
 # CORRECT — every GenericIndex parameter is declared in Inputs and forwarded
 class GoodModel(Model):
 
@@ -292,7 +292,7 @@ class GoodModel(Model):
         super().__init__("Good", inputs=inputs, outputs=...)
 ```
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L16-54
+```python
 # INCORRECT — 'inflow' is received but absent from Inputs; InputsContractWarning fires
 class BadModel(Model):
 
@@ -315,7 +315,7 @@ triggers an `InputsContractWarning`.
 The warning is **soft** — it does not abort execution — so that existing models can be migrated
 incrementally.  During development and in CI, escalate it to an error:
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L16-54
+```python
 import warnings
 from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
 
@@ -344,7 +344,7 @@ a fully transparent proxy for the chosen (active) variant.
 
 ### Construction
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model_variant.py#L16-109
+```python
 from civic_digital_twins.dt_model import ModelVariant
 
 mv = ModelVariant(
@@ -368,7 +368,7 @@ mv = ModelVariant(
 
 After construction, `mv` behaves as though it *is* the active variant:
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model_variant.py#L110-200
+```python
 mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
 mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
 mv.indexes                  # index list of the active (BikeModel) variant only
@@ -384,7 +384,7 @@ Any attribute not defined directly on `ModelVariant` itself is forwarded to the 
 Inactive variants' indexes are **not** reachable through `mv.indexes` or normal attribute access.
 They are accessible only via explicit navigation:
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model_variant.py#L200-260
+```python
 mv.variants["train"].outputs.emissions   # explicit — reaches inactive variant
 mv.variants["train"].indexes             # index list of TrainModel only
 ```
@@ -397,7 +397,7 @@ which variant is active.  `inputs` field names may differ across variants — in
 `mv.inputs` delegates to the active variant, in runtime mode all variants' inputs are surfaced
 as a union.
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model_variant.py#L260-310
+```python
 # Both BikeModel and TrainModel must declare identically-named Outputs fields, e.g.:
 #
 #   class Outputs:
@@ -523,7 +523,7 @@ A pipeline decomposition reflects a **strict dependency order**: each stage take
 previous stage as inputs.  This is the natural structure when the computation graph has a clear
 topological ordering at the domain level.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L554-682
+```python
 #  StageA  →  StageB  →  StageC
 #
 # Each stage's constructor receives exactly what it needs from the previous stage.
@@ -532,10 +532,10 @@ topological ordering at the domain level.
 
 The Bologna mobility model is a pure pipeline:
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L554-600
+```
 #  InflowModel  →  TrafficModel  →  EmissionsModel
 #       ↘                ↘
-#        BolognaModel (root, no Inputs)
+#        BolognaModel (root)
 ```
 
 `InflowModel` computes how the pricing policy modifies vehicle inflow and the per-euro-class split.
@@ -555,11 +555,11 @@ An independent-concerns decomposition reflects a domain that has multiple **para
 a common input base but not depending on each other.  The root model constructs each sub-model with
 indexes from a shared pool and then merges their outputs into its own KPI set.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L554-600
-#                   ┌─ ParkingModel      ─┐
-#                   │                     │
-#  RootModel ───────┼─ BeachModel        ─┼──→  KPI outputs
-#                   │                     │
+```python
+#                   ┌─ ParkingModel       ─┐
+#                   │                      │
+#  RootModel ───────┼─ BeachModel         ─┼──→  KPI outputs
+#                   │                      │
 #                   └─ AccommodationModel ─┘
 ```
 
@@ -588,14 +588,14 @@ The full source is in
 
 ### Overview
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L554-600
+```
 #  InflowModel  →  TrafficModel  →  EmissionsModel
 #       ↘                ↘
-#        BolognaModel (root, no Inputs)
+#        BolognaModel (root)
 #
-# BolognaModel creates all leaf indexes internally and constructs the three
-# sub-models in pipeline order.  It has no Inputs because it is the computation
-# root — there are no upstream indexes to receive.
+# BolognaModel declares all policy (i_p_*) and behavioural (i_b_*) parameters
+# in its own Inputs dataclass and passes them down to sub-models as constructor
+# arguments.  default_inputs() provides the reference-scenario values.
 ```
 
 The three sub-models and their roles:
@@ -611,7 +611,7 @@ The three sub-models and their roles:
 `InflowModel` takes 13 input indexes and produces 11 output indexes.  The `Inputs` dataclass
 documents the full interface at a glance:
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L66-127
+```python
 class InflowModel(Model):
 
     @dataclass
@@ -669,7 +669,7 @@ class InflowModel(Model):
 
 The constructor signature mirrors `Inputs` exactly:
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L129-170
+```python
 def __init__(
     self,
     ts_inflow: TimeseriesIndex,
@@ -706,7 +706,7 @@ def __init__(
 and the policy-modified versions from `InflowModel` — and computes steady-state traffic for both
 scenarios together.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L364-439
+```python
 class TrafficModel(Model):
 
     @dataclass
@@ -779,8 +779,8 @@ class TrafficModel(Model):
 
 - Both `traffic` (baseline) and `modified_traffic` (policy scenario) are co-located here because they
   share the same `ts_solve` computation structure.  Separating them across model boundaries would split
-  a symmetric pair for no benefit — see
-  [Why drop `BaseStateModel`?](#why-drop-basestatemodel) in the design rationale section.
+  a symmetric pair for no benefit — see "Why drop `BaseStateModel`?" in the
+  [Design Rationale](#design-rationale) section.
 
 - All intermediate computations access upstream indexes through `inputs.*` rather than through the raw
   constructor parameter names.  This is the required convention: once `inputs` is constructed, the
@@ -791,7 +791,7 @@ class TrafficModel(Model):
 `EmissionsModel` receives the baseline and modified traffic timeseries, the per-euro-class distribution
 from `InflowModel`, and the policy time window, and produces emission totals for both scenarios.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L442-546
+```python
 class EmissionsModel(Model):
 
     @dataclass
@@ -883,11 +883,28 @@ class EmissionsModel(Model):
 
 ### `BolognaModel` — root wiring
 
-`BolognaModel` has no `Inputs` dataclass.  It constructs all leaf indexes internally, wires the three
-sub-models in pipeline order, and declares its KPI outputs and expose fields.
+`BolognaModel` follows the same `Inputs` pattern as its sub-models.  All policy (`i_p_*`) and
+behavioural (`i_b_*`) parameters are declared in `Inputs` and received as constructor arguments.
+Default values for the reference scenario are provided by the `default_inputs()` class method,
+which callers can override selectively using `**`-unpacking.
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L554-682
+```python
 class BolognaModel(Model):
+
+    @dataclass
+    class Inputs:
+        # Policy parameters
+        i_p_start_time:              Index
+        i_p_end_time:                Index
+        i_p_cost:                    list[Index]
+        i_p_fraction_exempted:       Index
+        # Behavioural parameters
+        i_b_p50_cost:                DistributionIndex
+        i_b_p50_anticipating:        Index
+        i_b_p50_anticipation:        Index
+        i_b_p50_postponing:          Index
+        i_b_p50_postponement:        Index
+        i_b_starting_modified_factor: Index
 
     @dataclass
     class Outputs:
@@ -902,37 +919,57 @@ class BolognaModel(Model):
 
     @dataclass
     class Expose:
-        # Named timeseries surfaced for plotting
+        # Timeseries surfaced for plotting helpers
         ts_inflow:          TimeseriesIndex
         modified_inflow:    Index
         traffic:            TimeseriesIndex
         modified_traffic:   TimeseriesIndex
         emissions:          TimeseriesIndex
         modified_emissions: Index
-        # Sub-model index collections — required for engine graph traversal
-        inflow_indexes:     list[GenericIndex]
-        traffic_indexes:    list[GenericIndex]
-        emissions_indexes:  list[GenericIndex]
 
-    def __init__(self) -> None:
+    @classmethod
+    def default_inputs(cls) -> dict:
+        """Reference-scenario parameters as a keyword-argument dict."""
+        return {
+            "i_p_start_time":              Index("start time", ...),
+            "i_p_end_time":                Index("end time", ...),
+            "i_p_cost":                    [Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)],
+            "i_p_fraction_exempted":       Index("exempted vehicles %", 0.15),
+            "i_b_p50_cost":                DistributionIndex("cost 50% threshold", stats.uniform, {...}),
+            "i_b_p50_anticipating":        Index("anticipation 50% likelihood", 0.5),
+            "i_b_p50_anticipation":        Index("anticipation distribution 50% threshold", 0.25),
+            "i_b_p50_postponing":          Index("postponement 50% likelihood", 0.8),
+            "i_b_p50_postponement":        Index("postponement distribution 50% threshold", 0.50),
+            "i_b_starting_modified_factor": Index("starting modified factor", 1.00),
+        }
+
+    def __init__(
+        self,
+        *,
+        i_p_start_time: Index,
+        i_p_end_time: Index,
+        i_p_cost: list[Index],
+        i_p_fraction_exempted: Index,
+        i_b_p50_cost: DistributionIndex,
+        i_b_p50_anticipating: Index,
+        i_b_p50_anticipation: Index,
+        i_b_p50_postponing: Index,
+        i_b_p50_postponement: Index,
+        i_b_starting_modified_factor: Index,
+    ) -> None:
+        Inputs  = BolognaModel.Inputs
         Outputs = BolognaModel.Outputs
         Expose  = BolognaModel.Expose
 
-        # ── Leaf indexes ──────────────────────────────────────────────────────
+        inputs = Inputs(
+            i_p_start_time=i_p_start_time,
+            ...
+        )
+
+        # ── Internal timeseries (Level 3) ──────────────────────────────────────
         ts          = TimeseriesIndex("time range", np.array([...]))
         ts_inflow   = TimeseriesIndex("inflow", vehicle_inflow)
         ts_starting = TimeseriesIndex("starting", vehicle_starting)
-
-        i_p_start_time              = Index("start time", ...)
-        i_p_end_time                = Index("end time", ...)
-        i_p_cost                    = [Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)]
-        i_p_fraction_exempted       = Index("exempted vehicles %", 0.15)
-        i_b_p50_cost                = DistributionIndex("cost 50% threshold", stats.uniform, {...})
-        i_b_p50_anticipating        = Index("anticipation 50% likelihood", 0.5)
-        i_b_p50_anticipation        = Index("anticipation distribution 50% threshold", 0.25)
-        i_b_p50_postponing          = Index("postponement 50% likelihood", 0.8)
-        i_b_p50_postponement        = Index("postponement distribution 50% threshold", 0.50)
-        i_b_starting_modified_factor = Index("starting modified factor", 1.00)
 
         # ── Sub-models in pipeline order ──────────────────────────────────────
         _inflow = InflowModel(
@@ -940,15 +977,7 @@ class BolognaModel(Model):
             ts_starting=ts_starting,
             ts=ts,
             i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
-            i_p_fraction_exempted=i_p_fraction_exempted,
-            i_b_p50_cost=i_b_p50_cost,
-            i_b_p50_anticipating=i_b_p50_anticipating,
-            i_b_p50_anticipation=i_b_p50_anticipation,
-            i_b_p50_postponing=i_b_p50_postponing,
-            i_b_p50_postponement=i_b_p50_postponement,
-            i_b_starting_modified_factor=i_b_starting_modified_factor,
+            ...
         )
 
         _traffic = TrafficModel(
@@ -970,14 +999,10 @@ class BolognaModel(Model):
         # ── Root super().__init__ ─────────────────────────────────────────────
         super().__init__(
             "Bologna mobility",
+            inputs=inputs,
             outputs=Outputs(
                 total_base_inflow=_inflow.outputs.total_base_inflow,
-                total_modified_inflow=_inflow.outputs.total_modified_inflow,
-                total_shifted=_inflow.outputs.total_shifted,
-                total_paying=_inflow.outputs.total_paying,
-                avg_cost=_inflow.outputs.avg_cost,
-                total_payed=_inflow.outputs.total_paid,
-                total_emissions=_emissions.outputs.total_emissions,
+                ...
                 total_modified_emissions=_emissions.outputs.total_modified_emissions,
             ),
             expose=Expose(
@@ -987,26 +1012,17 @@ class BolognaModel(Model):
                 modified_traffic=_traffic.outputs.modified_traffic,
                 emissions=_emissions.outputs.emissions,
                 modified_emissions=_emissions.outputs.modified_emissions,
-                inflow_indexes=list(_inflow.indexes),     # engine reachability
-                traffic_indexes=list(_traffic.indexes),
-                emissions_indexes=list(_emissions.indexes),
             ),
         )
 ```
 
-**Annotation — the three `list[GenericIndex]` expose fields:**
+**Annotation — `Inputs` ensures engine reachability:**
 
 `BolognaModel.indexes` is derived by deduplicating all scalars from `inputs`, `outputs`, and `expose`.
-The root has no `Inputs`, and its `Outputs` contains only 8 KPI scalars.  Without the
-`inflow_indexes` / `traffic_indexes` / `emissions_indexes` lists in `Expose`, sub-model leaf indexes
-— such as the abstract `i_b_p50_cost` inside `InflowModel` — would be invisible to the engine and
-would never be evaluated.
-
-`list(_inflow.indexes)` captures the full, already-deduplicated index list of `InflowModel` and stores
-it as a single `list[GenericIndex]` field in `Expose`.  Indexes shared between sub-models (e.g.
-`ts_inflow` appears in both `InflowModel` and `TrafficModel`) may appear in multiple sub-model
-`.indexes` lists, but `_collect_indexes` deduplicates by object identity, so each index appears exactly
-once in `BolognaModel.indexes`.
+Declaring all policy and behavioural parameters in `Inputs` — including the abstract `i_b_p50_cost`
+`DistributionIndex` — guarantees they appear in `model.indexes` and are therefore reachable by the
+engine.  `Outputs` covers the 8 KPI scalars; `Expose` covers the plotting timeseries.  No bulk
+`list[GenericIndex]` fields are needed.
 
 **Annotation — `outputs` stores references to sub-model index objects:**
 
@@ -1016,8 +1032,15 @@ or aliasing occurs.  The `BolognaModel` does not own these indexes; it is a wiri
 
 ### Using `BolognaModel`
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L690-727
-m = BolognaModel()
+```python
+# Reference scenario — use built-in defaults
+m = BolognaModel(**BolognaModel.default_inputs())
+
+# Alternative scenario — override one parameter
+m_strict = BolognaModel(**{
+    **BolognaModel.default_inputs(),
+    "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
+})
 
 ensemble = DistributionEnsemble(m, size=500)
 result   = Evaluation(m).evaluate(ensemble)
@@ -1026,8 +1049,11 @@ result   = Evaluation(m).evaluate(ensemble)
 total_inflow_modified = result.marginalize(m.outputs.total_modified_inflow)
 total_emissions       = result.marginalize(m.outputs.total_emissions)
 
-# Access plotting timeseries through expose
-traffic_ts = result.marginalize(m.expose.traffic)
+# Access raw timeseries through expose (shape S×T)
+modified_inflow_ts = result[m.expose.modified_inflow]
+
+# Access constant timeseries (no scenario dimension)
+reference_inflow = result[m.expose.ts_inflow]  # shape (T,)
 ```
 
 The evaluation layer is unaware of sub-models.  It sees a flat `m.indexes` list, resolves the graph,
@@ -1040,7 +1066,7 @@ overhead.
 
 ### `Model`
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L437-648
+```python
 class Model:
     name:    str
     indexes: list[GenericIndex]
@@ -1092,7 +1118,7 @@ identity (first-seen wins).  The result is a flat `list[GenericIndex]` in declar
 
 ### `ModelVariant`
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model_variant.py#L16-109
+```python
 class ModelVariant:
     name:     str
     variants: dict[str, Model]
@@ -1186,7 +1212,7 @@ a list of `(key, predicate)` pairs.  Guards are evaluated top-to-bottom; the las
 
 ### `CategoricalIndex`
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/index.py
+```python
 class CategoricalIndex(Index):
 
     def __init__(self, name: str, outcomes: dict[str, float]) -> None: ...
@@ -1231,7 +1257,7 @@ boolean-per-scenario node usable in `graph.piecewise` or any formula.
 
 ### `IOProxy`
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L95-200
+```python
 class IOProxy(Generic[_DC]):
 
     # Attribute access — returns scalar, list[GenericIndex], or dict[str, GenericIndex]
@@ -1277,7 +1303,7 @@ are yielded in `.values()` order (insertion order in Python 3.7+).
 
 ### Warning classes
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L16-54
+```python
 class ModelContractWarning(UserWarning):
     """Base class for all Model I/O contract warnings."""
 
@@ -1292,7 +1318,7 @@ All three are subclasses of `UserWarning`.  Both concrete warnings are additiona
 `ModelContractWarning`, so a single filter on the base class covers all contract-violation
 categories:
 
-```civic-digital-twins/civic_digital_twins/dt_model/model/model.py#L16-30
+```python
 import warnings
 from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
 
@@ -1321,21 +1347,23 @@ parent model wires `child.expose.foo` into a sibling, it is depending on an unst
 Keeping the rule simple — never wire `expose` fields — makes it easy to audit: a `grep expose\.`
 across wiring code should return zero results.
 
-### Why list the sub-model indexes in the root `Expose`?
+### Why declare all parameters in root `Inputs`?
 
-The evaluation engine traverses `model.indexes` to resolve the computation graph.  `model.indexes` is
-derived from `inputs`, `outputs`, and `expose` only.  A root model with no `Inputs` and a small
-`Outputs` would be opaque to the engine: sub-model leaf indexes (e.g. the `DistributionIndex`
-parameters deep inside `InflowModel`) would be unreachable because no path from the root's `outputs`
-to those nodes passes through a field visible to `_collect_indexes`.
+The evaluation engine traverses `model.indexes`, which is derived from `inputs`, `outputs`, and
+`expose` only.  Abstract parameters — such as a `DistributionIndex` deep inside a sub-model — are
+invisible to the engine unless they appear in one of those three surfaces of the root model.
 
-The solution is to add `list(sub_model.indexes)` into named fields of the root's `Expose`.  This is
-explicit and auditable — the root declares exactly which sub-model index sets it is responsible for
-surfacing.  Deduplication in `_collect_indexes` ensures no index is double-counted.
+The idiomatic solution is to declare all policy and behavioural parameters in the root's `Inputs`
+dataclass and receive them as constructor arguments, exactly as sub-models do.  This makes abstract
+parameters reachable through `model.inputs` without any special scaffolding, and it is semantically
+correct: parameters whose values come from outside the model are inputs by definition.
 
-An alternative would be a recursive `indexes` traversal that automatically walks sub-model instances
-stored as `self.*` attributes, but that would be implicit, hard to reason about, and would blur the
-boundary between owned and referenced indexes.  Explicit `list(sub.indexes)` in `Expose` is clearer.
+An earlier approach placed `list(sub_model.indexes)` into named fields of the root's `Expose` to
+achieve the same reachability.  That approach worked mechanically but mixed concerns: `Expose` is
+meant for diagnostic timeseries, not for parameter surfacing.  It also prevented
+`InputsContractWarning` from firing on the parameters that were absent from `Inputs`, silently
+weakening the contract check.  Declaring parameters in `Inputs` is clearer and consistent with the
+three-level access model.
 
 ### Why drop `BaseStateModel`?
 
@@ -1356,7 +1384,7 @@ was to group two indexes together.  Both computations belong naturally in the mo
 
 The result is three sub-models with clean, symmetric interfaces:
 
-```civic-digital-twins/examples/mobility_bologna/mobility_bologna.py#L554-600
+```python
 # Before: BaseStateModel → ModifiedInflowModel → ModifiedTrafficModel → ModifiedEmissionsModel
 # After:  InflowModel    → TrafficModel         → EmissionsModel
 #
