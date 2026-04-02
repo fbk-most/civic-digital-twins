@@ -94,14 +94,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+**`multi_clause_where`**
+
 - `multi_clause_where` is now a subclass of `MultiClauseOp` rather than a
   direct subclass of `Node`.  `isinstance(node, graph.multi_clause_where)` is
   unaffected; `isinstance(node, graph.MultiClauseOp)` is now the preferred
   check for code that handles both conditional node types.
+
+**`ModelVariant` input contract**
+
 - `ModelVariant` no longer requires variants to share identical `inputs` field
   names.  Only `outputs` field names must be identical (required to build the
   merge graph).  `inputs` may differ across variants; `mv.inputs` exposes their
   union.
+
+**`BolognaModel` — structured inputs and direct `EvaluationResult`**
+
+- `BolognaModel` now declares all policy (`i_p_*`) and behavioural (`i_b_*`)
+  parameters in an `Inputs` dataclass, following the same constructor-argument
+  pattern as its sub-models.
+- `evaluate()` returns `EvaluationResult` directly instead of a normalised
+  `subs` dict; `compute_kpis()` uses `result.marginalize()`.
+- `__main__` demonstrates a second (stricter pricing) scenario; plots are saved
+  to `examples/mobility_bologna/output/` (directory is `.gitignore`d).
 
 ## [0.8.0] - 2026-03-21
 
