@@ -149,117 +149,155 @@ assert _id_in(m3.expose.intermediate, m3.indexes)
 # ---------------------------------------------------------------------------
 
 
-class FactorModel(Model):
-    """Stage-A sub-model: doubles its input."""
+class StageAModel(Model):
+    """Stage-A sub-model: processes raw data into two outputs."""
 
     @dataclass
     class Inputs:
-        """Inputs of :class:`FactorModel`."""
+        """Inputs of :class:`StageAModel`."""
 
-        x: Index
+        raw_data: Index
 
     @dataclass
     class Outputs:
-        """Outputs of :class:`FactorModel`."""
+        """Outputs of :class:`StageAModel`."""
 
-        y: Index
+        processed: Index
+        ratio: Index
 
-    def __init__(self, x: Index) -> None:
-        inputs = FactorModel.Inputs(x=x)
-        y = Index("y", inputs.x * 2.0)
-        super().__init__("Factor", inputs=inputs, outputs=FactorModel.Outputs(y=y))
+    def __init__(self, raw_data: Index) -> None:
+        inputs = StageAModel.Inputs(raw_data=raw_data)
+        processed = Index("processed", inputs.raw_data * 2.0)
+        ratio = Index("ratio", inputs.raw_data * 0.1)
+        super().__init__("StageA", inputs=inputs, outputs=StageAModel.Outputs(processed=processed, ratio=ratio))
 
 
-class SumModel(Model):
-    """Stage-B sub-model: sums two inputs."""
+class StageBModel(Model):
+    """Stage-B sub-model: combines processed data and ratio."""
 
     @dataclass
     class Inputs:
-        """Inputs of :class:`SumModel`."""
+        """Inputs of :class:`StageBModel`."""
 
-        y: Index
-        z: Index
-
-    @dataclass
-    class Outputs:
-        """Outputs of :class:`SumModel`."""
-
-        total: Index
-
-    def __init__(self, y: Index, z: Index) -> None:
-        inputs = SumModel.Inputs(y=y, z=z)
-        total = Index("total", inputs.y + inputs.z)
-        super().__init__("Sum", inputs=inputs, outputs=SumModel.Outputs(total=total))
-
-
-class RootModel(Model):
-    """Root model that wires FactorModel → SumModel as a pipeline."""
+        processed: Index
+        ratio: Index
 
     @dataclass
     class Outputs:
-        """Outputs of :class:`RootModel`."""
+        """Outputs of :class:`StageBModel`."""
 
-        total: Index
+        result: Index
+
+    def __init__(self, processed: Index, ratio: Index) -> None:
+        inputs = StageBModel.Inputs(processed=processed, ratio=ratio)
+        result = Index("result", inputs.processed + inputs.ratio)
+        super().__init__("StageB", inputs=inputs, outputs=StageBModel.Outputs(result=result))
+
+
+class PipelineModel(Model):
+    """Root model that wires StageAModel → StageBModel as a pipeline."""
+
+    @dataclass
+    class Outputs:
+        """Outputs of :class:`PipelineModel`."""
+
+        result: Index
 
     @dataclass
     class Expose:
-        """Inspectable intermediate indexes of :class:`RootModel`."""
+        """Inspectable intermediate indexes of :class:`PipelineModel`."""
 
-        sub_indexes: list
+        stage_a_indexes: list
+        stage_b_indexes: list
 
     def __init__(self) -> None:
-        x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
-        z = Index("z", 3.0)
+        raw_data = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
 
-        _factor = FactorModel(x=x)
-        _sum = SumModel(y=_factor.outputs.y, z=z)
+        stage_a = StageAModel(raw_data=raw_data)
+        stage_b = StageBModel(
+            processed=stage_a.outputs.processed,
+            ratio=stage_a.outputs.ratio,
+        )
 
         super().__init__(
-            "Root",
-            outputs=RootModel.Outputs(total=_sum.outputs.total),
-            expose=RootModel.Expose(sub_indexes=list(_factor.indexes) + list(_sum.indexes)),
+            "Pipeline",
+            outputs=PipelineModel.Outputs(result=stage_b.outputs.result),
+            expose=PipelineModel.Expose(
+                stage_a_indexes=list(stage_a.indexes),
+                stage_b_indexes=list(stage_b.indexes),
+            ),
         )
 
 
-root = RootModel()
+pipeline = PipelineModel()
 
-assert root.outputs.total is not None
-# x is a DistributionIndex (abstract) → model is not fully instantiated
-assert root.is_instantiated() is False
-# The wired output is reachable through the root's index list
-assert _id_in(root.outputs.total, root.indexes)
+assert pipeline.outputs.result is not None
+# raw_data is a DistributionIndex (abstract) → model is not fully instantiated
+assert pipeline.is_instantiated() is False
+# The wired output is reachable through the pipeline's index list
+assert _id_in(pipeline.outputs.result, pipeline.indexes)
 # Sub-model indexes are surfaced via Expose
-assert len(root.expose.sub_indexes) > 0
+assert len(pipeline.expose.stage_a_indexes) > 0
+assert len(pipeline.expose.stage_b_indexes) > 0
 
 # ---------------------------------------------------------------------------
 # dd-cdt-modularity.md §5 — Inputs contract convention / InputsContractWarning
 # ---------------------------------------------------------------------------
 
 
-class UndeclaredModel(Model):
-    """Model that deliberately omits 'x' from its Inputs dataclass."""
+class GoodModel(Model):
+    """Model that correctly declares its GenericIndex parameter in Inputs."""
 
     @dataclass
     class Inputs:
-        """Inputs of :class:`UndeclaredModel` — intentionally empty to trigger the warning."""
+        """Inputs of :class:`GoodModel` — 'inflow' declared here ..."""
 
-        pass  # does NOT declare 'x'
+        inflow: TimeseriesIndex
 
     @dataclass
     class Outputs:
-        """Outputs of :class:`UndeclaredModel`."""
+        """Outputs of :class:`GoodModel`."""
 
-        y: Index
+        total: Index
 
-    def __init__(self, x: Index) -> None:
-        y = Index("y", x * 2)
-        super().__init__("Undeclared", inputs=UndeclaredModel.Inputs(), outputs=UndeclaredModel.Outputs(y=y))
+    def __init__(self, inflow: TimeseriesIndex) -> None:
+        Inputs = GoodModel.Inputs
+        inputs = Inputs(inflow=inflow)  # ... and forwarded here
+        total = Index("total_good", inputs.inflow.sum())
+        super().__init__("Good", inputs=inputs, outputs=GoodModel.Outputs(total=total))
 
 
-x_contract = Index("x_contract", 5.0)
+class BadModel(Model):
+    """Model that deliberately omits 'inflow' from its Inputs dataclass."""
+
+    @dataclass
+    class Inputs:
+        """Inputs of :class:`BadModel` — intentionally empty to trigger the warning."""
+
+        pass  # inflow is missing
+
+    @dataclass
+    class Outputs:
+        """Outputs of :class:`BadModel`."""
+
+        total: Index
+
+    def __init__(self, inflow: TimeseriesIndex) -> None:
+        # InputsContractWarning fires here: 'inflow' holds a GenericIndex
+        # that is not declared in Inputs.
+        total = Index("total_bad", inflow.sum())
+        super().__init__("Bad", inputs=BadModel.Inputs(), outputs=BadModel.Outputs(total=total))
+
+
+ts_inflow_gs = TimeseriesIndex("inflow_gs", np.array([10.0, 20.0, 30.0]))
+
+good = GoodModel(ts_inflow_gs)
+assert good.inputs.inflow is ts_inflow_gs
+assert good.outputs.total is not None
+
 with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
-    UndeclaredModel(x_contract)
+    BadModel(ts_inflow_gs)
 
 assert any(issubclass(w.category, InputsContractWarning) for w in caught), (
     "Expected an InputsContractWarning when a GenericIndex parameter is absent from Inputs"
@@ -270,64 +308,64 @@ assert any(issubclass(w.category, InputsContractWarning) for w in caught), (
 # ---------------------------------------------------------------------------
 
 
-class HighCostModel(Model):
-    """Variant with a cost multiplier of 3."""
+class BikeModel(Model):
+    """Variant: bike transport emissions model."""
 
     @dataclass
     class Inputs:
-        """Inputs of :class:`HighCostModel`."""
+        """Inputs of :class:`BikeModel`."""
 
         base: Index
 
     @dataclass
     class Outputs:
-        """Outputs of :class:`HighCostModel`."""
+        """Outputs of :class:`BikeModel`."""
 
-        cost: Index
+        emissions: Index
 
     def __init__(self, base: Index) -> None:
-        inputs = HighCostModel.Inputs(base=base)
-        cost = Index("cost", inputs.base * 3.0)
-        super().__init__("HighCost", inputs=inputs, outputs=HighCostModel.Outputs(cost=cost))
+        inputs = BikeModel.Inputs(base=base)
+        emissions = Index("bike_emissions", inputs.base * 3.0)
+        super().__init__("Bike", inputs=inputs, outputs=BikeModel.Outputs(emissions=emissions))
 
 
-class LowCostModel(Model):
-    """Variant with a cost multiplier of 1."""
+class TrainModel(Model):
+    """Variant: train transport emissions model."""
 
     @dataclass
     class Inputs:
-        """Inputs of :class:`LowCostModel`."""
+        """Inputs of :class:`TrainModel`."""
 
         base: Index
 
     @dataclass
     class Outputs:
-        """Outputs of :class:`LowCostModel`."""
+        """Outputs of :class:`TrainModel`."""
 
-        cost: Index
+        emissions: Index
 
     def __init__(self, base: Index) -> None:
-        inputs = LowCostModel.Inputs(base=base)
-        cost = Index("cost", inputs.base * 1.0)
-        super().__init__("LowCost", inputs=inputs, outputs=LowCostModel.Outputs(cost=cost))
+        inputs = TrainModel.Inputs(base=base)
+        emissions = Index("train_emissions", inputs.base * 1.0)
+        super().__init__("Train", inputs=inputs, outputs=TrainModel.Outputs(emissions=emissions))
 
 
 mv_base = Index("base", 10.0)
 mv = ModelVariant(
-    "CostModel",
-    variants={"high": HighCostModel(mv_base), "low": LowCostModel(mv_base)},
-    selector="high",
+    "TransportModel",
+    variants={"bike": BikeModel(mv_base), "train": TrainModel(mv_base)},
+    selector="bike",
 )
 
-# Active variant is "high" — proxy delegates to HighCostModel
-assert mv.outputs.cost is not None
+# Active variant is "bike" — proxy delegates to BikeModel
+assert mv.outputs.emissions is not None
 # Inactive variant is still reachable via mv.variants
-assert mv.variants["low"] is not None
-assert mv.variants["low"].outputs.cost is not None
-# Inactive variant's cost index must NOT be in mv.indexes (identity check)
-assert not _id_in(mv.variants["low"].outputs.cost, mv.indexes)
-# Active variant's cost index IS in mv.indexes (identity check)
-assert _id_in(mv.variants["high"].outputs.cost, mv.indexes)
+assert mv.variants["train"] is not None
+assert mv.variants["train"].outputs.emissions is not None
+# Inactive variant's emissions index must NOT be in mv.indexes (identity check)
+assert not _id_in(mv.variants["train"].outputs.emissions, mv.indexes)
+# Active variant's emissions index IS in mv.indexes (identity check)
+assert _id_in(mv.variants["bike"].outputs.emissions, mv.indexes)
 # is_instantiated delegates to active variant (all indexes are concrete)
 assert mv.is_instantiated() is True
 

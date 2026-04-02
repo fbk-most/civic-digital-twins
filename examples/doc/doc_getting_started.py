@@ -62,17 +62,17 @@ class Co2Model(Model):
             distance=DistributionIndex("distance_km2", stats.uniform, {"loc": 50.0, "scale": 30.0}),
         )
 
-        ltr = Index("litres2", inputs.distance / inputs.fuel_efficiency)
-        cpl = Index("co2_per_litre2", 2.31)
-        co2_out = Index("co2_kg2", ltr * cpl)
+        litres = Index("litres2", inputs.distance / inputs.fuel_efficiency)
+        co2_per_litre = Index("co2_per_litre2", 2.31)
+        co2 = Index("co2_kg2", litres * co2_per_litre)
 
         super().__init__(
             "co2_model2",
             inputs=inputs,
             outputs=Outputs(
-                litres=ltr,
-                co2_per_litre=cpl,
-                co2=co2_out,
+                litres=litres,
+                co2_per_litre=co2_per_litre,
+                co2=co2,
             ),
         )
 
