@@ -58,8 +58,8 @@ class Co2Model(Model):
         Outputs = Co2Model.Outputs
 
         inputs = Inputs(
-            fuel_efficiency=DistributionIndex("fuel_efficiency_km_l2", stats.uniform, {"loc": 10.0, "scale": 5.0}),
-            distance=DistributionIndex("distance_km2", stats.uniform, {"loc": 50.0, "scale": 30.0}),
+            fuel_efficiency = DistributionIndex("fuel_efficiency_km_l2", stats.uniform, {"loc": 10.0, "scale": 5.0}),
+            distance = DistributionIndex("distance_km2", stats.uniform, {"loc": 50.0, "scale": 30.0}),
         )
 
         litres = Index("litres2", inputs.distance / inputs.fuel_efficiency)
@@ -67,7 +67,7 @@ class Co2Model(Model):
         co2 = Index("co2_kg2", litres * co2_per_litre)
 
         super().__init__(
-            "co2_model2",
+            "co2_model",
             inputs=inputs,
             outputs=Outputs(
                 litres=litres,
@@ -77,14 +77,14 @@ class Co2Model(Model):
         )
 
 
-co2_model2 = Co2Model()
+co2_model = Co2Model()
 
-assert len(co2_model2.abstract_indexes()) == 2   # fuel_efficiency, distance
-assert co2_model2.is_instantiated() is False
-assert co2_model2.outputs.co2 is not None
-assert co2_model2.outputs.litres is not None
+assert len(co2_model.abstract_indexes()) == 2   # fuel_efficiency, distance
+assert co2_model.is_instantiated() is False
+assert co2_model.outputs.co2 is not None
+assert co2_model.outputs.litres is not None
 # indexes derived automatically from inputs + outputs — no flat list needed
-assert len(co2_model2.indexes) == 5
+assert len(co2_model.indexes) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -92,23 +92,31 @@ assert len(co2_model2.indexes) == 5
 # ---------------------------------------------------------------------------
 
 # Use the dataclass-based model for the rest of the walkthrough
-ensemble = DistributionEnsemble(co2_model2, size=1000)
+ensemble = DistributionEnsemble(co2_model, size=1000)
 
 
 # ---------------------------------------------------------------------------
 # getting-started.md §3 — Evaluate
 # ---------------------------------------------------------------------------
 
-result = Evaluation(co2_model2).evaluate(ensemble)
+result = Evaluation(co2_model).evaluate(ensemble)
 
-co2_out = co2_model2.outputs.co2
-co2_samples = result[co2_out]            # np.ndarray, shape (1000, 1)
-co2_mean = result.marginalize(co2_out)   # scalar
+co2 = co2_model.outputs.co2   # access via contractual output
+co2_samples = result[co2]            # np.ndarray, shape (1000, 1)
+co2_mean = result.marginalize(co2)   # scalar
 
 assert co2_samples.shape == (1000, 1)
 # E[CO2] = E[distance / fuel_efficiency * 2.31]
 # distance ~ U(50,80), fuel_efficiency ~ U(10,15)  → reasonable range
 assert 0 < co2_mean < 200, f"Unexpected CO2 mean: {co2_mean:.1f}"
+
+
+# ---------------------------------------------------------------------------
+# getting-started.md §1 — abstract_indexes / is_instantiated (Block 02)
+# ---------------------------------------------------------------------------
+
+co2_model.abstract_indexes()   # → [fuel_efficiency, distance]
+co2_model.is_instantiated()    # → False
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +135,12 @@ smoothed = TimeseriesIndex(
 # Build a small model that uses the timeseries indexes
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    ts_model = Model("ts_model", [demand_ts, smoothed])
+    model = Model("ts_model", [demand_ts, smoothed])
+    ensemble = [(1.0, {})]
 
 # Single scenario with no abstract indexes
-ts_result = Evaluation(ts_model).evaluate(
-    [(1.0, {})],
+result = Evaluation(model).evaluate(
+    ensemble,
     functions={
         "smooth": executor.LambdaAdapter(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
@@ -139,7 +148,7 @@ ts_result = Evaluation(ts_model).evaluate(
     },
 )
 
-smoothed_values = ts_result[smoothed]
+smoothed_values = result[smoothed]
 assert smoothed_values.shape[-1] == 24   # 24 time steps
 
 
