@@ -123,13 +123,13 @@ uv add civic-digital-twins
 
 The main package name is `civic_digital_twins`:
 
-```Python
+```python
 import civic_digital_twins
 ```
 
 or
 
-```Python
+```python
 from civic_digital_twins import dt_model
 ```
 
