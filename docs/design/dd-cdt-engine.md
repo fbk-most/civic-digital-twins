@@ -4,7 +4,7 @@
 |--------------|------------------------------------------------|
 | Author       | [@bassosimone](https://github.com/bassosimone) |
 | Co-authors   | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-03-30                                     |
+| Last-Updated | 2026-04-04                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -70,7 +70,7 @@ see [#54](https://github.com/fbk-most/civic-digital-twins/issues/54).
 
 ## End-To-End Example
 
-```Python
+```python
 import numpy as np
 
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
@@ -183,7 +183,7 @@ DAGs are generated *indirectly* by the
 
 The following example shows how one could write a simple DSL:
 
-```Python
+```python
 # Import the `graph` module for manually writing the DAG
 from civic_digital_twins.dt_model.engine.frontend import graph
 
@@ -216,7 +216,7 @@ can annotate nodes with types using Python's generics syntax. This
 way you will know if you're mixing "apples and oranges". For
 example, you could write the following:
 
-```Python
+```python
 # ...
 
 
@@ -244,7 +244,7 @@ static type errors — rendered as squiggles by editors
 such as VSCode — when mixing apples and oranges. For example,
 the following code mixes incompatible types:
 
-```Python
+```python
 # ...
 
 # Explicitly say that the placeholders are oranges
@@ -274,7 +274,7 @@ shapes by mistake.
 Regarding how `graph.py` could be implemented, a very simplified
 implementation looks like this:
 
-```Python
+```python
 # === Extremely simplified `graph.py` implementation (illustrative only) ===
 
 
@@ -327,7 +327,7 @@ because we want names compatible with NumPy (e.g., we want
 Additionally, the `graph.function_call` node allows to create
 a node that will call a user-defined function. For example:
 
-```Python
+```python
 # ...
 
 f = graph.function_call("reduce", c, d, e)
@@ -336,7 +336,7 @@ f = graph.function_call("reduce", c, d, e)
 The programmer will need to supply at evaluation time an
 implementation of reduce that looks like this:
 
-```Python
+```python
 def reduce(c: np.ndarray, d: np.ndarray, e: np.ndarray) -> np.ndarray: ...
 ```
 
@@ -387,7 +387,7 @@ two nodes for representing time-indexed data:
 
 Example:
 
-```Python
+```python
 import numpy as np
 from civic_digital_twins.dt_model.engine.frontend import graph
 
@@ -457,7 +457,7 @@ using `print` on each node in the DAG.
 
 For example, `print(a)` produces the following output:
 
-```Python
+```python
 n1 = graph.placeholder(name='a', default_value=None)
 ```
 
@@ -481,14 +481,14 @@ value associated with the placeholder.
 
 Similarly, `print(scale)` produces the following output:
 
-```Python
+```python
 n3 = graph.constant(value=1024, name='')
 ```
 
 So far, we have dumped constants and placeholders, which are
 simple to understand. If we `print(c)`, instead, we get:
 
-```Python
+```python
 n7 = graph.add(left=n4, right=n6, name='c')
 ```
 
@@ -515,7 +515,7 @@ The corresponding module is [frontend/linearize.py](../../civic_digital_twins/dt
 
 Let us use `linearize.forest` to produce a topological sorting for `c`:
 
-```Python
+```python
 # ...
 
 # Let's import the linearize module
@@ -535,7 +535,7 @@ linearizing a forest of trees embedded into the DAG.)
 
 This is the output that we get:
 
-```Python
+```python
 n1 = graph.placeholder(name='a', default_value=None)
 n4 = graph.exp(node=n1, name='')
 n5 = graph.constant(value=55, name='')
@@ -559,7 +559,7 @@ This plan basically tells us that to produce `c`, which is
 Note that the above representation is just a more verbose
 way of writing the original code:
 
-```Python
+```python
 a = graph.placeholder("a")
 c = graph.exp(a) + 55 / a
 ```
@@ -580,7 +580,7 @@ module evaluates a sequence of topologically sorted graph nodes and produces num
 The `executor` is associated with a *State* data structure that maps each
 `graph.Node` to its `np.ndarray` result.  A barebone implementation looks like:
 
-```Python
+```python
 # === Extremely simplified executor implementation (illustrative only) ===
 
 # Define the empty state
@@ -609,7 +609,7 @@ def evaluate_nodes(state: dict[graph.Node, np.ndarray], *nodes: graph.Node) -> N
 In terms of the *actual* usage, the following code illustrates
 how you can use the executor in your code:
 
-```Python
+```python
 # ...
 
 from civic_digital_twins.dt_model.engine.frontend import linearize
@@ -660,7 +660,7 @@ uv run python example/basic.py
 
 Produces the following output:
 
-```Python
+```python
 # n1 = graph.placeholder(name='a', default_value=None)
 n1 = np.asarray(4)
 # shape: ()
@@ -763,7 +763,7 @@ set flags programmatically. For example, you can take advantage
 of `compileflags.BREAK` to stop the execution *after* a node has
 been evaluated:
 
-```Python
+```python
 # ...
 
 # import the compileflags package to get flags values
@@ -792,7 +792,7 @@ ordinary Python `lambda` and register a user-defined function.
 
 The following code shows some usage examples:
 
-```Python
+```python
 import numpy as np
 
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
@@ -846,7 +846,7 @@ print(f"#{state.get_node_value(scaled3)}")
 Executing this code with `export DTMODEL_ENGINE_FLAGS=trace`
 produces the following output:
 
-```Python
+```python
 # n1 = graph.constant(value=100, name='')
 n1 = np.asarray(100)
 # shape: ()

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tests/test_doc_sync.py` — automated snippet-alignment test that compares
+  every Python code block in the design docs and guides against its paired
+  runnable example script in `examples/doc/`.  Run without arguments for a
+  compact per-pair summary (`= OK` / `~ OK` / `~ Warn` / `✗ Fail`); pass a
+  doc-name fragment for a verbose block-by-block report.  Stub and
+  reference-only blocks are detected and skipped automatically.
+- `examples/doc/doc_readme.py` — new script covering the two README code
+  snippets (engine layer and model/simulation layer).
+- `examples/doc/` scripts updated to better match the docs.
+
 ## [0.8.1] - 2026-04-02
 
 ### Fixed

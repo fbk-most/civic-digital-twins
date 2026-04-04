@@ -3,7 +3,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-04-02                                     |
+| Last-Updated | 2026-04-04                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -223,7 +223,7 @@ class PipelineModel(Model):
 
         # Step 1 — construct sub-models in dependency order.
         # All leaf indexes are created here; sub-models receive them as arguments.
-        stage_a = StageAModel(raw_data=some_timeseries)
+        stage_a = StageAModel(raw_data=raw_data)
 
         # Step 2 — thread Level-1 outputs of stage A into stage B
         stage_b = StageBModel(

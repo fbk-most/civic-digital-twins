@@ -2,8 +2,8 @@
 
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
-| Author       | [@pistore](https://github.com/pistore)        |
-| Last-Updated | 2026-03-30                                     |
+| Author       | [@pistore](https://github.com/pistore)         |
+| Last-Updated | 2026-04-04                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -96,8 +96,8 @@ class Co2Model(Model):
         Outputs = Co2Model.Outputs
 
         inputs = Inputs(
-            fuel_efficiency=DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0}),
-            distance=       DistributionIndex("distance_km",          stats.uniform, {"loc": 50.0, "scale": 30.0}),
+            fuel_efficiency = DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0}),
+            distance =        DistributionIndex("distance_km",          stats.uniform, {"loc": 50.0, "scale": 30.0}),
         )
 
         litres        = Index("litres",        inputs.distance / inputs.fuel_efficiency)
@@ -114,17 +114,17 @@ class Co2Model(Model):
             ),
         )
 
-model = Co2Model()
-co2 = model.outputs.co2   # access via contractual output
+co2_model = Co2Model()
+co2 = co2_model.outputs.co2   # access via contractual output
 ```
 
-`model.indexes` is derived automatically from `inputs` and `outputs` — no flat
+`co2_model.indexes` is derived automatically from `inputs` and `outputs` — no flat
 list required.  `abstract_indexes()` and `is_instantiated()` work identically
 regardless of which API was used:
 
 ```python
-print(model.abstract_indexes())   # [fuel_efficiency, distance]
-print(model.is_instantiated())    # False
+co2_model.abstract_indexes()   # → [fuel_efficiency, distance]
+co2_model.is_instantiated()    # → False
 ```
 
 ## 2 — Build an ensemble
@@ -137,7 +137,7 @@ supported: `DistributionIndex` (sampled via its `scipy.stats` distribution) and
 ```python
 from civic_digital_twins.dt_model import DistributionEnsemble
 
-ensemble = DistributionEnsemble(model, size=1000)
+ensemble = DistributionEnsemble(co2_model, size=1000)
 ```
 
 ## 3 — Evaluate
@@ -145,7 +145,7 @@ ensemble = DistributionEnsemble(model, size=1000)
 ```python
 from civic_digital_twins.dt_model import Evaluation
 
-result = Evaluation(model).evaluate(ensemble)
+result = Evaluation(co2_model).evaluate(ensemble)
 ```
 
 `result` is an `EvaluationResult`.  Use `result[idx]` for the raw array

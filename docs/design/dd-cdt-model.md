@@ -3,7 +3,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-03-30                                     |
+| Last-Updated | 2026-04-04                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -92,15 +92,13 @@ dedicated subclasses (`DistributionIndex`, `ConstIndex`, `CategoricalIndex`) rat
 ```python
 from scipy import stats
 from civic_digital_twins.dt_model.model.index import (
-    ConstIndex, DistributionIndex, Index
+    ConstIndex, DistributionIndex, Index,
 )
 
 # Distribution-backed (abstract — must be resolved in each scenario)
 # Pass any scipy-compatible distribution callable and a params dict:
 cap_dist = DistributionIndex("capacity", stats.uniform, {"loc": 400.0, "scale": 200.0})
-
-# Or use Index directly with a pre-frozen distribution:
-mu = Index("mu", stats.norm(loc=0.5, scale=0.1))
+mu       = DistributionIndex("mu",       stats.norm,    {"loc": 0.5,   "scale": 0.1})
 
 # Constant
 cap = ConstIndex("capacity", 500.0)
