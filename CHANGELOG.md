@@ -19,6 +19,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snippets (engine layer and model/simulation layer).
 - `examples/doc/` scripts updated to better match the docs.
 
+### Changed
+
+- **Python 3.11 dropped** — minimum supported version is now Python 3.12.
+  The CI matrix, `pyproject.toml` classifiers, ruff `target-version`, and
+  `pyrightconfig.json` are updated accordingly. (#122)
+- PEP 695 generic syntax adopted throughout: `~30` generic classes in
+  `graph.py` converted to `class Foo[T]`; `TypeAlias` declarations in
+  `executor.py` and `IOProxy` in `model.py` converted to `type X = ...`.
+  `from __future__ import annotations` removed from five modules; `Callable`
+  and `Iterator` migrated from `typing` to `collections.abc` where
+  applicable. (#114)
+- `numpy` floor raised to `>=2.3.2`; `pandas` moved from runtime to `dev`
+  dependencies (used only by example models, not the library itself). Both
+  floors now guarantee pre-compiled wheels for Python 3.12, 3.13, and 3.14,
+  eliminating source-compilation delays in CI. (#122)
+
+### Fixed
+
+- Dependabot vulnerability alerts resolved: `fonttools` bumped to `>=4.60.2`
+  (moderate) and `pillow` to `>=12.1.1` (high) via lockfile regeneration. (#132)
+
 ## [0.8.1] - 2026-04-02
 
 ### Fixed
