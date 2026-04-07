@@ -278,7 +278,7 @@ implementation looks like this:
 # === Extremely simplified `graph.py` implementation (illustrative only) ===
 
 
-class Node(Generic[T]):
+class Node[T]:
     def __init__(self, name: str) -> None:
         self.name = name
 
@@ -288,18 +288,18 @@ class Node(Generic[T]):
     # ...
 
 
-class placeholder(Generic[T], Node[T]):
+class placeholder[T](Node[T]):
     def __init__(self, name: str) -> None:
         super.__init__(name)
 
 
-class constant(Generic[T], Node[T]):
+class constant[T](Node[T]):
     def __init__(self, value: int | float, name: str = "") -> None:
         super.__init__(name)
         self.value = value
 
 
-class add(Generic[T], Node[T]):
+class add[T](Node[T]):
     def __init__(self, left: Node[T], right: Node[T], name: str = "") -> None:
         super.__init__(name)
         self.left = left

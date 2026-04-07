@@ -19,7 +19,6 @@ jobs:
       matrix:
         # Test with multiple Python versions (good for forward-compatibility)
         python_version:
-          - "3.11"
           - "3.12"
           - "3.13"
           - "3.14"
@@ -39,21 +38,21 @@ jobs:
         run: uv sync --python ${{ matrix.python_version }} --dev
 
       # Step 4: Run ruff in "format check" mode
-      # Only run once (on 3.11) to avoid repeating identical checks across Python versions
+      # Only run once (on 3.12) to avoid repeating identical checks across Python versions
       - name: Check formatting with ruff
-        if: matrix['python_version'] == '3.11'
+        if: matrix['python_version'] == '3.12'
         run: uv run --python ${{ matrix.python_version }} ruff format --check .
 
       # Step 5: Run ruff linter to check code quality and static issues
-      # Again, only on 3.11 to avoid duplication
+      # Again, only on 3.12 to avoid duplication
       - name: Lint with ruff
-        if: matrix['python_version'] == '3.11'
+        if: matrix['python_version'] == '3.12'
         run: uv run --python ${{ matrix.python_version }} ruff check .
 
       # Step 6: Run static type checking with pyright
-      # Limited to 3.11 to reduce time, since it's version-agnostic in practice
+      # Limited to 3.12 to reduce time, since it's version-agnostic in practice
       - name: Check types with pyright
-        if: matrix['python_version'] == '3.11'
+        if: matrix['python_version'] == '3.12'
         run: uv run --python ${{ matrix.python_version }} pyright
 
       # Step 7: Run tests with pytest (on all Python versions)
@@ -61,10 +60,10 @@ jobs:
         run: uv run --python ${{ matrix.python_version }} pytest
 
       # Step 8: Upload code coverage report to Codecov
-      # This only needs to happen once (on 3.11)
+      # This only needs to happen once (on 3.12)
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
-        if: matrix['python_version'] == '3.11'
+        if: matrix['python_version'] == '3.12'
         with:
           token: ${{ secrets.CODECOV_TOKEN }} # Add this token as a GitHub secret
           file: ./coverage.xml # This is the default output file from pytest-cov

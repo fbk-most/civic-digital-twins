@@ -6,10 +6,9 @@ parameter that is used to calculate the value of a symbol. The index variable ca
 be a constant, a distribution, or a symbolic expression.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Protocol, cast, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 

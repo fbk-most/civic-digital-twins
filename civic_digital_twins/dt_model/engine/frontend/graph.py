@@ -174,7 +174,7 @@ This behavior impacts code that needs to find nodes in collections like lists:
 
 from __future__ import annotations
 
-from typing import Generic, Sequence, TypeVar
+from collections.abc import Sequence
 
 from numpy.typing import ArrayLike
 
@@ -208,17 +208,17 @@ _id_generator = atomic.Int()
 # This behavior is documented in the module docstring. Here, we outline how
 # to migrate to stricter type checking once @scc-digitalhub permits it.
 #
-# Currently, we target Python <= 3.11. When the runtime environment (e.g.,
-# @scc-digitalhub) upgrades to Python >= 3.13 and `pyrightconfig.json` is
-# updated accordingly, we could rewrite the following code like so:
+# We now target Python >= 3.12, so PEP 695 syntax is used throughout this
+# module (``class Foo[T]:`` and ``type Alias[T] = ...``).  The next upgrade
+# step — once Python >= 3.13 becomes the minimum — would look like this:
 #
 #   class Erased:
 #       """Represents the type-erased dimension."""
 #
-#   T = TypeVar("T", default=Erased)  # requires Python >= 3.13
-#   C = TypeVar("C", default=Erased)  # ditto
+#   class Node[T = Erased]: ...   # PEP 696 default — requires Python >= 3.13
+#   class where[C = Erased, T = Erased](Node[T]): ...   # ditto
 #
-#   def erase(node: Node[T]) -> Node[Erased]:
+#   def erase[T](node: Node[T]) -> Node[Erased]:
 #       """Explicitly erase the type of a node."""
 #       return cast(Node[Erased], node)
 #
@@ -268,15 +268,11 @@ _id_generator = atomic.Int()
 #
 #              -sbs (2025-07-29)
 
-
-T = TypeVar("T")
-"""Type associated with a Node."""
-
-C = TypeVar("C")
-"""Type associated with boolean conditions."""
+# In the rest of the file, `T` is used as a type parameter for `Node`,
+# while `C` is used as a type parameter for boolean conditions.
 
 
-def ensure_node(value: Node[T] | Scalar) -> Node[T]:
+def ensure_node[T](value: Node[T] | Scalar) -> Node[T]:
     """Convert a scalar value to a constant node if necessary.
 
     If *value* is already a ``Node`` it is returned as-is.  If it exposes
@@ -294,7 +290,7 @@ def ensure_node(value: Node[T] | Scalar) -> Node[T]:
     return constant(value)
 
 
-class Node(Generic[T]):
+class Node[T]:
     """
     Base class for all computation graph nodes.
 
@@ -434,7 +430,7 @@ class Node(Generic[T]):
         return logical_not(self)
 
 
-class constant(Generic[T], Node[T]):
+class constant[T](Node[T]):
     """A constant scalar value in the computation graph.
 
     Args:
@@ -450,7 +446,7 @@ class constant(Generic[T], Node[T]):
         return f"n{self.id} = graph.constant(value={self.value}, name='{self.name}')"
 
 
-class placeholder(Generic[T], Node[T]):
+class placeholder[T](Node[T]):
     """Named placeholder for a value to be provided during evaluation.
 
     Args:
@@ -467,7 +463,7 @@ class placeholder(Generic[T], Node[T]):
         return f"n{self.id} = graph.placeholder(name='{self.name}', default_value={self.default_value})"
 
 
-class timeseries_constant(Generic[T], Node[T]):
+class timeseries_constant[T](Node[T]):
     """A node holding a fixed sequence of values indexed by time.
 
     ``values`` is stored as-is.  The executor is responsible for converting
@@ -488,7 +484,7 @@ class timeseries_constant(Generic[T], Node[T]):
         return f"n{self.id} = graph.timeseries_constant(values={self.values!r}, name={self.name!r})"
 
 
-class timeseries_placeholder(Generic[T], Node[T]):
+class timeseries_placeholder[T](Node[T]):
     """Named placeholder for a timeseries value to be provided during evaluation.
 
     Args:
@@ -503,7 +499,7 @@ class timeseries_placeholder(Generic[T], Node[T]):
         return f"n{self.id} = graph.timeseries_placeholder(name={self.name!r})"
 
 
-class BinaryOp(Generic[T], Node[T]):
+class BinaryOp[T](Node[T]):
     """Base class for binary operations.
 
     Args:
@@ -517,7 +513,7 @@ class BinaryOp(Generic[T], Node[T]):
         self.right = right
 
 
-class UnaryOp(Generic[T], Node[T]):
+class UnaryOp[T](Node[T]):
     """Base class for unary operations.
 
     Args:
@@ -532,7 +528,7 @@ class UnaryOp(Generic[T], Node[T]):
 # Arithmetic operations
 
 
-class add(Generic[T], BinaryOp[T]):
+class add[T](BinaryOp[T]):
     """Element-wise addition of two tensors."""
 
     def __repr__(self) -> str:
@@ -540,7 +536,7 @@ class add(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.add(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class subtract(Generic[T], BinaryOp[T]):
+class subtract[T](BinaryOp[T]):
     """Element-wise subtraction of two tensors."""
 
     def __repr__(self) -> str:
@@ -548,7 +544,7 @@ class subtract(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.subtract(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class multiply(Generic[T], BinaryOp[T]):
+class multiply[T](BinaryOp[T]):
     """Element-wise multiplication of two tensors."""
 
     def __repr__(self) -> str:
@@ -556,7 +552,7 @@ class multiply(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.multiply(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class divide(Generic[T], BinaryOp[T]):
+class divide[T](BinaryOp[T]):
     """Element-wise division of two tensors."""
 
     def __repr__(self) -> str:
@@ -564,7 +560,7 @@ class divide(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.divide(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class power(Generic[T], BinaryOp[T]):
+class power[T](BinaryOp[T]):
     """Element-wise power operation (first tensor raised to power of second)."""
 
     def __repr__(self) -> str:
@@ -576,7 +572,7 @@ pow = power
 """Name alias for power, for compatibility with NumPy naming."""
 
 
-class negate(Generic[T], UnaryOp[T]):
+class negate[T](UnaryOp[T]):
     """Element-wise negation of a tensor (unary minus)."""
 
     def __repr__(self) -> str:
@@ -587,7 +583,7 @@ class negate(Generic[T], UnaryOp[T]):
 # Comparison operations
 
 
-class equal(Generic[T], BinaryOp[T]):
+class equal[T](BinaryOp[T]):
     """Element-wise equality comparison of two tensors."""
 
     def __repr__(self) -> str:
@@ -595,7 +591,7 @@ class equal(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class not_equal(Generic[T], BinaryOp[T]):
+class not_equal[T](BinaryOp[T]):
     """Element-wise inequality comparison of two tensors."""
 
     def __repr__(self) -> str:
@@ -603,7 +599,7 @@ class not_equal(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.not_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class less(Generic[T], BinaryOp[T]):
+class less[T](BinaryOp[T]):
     """Element-wise less-than comparison of two tensors."""
 
     def __repr__(self) -> str:
@@ -611,7 +607,7 @@ class less(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.less(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class less_equal(Generic[T], BinaryOp[T]):
+class less_equal[T](BinaryOp[T]):
     """Element-wise less-than-or-equal comparison of two tensors."""
 
     def __repr__(self) -> str:
@@ -619,7 +615,7 @@ class less_equal(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.less_equal(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class greater(Generic[T], BinaryOp[T]):
+class greater[T](BinaryOp[T]):
     """Element-wise greater-than comparison of two tensors."""
 
     def __repr__(self) -> str:
@@ -627,7 +623,7 @@ class greater(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.greater(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class greater_equal(Generic[T], BinaryOp[T]):
+class greater_equal[T](BinaryOp[T]):
     """Element-wise greater-than-or-equal comparison of two tensors."""
 
     def __repr__(self) -> str:
@@ -638,7 +634,7 @@ class greater_equal(Generic[T], BinaryOp[T]):
 # Logical operations
 
 
-class logical_and(Generic[T], BinaryOp[T]):
+class logical_and[T](BinaryOp[T]):
     """Element-wise logical AND of two boolean tensors."""
 
     def __repr__(self) -> str:
@@ -646,7 +642,7 @@ class logical_and(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.logical_and(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class logical_or(Generic[T], BinaryOp[T]):
+class logical_or[T](BinaryOp[T]):
     """Element-wise logical OR of two boolean tensors."""
 
     def __repr__(self) -> str:
@@ -654,7 +650,7 @@ class logical_or(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.logical_or(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class logical_xor(Generic[T], BinaryOp[T]):
+class logical_xor[T](BinaryOp[T]):
     """Element-wise logical XOR of two boolean tensors."""
 
     def __repr__(self) -> str:
@@ -662,7 +658,7 @@ class logical_xor(Generic[T], BinaryOp[T]):
         return f"n{self.id} = graph.logical_xor(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
 
 
-class logical_not(Generic[T], UnaryOp[T]):
+class logical_not[T](UnaryOp[T]):
     """Element-wise logical NOT of a boolean tensor."""
 
     def __repr__(self) -> str:
@@ -673,7 +669,7 @@ class logical_not(Generic[T], UnaryOp[T]):
 # Math operations
 
 
-class exp(Generic[T], UnaryOp[T]):
+class exp[T](UnaryOp[T]):
     """Element-wise exponential of a tensor."""
 
     def __repr__(self) -> str:
@@ -681,7 +677,7 @@ class exp(Generic[T], UnaryOp[T]):
         return f"n{self.id} = graph.exp(node=n{self.node.id}, name='{self.name}')"
 
 
-class log(Generic[T], UnaryOp[T]):
+class log[T](UnaryOp[T]):
     """Element-wise natural logarithm of a tensor."""
 
     def __repr__(self) -> str:
@@ -689,7 +685,7 @@ class log(Generic[T], UnaryOp[T]):
         return f"n{self.id} = graph.log(node=n{self.node.id}, name='{self.name}')"
 
 
-class maximum(Generic[T], BinaryOp[T]):
+class maximum[T](BinaryOp[T]):
     """Element-wise maximum of two tensors."""
 
     def __repr__(self) -> str:
@@ -700,7 +696,7 @@ class maximum(Generic[T], BinaryOp[T]):
 # Conditional operations
 
 
-class where(Generic[C, T], Node[T]):
+class where[C, T](Node[T]):
     """Selects elements from tensors based on a condition.
 
     Args:
@@ -720,7 +716,7 @@ class where(Generic[C, T], Node[T]):
         return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"  # noqa: E501
 
 
-class MultiClauseOp(Generic[C, T], Node[T]):
+class MultiClauseOp[C, T](Node[T]):
     """Abstract base class for multi-clause conditional nodes.
 
     Holds the shared structure — a sequence of ``(condition, value)`` clause
@@ -739,7 +735,7 @@ class MultiClauseOp(Generic[C, T], Node[T]):
         self.default_value = default_value
 
 
-class multi_clause_where(MultiClauseOp[C, T]):
+class multi_clause_where[C, T](MultiClauseOp[C, T]):
     """Selects elements from tensors based on multiple conditions.
 
     Backed by ``np.select``; both branches always evaluated (eager).
@@ -816,7 +812,7 @@ class variant_selector(Node):
         )
 
 
-class exclusive_multi_clause_where(MultiClauseOp[C, T]):
+class exclusive_multi_clause_where[C, T](MultiClauseOp[C, T]):
     """Like :class:`multi_clause_where` but declares branches as mutually exclusive.
 
     Receives a :class:`variant_selector` companion at construction time and
@@ -862,13 +858,14 @@ class exclusive_multi_clause_where(MultiClauseOp[C, T]):
         )
 
 
-# TODO(python3.12): replace inline annotations below with generic type aliases:
-#   type Expr[T] = Node[T] | Scalar
-#   type Cond[T] = Node[T] | Scalar
-#   type Clause[T] = tuple[Expr[T], Cond[T]]
+type Expr[T] = Node[T] | Scalar
+"""Type alias for piecewise expression operands."""
+
+type Cond[T] = Node[T] | Scalar
+"""Type alias for piecewise condition operands."""
 
 
-def piecewise(*clauses: tuple[Node[T] | Scalar, Node[T] | Scalar]) -> Node[T]:
+def piecewise[T](*clauses: tuple[Expr[T], Cond[T]]) -> Node[T]:
     """Build a piecewise function from ``(expression, condition)`` clauses.
 
     Converts clauses in sympy.Piecewise convention — ``(expression, condition)``
@@ -891,11 +888,11 @@ def piecewise(*clauses: tuple[Node[T] | Scalar, Node[T] | Scalar]) -> Node[T]:
     return _piecewise_to_node(_filter_piecewise_clauses(clauses))
 
 
-def _filter_piecewise_clauses(
-    clauses: tuple[tuple[Node[T] | Scalar, Node[T] | Scalar], ...],
-) -> list[tuple[Node[T] | Scalar, Node[T] | Scalar]]:
+def _filter_piecewise_clauses[T](
+    clauses: tuple[tuple[Expr[T], Cond[T]], ...],
+) -> list[tuple[Expr[T], Cond[T]]]:
     """Discard clauses that follow the first unconditional (``True``) clause."""
-    filtered: list[tuple[Node[T] | Scalar, Node[T] | Scalar]] = []
+    filtered: list[tuple[Expr[T], Cond[T]]] = []
     for expr, cond in clauses:
         filtered.append((expr, cond))
         if cond is True:
@@ -903,14 +900,14 @@ def _filter_piecewise_clauses(
     return filtered
 
 
-def _piecewise_to_node(
-    clauses: list[tuple[Node[T] | Scalar, Node[T] | Scalar]],
+def _piecewise_to_node[T](
+    clauses: list[tuple[Expr[T], Cond[T]]],
 ) -> Node[T]:
     if len(clauses) < 1:
         raise ValueError("piecewise: at least one clause is required")
 
     # Extract the default value from the last True-condition clause, or use NaN.
-    default: Node[T] | Scalar = float("NaN")
+    default: Expr[T] = float("NaN")
     last_expr, last_cond = clauses[-1]
     if last_cond is True:
         default = last_expr
@@ -937,7 +934,7 @@ def _piecewise_to_node(
 # Shape-changing operations
 
 
-class AxisOp(Generic[T], Node[T]):
+class AxisOp[T](Node[T]):
     """Base class for axis manipulation operations.
 
     We use these operations to expand a tensor to a higher-dimensional
@@ -955,7 +952,7 @@ class AxisOp(Generic[T], Node[T]):
         self.axis = axis
 
 
-class expand_dims(Generic[T], AxisOp[T]):
+class expand_dims[T](AxisOp[T]):
     """Adds new axes of size 1 to a tensor's shape.
 
     This expands the tensor to a higher-dimensional space.
@@ -966,7 +963,7 @@ class expand_dims(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.expand_dims(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class squeeze(Generic[T], AxisOp[T]):
+class squeeze[T](AxisOp[T]):
     """Removes axes of size 1 from a tensor's shape."""
 
     def __repr__(self) -> str:
@@ -974,7 +971,7 @@ class squeeze(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.squeeze(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_sum(Generic[T], AxisOp[T]):
+class project_using_sum[T](AxisOp[T]):
     """Computes sum of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -992,7 +989,7 @@ class project_using_sum(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_mean(Generic[T], AxisOp[T]):
+class project_using_mean[T](AxisOp[T]):
     """Computes mean of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1010,7 +1007,7 @@ class project_using_mean(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_min(Generic[T], AxisOp[T]):
+class project_using_min[T](AxisOp[T]):
     """Computes minimum of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1028,7 +1025,7 @@ class project_using_min(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_min(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_max(Generic[T], AxisOp[T]):
+class project_using_max[T](AxisOp[T]):
     """Computes maximum of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1046,7 +1043,7 @@ class project_using_max(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_max(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_std(Generic[T], AxisOp[T]):
+class project_using_std[T](AxisOp[T]):
     """Computes standard deviation of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1064,7 +1061,7 @@ class project_using_std(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_std(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_var(Generic[T], AxisOp[T]):
+class project_using_var[T](AxisOp[T]):
     """Computes variance of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1082,7 +1079,7 @@ class project_using_var(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_var(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_median(Generic[T], AxisOp[T]):
+class project_using_median[T](AxisOp[T]):
     """Computes median of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1100,7 +1097,7 @@ class project_using_median(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_median(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_prod(Generic[T], AxisOp[T]):
+class project_using_prod[T](AxisOp[T]):
     """Computes product of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1118,7 +1115,7 @@ class project_using_prod(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_prod(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_any(Generic[T], AxisOp[T]):
+class project_using_any[T](AxisOp[T]):
     """Computes logical OR of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1136,7 +1133,7 @@ class project_using_any(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_any(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_all(Generic[T], AxisOp[T]):
+class project_using_all[T](AxisOp[T]):
     """Computes logical AND of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1154,7 +1151,7 @@ class project_using_all(Generic[T], AxisOp[T]):
         return f"n{self.id} = graph.project_using_all(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
 
 
-class project_using_count_nonzero(Generic[T], AxisOp[T]):
+class project_using_count_nonzero[T](AxisOp[T]):
     """Counts non-zero elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1175,7 +1172,7 @@ class project_using_count_nonzero(Generic[T], AxisOp[T]):
         )
 
 
-class project_using_quantile(Generic[T], AxisOp[T]):
+class project_using_quantile[T](AxisOp[T]):
     """Computes quantile/percentile of tensor elements along specified axes, preserving dimensions.
 
     This projects the tensor to a lower-dimensional space.  The reduced axis
@@ -1205,7 +1202,7 @@ class project_using_quantile(Generic[T], AxisOp[T]):
 # User-defined functions
 
 
-class function_call(Generic[T], Node[T]):
+class function_call[T](Node[T]):
     """
     Represent calling a user-defined function.
 
@@ -1231,7 +1228,7 @@ class function_call(Generic[T], Node[T]):
 # Debug operations
 
 
-def tracepoint(node: Node[T]) -> Node[T]:
+def tracepoint[T](node: Node[T]) -> Node[T]:
     """
     Mark the node as a tracepoint and returns it.
 
@@ -1246,7 +1243,7 @@ def tracepoint(node: Node[T]) -> Node[T]:
     return node
 
 
-def breakpoint(node: Node[T]) -> Node[T]:
+def breakpoint[T](node: Node[T]) -> Node[T]:
     """
     Mark the node as a breakpoint and returns it.
 

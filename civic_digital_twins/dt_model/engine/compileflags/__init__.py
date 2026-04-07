@@ -15,7 +15,7 @@ Available flag names: ``trace``, ``dump``, ``break``.
 """
 
 import os
-from typing import Callable
+from collections.abc import Callable
 
 TRACE = 1 << 0
 """Indicates that we should trace execution.

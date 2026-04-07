@@ -44,7 +44,6 @@ license = "Apache-2.0"
 # PyPI classifiers for metadata
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -54,14 +53,11 @@ classifiers = [
 keywords = ["digital twin", "simulation", "urban", "sustainability", "civic", "modeling"]
 
 # Minimum required Python version
-#
-# We target the maximum version supported by @scc-digitalhub.
-requires-python = ">=3.11.0"
+requires-python = ">=3.12.0"
 
 # Runtime dependencies
 dependencies = [
-    "numpy>=2.2.0",
-    "pandas>=2.2.0",
+    "numpy>=2.3.2",
     "scipy>=1.17.1",
 ]
 
@@ -71,6 +67,7 @@ dependencies = [
 # Developer tools: testing, linting, type checking, visualization
 dev = [
     "matplotlib>=3.10.8",
+    "pandas>=2.3.3",        # used by examples, not by the library itself
     "pyright>=1.1.408",     # static type checker
     "pytest>=7.0.0",        # test runner
     "pytest-cov>=4.0.0",    # code coverage plugin for pytest
@@ -107,9 +104,7 @@ addopts = "--cov=civic_digital_twins --cov-report=xml --cov-report=term-missing"
 [tool.ruff]
 
 # Target Python version for linting and formatting
-#
-# We target the maximum version supported by @scc-digitalhub.
-target-version = "py311"
+target-version = "py312"
 
 # Exclude doc test scripts: they mirror documentation snippets verbatim and
 # are not subject to style enforcement.
