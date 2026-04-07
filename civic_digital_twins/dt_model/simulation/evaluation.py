@@ -1,7 +1,5 @@
 """Generic model evaluation."""
 
-from __future__ import annotations
-
 import numpy as np
 
 from ..engine.frontend import graph, linearize
