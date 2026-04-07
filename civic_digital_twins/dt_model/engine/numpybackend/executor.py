@@ -14,11 +14,10 @@ The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import (
-    Callable,
     Protocol,
-    TypeAlias,
     cast,
     runtime_checkable,
 )
@@ -30,9 +29,9 @@ from ..frontend import graph
 from . import numpy_ast
 
 # Type aliases for operation function signatures
-_BinaryOpFunc: TypeAlias = Callable[[np.ndarray, np.ndarray], np.ndarray]
-_UnaryOpFunc: TypeAlias = Callable[[np.ndarray], np.ndarray]
-_AxisOpFunc: TypeAlias = Callable[[np.ndarray, graph.Axis], np.ndarray]
+type _BinaryOpFunc = Callable[[np.ndarray, np.ndarray], np.ndarray]
+type _UnaryOpFunc = Callable[[np.ndarray], np.ndarray]
+type _AxisOpFunc = Callable[[np.ndarray, graph.Axis], np.ndarray]
 
 _binary_operations: dict[type[graph.BinaryOp], _BinaryOpFunc] = {
     graph.add: np.add,

@@ -2,13 +2,11 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from __future__ import annotations
-
 import dataclasses
 import inspect
 import warnings
 from collections.abc import Iterator
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from .index import Distribution, GenericIndex, Index
 
@@ -73,8 +71,6 @@ class AbstractIndexNotInInputsWarning(ModelContractWarning):
     """
 
 
-_DC = TypeVar("_DC")
-
 # ---------------------------------------------------------------------------
 # IOProxy value types
 # ---------------------------------------------------------------------------
@@ -111,13 +107,13 @@ def _iter_scalars(value: _ProxyValue) -> Iterator[GenericIndex]:
 # ---------------------------------------------------------------------------
 
 
-class IOProxy(Generic[_DC]):
+class IOProxy[DC]:
     """Read-only attribute-access proxy over a declared inputs, outputs, or expose mapping.
 
-    The class is generic over the dataclass type *_DC* it wraps.  When
+    The class is generic over the dataclass type *DC* it wraps.  When
     constructed from a dataclass instance (the normal path), field access
     ``proxy.field`` is typed as :data:`~typing.Any` by the type checker, which
-    means the declared field type on *_DC* flows through without any
+    means the declared field type on *DC* flows through without any
     :func:`~typing.cast` calls at the call site.
 
     Each slot is accessible by the field name used to register it.  The slot
@@ -134,7 +130,7 @@ class IOProxy(Generic[_DC]):
     * ``repr(proxy)``  — lists declared field names.
     """
 
-    def __init__(self, entries: list[tuple[str, _ProxyValue]], dc: _DC | None = None) -> None:
+    def __init__(self, entries: list[tuple[str, _ProxyValue]], dc: DC | None = None) -> None:
         # entries is an ordered list of (field_name, value) pairs.
         # dc is the original dataclass instance (if any) — stored so that
         # __getattr__ can delegate to it and return Any, giving callers precise
@@ -224,7 +220,7 @@ class IOProxy(Generic[_DC]):
 # ---------------------------------------------------------------------------
 
 
-def _proxy_from_dataclass(dc_instance: _DC) -> IOProxy[_DC]:
+def _proxy_from_dataclass[DC](dc_instance: DC) -> IOProxy[DC]:
     """Build an :class:`IOProxy` from a dataclass instance.
 
     Each dataclass field becomes one slot in the proxy; its value may be a
@@ -242,7 +238,7 @@ def _proxy_from_dataclass(dc_instance: _DC) -> IOProxy[_DC]:
 
     Returns
     -------
-    IOProxy[_DC]
+    IOProxy[DC]
         Proxy whose attribute keys are the dataclass field names.
     """
     entries: list[tuple[str, _ProxyValue]] = []
