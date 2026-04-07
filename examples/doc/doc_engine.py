@@ -22,6 +22,14 @@ class EnsembleDimension:
     """Represents nodes in the ensemble dimension."""
 
 
+class Apple:
+    """Represent apples."""
+
+
+class Orange:
+    """Represent oranges."""
+
+
 def _demo_end_to_end() -> None:
     """dd-cdt-engine.md — End-to-End Example (block 00)."""
     a = graph.placeholder[TimeDimension]("a")
@@ -55,12 +63,12 @@ def _demo_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Blocks 01, 03, 05 — frontend/graph.py: Writing a DAG
+# Blocks 01, 05 — frontend/graph.py: Writing a DAG
 # ---------------------------------------------------------------------------
 
 
 def _demo_dag_writing() -> None:
-    """dd-cdt-engine.md — Writing a DAG (blocks 01, 03, 05)."""
+    """dd-cdt-engine.md — Writing a DAG (blocks 01, 05)."""
     a = graph.placeholder("a")
     b = graph.placeholder("b")
     scale = graph.constant(1024)
@@ -74,6 +82,39 @@ def _demo_dag_writing() -> None:
 
     f = graph.function_call("reduce", c, d, e)
     assert f is not None
+
+
+# ---------------------------------------------------------------------------
+# Blocks 02, 03 — frontend/graph.py: Typed nodes
+# ---------------------------------------------------------------------------
+
+
+def _demo_typed_nodes() -> None:
+    """dd-cdt-engine.md — Typed nodes (blocks 02, 03)."""
+    # Block 02 — correct typed usage: all-Orange nodes
+    a = graph.placeholder[Orange]("a")
+    b = graph.placeholder[Orange]("b")
+
+    # Explicitly say that the constants are oranges
+    scale = graph.constant[Orange](1024)
+
+    assert a is not None
+    assert b is not None
+    assert scale is not None
+
+    # Block 03 — type-mismatch example: static error only, no runtime error
+    a = graph.placeholder[Orange]("a")
+    b = graph.placeholder[Orange]("b")
+
+    # Oops, scale is now an apple and not an orange!
+    scale = graph.constant[Apple](1024)
+
+    c = graph.placeholder[Orange]("c")
+
+    # This line produces static typing errors because the
+    # operation is mixing apples and oranges.
+    d = c * b + scale  # type: ignore[operator]  # Apple vs Orange — intentional static error
+    assert d is not None
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +351,7 @@ def _demo_udf_trace() -> None:
 
 _demo_end_to_end()
 _demo_dag_writing()
+_demo_typed_nodes()
 _demo_timeseries()
 _demo_ssa_and_sorting()
 _demo_executor_usage()
