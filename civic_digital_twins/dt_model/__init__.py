@@ -2,7 +2,12 @@
 
 from .engine.frontend.graph import piecewise
 from .model import (
+    DOMAIN,
+    ENSEMBLE,
+    PARAMETER,
     AbstractIndexNotInInputsWarning,
+    Axis,
+    AxisRole,
     CategoricalIndex,
     ConstIndex,
     Distribution,
@@ -15,16 +20,22 @@ from .model import (
     ModelVariant,
     TimeseriesIndex,
 )
-from .simulation import DistributionEnsemble, Ensemble, Evaluation, EvaluationResult, WeightedScenario
+from .simulation import AxisEnsemble, DistributionEnsemble, Ensemble, EnsembleAxisSpec, Evaluation, EvaluationResult, WeightedScenario
 
 __all__ = [
     "AbstractIndexNotInInputsWarning",
+    "Axis",
+    "AxisEnsemble",
+    "AxisRole",
     "CategoricalIndex",
     "ConstIndex",
     "Distribution",
+    "DOMAIN",
     "DistributionEnsemble",
     "DistributionIndex",
+    "ENSEMBLE",
     "Ensemble",
+    "EnsembleAxisSpec",
     "Evaluation",
     "EvaluationResult",
     "GenericIndex",
@@ -33,6 +44,7 @@ __all__ = [
     "Model",
     "ModelContractWarning",
     "ModelVariant",
+    "PARAMETER",
     "TimeseriesIndex",
     "WeightedScenario",
     "piecewise",
