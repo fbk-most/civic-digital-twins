@@ -20,7 +20,7 @@ from .model import (
     ModelVariant,
     TimeseriesIndex,
 )
-from .simulation import AxisEnsemble, DistributionEnsemble, Ensemble, EnsembleAxisSpec, Evaluation, EvaluationResult, WeightedScenario
+from .simulation import AxisEnsemble, DistributionEnsemble, Ensemble, EnsembleAxisSpec, Evaluation, EvaluationResult, PartitionedEnsemble, WeightedScenario
 
 __all__ = [
     "AbstractIndexNotInInputsWarning",
@@ -45,6 +45,7 @@ __all__ = [
     "ModelContractWarning",
     "ModelVariant",
     "PARAMETER",
+    "PartitionedEnsemble",
     "TimeseriesIndex",
     "WeightedScenario",
     "piecewise",

@@ -123,6 +123,138 @@ class AxisEnsemble(Protocol):
         ...  # pragma: no cover
 
 
+class PartitionedEnsemble:
+    """Ensemble that distributes abstract indexes across multiple named ENSEMBLE axes.
+
+    Each :class:`EnsembleAxisSpec` defines one ENSEMBLE axis: its name, which
+    abstract indexes belong to it, and how many independent samples to draw.
+    The result tensor has shape ``(S0, S1, …, S(M-1))`` before marginalization,
+    where ``Sj`` is the size of axis ``j``.  This allows orthogonal Monte Carlo
+    budgets for independent uncertainty sources.
+
+    Abstract indexes not mentioned in any ``axes`` spec must be covered by
+    ``default_axis``; otherwise a :class:`ValueError` is raised at construction.
+
+    Parameters
+    ----------
+    model:
+        The model whose abstract indexes are sampled.
+    axes:
+        Ordered list of :class:`EnsembleAxisSpec` objects, each naming a subset
+        of abstract indexes and a sample size.
+    default_axis:
+        Optional catch-all :class:`EnsembleAxisSpec` for abstract indexes not
+        listed in *axes*.  Its ``indexes`` list is extended automatically.
+    rng:
+        Optional :class:`numpy.random.Generator` for reproducibility.
+
+    Raises
+    ------
+    ValueError
+        If any abstract index is not covered by any spec and no *default_axis*
+        is provided, or if any spec index is not abstract in *model*.
+    """
+
+    def __init__(
+        self,
+        model: Model | ModelVariant,
+        axes: list[EnsembleAxisSpec],
+        default_axis: EnsembleAxisSpec | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> None:
+        abstract = list(model.abstract_indexes())
+        abstract_set = set(abstract)
+
+        # Build mapping: index → spec
+        assigned: dict[GenericIndex, EnsembleAxisSpec] = {}
+        for spec in axes:
+            for idx in spec.indexes:
+                if idx not in abstract_set:
+                    raise ValueError(
+                        f"Index {getattr(idx, 'name', repr(idx))!r} in EnsembleAxisSpec "
+                        f"{spec.name!r} is not an abstract index of the model."
+                    )
+                if idx in assigned:
+                    raise ValueError(
+                        f"Index {getattr(idx, 'name', repr(idx))!r} appears in more than one EnsembleAxisSpec."
+                    )
+                assigned[idx] = spec
+
+        # Handle unassigned indexes
+        unassigned = [idx for idx in abstract if idx not in assigned]
+        if unassigned:
+            if default_axis is None:
+                names = ", ".join(getattr(idx, "name", repr(idx)) for idx in unassigned)
+                raise ValueError(
+                    f"Abstract indexes not covered by any EnsembleAxisSpec and no default_axis provided: {names}"
+                )
+            for idx in unassigned:
+                default_axis.indexes.append(idx)
+                assigned[idx] = default_axis
+
+        # Final ordered spec list (include default_axis if used)
+        all_specs: list[EnsembleAxisSpec] = list(axes)
+        if default_axis is not None and default_axis.indexes:
+            all_specs.append(default_axis)
+
+        # Validate unique axis names across all specs (including default_axis).
+        seen_names: set[str] = set()
+        for spec in all_specs:
+            if spec.name in seen_names:
+                raise ValueError(f"Duplicate EnsembleAxisSpec name: {spec.name!r}")
+            seen_names.add(spec.name)
+
+        self._axes: tuple[Axis, ...] = tuple(Axis(spec.name, ENSEMBLE) for spec in all_specs)
+        self._weights: tuple[np.ndarray, ...] = tuple(
+            np.full(spec.size, 1.0 / spec.size) for spec in all_specs
+        )
+        self._specs = all_specs
+        self._assigned = assigned
+        self._rng = rng
+
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        return self._axes
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        return self._weights
+
+    def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
+        """Return batched samples for every abstract index.
+
+        Each value has shape ``(1, …, Sj, …, 1)`` — size ``Sj`` only at the
+        dimension corresponding to the index's own axis, 1 everywhere else.
+        """
+        M = len(self._specs)
+        result: dict[GenericIndex, np.ndarray] = {}
+
+        for j, spec in enumerate(self._specs):
+            Sj = spec.size
+            for idx in spec.indexes:
+                # Sample Sj values for this index.
+                if isinstance(idx, CategoricalIndex):
+                    raw = [idx.sample(self._rng) for _ in range(Sj)]
+                    samples = np.array(raw, dtype=object)  # shape (Sj,)
+                elif isinstance(idx, Index) and isinstance(idx.value, Distribution):
+                    if self._rng is not None:
+                        samples = np.asarray(idx.value.rvs(size=Sj, random_state=self._rng))
+                    else:
+                        samples = np.asarray(idx.value.rvs(size=Sj))
+                else:
+                    raise ValueError(
+                        f"Index {getattr(idx, 'name', repr(idx))!r} is not Distribution-backed "
+                        f"or CategoricalIndex; cannot sample."
+                    )
+
+                # Reshape to (1, …, Sj, …, 1): size Sj at position j, 1 elsewhere.
+                shape = [1] * M
+                shape[j] = Sj
+                result[idx] = samples.reshape(shape)
+
+        return result
+
+
 class DistributionEnsemble:
     """Ensemble that independently samples each samplable abstract index.
 
