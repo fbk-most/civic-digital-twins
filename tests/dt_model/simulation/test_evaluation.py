@@ -55,8 +55,8 @@ def test_1d_single_scenario_placeholder():
     a: dict[GenericIndex, Any] = {I_x: 5.0}
     scenarios: list[WeightedScenario] = [(1.0, a)]
     result = Evaluation(model).evaluate(scenarios)
-    # Batch dim: shape (1,); value = 2 * 5 = 10
-    assert result[I_result].shape == (1,)
+    # Shape (S, 1): S=1 scenario, trailing 1 from DOMAIN placeholder; value = 2 * 5 = 10
+    assert result[I_result].shape == (1, 1)
     assert np.isclose(result[I_result][0], 10.0)
 
 
@@ -70,7 +70,7 @@ def test_1d_multiple_scenarios():
     a1: dict[GenericIndex, Any] = {I_x: 3.0}
     scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
     result = Evaluation(model).evaluate(scenarios)
-    assert result[I_result].shape == (2,)
+    assert result[I_result].shape == (2, 1)
     assert np.isclose(result[I_result][0], 4.0)
     assert np.isclose(result[I_result][1], 9.0)
 
