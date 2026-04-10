@@ -185,7 +185,7 @@ def evaluate_scenario(model, situation) -> tuple:
     scenarios: list[WeightedScenario] = list(OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size))
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(scenarios, axes={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(scenarios, parameters={PV_tourists: tt, PV_excursionists: ee})
     return result, scenarios
 
 
@@ -207,8 +207,8 @@ def plot_scenario(ax, model, result, scenarios, title):
     title:
         Plot title prefix.
     """
-    tt = result.axes[PV_tourists]
-    ee = result.axes[PV_excursionists]
+    tt = result.parameter_values[PV_tourists]
+    ee = result.parameter_values[PV_excursionists]
 
     # Compute sustainability field.
     # field[t_idx, e_idx] = P(all constraints satisfied | tourists=tt[t_idx], excursionists=ee[e_idx])

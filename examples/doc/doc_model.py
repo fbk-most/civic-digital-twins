@@ -262,7 +262,7 @@ def _demo_18_20_overtourism() -> None:
 
     result = Evaluation(model).evaluate(
         list(ensemble),
-        axes={PV_tourists: tt, PV_excursionists: ee},
+        parameters={PV_tourists: tt, PV_excursionists: ee},
     )
 
     # Compute sustainability field per constraint

@@ -131,7 +131,7 @@ visitors_axis = np.linspace(0, 20_000, 201)
 
 result = Evaluation(model).evaluate(
     scenarios,
-    axes={PV_visitors: visitors_axis},
+    parameters={PV_visitors: visitors_axis},
 )
 
 assert result.full_shape == (201, 6)

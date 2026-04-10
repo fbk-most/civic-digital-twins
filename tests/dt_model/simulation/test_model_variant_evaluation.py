@@ -220,7 +220,7 @@ def test_grid_mode_categorical_selector_all_bike():
 
     # mode is a non-axis abstract; presence is the axis → single scenario needs mode assignment.
     manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
-    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], axes={presence: xs})
+    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
 
     assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 1.0)
 
@@ -232,7 +232,7 @@ def test_grid_mode_categorical_selector_all_train():
     xs = np.array([100.0, 200.0, 300.0])
 
     manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
-    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], axes={presence: xs})
+    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
 
     assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 10.0)
 
@@ -250,7 +250,7 @@ def test_grid_mode_categorical_selector_mixed_scenarios():
         (0.5, {mode: np.array(["bike"])}),
         (0.5, {mode: np.array(["train"])}),
     ]
-    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], axes={presence: xs})
+    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
 
     assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 5.5)
 
@@ -276,7 +276,7 @@ def test_grid_mode_node_selector_from_axis():
     xs = np.array([100.0, 200.0, 300.0])
 
     # presence is the only abstract index and it is the axis → no assignments needed.
-    result = Evaluation(mv).evaluate([(1.0, {})], [mv.outputs.throughput], axes={presence: xs})
+    result = Evaluation(mv).evaluate([(1.0, {})], [mv.outputs.throughput], parameters={presence: xs})
 
     # presence=100 → bike → 100*1=100
     # presence=200 → train → 200*10=2000

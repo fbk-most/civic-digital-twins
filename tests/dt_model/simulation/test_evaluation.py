@@ -97,7 +97,7 @@ def test_axes_single_axis_result_shape():
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
     assert result[I_x].shape == (3, 1)
 
 
@@ -109,7 +109,7 @@ def test_axes_two_axes_result_shape():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs, I_y: ys})
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
     assert result[I_x].shape == (2, 1, 1)
     assert result[I_y].shape == (1, 3, 1)
 
@@ -124,7 +124,7 @@ def test_axes_non_axis_abstract_has_shape_1_1_s():
     a0: dict[GenericIndex, Any] = {I_factor: 1.0}
     a1: dict[GenericIndex, Any] = {I_factor: 2.0}
     scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
-    result = Evaluation(model).evaluate(scenarios, axes={I_x: xs})
+    result = Evaluation(model).evaluate(scenarios, parameters={I_x: xs})
     # Non-axis abstract: shape (1, S) = (1, 2)
     assert result[I_factor].shape == (1, 2)
 
@@ -142,7 +142,7 @@ def test_axes_single_axis_formula_values():
     model = _make_model(I_x, I_scale, I_result)
     xs = np.array([1.0, 2.0, 4.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
     # shape (3, 1); marginalize: tensordot(..., [1.0], axes=([-1],[0])) → (3,)
     marginalised = result.marginalize(I_result)
     assert np.allclose(marginalised, [3.0, 6.0, 12.0])
@@ -157,7 +157,7 @@ def test_axes_two_axes_additive_formula():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs, I_y: ys})
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
     marginalised = result.marginalize(I_result)
     # result[i, j] = xs[i] + ys[j]
     expected = xs[:, None] + ys[None, :]
@@ -176,7 +176,7 @@ def test_axes_non_axis_factor_marginalised_correctly():
     a1: dict[GenericIndex, Any] = {I_factor: 3.0}
     scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
 
-    result = Evaluation(model).evaluate(scenarios, axes={I_x: xs})
+    result = Evaluation(model).evaluate(scenarios, parameters={I_x: xs})
     marginalised = result.marginalize(I_result)
     # result[i] = xs[i] * mean_factor = xs[i] * 2
     assert np.allclose(marginalised, [2.0, 4.0, 6.0])
@@ -194,7 +194,7 @@ def test_axes_raises_on_unresolved_non_axis_abstract():
     model = _make_model(I_x, I_missing)
 
     with pytest.raises(ValueError, match="abstract index"):
-        Evaluation(model).evaluate([(1.0, {})], axes={I_x: np.array([1.0])})
+        Evaluation(model).evaluate([(1.0, {})], parameters={I_x: np.array([1.0])})
 
 
 def test_axes_axis_index_not_required_in_scenario():
@@ -203,7 +203,7 @@ def test_axes_axis_index_not_required_in_scenario():
     model = _make_model(I_x)
 
     # Should not raise — I_x is an axis, not required in scenario dict.
-    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: np.array([5.0, 10.0])})
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: np.array([5.0, 10.0])})
     assert result[I_x].shape == (2, 1)
 
 
@@ -228,25 +228,25 @@ def test_evaluation_result_weights_property():
     assert np.isclose(weights[1], 0.7)
 
 
-def test_evaluation_result_axes_property():
-    """EvaluationResult.axes returns the dict passed to evaluate()."""
+def test_evaluation_result_parameter_values_property():
+    """EvaluationResult.parameter_values returns the dict passed to evaluate()."""
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
-    axes = result.axes
-    assert I_x in axes
-    assert np.array_equal(axes[I_x], xs)
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    pv = result.parameter_values
+    assert I_x in pv
+    assert np.array_equal(pv[I_x], xs)
 
 
-def test_evaluation_result_axes_property_empty_in_1d_mode():
-    """EvaluationResult.axes is empty when no axes are passed."""
+def test_evaluation_result_parameter_values_empty_in_1d_mode():
+    """EvaluationResult.parameter_values is empty when no parameters are passed."""
     I_x = Index("x", 1.0)
     model = _make_model(I_x)
 
     result = Evaluation(model).evaluate([])
-    assert result.axes == {}
+    assert result.parameter_values == {}
 
 
 def test_marginalize_constant_index():

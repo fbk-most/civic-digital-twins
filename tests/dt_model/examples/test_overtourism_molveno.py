@@ -49,7 +49,7 @@ def compute_field(model, scenarios, tt, ee):
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(scenarios, axes={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(scenarios, parameters={PV_tourists: tt, PV_excursionists: ee})
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}
