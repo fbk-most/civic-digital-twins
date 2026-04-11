@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Typed axes — canonical shape contract for evaluation results**
+
+- `Axis(name, role)` and `AxisRole` (`PARAMETER`, `ENSEMBLE`, `DOMAIN`) — explicit
+  named dimensions for result arrays; exported from `civic_digital_twins.dt_model`.
+- `AxisEnsemble` protocol — batched ensemble interface exposing `ensemble_axes`,
+  `ensemble_weights`, and `assignments()`.  `DistributionEnsemble` now implements
+  it natively; the legacy `Iterable[WeightedScenario]` path is still accepted via a
+  deprecation adapter.
+- `PartitionedEnsemble(model, axes, default_axis, rng)` — N-on-M independent ENSEMBLE
+  axes; each `EnsembleAxisSpec` covers a disjoint subset of abstract indexes with its
+  own sample budget.  Validates unique axis names and full index coverage.
+- `Evaluation.evaluate()` — new `ensemble=` and `parameters=` keyword arguments
+  (canonical names replacing the deprecated `scenarios=` / `axes=`).  Accepts any
+  `AxisEnsemble`; a single batched evaluation pass replaces the old per-scenario loop.
+- `EvaluationResult.parameter_values` — replaces the deprecated `result.axes`.
+- Every result array is guaranteed to carry explicit ENSEMBLE singleton dims for
+  nodes not downstream of ENSEMBLE substitutions, eliminating the `S == T` shape
+  ambiguity (#142).
+- `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
+
+**Document snippes - test alignment check**
+
 - `tests/test_doc_sync.py` — automated snippet-alignment test that compares
   every Python code block in the design docs and guides against its paired
   runnable example script in `examples/doc/`.  Run without arguments for a
@@ -37,8 +59,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `EvaluationResult.marginalize()` contracted the wrong axis when the ENSEMBLE size
+  equalled the timeseries length (`S == T`, #142).  The fix injects explicit ENSEMBLE
+  singleton dims post-evaluation so `marginalize()` always contracts the correct axis.
+- `marginalize()` no longer calls `squeeze()` on the result: only ENSEMBLE axes are
+  contracted; PARAMETER dims and non-trivial DOMAIN dims are preserved.
 - Dependabot vulnerability alerts resolved: `fonttools` bumped to `>=4.60.2`
   (moderate) and `pillow` to `>=12.1.1` (high) via lockfile regeneration. (#132)
+
+### Deprecated
+
+- `evaluate(scenarios, …)` positional argument — use `ensemble=` instead.
+- `evaluate(axes={…})` keyword — use `parameters=` instead.
+- `result.axes` property — use `result.parameter_values` instead.
+- Passing `Iterable[WeightedScenario]` to `evaluate()` — use an `AxisEnsemble`
+  (e.g. `DistributionEnsemble`) instead.
 
 ## [0.8.1] - 2026-04-02
 
