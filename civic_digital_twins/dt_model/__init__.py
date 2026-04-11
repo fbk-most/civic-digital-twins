@@ -20,7 +20,16 @@ from .model import (
     ModelVariant,
     TimeseriesIndex,
 )
-from .simulation import AxisEnsemble, DistributionEnsemble, Ensemble, EnsembleAxisSpec, Evaluation, EvaluationResult, PartitionedEnsemble, WeightedScenario
+from .simulation import (
+    AxisEnsemble,
+    DistributionEnsemble,
+    Ensemble,
+    EnsembleAxisSpec,
+    Evaluation,
+    EvaluationResult,
+    PartitionedEnsemble,
+    WeightedScenario,
+)
 
 __all__ = [
     "AbstractIndexNotInInputsWarning",

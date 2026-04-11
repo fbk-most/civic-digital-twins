@@ -205,9 +205,7 @@ class PartitionedEnsemble:
             seen_names.add(spec.name)
 
         self._axes: tuple[Axis, ...] = tuple(Axis(spec.name, ENSEMBLE) for spec in all_specs)
-        self._weights: tuple[np.ndarray, ...] = tuple(
-            np.full(spec.size, 1.0 / spec.size) for spec in all_specs
-        )
+        self._weights: tuple[np.ndarray, ...] = tuple(np.full(spec.size, 1.0 / spec.size) for spec in all_specs)
         self._specs = all_specs
         self._assigned = assigned
         self._rng = rng

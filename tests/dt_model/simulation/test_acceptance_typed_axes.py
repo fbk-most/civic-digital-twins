@@ -52,8 +52,8 @@ def test_parameter_then_ensemble_then_domain_order():
     only abstract index (sampled by DistributionEnsemble → ENSEMBLE dim).
     Expected shape: (3, 5) — PARAMETER first, ENSEMBLE second.
     """
-    i_x = _dist_index("x")     # abstract: sampled by ensemble → ENSEMBLE dim
-    i_p = Index("p", 1.0)      # concrete default, swept via parameters= → PARAMETER dim
+    i_x = _dist_index("x")  # abstract: sampled by ensemble → ENSEMBLE dim
+    i_p = Index("p", 1.0)  # concrete default, swept via parameters= → PARAMETER dim
     i_result = Index("result", i_p.node * i_x.node)
     model = _make_model(i_x, i_p, i_result)
 
@@ -69,7 +69,7 @@ def test_parameter_then_ensemble_then_domain_order():
 def test_no_shape_heuristic_constant_node():
     """A constant node marginalizes to a scalar regardless of ENSEMBLE size."""
     i_c = Index("c", 42.0)
-    i_x = _dist_index("x")   # gives DistributionEnsemble something to sample
+    i_x = _dist_index("x")  # gives DistributionEnsemble something to sample
     model = _make_model(i_c, i_x)
 
     ens = DistributionEnsemble(model, size=4, rng=np.random.default_rng(0))
