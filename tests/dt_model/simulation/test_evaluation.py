@@ -259,7 +259,7 @@ def test_marginalize_constant_index():
 
 
 def test_marginalize_1d_squeeze_scalar():
-    """Marginalize squeezes the trailing size-1 dim added by DistributionEnsemble."""
+    """Marginalize of a pure-ENSEMBLE scalar result is a 0-d scalar array."""
     from scipy import stats
 
     from civic_digital_twins.dt_model.model.index import DistributionIndex
@@ -272,7 +272,7 @@ def test_marginalize_1d_squeeze_scalar():
     ensemble = DistributionEnsemble(model, size=50)
     result = Evaluation(model).evaluate(ensemble)
     marginalised = result.marginalize(I_result)
-    # Should be a plain scalar (0-d array), not shape (1,).
+    # ENSEMBLE axis contracted, DOMAIN placeholder squeezed → 0-d scalar.
     assert np.ndim(marginalised) == 0
 
 

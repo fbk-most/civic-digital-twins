@@ -170,7 +170,11 @@ class EvaluationResult:
     def marginalize(self, index: GenericIndex) -> np.ndarray:
         """Contract ENSEMBLE axes using their weights and return the result.
 
-        Uses the explicit axis layout — no shape heuristics.
+        Uses the explicit axis layout — no shape heuristics.  After
+        contracting all ENSEMBLE axes the result shape is
+        ``(*PARAMETER_sizes, *DOMAIN_dims)``; trailing size-1 dims that lie
+        beyond the PARAMETER positions are squeezed away (they are internal
+        DOMAIN placeholders, not meaningful dimensions).
         """
         arr = np.asarray(self._state.values[index.node])
 
@@ -180,23 +184,36 @@ class EvaluationResult:
             reverse=True,
         )
 
+        n_params = len(self._parameter_arrays)
+
         if not ensemble_entries:
-            return arr.squeeze()
+            return self._squeeze_domain(arr, n_params)
 
         for ax, pos in ensemble_entries:
-            weights = self._factorized_weights[ax]
-            S = self._axis_sizes[ax]
-            # Ensure the ENSEMBLE dimension exists at `pos` with size S.
-            # Constant or PARAMETER-only nodes may have fewer dims or size 1
-            # at `pos` — expand before contracting.
-            target = list(arr.shape)
-            while len(target) <= pos:
-                target.insert(0, 1)
-            if target[pos] != S:
-                target[pos] = S
-            arr = np.average(np.broadcast_to(arr, target), weights=weights, axis=pos)
+            # evaluate() guarantees shape[pos] is either S (ENSEMBLE-touched
+            # nodes) or 1 (injected singleton for non-touched nodes).
+            # For the singleton case: weighted average of S identical copies
+            # (weights summing to 1) equals the value itself — squeeze directly.
+            if arr.shape[pos] == 1:
+                arr = arr.squeeze(axis=pos)
+            else:
+                arr = np.average(arr, weights=self._factorized_weights[ax], axis=pos)
 
-        return arr.squeeze()
+        return self._squeeze_domain(arr, n_params)
+
+    @staticmethod
+    def _squeeze_domain(arr: np.ndarray, n_params: int) -> np.ndarray:
+        """Squeeze size-1 dims beyond the first *n_params* dimensions.
+
+        PARAMETER dims (positions 0..n_params-1) are preserved even if
+        size 1.  Trailing size-1 DOMAIN placeholder dims are removed so
+        that pure-scalar results are returned as 0-d arrays rather than
+        shape ``(1,)`` arrays.
+        """
+        domain_dims = tuple(i for i in range(n_params, arr.ndim) if arr.shape[i] == 1)
+        if domain_dims:
+            arr = np.squeeze(arr, axis=domain_dims)
+        return arr
 
 
 class Evaluation:
@@ -365,6 +382,41 @@ class Evaluation:
         actual_nodes = [idx.node for idx in nodes_of_interest]
         state = executor.State(c_subs, functions=functions or {})
         executor.evaluate_nodes(state, *linearize.forest(*actual_nodes))
+
+        # Normalize result arrays: inject an explicit ENSEMBLE singleton dim at
+        # every ENSEMBLE axis position for nodes that did NOT receive any ENSEMBLE
+        # substitution (directly or transitively).  Without this, a constant
+        # timeseries node (T,) is indistinguishable from an ENSEMBLE result (S,)
+        # when S == T, causing marginalize() to erroneously contract the time axis.
+        if n_ensemble > 0:
+            ensemble_positions: list[tuple[int, int]] = [
+                (n_params + j, axis_sizes[ax])
+                for j, ax in enumerate(ensemble.ensemble_axes)  # type: ignore[union-attr]
+            ]
+            # Build the set of nodes that are downstream of ENSEMBLE substitutions
+            # (i.e., touched by ENSEMBLE data) via forward BFS through the graph.
+            ens_touched: set[graph.Node] = set(ens_subs)
+            for node in linearize.forest(*actual_nodes):
+                if node in ens_touched:
+                    continue
+                if any(dep in ens_touched for dep in linearize._get_dependencies(node)):
+                    ens_touched.add(node)
+
+            for node in actual_nodes:
+                if node in ens_touched or node not in state.values:
+                    continue  # already has correct ENSEMBLE dims
+                arr = np.asarray(state.values[node])
+                modified = False
+                for pos, _ in ensemble_positions:
+                    # Insert singleton at pos: node has no ENSEMBLE data there.
+                    # Clamp insertion point to arr.ndim (appending at end for
+                    # arrays shorter than pos, e.g. scalars or 1-D constants).
+                    insert_at = min(pos, arr.ndim)
+                    if arr.ndim <= pos or arr.shape[pos] != 1:
+                        arr = np.expand_dims(arr, axis=insert_at)
+                        modified = True
+                if modified:
+                    state.values[node] = arr
 
         return EvaluationResult(
             state,
