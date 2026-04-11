@@ -26,7 +26,6 @@ from civic_digital_twins.dt_model.simulation.ensemble import (
 )
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

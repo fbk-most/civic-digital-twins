@@ -281,6 +281,99 @@ def test_marginalize_1d_squeeze_scalar():
 # ---------------------------------------------------------------------------
 
 
+def test_result_axes_deprecated_property():
+    """EvaluationResult.axes emits DeprecationWarning and returns parameter_values."""
+    import warnings
+
+    I_x = Index("x", None)
+    model = _make_model(I_x)
+    xs = np.array([1.0, 2.0])
+
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        axes = result.axes
+    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert any("result.axes" in str(w.message) for w in deprecations)
+    assert I_x in axes
+
+
+def test_result_parameter_values_for():
+    """EvaluationResult.parameter_values_for() returns the array for a given index."""
+    I_x = Index("x", None)
+    model = _make_model(I_x)
+    xs = np.array([1.0, 2.0, 3.0])
+
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    assert np.array_equal(result.parameter_values_for(I_x), xs)
+
+
+def test_result_full_shape_no_axes():
+    """EvaluationResult.full_shape is () when there are no axes at all."""
+    I_c = Index("c", 5.0)
+    model = _make_model(I_c)
+
+    result = Evaluation(model).evaluate(ensemble=None)
+    assert result.full_shape == ()
+
+
+def test_result_weights_no_ensemble():
+    """EvaluationResult.weights returns empty array when there are no ENSEMBLE axes."""
+    I_c = Index("c", 5.0)
+    model = _make_model(I_c)
+
+    result = Evaluation(model).evaluate(ensemble=None)
+    assert result.weights.shape == (0,)
+
+
+def test_evaluate_raises_when_both_scenarios_and_ensemble():
+    """TypeError when both 'scenarios' and 'ensemble=' are supplied."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model.model.index import DistributionIndex
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+    I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    model = _make_model(I_x)
+    ens = DistributionEnsemble(model, size=3)
+
+    scenario: dict[GenericIndex, Any] = {I_x: 0.5}
+    legacy: list[WeightedScenario] = [(1.0, scenario)]
+    with pytest.raises(TypeError, match="both"):
+        Evaluation(model).evaluate(legacy, ensemble=ens)
+
+
+def test_evaluate_raises_when_both_axes_and_parameters():
+    """TypeError when both 'axes=' and 'parameters=' are supplied."""
+    import warnings
+
+    I_x = Index("x", None)
+    model = _make_model(I_x)
+    xs = np.array([1.0, 2.0])
+
+    with pytest.raises(TypeError, match="both"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs}, parameters={I_x: xs})
+
+
+def test_evaluate_deprecated_axes_kwarg():
+    """Passing axes= emits DeprecationWarning and is equivalent to parameters=."""
+    import warnings
+
+    I_x = Index("x", None)
+    model = _make_model(I_x)
+    xs = np.array([1.0, 2.0])
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
+
+    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert any("axes" in str(w.message) for w in deprecations)
+    assert result[I_x].shape[0] == 2
+
+
 def test_distribution_ensemble_raises_for_non_distribution_abstract():
     """DistributionEnsemble raises ValueError when an abstract index has no distribution."""
     from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
@@ -290,6 +383,23 @@ def test_distribution_ensemble_raises_for_non_distribution_abstract():
 
     with pytest.raises(ValueError, match="unsupported indexes"):
         DistributionEnsemble(model, size=10)
+
+
+def test_distribution_ensemble_iteration_without_rng():
+    """DistributionEnsemble.__iter__ works without an explicit rng (rng=None path)."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model.model.index import DistributionIndex
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+    I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    model = _make_model(I_x)
+
+    scenarios = list(DistributionEnsemble(model, size=5))
+    assert len(scenarios) == 5
+    w, a = scenarios[0]
+    assert np.isclose(w, 1.0 / 5)
+    assert I_x in a
 
 
 def test_distribution_ensemble_with_rng_is_reproducible():

@@ -167,7 +167,7 @@ from civic_digital_twins.dt_model import Evaluation
 visitors_axis = np.linspace(0, 20_000, 201)
 
 result = Evaluation(model).evaluate(
-    ensemble,
+    ensemble=ensemble,
     parameters={PV_visitors: visitors_axis},
 )
 # result.full_shape == (201, 6)

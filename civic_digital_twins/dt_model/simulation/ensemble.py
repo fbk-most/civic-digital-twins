@@ -214,10 +214,12 @@ class PartitionedEnsemble:
 
     @property
     def ensemble_axes(self) -> tuple[Axis, ...]:
+        """Return the ENSEMBLE axes, one per partition."""
         return self._axes
 
     @property
     def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        """Return the weight arrays, one per partition axis."""
         return self._weights
 
     def assignments(self) -> Mapping[GenericIndex, np.ndarray]:

@@ -174,7 +174,7 @@ class ContinuousContextVariable(ContextVariable):
         """Sample from the continuous context variable."""
         if force_sample or subset is None or nr < len(subset):
             assert nr > 0
-            return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]
+            return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]  # type: ignore[arg-type]
 
         subset_probability = list(self.rvc.pdf(subset))
         subset_probability_sum = sum(subset_probability)
@@ -413,10 +413,12 @@ class OvertourismEnsemble:
 
     @property
     def ensemble_axes(self) -> tuple[Axis, ...]:
+        """Return the single ENSEMBLE axis for this ensemble."""
         return (self._axis,)
 
     @property
     def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        """Return the weight array for the single ENSEMBLE axis."""
         return (self._weights,)
 
     @property
@@ -425,6 +427,7 @@ class OvertourismEnsemble:
         return self._weights
 
     def assignments(self) -> dict[GenericIndex, np.ndarray]:
+        """Return batched assignments for all CVs and distribution-backed indexes."""
         return self._assignments
 
     def __len__(self) -> int:

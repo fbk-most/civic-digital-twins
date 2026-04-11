@@ -184,7 +184,7 @@ def evaluate_scenario(model, situation) -> tuple:
     ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
     return result, ensemble
 
 

@@ -6,12 +6,11 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.axis import ENSEMBLE
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import EnsembleAxisSpec, PartitionedEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -262,6 +261,70 @@ def test_marginalize_order_independence():
     m_fwd = float(Evaluation(model).evaluate(ensemble=ens_fwd).marginalize(i_result))
     m_rev = float(Evaluation(model).evaluate(ensemble=ens_rev).marginalize(i_result))
     assert m_fwd == pytest.approx(m_rev, rel=0.05)
+
+
+def test_axis_repr():
+    """Axis.__repr__ returns a concise human-readable string."""
+    ax = Axis("my_axis", ENSEMBLE)
+    assert repr(ax) == "Axis('my_axis', role='ENSEMBLE')"
+
+
+def test_categorical_index_in_partitioned_ensemble():
+    """CategoricalIndex is sampled via its sample() in PartitionedEnsemble."""
+    i_cat = CategoricalIndex("mode", {"bike": 0.6, "train": 0.4})
+    model = _make_model(i_cat)
+
+    ens = PartitionedEnsemble(
+        model,
+        axes=[EnsembleAxisSpec("unc", indexes=[i_cat], size=10)],
+        rng=np.random.default_rng(0),
+    )
+    asgn = ens.assignments()
+    assert i_cat in asgn
+    assert asgn[i_cat].shape == (10,)
+    assert all(v in ("bike", "train") for v in asgn[i_cat])
+
+
+def test_partitioned_ensemble_without_rng():
+    """PartitionedEnsemble works without an explicit rng (rng=None path)."""
+    i_a = _dist_index("a")
+    model = _make_model(i_a)
+
+    ens = PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=5)])
+    asgn = ens.assignments()
+    assert i_a in asgn
+    assert asgn[i_a].shape == (5,)
+
+
+def test_result_weights_with_two_ensemble_axes():
+    """EvaluationResult.weights returns the joint weight array for two ENSEMBLE axes."""
+    i_a = _dist_index("a")
+    i_b = _dist_index("b")
+    model = _make_model(i_a, i_b)
+
+    ens = PartitionedEnsemble(
+        model,
+        axes=[
+            EnsembleAxisSpec("ax0", indexes=[i_a], size=3),
+            EnsembleAxisSpec("ax1", indexes=[i_b], size=4),
+        ],
+        rng=np.random.default_rng(0),
+    )
+    result = Evaluation(model).evaluate(ensemble=ens)
+    w = result.weights
+    # Joint weight = outer product of (3,) and (4,) uniform weights → (3, 4)
+    assert w.shape == (3, 4)
+    assert np.isclose(w.sum(), 1.0)
+
+
+def test_raises_on_non_samplable_index_in_spec():
+    """ValueError when assignments() is called with a plain abstract index (no distribution)."""
+    I_plain = Index("plain", None)  # abstract but no distribution
+    model = _make_model(I_plain)
+
+    ens = PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
+    with pytest.raises(ValueError, match="not Distribution-backed"):
+        ens.assignments()
 
 
 def test_factorized_weights_are_uniform():
