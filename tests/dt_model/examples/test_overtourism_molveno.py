@@ -41,15 +41,15 @@ from civic_digital_twins.dt_model.model.index import Distribution, DistributionI
 # ---------------------------------------------------------------------------
 
 
-def compute_field(model, scenarios, tt, ee):
-    """Evaluate the sustainability field using Evaluation.evaluate(axes=...).
+def compute_field(model, ensemble, tt, ee):
+    """Evaluate the sustainability field using Evaluation.evaluate(parameters=...).
 
     Returns ``(field, field_elements, result)`` where:
     - ``field`` has shape ``(tt.size, ee.size)``
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(scenarios, parameters={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}
@@ -128,18 +128,16 @@ def excursionists():
 
 @pytest.fixture
 def good_weather_scenarios():
-    """Single-member scenario list: good weather, monday, high season."""
+    """Single-member ensemble: good weather, monday, high season."""
     np.random.seed(0)
     random.seed(0)
-    return list(
-        OvertourismEnsemble(
-            M_Base,
-            {
-                CV_weekday: ["monday"],
-                CV_season: ["high"],
-                CV_weather: ["good"],
-            },
-        )
+    return OvertourismEnsemble(
+        M_Base,
+        {
+            CV_weekday: ["monday"],
+            CV_season: ["high"],
+            CV_weather: ["good"],
+        },
     )
 
 
@@ -189,9 +187,8 @@ def test_ensemble_based_evaluation(tourists, excursionists):
     random.seed(42)
     scenario: dict[ContextVariable, list] = {CV_weather: ["good", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=5)
-    scenarios = list(ensemble)
 
-    field, field_elements, _ = compute_field(M_Base, scenarios, tourists, excursionists)
+    field, field_elements, _ = compute_field(M_Base, ensemble, tourists, excursionists)
 
     assert field.shape == (tourists.size, excursionists.size)
     assert np.all(field >= 0.0)
@@ -223,9 +220,7 @@ def test_fixed_ensemble():
             CV_weather: ["good"],
         },
     )
-    scenarios = list(ensemble)
-
-    _, got, _ = compute_field(M_Base, scenarios, tourists, excursionists)
+    _, got, _ = compute_field(M_Base, ensemble, tourists, excursionists)
 
     # Expected: field_elements[t_idx, e_idx] — tourists on axis 0, excursionists on axis 1.
     # Parking: mostly excursionist-dominated; parking violated when excursionists > ~2000.
@@ -285,12 +280,10 @@ def test_multiple_ensemble_members():
     random.seed(0)
     scenario: dict[ContextVariable, list] = {CV_weather: ["good", "bad"]}
     ens = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=10)
-    scenarios = list(ens)
-
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
-    field, field_elements, _ = compute_field(M_Base, scenarios, tourists, excursionists)
+    field, field_elements, _ = compute_field(M_Base, ens, tourists, excursionists)
 
     assert field is not None
     assert field_elements is not None
@@ -614,12 +607,11 @@ def test_bug_37():
     random.seed(0)
     situation: dict[ContextVariable, list] = {CV_weather: ["good", "unsettled", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, situation, cv_ensemble_size=20)
-    scenarios = list(ensemble)
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
-    field, field_elements, _ = compute_field(M_Base, scenarios, tourists, excursionists)
+    field, field_elements, _ = compute_field(M_Base, ensemble, tourists, excursionists)
 
     assert field is not None
     assert field_elements is not None

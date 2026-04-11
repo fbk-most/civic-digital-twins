@@ -16,7 +16,6 @@ from scipy import interpolate, ndimage, stats
 
 from civic_digital_twins.dt_model import Evaluation
 from civic_digital_twins.dt_model.model.index import Distribution
-from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 
 try:
     from overtourism_molveno.molveno_model import (
@@ -177,16 +176,16 @@ def threshold(p, t):
 def evaluate_scenario(model, situation) -> tuple:
     """Evaluate the sustainability field for *situation*.
 
-    Returns ``(result, scenarios)`` where *result* is an
-    :class:`~dt_model.simulation.evaluation.EvaluationResult` and *scenarios*
-    is the list of :data:`~dt_model.simulation.evaluation.WeightedScenario`
-    used (needed downstream for presence-sample generation).
+    Returns ``(result, ensemble)`` where *result* is an
+    :class:`~dt_model.simulation.evaluation.EvaluationResult` and *ensemble*
+    is the :class:`~overtourism_molveno.OvertourismEnsemble` used (needed
+    downstream for presence-sample generation).
     """
-    scenarios: list[WeightedScenario] = list(OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size))
+    ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(scenarios, parameters={PV_tourists: tt, PV_excursionists: ee})
-    return result, scenarios
+    result = Evaluation(model).evaluate(ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
+    return result, ensemble
 
 
 def plot_scenario(ax, model, result, scenarios, title):
@@ -235,15 +234,25 @@ def plot_scenario(ax, model, result, scenarios, title):
     rf_e = float(np.mean(result[I_P_excursionists_reduction_factor]))
     sl_e = float(np.mean(result[I_P_excursionists_saturation_level]))
 
+    ens_weights = scenarios.weights
+    ens_assignments = scenarios.assignments()
+    # Iterate scenario-by-scenario: zip per-index arrays into per-scenario dicts.
+    scenario_keys = list(ens_assignments.keys())
     sample_tourists = [
         presence_transformation(sample, rf_t, sl_t)
-        for w, assignments in scenarios
-        for sample in PV_tourists.sample(cvs=assignments, nr=max(1, round(w * target_presence_samples)))
+        for i, w in enumerate(ens_weights)
+        for sample in PV_tourists.sample(
+            cvs={k: ens_assignments[k][i] for k in scenario_keys},
+            nr=max(1, round(w * target_presence_samples)),
+        )
     ]
     sample_excursionists = [
         presence_transformation(sample, rf_e, sl_e)
-        for w, assignments in scenarios
-        for sample in PV_excursionists.sample(cvs=assignments, nr=max(1, round(w * target_presence_samples)))
+        for i, w in enumerate(ens_weights)
+        for sample in PV_excursionists.sample(
+            cvs={k: ens_assignments[k][i] for k in scenario_keys},
+            nr=max(1, round(w * target_presence_samples)),
+        )
     ]
 
     axes_dict = {PV_tourists: tt, PV_excursionists: ee}

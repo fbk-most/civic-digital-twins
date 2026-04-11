@@ -32,6 +32,7 @@ from scipy import stats
 from scipy.stats import rv_continuous
 from scipy.stats._distn_infrastructure import rv_continuous_frozen
 
+from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import Distribution, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 
@@ -330,13 +331,15 @@ class OvertourismModel(Model):
 
 
 class OvertourismEnsemble:
-    """Iterable that yields weighted scenarios for an :class:`OvertourismModel`.
+    """Batched ensemble for an :class:`OvertourismModel`.
 
-    Each iteration produces a :data:`~dt_model.simulation.evaluation.WeightedScenario`
-    assigning a concrete value to every context variable and every
-    distribution-backed (non-PV, non-CV) abstract index in the model.
-    Presence variables are *not* included — they are provided as grid axes
-    to :meth:`~dt_model.simulation.evaluation.Evaluation.evaluate`.
+    Implements :class:`~dt_model.simulation.ensemble.AxisEnsemble`.
+
+    Enumerates all combinations of CV values and pre-samples
+    distribution-backed indexes, materialising the results into a single
+    batched ENSEMBLE axis.  Presence variables are *not* included — they
+    are provided as PARAMETER axes to
+    :meth:`~dt_model.simulation.evaluation.Evaluation.evaluate`.
 
     Parameters
     ----------
@@ -358,21 +361,22 @@ class OvertourismEnsemble:
         self.model = model
 
         # Build per-CV list of (prob, value) pairs.
-        self._cv_samples: dict[ContextVariable, list] = {}
+        cv_samples: dict[ContextVariable, list] = {}
         for cv in model.cvs:
             if cv in scenario:
                 subset = scenario[cv]
                 if len(subset) == 1:
-                    self._cv_samples[cv] = [(1.0, subset[0])]
+                    cv_samples[cv] = [(1.0, subset[0])]
                 else:
-                    self._cv_samples[cv] = cv.sample(cv_ensemble_size, subset=subset)
+                    cv_samples[cv] = cv.sample(cv_ensemble_size, subset=subset)
             else:
-                self._cv_samples[cv] = cv.sample(cv_ensemble_size)
+                cv_samples[cv] = cv.sample(cv_ensemble_size)
 
         # Total number of scenarios = product of all per-CV sample sizes.
-        self.size = 1
-        for samples in self._cv_samples.values():
-            self.size *= len(samples)
+        S = 1
+        for samples in cv_samples.values():
+            S *= len(samples)
+        self.size = S
 
         # Distribution-backed non-PV non-CV abstract indexes (e.g. capacities
         # and distribution-backed conversion factors).
@@ -380,7 +384,7 @@ class OvertourismEnsemble:
         # GenericIndex.__eq__ returns a graph.Node (always truthy), making
         # the list `in` operator unreliable for these objects.
         pv_ids = {id(pv) for pv in model.pvs}
-        self._dist_indexes: list[Index] = [
+        dist_indexes: list[Index] = [
             idx  # type: ignore[misc]
             for idx in model.abstract_indexes()
             if not isinstance(idx, ContextVariable)
@@ -389,31 +393,39 @@ class OvertourismEnsemble:
             and isinstance(idx.value, Distribution)
         ]
 
-        # Pre-sample S values for each distribution-backed index.
-        S = max(self.size, 1)
-        self._dist_samples: dict[Index, object] = {
-            idx: idx.value.rvs(size=S)  # type: ignore[union-attr]
-            for idx in self._dist_indexes
-        }
+        # Materialise all scenario combinations into batched arrays.
+        cvs = list(cv_samples.keys())
+        cv_sample_lists = [cv_samples[cv] for cv in cvs]
 
-    def __iter__(self):
-        """Iterate over all CV combinations, yielding one WeightedScenario each."""
-        cvs = list(self._cv_samples.keys())
-        cv_sample_lists = [self._cv_samples[cv] for cv in cvs]
-
+        weights = np.ones(S)
+        cv_batched: dict[ContextVariable, list] = {cv: [] for cv in cvs}
         for i, combo in enumerate(itertools.product(*cv_sample_lists)):
-            weight = 1.0
-            assignments: dict = {}
-
             for cv, (prob, val) in zip(cvs, combo):
-                weight *= prob
-                assignments[cv] = val
+                weights[i] *= prob
+                cv_batched[cv].append(val)
 
-            # Include pre-sampled values for distribution-backed indexes.
-            for idx in self._dist_indexes:
-                assignments[idx] = self._dist_samples[idx][i]  # type: ignore[index]
+        self._axis = Axis("_overtourism", ENSEMBLE)
+        self._weights = weights
+        self._assignments: dict[GenericIndex, np.ndarray] = {cv: np.asarray(cv_batched[cv]) for cv in cvs}
+        # Pre-sample S values for each distribution-backed index.
+        for idx in dist_indexes:
+            self._assignments[idx] = idx.value.rvs(size=S)  # type: ignore[union-attr]
 
-            yield weight, assignments
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        return (self._axis,)
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        return (self._weights,)
+
+    @property
+    def weights(self) -> np.ndarray:
+        """Joint weight array (alias for the single ENSEMBLE axis weights)."""
+        return self._weights
+
+    def assignments(self) -> dict[GenericIndex, np.ndarray]:
+        return self._assignments
 
     def __len__(self) -> int:
         """Return the total number of scenarios."""

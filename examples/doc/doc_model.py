@@ -135,11 +135,11 @@ def _demo_12_distribution_ensemble() -> None:
         model = Model("demo12", [x, y, z])
 
     ensemble = DistributionEnsemble(model, size=100)
-    scenarios = list(ensemble)
 
-    assert len(scenarios) == 100
-    weight, assignments = scenarios[0]
+    assert len(ensemble.ensemble_weights[0]) == 100
+    weight = ensemble.ensemble_weights[0][0]
     assert abs(weight - 0.01) < 1e-12
+    assignments = ensemble.assignments()
     assert x in assignments
     assert y in assignments
 
@@ -261,7 +261,7 @@ def _demo_18_20_overtourism() -> None:
     ee = np.linspace(0, 50_000, 101)   # excursionist presence axis
 
     result = Evaluation(model).evaluate(
-        list(ensemble),
+        ensemble,
         parameters={PV_tourists: tt, PV_excursionists: ee},
     )
 
