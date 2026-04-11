@@ -31,23 +31,23 @@ placeholder index whose value must be supplied externally before the
 model can be evaluated.  It is *instantiated* when all indexes are
 fully concrete.
 
-**WeightedScenario / Ensemble.** The bridge from abstract to instantiated
-is an *ensemble*: an iterable of *weighted scenarios*, each pairing a
-probability weight with a dictionary that maps every abstract index to a
-concrete value.  The `Ensemble` type is a structural Protocol — any
-iterable of `(float, dict)` pairs satisfies it.
+**AxisEnsemble.** The bridge from abstract to instantiated is an
+*ensemble*: a batched object that assigns concrete arrays to every abstract
+index.  `DistributionEnsemble` and `PartitionedEnsemble` implement the
+`AxisEnsemble` protocol, which exposes named ENSEMBLE axes with factorized
+weight vectors.
 
-**Evaluation.** `Evaluation(model).evaluate(scenarios)` consumes an
-ensemble, builds the engine substitution dictionary from the scenario
-assignments, runs `executor.evaluate_nodes`, and returns an
+**Evaluation.** `Evaluation(model).evaluate(ensemble=…, parameters=…)`
+consumes an ensemble, builds the engine substitution dictionary from the
+batched assignments, runs `executor.evaluate_nodes`, and returns an
 `EvaluationResult`.  The result provides typed access to node arrays and
-weighted marginalisation over the scenario dimension.
+weighted marginalisation over ENSEMBLE and PARAMETER axes.
 
-**Grid mode.** `evaluate(scenarios, axes={idx: array, …})` extends the
-1-D scenario mode to multi-dimensional grids.  Axis indexes are swept
-over a dense grid; non-axis abstract indexes are drawn from the ensemble.
-Result arrays broadcast to shape `(N₀, N₁, …, S)` where each `Nᵢ`
-corresponds to one grid axis and `S` is the scenario count.
+**Grid mode.** `evaluate(ensemble=…, parameters={idx: array, …})` extends
+ensemble evaluation to multi-dimensional parameter grids.  PARAMETER
+indexes are swept over a dense grid; abstract indexes are handled by the
+ensemble.  Result arrays have canonical shape `(*PARAMETER, *ENSEMBLE)`
+where each PARAMETER size is `Nᵢ` and the ENSEMBLE size is `S`.
 
 ## Index Types
 
@@ -389,47 +389,74 @@ class GoodModel(Model):
         )
 ```
 
-## Ensemble and WeightedScenario
+## Ensemble
 
 [`simulation/ensemble.py`](../../civic_digital_twins/dt_model/simulation/ensemble.py)
 
-```python
-WeightedScenario = tuple[float, dict[GenericIndex, Any]]
+The canonical ensemble type is `AxisEnsemble`:
 
-class Ensemble(Protocol):
-    def __iter__(self) -> Iterator[WeightedScenario]: ...
+```python
+class AxisEnsemble(Protocol):
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]: ...
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]: ...
+    def assignments(self) -> Mapping[GenericIndex, np.ndarray]: ...
 ```
 
-`WeightedScenario` is a `(weight, assignments)` pair where:
-- `weight` is a probability (all weights in an ensemble should sum to 1).
-- `assignments` maps every abstract index that is not an axis to a
-  concrete `np.ndarray` value.
+Each `Axis` in `ensemble_axes` names one ENSEMBLE dimension.
+`ensemble_weights` provides the per-axis weight vector (sums to 1).
+`assignments()` returns batched arrays — one array per abstract index,
+with ENSEMBLE dimensions at the positions declared by the axes.
 
-`Ensemble` is a `runtime_checkable` Protocol: any iterable of
-`WeightedScenario` tuples satisfies it without inheriting from a base
-class.
+> **Legacy API (deprecated):** `WeightedScenario = tuple[float, dict[GenericIndex, Any]]`
+> and the `Ensemble` iterable protocol are still accepted by `evaluate()` but emit a
+> `DeprecationWarning`.  Migrate to `AxisEnsemble` (e.g. `DistributionEnsemble`).
 
 ### DistributionEnsemble
 
 `DistributionEnsemble(model, size, rng=None)` is the standard ensemble
 for models whose abstract indexes are all distribution-backed.  It draws
-`size` independent samples from each distribution and yields
-`size` equally-weighted scenarios (weight `1/size` each).
+`size` independent samples from each distribution into a single ENSEMBLE
+axis with uniform weights (`1/size` each).
 
 ```python
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 
 ensemble = DistributionEnsemble(model, size=100)
-scenarios = list(ensemble)
-# Each scenario: (0.01, {x: array([...]), y: array([...])})
+# ensemble.ensemble_axes   → (Axis("x", ENSEMBLE), …)
+# ensemble.ensemble_weights[0]  → array of 100 weights summing to 1
+assignments = ensemble.assignments()
+# assignments[x]  → shape (100,) array of sampled values
 ```
 
 `DistributionEnsemble` also handles `CategoricalIndex` abstract indexes automatically —
-each categorical index is sampled proportional to its outcome weights, yielding a `(1,)` string
-array per scenario.  
+each categorical index is sampled proportional to its outcome weights.
 
 A `ValueError` is raised at construction if any abstract index is neither
 distribution-backed nor a `CategoricalIndex`.
+
+### PartitionedEnsemble
+
+`PartitionedEnsemble(model, axes, default_axis=None, rng=None)` creates
+N independent ENSEMBLE axes, each covering a disjoint subset of the
+model's abstract indexes.  Each `EnsembleAxisSpec` names the axis and
+lists the indexes it covers:
+
+```python
+from civic_digital_twins.dt_model.simulation.ensemble import (
+    EnsembleAxisSpec, PartitionedEnsemble,
+)
+
+ens = PartitionedEnsemble(
+    model,
+    axes=[
+        EnsembleAxisSpec("demand", indexes=[demand_idx], size=50),
+        EnsembleAxisSpec("capacity", indexes=[cap_idx], size=20),
+    ],
+)
+# Result arrays have shape (*PARAMETER, 50, 20) — two independent ENSEMBLE dims.
+```
 
 ## Evaluation
 
@@ -441,57 +468,51 @@ class Evaluation:
 
     def evaluate(
         self,
-        scenarios: Ensemble,
+        ensemble: AxisEnsemble | None = None,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        axes: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, np.ndarray] | None = None,
         functions: dict[str, executor.Functor] | None = None,
     ) -> EvaluationResult: ...
 ```
 
-### 1-D mode
+### Ensemble mode
 
-When `axes` is `None` (or an empty dict), `evaluate` operates in *1-D
-mode*: it stacks the per-scenario values for each abstract index into a
-single substitution array and evaluates the graph once.
+When `parameters` is `None`, `evaluate` operates in *ensemble mode*: the
+`AxisEnsemble.assignments()` arrays are used as ENSEMBLE substitutions and
+evaluated in a single batched pass.
 
-For a model with abstract indexes `[x, y]` and `S` scenarios:
+For a model with abstract indexes `[x, y]` and ENSEMBLE size `S`:
 
-1. For each abstract index `idx`, collect its values across all
-   scenarios: `values = [assignments[idx] for _, assignments in scenarios]`.
-2. Stack: `stacked = np.asarray(values)`, shape `(S, 1)` for scalars or
-   `(S, T)` for timeseries-shaped values (shape `(1,)` per scenario
-   → `(S, 1)` after stacking, which broadcasts with shape `(T,)`).
-3. Build the engine substitution dict: `{idx.node: stacked, …}`.
-4. Run `executor.evaluate_nodes`.
+1. `ensemble.assignments()` returns `{x: arr_x, y: arr_y}` where each
+   `arr` has shape `(S,)` (or `(S, T)` for timeseries-shaped values).
+2. Shapes are normalised to `(*PARAMETER, *ENSEMBLE)` canonical form.
+3. Run `executor.evaluate_nodes` once.
 
-Result arrays have shape `(S, 1)` for scalar formulas or `(S, T)` for
-timeseries formulas.  Use `result.marginalize(idx)` to compute the
-weighted mean over `S`.
+Result arrays have shape `(S,)` for scalar formulas (plus any trailing
+DOMAIN dims, e.g. `(S, T)` for timeseries).
 
 ### Grid mode
 
-When `axes={pv₀: arr₀, pv₁: arr₁, …}` is provided, `evaluate` operates
-in *grid mode*:
+When `parameters={pv₀: arr₀, pv₁: arr₁, …}` is provided alongside an
+ensemble, `evaluate` operates in *grid mode*:
 
-- Each axis index at position `i` contributes a substitution of shape
-  `(1, …, Nᵢ, …, 1, 1)` where `Nᵢ = arrᵢ.size` and the non-unit
-  dimension is at position `i`.
-- Each non-axis abstract index contributes a substitution of shape
-  `(1, …, 1, S)` — one sample per scenario, broadcast-compatible with
-  all axis dimensions.
-- Result arrays broadcast to shape `(N₀, N₁, …, S)`.
+- Each PARAMETER index at position `i` contributes a substitution of shape
+  `(1, …, Nᵢ, …, 1)` where `Nᵢ = arrᵢ.size`.
+- ENSEMBLE indexes get shapes `(1, …, 1, S, 1)` — broadcast-compatible
+  with all PARAMETER dimensions.
+- Result arrays have canonical shape `(*PARAMETER, *ENSEMBLE)`.
 
-Use `result.marginalize(idx)` to contract the `S` dimension:
+Use `result.marginalize(idx)` to contract all ENSEMBLE dimensions:
 
 ```python
-# shape (N₀, N₁, …, S) → (N₀, N₁, …)
+# shape (*PARAMETER, *ENSEMBLE) → (*PARAMETER)
 marginalised = result.marginalize(idx)
 ```
 
 Grid mode is the standard way to compute sustainability fields in
-overtourism models, where the two presence variables define the grid
-axes.
+overtourism models, where the two presence variables define the parameter
+grid.
 
 ### EvaluationResult
 
@@ -499,13 +520,13 @@ axes.
 
 | API | Description |
 | --- | ----------- |
-| `result[idx]` | Raw array for `idx` (not yet broadcast to `full_shape`). |
-| `result.marginalize(idx)` | Broadcast to `full_shape`, then `tensordot` with `weights`. |
-| `result.weights` | Scenario weights, shape `(S,)`. |
-| `result.axes` | The `axes` dict passed to `evaluate`. |
-| `result.full_shape` | `(N₀, …, Nₖ, S)` — shape of a fully-broadcast array. |
+| `result[idx]` | Raw array for `idx` in canonical `(*PARAMETER, *ENSEMBLE)` shape prefix. |
+| `result.marginalize(idx)` | Contract all ENSEMBLE axes using factorized weights; result shape is `(*PARAMETER, *DOMAIN)`. |
+| `result.weights` | Joint weight array (outer product of per-axis weights). |
+| `result.parameter_values` | The `parameters=` dict passed to `evaluate`. |
+| `result.full_shape` | `(*PARAMETER, *ENSEMBLE)` sizes in axis-layout order. |
 
-### End-to-End Example (1-D mode)
+### End-to-End Example
 
 ```python
 import numpy as np
@@ -631,8 +652,8 @@ tt = np.linspace(0, 50_000, 101)   # tourist presence axis
 ee = np.linspace(0, 50_000, 101)   # excursionist presence axis
 
 result = Evaluation(model).evaluate(
-    list(ensemble),
-    axes={PV_tourists: tt, PV_excursionists: ee},
+    ensemble,
+    parameters={PV_tourists: tt, PV_excursionists: ee},
 )
 
 # Compute sustainability field per constraint
@@ -673,12 +694,15 @@ instances at construction time — the selector is a plain string.  This
 keeps variant switching visible at the call site and avoids deep
 inheritance hierarchies.
 
-### Why a structural `Ensemble` Protocol?
+### Why a structural `AxisEnsemble` Protocol?
 
-Making `Ensemble` a structural `Protocol` (rather than a base class)
-means that any iterable of `(float, dict)` pairs satisfies the contract
-without inheritance.  A `list[WeightedScenario]`, a generator, or a
-domain-specific class all work transparently.
+Making `AxisEnsemble` a structural `Protocol` (rather than a base class)
+means that any class exposing `ensemble_axes`, `ensemble_weights`, and
+`assignments()` satisfies the contract without inheritance.
+`DistributionEnsemble`, `PartitionedEnsemble`, and domain-specific
+ensemble classes (e.g. `OvertourismEnsemble`) all work transparently.
+The legacy `Iterable[WeightedScenario]` path is still supported via a
+deprecation adapter.
 
 ### Why `GenericIndex.__hash__` is identity-based
 
@@ -707,17 +731,23 @@ evaluated.
 **Concrete index**: an `Index` whose `value` is a scalar constant or a
 `graph.Node` formula; it can be evaluated without external input.
 
-**Ensemble**: an iterable of `WeightedScenario` tuples that defines a
-discrete probability distribution over model instantiations.
+**AxisEnsemble**: the canonical batched ensemble protocol.  Exposes named
+ENSEMBLE `Axis` objects, per-axis weight vectors, and a batched
+`assignments()` mapping.  `DistributionEnsemble` and `PartitionedEnsemble`
+implement this protocol.
+
+**Ensemble (legacy)**: an iterable of `WeightedScenario` tuples.  Still
+accepted by `evaluate()` via a deprecation adapter; migrate to
+`AxisEnsemble`.
 
 **Expose**: optional inner `@dataclass` on a `Model` subclass that
 holds inspectable but non-contractual intermediate indexes.  `Expose`
 fields are intended for debugging and visualisation only; they MUST NOT
 be used to wire indexes between models.
 
-**Grid mode**: the `axes=` keyword of `Evaluation.evaluate`; sweeps
-axis indexes over a dense grid while the ensemble provides the
-non-axis abstract index values.
+**Grid mode**: the `parameters=` keyword of `Evaluation.evaluate`; sweeps
+PARAMETER indexes over a dense grid while the ensemble provides the
+ENSEMBLE abstract index values.
 
 **InputsContractWarning**: a `ModelContractWarning` emitted when a
 `GenericIndex` constructor parameter is absent from the declared
@@ -730,9 +760,9 @@ instances passed in from outside).
 **Instantiated model**: a model in which `is_instantiated()` returns
 `True` — all indexes are concrete.
 
-**Marginalize**: collapse the scenario dimension `S` by computing
-`tensordot(arr, weights, axes=([-1], [0]))`, returning the weighted
-expectation over scenarios.
+**Marginalize**: contract all ENSEMBLE axes by computing the weighted
+average over each ENSEMBLE dimension using the factorized per-axis weights.
+Result shape is `(*PARAMETER, *DOMAIN)`.
 
 **ModelVariant**: a transparent proxy that selects among pre-constructed
 `Model` instances sharing the same I/O contract (`Inputs` / `Outputs`
@@ -747,6 +777,7 @@ evaluation layer may read.
 composing domain-specific `Index` subclasses) to add domain semantics
 without modifying the core library.
 
-**WeightedScenario**: `tuple[float, dict[GenericIndex, Any]]` — a
-probability weight paired with an assignment of every non-axis abstract
-index to a concrete `np.ndarray` value.
+**WeightedScenario** (deprecated): `tuple[float, dict[GenericIndex, Any]]` — a
+probability weight paired with an assignment dict.  The legacy iterable
+protocol is still accepted but emits `DeprecationWarning`; use `AxisEnsemble`
+instead.

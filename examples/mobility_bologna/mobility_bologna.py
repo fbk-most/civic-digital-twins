@@ -757,7 +757,7 @@ def evaluate(model: BolognaModel, size: int = 1) -> EvaluationResult:
     """
     ensemble = DistributionEnsemble(model, size)
     return Evaluation(model).evaluate(
-        ensemble,
+        ensemble=ensemble,
         functions={"ts_solve": executor.LambdaAdapter(_ts_solve)},
     )
 
@@ -875,7 +875,7 @@ def _save_scenario_plots(label: str, m: BolognaModel, result: EvaluationResult, 
         vertical_label="Flow (vehicles/hour)",
         vertical_size=1600,
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
-        reference_line=result[m.expose.ts_inflow],
+        reference_line=result.marginalize(m.expose.ts_inflow),
     )
     fig.savefig(out / f"{label}_inflow.png", dpi=150)
     plt.close(fig)
@@ -885,7 +885,7 @@ def _save_scenario_plots(label: str, m: BolognaModel, result: EvaluationResult, 
         horizontal_label="Time",
         vertical_label="Traffic (circulating vehicles)",
         vertical_size=15000,
-        reference_line=result[m.expose.traffic],
+        reference_line=result.marginalize(m.expose.traffic),
     )
     fig.savefig(out / f"{label}_traffic.png", dpi=150)
     plt.close(fig)
@@ -896,7 +896,7 @@ def _save_scenario_plots(label: str, m: BolognaModel, result: EvaluationResult, 
         vertical_label="Emissions (NOx gr/h)",
         vertical_size=4000,
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
-        reference_line=result[m.expose.emissions],
+        reference_line=result.marginalize(m.expose.emissions),
     )
     fig.savefig(out / f"{label}_emissions.png", dpi=150)
     plt.close(fig)

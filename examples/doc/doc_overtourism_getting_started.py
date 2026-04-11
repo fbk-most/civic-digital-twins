@@ -114,13 +114,11 @@ scenario: dict[ContextVariable, list] = {
 }
 
 ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
-scenarios = list(ensemble)
 # 2 × 3 = 6 scenarios (cv_ensemble_size=10 >= support sizes 2 and 3,
 # so all CV values are enumerated rather than sampled randomly)
-assert len(scenarios) == 6
+assert len(ensemble) == 6
 
-weights = np.array([w for w, _ in scenarios])
-assert abs(weights.sum() - 1.0) < 1e-10
+assert abs(ensemble.weights.sum() - 1.0) < 1e-10
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +128,8 @@ assert abs(weights.sum() - 1.0) < 1e-10
 visitors_axis = np.linspace(0, 20_000, 201)
 
 result = Evaluation(model).evaluate(
-    scenarios,
-    axes={PV_visitors: visitors_axis},
+    ensemble=ensemble,
+    parameters={PV_visitors: visitors_axis},
 )
 
 assert result.full_shape == (201, 6)

@@ -1,13 +1,17 @@
 """Generic model evaluation."""
 
+import warnings
+from collections.abc import Mapping
+
 import numpy as np
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
+from ..model.axis import ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
-from .ensemble import Ensemble, WeightedScenario
+from .ensemble import AxisEnsemble, Ensemble, WeightedScenario
 
 __all__ = ["EvaluationResult", "Evaluation"]
 
@@ -24,96 +28,200 @@ def _validate_scenarios(
             raise ValueError(f"Scenario {i}: abstract index(es) not resolved: {names}")
 
 
+class _LegacyEnsembleAdapter:
+    """Adapt ``Iterable[WeightedScenario]`` to :class:`AxisEnsemble`.
+
+    Materialises the scenario list into batched arrays matching the
+    ``AxisEnsemble`` shape contract so that the single batched evaluation
+    path can handle both legacy and canonical inputs.
+    """
+
+    def __init__(
+        self,
+        scenarios: list[WeightedScenario],
+        non_param_abstract: list[GenericIndex],
+    ) -> None:
+        self._axis = Axis("_ensemble", ENSEMBLE)
+        self._weights = np.array([w for w, _ in scenarios])
+        self._assignments: dict[GenericIndex, np.ndarray] = {}
+        for idx in non_param_abstract:
+            values = [assignments[idx] for _, assignments in scenarios]
+            # Normalize: 1-element array assignments (common when values come
+            # from DistributionEnsemble.__iter__) are unwrapped to scalars so
+            # that np.asarray produces shape (S,) rather than (S, 1).
+            normalized = [v.flat[0] if isinstance(v, np.ndarray) and v.size == 1 else v for v in values]
+            self._assignments[idx] = np.asarray(normalized)  # shape (S,) or (S, T)
+
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        return (self._axis,)
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        return (self._weights,)
+
+    def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
+        return self._assignments
+
+
 class EvaluationResult:
     """Result of :meth:`Evaluation.evaluate`.
 
     Wraps the executor :class:`~executor.State` and provides typed access to
-    node values and weighted marginalization over the scenario dimension.
+    node values and weighted marginalization over ENSEMBLE and PARAMETER axes.
 
     Parameters
     ----------
     state:
         The executor state after evaluation.
-    weights:
-        Scenario weights, shape ``(S,)``.
-    axes:
-        The axis arrays passed to :meth:`Evaluation.evaluate`, mapping each
-        axis index to its 1-D value array.  Empty dict for 1-D mode.
+    axis_layout:
+        Maps each :class:`~dt_model.model.axis.Axis` to its numpy dimension
+        position in result arrays.
+    parameter_arrays:
+        The value arrays passed in ``parameters=``, keyed by index.  Used by
+        :meth:`parameter_values_for`.  Empty dict when no PARAMETER axes.
+    axis_sizes:
+        Maps each :class:`~dt_model.model.axis.Axis` to its size.
+    factorized_weights:
+        Per-ENSEMBLE-axis weight vectors.
     """
 
     def __init__(
         self,
         state: executor.State,
-        weights: np.ndarray,
-        axes: dict[GenericIndex, np.ndarray],
+        axis_layout: dict[Axis, int],
+        parameter_arrays: dict[GenericIndex, np.ndarray],
+        axis_sizes: dict[Axis, int] | None = None,
+        factorized_weights: dict[Axis, np.ndarray] | None = None,
     ) -> None:
         self._state = state
-        self._weights = weights
-        self._axes = axes
+        self._axis_layout = axis_layout
+        self._parameter_arrays = parameter_arrays
+        self._axis_sizes: dict[Axis, int] = axis_sizes or {}
+        self._factorized_weights: dict[Axis, np.ndarray] = factorized_weights or {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     @property
     def weights(self) -> np.ndarray:
-        """Scenario weights, shape ``(S,)``."""
-        return self._weights
+        """Scenario weight array.
+
+        Returns the joint weight array (outer product of factorized per-axis
+        weights).  Returns an empty array when there are no ENSEMBLE axes.
+        """
+        if not self._factorized_weights:
+            return np.empty(0)
+        joint: np.ndarray = next(iter(self._factorized_weights.values()))
+        for w in list(self._factorized_weights.values())[1:]:
+            joint = np.multiply.outer(joint, w)
+        return joint
 
     @property
     def axes(self) -> dict[GenericIndex, np.ndarray]:
-        """Axis value arrays as passed to :meth:`Evaluation.evaluate`."""
-        return self._axes
+        """Deprecated. Use :attr:`parameter_values` instead."""
+        warnings.warn(
+            "'result.axes' is deprecated; use 'result.parameter_values'.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._parameter_arrays
+
+    @property
+    def parameter_values(self) -> dict[GenericIndex, np.ndarray]:
+        """Parameter value arrays, keyed by the index passed in ``parameters=``."""
+        return self._parameter_arrays
+
+    def parameter_values_for(self, index: GenericIndex) -> np.ndarray:
+        """Return the value array for a specific PARAMETER index.
+
+        Parameters
+        ----------
+        index:
+            An index that was passed in ``parameters=`` to
+            :meth:`Evaluation.evaluate`.
+
+        Raises
+        ------
+        KeyError
+            If *index* was not a PARAMETER axis in this result.
+        """
+        return self._parameter_arrays[index]
 
     @property
     def full_shape(self) -> tuple[int, ...]:
-        """Shape ``(N_0, ..., N_k, S)`` of a fully-broadcast result array."""
-        return tuple(arr.size for arr in self._axes.values()) + (self._weights.size,)
+        """Shape of a fully-broadcast result array.
+
+        Returns ``(*PARAMETER, *ENSEMBLE)`` sizes in axis-layout order.
+        """
+        n_dims = len(self._axis_layout)
+        if n_dims == 0:
+            return ()
+        shape: list[int] = [0] * n_dims
+        for ax, pos in self._axis_layout.items():
+            shape[pos] = self._axis_sizes[ax]
+        return tuple(shape)
 
     def __getitem__(self, index: GenericIndex) -> np.ndarray:
-        """Return the raw result array for *index* (not yet broadcast to full shape)."""
-        return self._state.values[index.node]
+        """Return the result array for *index*."""
+        return np.asarray(self._state.values[index.node])
 
     def marginalize(self, index: GenericIndex) -> np.ndarray:
-        """Broadcast *index*'s result to :attr:`full_shape` then contract with weights.
+        """Contract ENSEMBLE axes using their weights and return the result.
 
-        Returns an array of shape ``(N_0, ..., N_k)`` — the scenario dimension
-        is contracted.  In 1-D mode (no axes) returns a scalar (or a timeseries
-        array of shape ``(T,)`` for timeseries indexes).
-
-        In 1-D mode the scenario dimension is axis 0; trailing size-1 dimensions
-        added by :class:`~.ensemble.DistributionEnsemble` (which wraps each
-        scalar sample as shape ``(1,)`` for timeseries broadcast compatibility)
-        are squeezed away so that the return value is a plain scalar.
+        Uses the explicit axis layout — no shape heuristics.  After
+        contracting all ENSEMBLE axes the result shape is
+        ``(*PARAMETER_sizes, *DOMAIN_dims)``; trailing size-1 dims that lie
+        beyond the PARAMETER positions are squeezed away (they are internal
+        DOMAIN placeholders, not meaningful dimensions).
         """
         arr = np.asarray(self._state.values[index.node])
-        if not self._axes:
-            S = self._weights.size
-            # If the array has no scenario dimension (constant index, or an
-            # index whose evaluation did not broadcast over scenarios), inject
-            # a scenario dimension before contracting.
-            if arr.ndim == 0 or arr.shape[0] != S:
-                # Heuristic: if the leading dimension does not equal S, the
-                # array has no scenario dimension (constant node, or a sum
-                # projection that collapses T→1 regardless of scenarios).
-                # Inject a broadcast scenario dimension so the tensordot below
-                # can contract it.
-                #
-                # Known fragility: if S == T for a timeseries-shaped result
-                # this check would incorrectly treat the timeseries dimension
-                # as the scenario dimension.  This will be addressed when typed
-                # axes are introduced in v0.9.0 (see GitHub issue #142).
-                arr = np.broadcast_to(arr.reshape((1,) + arr.shape), (S,) + arr.shape)
-            # 1-D mode: scenario dimension is always axis 0.
-            # Contract directly; squeeze trailing size-1 dims so scalar indexes
-            # return a scalar rather than a (1,) array.
-            return np.tensordot(arr, self._weights, axes=([0], [0])).squeeze()
-        arr = np.broadcast_to(arr, self.full_shape)
-        return np.tensordot(arr, self._weights, axes=([-1], [0]))
+
+        ensemble_entries = sorted(
+            [(ax, pos) for ax, pos in self._axis_layout.items() if ax.role == ENSEMBLE],
+            key=lambda t: t[1],
+            reverse=True,
+        )
+
+        n_params = len(self._parameter_arrays)
+
+        if not ensemble_entries:
+            return self._squeeze_domain(arr, n_params)
+
+        for ax, pos in ensemble_entries:
+            # evaluate() guarantees shape[pos] is either S (ENSEMBLE-touched
+            # nodes) or 1 (injected singleton for non-touched nodes).
+            # For the singleton case: weighted average of S identical copies
+            # (weights summing to 1) equals the value itself — squeeze directly.
+            if arr.shape[pos] == 1:
+                arr = arr.squeeze(axis=pos)
+            else:
+                arr = np.average(arr, weights=self._factorized_weights[ax], axis=pos)
+
+        return self._squeeze_domain(arr, n_params)
+
+    @staticmethod
+    def _squeeze_domain(arr: np.ndarray, n_params: int) -> np.ndarray:
+        """Squeeze size-1 dims beyond the first *n_params* dimensions.
+
+        PARAMETER dims (positions 0..n_params-1) are preserved even if
+        size 1.  Trailing size-1 DOMAIN placeholder dims are removed so
+        that pure-scalar results are returned as 0-d arrays rather than
+        shape ``(1,)`` arrays.
+        """
+        domain_dims = tuple(i for i in range(n_params, arr.ndim) if arr.shape[i] == 1)
+        if domain_dims:
+            arr = np.squeeze(arr, axis=domain_dims)
+        return arr
 
 
 class Evaluation:
     """Bridge between a :class:`~dt_model.model.model.Model` and the engine.
 
-    Given a model and a list of weighted scenarios, :meth:`evaluate` builds
-    the engine substitution dict, runs :func:`executor.evaluate_nodes`, and
-    returns an :class:`EvaluationResult`.
+    Given a model and an ensemble, :meth:`evaluate` builds the engine
+    substitution dict, runs :func:`executor.evaluate_nodes`, and returns an
+    :class:`EvaluationResult`.
 
     This class knows nothing about grids, presence variables, sustainability,
     or constraints — all domain-specific logic lives in subclasses or
@@ -130,90 +238,190 @@ class Evaluation:
 
     def evaluate(
         self,
-        scenarios: Ensemble,
+        scenarios: AxisEnsemble | Ensemble | None = None,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
+        parameters: dict[GenericIndex, np.ndarray] | None = None,
         axes: dict[GenericIndex, np.ndarray] | None = None,
+        ensemble: AxisEnsemble | Ensemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
     ) -> EvaluationResult:
-        """Evaluate *nodes_of_interest* over the given scenarios.
+        """Evaluate *nodes_of_interest* over the given ensemble.
 
         Parameters
         ----------
         scenarios:
-            An :class:`~dt_model.simulation.ensemble.Ensemble` (any iterable
-            of ``(weight, assignments)`` pairs).  Non-axis abstract indexes of
-            the model must appear in every ``assignments`` dict.
+            Deprecated positional name for the ensemble argument.  Use
+            ``ensemble=`` instead.  Only one of *scenarios* / *ensemble* may
+            be supplied per call.
         nodes_of_interest:
             Indexes to evaluate.  Transitive dependencies are resolved
             automatically via :func:`linearize.forest`.  Defaults to all
             indexes in the model when ``None``.
-        axes:
-            Optional grid axes for multi-dimensional evaluation.  Maps each
+        parameters:
+            PARAMETER axes for multi-dimensional evaluation.  Maps each
             axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
-            array of values.  When provided:
-
-            * Each axis index ``idx`` at position ``i`` contributes a
-              substitution array of shape ``(1, …, N_i, …, 1, 1)`` where
-              ``N_i = arr.size`` and the non-unit dimension is at position
-              ``i`` (zero-indexed).
-            * Each non-axis abstract index contributes a substitution derived
-              from the scenario assignments.
-            * Result arrays broadcast to shape ``(N_0, N_1, …, S)``; use
-              :meth:`EvaluationResult.marginalize` to contract the scenario
-              dimension.
+            array of values.  When provided, each axis index ``idx`` at
+            position ``i`` contributes a substitution array of shape
+            ``(1, …, N_i, …, 1, 1)`` where ``N_i = arr.size``.
+        axes:
+            Deprecated alias for *parameters*.  Use ``parameters=`` instead.
+        ensemble:
+            The ensemble to evaluate.  Must be an :class:`AxisEnsemble`
+            (canonical, batched) or a legacy ``Iterable[WeightedScenario]``
+            (deprecated, emits :class:`DeprecationWarning`).  Pass ``None``
+            for deterministic evaluation (no ENSEMBLE axes).
         functions:
-            Optional user-defined functions passed to the executor.  Keys are
-            the names referenced by :class:`~graph.function_call` nodes;
-            values are :class:`~executor.Functor` callables.
+            Optional user-defined functions passed to the executor.
 
         Returns
         -------
         EvaluationResult
-            Typed result wrapper.  Node values can be retrieved via
-            ``result[index]``; weighted expectations via
-            ``result.marginalize(index)``.
+            Typed result wrapper.
 
         Raises
         ------
+        TypeError
+            If both *scenarios* and *ensemble* are supplied, or both
+            *axes* and *parameters* are supplied.
         ValueError
-            If any non-axis abstract index is not resolved in a scenario.
+            If any non-parameter abstract index is not resolved in a scenario.
         """
-        abstract = self.model.abstract_indexes()
-        scenarios_list = list(scenarios)
-        axes = axes or {}
+        # --- resolve 'ensemble' from positional 'scenarios' arg ------------
+        if scenarios is not None and ensemble is not None:
+            raise TypeError("Cannot specify both 'scenarios' and 'ensemble'.")
+        if scenarios is not None:
+            warnings.warn(
+                "The positional 'scenarios' argument is deprecated; use 'ensemble=' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            ensemble = scenarios
+
+        # --- resolve 'parameters' from deprecated 'axes' arg ---------------
+        if axes is not None and parameters is not None:
+            raise TypeError("Cannot specify both 'axes' and 'parameters'.")
+        if axes is not None:
+            warnings.warn(
+                "'axes' is deprecated; use 'parameters=' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            parameters = axes
+
+        parameters = parameters or {}
 
         if nodes_of_interest is None:
             nodes_of_interest = list(self.model.indexes)
 
-        axis_set = set(axes.keys())
-        non_axis_abstract = [idx for idx in abstract if idx not in axis_set]
+        abstract = self.model.abstract_indexes()
+        param_set = set(parameters.keys())
+        non_param_abstract = [idx for idx in abstract if idx not in param_set]
 
-        _validate_scenarios(non_axis_abstract, scenarios_list)
+        # --- adapt legacy Iterable[WeightedScenario] to AxisEnsemble ------
+        if ensemble is not None and not isinstance(ensemble, AxisEnsemble):
+            warnings.warn(
+                "Passing an iterable of WeightedScenario to 'evaluate()' is deprecated. "
+                "Use an AxisEnsemble (e.g. DistributionEnsemble) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            scenarios_list = list(ensemble)
+            if scenarios_list:
+                _validate_scenarios(non_param_abstract, scenarios_list)
+                ensemble = _LegacyEnsembleAdapter(scenarios_list, non_param_abstract)
+            else:
+                ensemble = None  # empty list → deterministic
 
-        n_axes = len(axes)
-        S = len(scenarios_list)
+        n_params = len(parameters)
+        axis_layout: dict[Axis, int] = {}
+        axis_sizes: dict[Axis, int] = {}
+        factorized_weights: dict[Axis, np.ndarray] = {}
         c_subs: dict[graph.Node, np.ndarray] = {}
+        param_nodes: list[graph.Node] = []
 
-        # Axis indexes: shape (1, …, N_i, …, 1, 1) — N_i at position i.
-        for i, (idx, arr) in enumerate(axes.items()):
-            shape = [1] * (n_axes + 1)
+        # PARAMETER axes — positions 0..n_params-1.
+        for i, (idx, arr) in enumerate(parameters.items()):
+            ax = Axis(getattr(idx, "name", f"param_{i}"), PARAMETER)
+            axis_layout[ax] = i
+            axis_sizes[ax] = arr.size
+            shape = [1] * n_params
             shape[i] = arr.size
             c_subs[idx.node] = arr.reshape(shape)
+            param_nodes.append(idx.node)
 
-        # Non-axis abstract indexes: stack scenario values.
-        # In grid mode (n_axes > 0) reshape to (1, …, 1, S) so they broadcast
-        # against the axis dimensions.  In 1-D mode (n_axes == 0) preserve the
-        # stacked shape as-is (e.g. (S, T) for timeseries-shaped values).
-        for idx in non_axis_abstract:
-            values = [assignments[idx] for _, assignments in scenarios_list]
-            stacked = np.asarray(values)
-            if n_axes > 0:
-                stacked = stacked.reshape([1] * n_axes + [S])
-            c_subs[idx.node] = stacked
+        n_ensemble = 0
+        ens_subs: dict[graph.Node, np.ndarray] = {}
 
-        weights = np.array([w for w, _ in scenarios_list])
+        if ensemble is not None:
+            ens_assignments = ensemble.assignments()
+            n_ensemble = len(ensemble.ensemble_axes)
+            for j, (ax, w) in enumerate(zip(ensemble.ensemble_axes, ensemble.ensemble_weights)):
+                axis_layout[ax] = n_params + j
+                axis_sizes[ax] = w.size
+                factorized_weights[ax] = w
+            for idx, batched in ens_assignments.items():
+                # Prepend n_params PARAMETER singletons.
+                # In pure-ensemble mode (no PARAMETER axes), also append a
+                # trailing 1 for scalar assignments so they broadcast with
+                # timeseries (T,) nodes: (S,) → (S, 1) × (T,) → (S, T).
+                param_singletons = (1,) * n_params
+                target = param_singletons + batched.shape
+                if n_params == 0 and batched.ndim == n_ensemble:
+                    target = target + (1,)
+                ens_subs[idx.node] = np.reshape(batched, target)
+
+        # Extend PARAMETER subs with n_ensemble trailing singleton dims.
+        if n_ensemble > 0:
+            ens_singletons = (1,) * n_ensemble
+            for node in param_nodes:
+                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + ens_singletons)
+
+        c_subs.update(ens_subs)
+
         actual_nodes = [idx.node for idx in nodes_of_interest]
         state = executor.State(c_subs, functions=functions or {})
         executor.evaluate_nodes(state, *linearize.forest(*actual_nodes))
-        return EvaluationResult(state, weights, axes)
+
+        # Normalize result arrays: inject an explicit ENSEMBLE singleton dim at
+        # every ENSEMBLE axis position for nodes that did NOT receive any ENSEMBLE
+        # substitution (directly or transitively).  Without this, a constant
+        # timeseries node (T,) is indistinguishable from an ENSEMBLE result (S,)
+        # when S == T, causing marginalize() to erroneously contract the time axis.
+        if n_ensemble > 0:
+            ensemble_positions: list[tuple[int, int]] = [
+                (n_params + j, axis_sizes[ax])
+                for j, ax in enumerate(ensemble.ensemble_axes)  # type: ignore[union-attr]
+            ]
+            # Build the set of nodes that are downstream of ENSEMBLE substitutions
+            # (i.e., touched by ENSEMBLE data) via forward BFS through the graph.
+            ens_touched: set[graph.Node] = set(ens_subs)
+            for node in linearize.forest(*actual_nodes):
+                if node in ens_touched:
+                    continue
+                if any(dep in ens_touched for dep in linearize._get_dependencies(node)):
+                    ens_touched.add(node)
+
+            for node in actual_nodes:
+                if node in ens_touched or node not in state.values:
+                    continue  # already has correct ENSEMBLE dims
+                arr = np.asarray(state.values[node])
+                modified = False
+                for pos, _ in ensemble_positions:
+                    # Insert singleton at pos: node has no ENSEMBLE data there.
+                    # Clamp insertion point to arr.ndim (appending at end for
+                    # arrays shorter than pos, e.g. scalars or 1-D constants).
+                    insert_at = min(pos, arr.ndim)
+                    if arr.ndim <= pos or arr.shape[pos] != 1:
+                        arr = np.expand_dims(arr, axis=insert_at)
+                        modified = True
+                if modified:
+                    state.values[node] = arr
+
+        return EvaluationResult(
+            state,
+            axis_layout,
+            parameters,
+            axis_sizes=axis_sizes,
+            factorized_weights=factorized_weights,
+        )

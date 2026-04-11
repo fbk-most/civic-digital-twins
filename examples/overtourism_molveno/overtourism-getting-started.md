@@ -141,14 +141,14 @@ scenario: dict[ContextVariable, list] = {
 }
 
 ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
-scenarios = list(ensemble)
-# 2 × 3 = 6 weighted scenarios
+# 2 × 3 = 6 scenarios (all CV combinations enumerated)
 ```
 
-`OvertourismEnsemble` enumerates all combinations of CV values and yields
-one weighted scenario per combination — here 2 × 3 = 6 scenarios, one per
-(season, weather) pair.  Each scenario also includes one sample of every
-distribution-backed non-PV non-CV abstract index (here: `I_C_beach`).
+`OvertourismEnsemble` implements `AxisEnsemble`: it enumerates all
+combinations of CV values and materialises the results into a single batched
+ENSEMBLE axis — here 2 × 3 = 6 scenarios, one per (season, weather) pair.
+Each scenario also includes one sample of every distribution-backed
+non-PV non-CV abstract index (here: `I_C_beach`).
 
 The `cv_ensemble_size` parameter controls random sampling only when a CV's
 support is too large (or continuous) to enumerate fully.  For the small
@@ -167,10 +167,10 @@ from civic_digital_twins.dt_model import Evaluation
 visitors_axis = np.linspace(0, 20_000, 201)
 
 result = Evaluation(model).evaluate(
-    scenarios,
-    axes={PV_visitors: visitors_axis},
+    ensemble=ensemble,
+    parameters={PV_visitors: visitors_axis},
 )
-# result.full_shape == (201, 60)
+# result.full_shape == (201, 6)
 ```
 
 ## 7 — Sustainability field
