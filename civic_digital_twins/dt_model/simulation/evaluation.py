@@ -314,6 +314,18 @@ class Evaluation:
         if nodes_of_interest is None:
             nodes_of_interest = list(self.model.indexes)
 
+        actual_nodes = [idx.node for idx in nodes_of_interest]
+        n_params = len(parameters)
+        # Detect timeseries nodes in the computation graph.
+        # In grid+ensemble mode, any timeseries_constant or timeseries_placeholder
+        # node requires all substitution arrays to carry a trailing time-singleton so
+        # that policy-dependent scalars of shape (*PARAMETER, *ENSEMBLE, 1) broadcast
+        # correctly with (T,) timeseries: the product becomes (*PARAMETER, *ENSEMBLE, T).
+        _has_timeseries = n_params > 0 and any(
+            isinstance(n, (graph.timeseries_constant, graph.timeseries_placeholder))
+            for n in linearize.forest(*actual_nodes)
+        )
+
         abstract = self.model.abstract_indexes()
         param_set = set(parameters.keys())
         non_param_abstract = [idx for idx in abstract if idx not in param_set]
@@ -333,7 +345,6 @@ class Evaluation:
             else:
                 ensemble = None  # empty list → deterministic
 
-        n_params = len(parameters)
         axis_layout: dict[Axis, int] = {}
         axis_sizes: dict[Axis, int] = {}
         factorized_weights: dict[Axis, np.ndarray] = {}
@@ -362,24 +373,28 @@ class Evaluation:
                 factorized_weights[ax] = w
             for idx, batched in ens_assignments.items():
                 # Prepend n_params PARAMETER singletons.
-                # In pure-ensemble mode (no PARAMETER axes), also append a
-                # trailing 1 for scalar assignments so they broadcast with
-                # timeseries (T,) nodes: (S,) → (S, 1) × (T,) → (S, T).
+                # Append a trailing 1 for scalar assignments so they broadcast
+                # with timeseries (T,) nodes:
+                #   pure-ensemble:    (S,)     → (S, 1)      × (T,) → (S, T)
+                #   grid+timeseries:  (1,1,S)  → (1,1,S,1)   × (T,) → (*PARAM,S,T)
                 param_singletons = (1,) * n_params
                 target = param_singletons + batched.shape
-                if n_params == 0 and batched.ndim == n_ensemble:
+                if (n_params == 0 or _has_timeseries) and batched.ndim == n_ensemble:
                     target = target + (1,)
                 ens_subs[idx.node] = np.reshape(batched, target)
 
-        # Extend PARAMETER subs with n_ensemble trailing singleton dims.
+        # Extend PARAMETER subs with trailing singleton dims.
+        # In timeseries mode we add (n_ensemble + 1) singletons — the extra 1 is
+        # the trailing time-singleton so that (*PARAMETER, *ENSEMBLE, 1) scalars
+        # broadcast with (T,) timeseries nodes.
         if n_ensemble > 0:
-            ens_singletons = (1,) * n_ensemble
+            extra = 1 if _has_timeseries else 0
+            ens_singletons = (1,) * (n_ensemble + extra)
             for node in param_nodes:
                 c_subs[node] = c_subs[node].reshape(c_subs[node].shape + ens_singletons)
 
         c_subs.update(ens_subs)
 
-        actual_nodes = [idx.node for idx in nodes_of_interest]
         state = executor.State(c_subs, functions=functions or {})
         executor.evaluate_nodes(state, *linearize.forest(*actual_nodes))
 

@@ -328,25 +328,7 @@ class InflowModel(Model):
             ),
         )
 
-        # Total inflow during the charging window — a scalar that is independent of
-        # the pricing policy and Euro-class composition.  Separating this sum from
-        # the ensemble/parameter-dependent fraction_rigid avoids multiplying a
-        # (N_c0, N_incr, S) tensor by a (T,) timeseries inside the executor, which
-        # would cause a broadcast failure in vectorised grid evaluation.
-        # Mathematical equivalence:
-        #   Σ_t [ fraction_rigid × inflow(t) × mask(t) ]
-        #   = fraction_rigid × Σ_t [ inflow(t) × mask(t) ]
-        _window_inflow = Index(
-            "inflow in charging window",
-            graph.piecewise(
-                (
-                    inputs.ts_inflow.node,
-                    (inputs.ts >= inputs.i_p_start_time) & (inputs.ts <= inputs.i_p_end_time),
-                ),
-                (0, True),
-            ),
-        )
-        total_paying = Index("total vehicles paying", fraction_rigid * _window_inflow.sum())
+        total_paying = Index("total vehicles paying", number_paying.sum())
 
         modified_starting = Index(
             "modified starting",
