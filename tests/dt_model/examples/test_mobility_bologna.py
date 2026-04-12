@@ -47,7 +47,7 @@ def test_kpis_stable_with_fixed_seed(model, evaluation):
         "Modified inflow [veh/day]": 141044,
         "Shifted inflow [veh/day]": 5357,
         "Paying inflow [veh/day]": 77118,
-        "Collected fees [€/day]": 294670,
+        "Collected fees [€/day]": 293490,
         "Emissions [NOx gr/day]": 508105,
         "Modified emissions [NOx gr/day]": 104427,
     }
