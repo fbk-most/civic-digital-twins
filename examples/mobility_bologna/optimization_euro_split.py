@@ -47,11 +47,12 @@ import numpy as np
 from scipy.optimize import minimize
 
 from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation, Index
+from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 try:
-    from .mobility_bologna import BolognaModel
+    from .mobility_bologna import BolognaModel, _ts_solve
 except ImportError:
-    from mobility_bologna import BolognaModel  # type: ignore[no-redef]
+    from mobility_bologna import BolognaModel, _ts_solve  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +60,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 # Monte-Carlo ensemble sizes: smaller = faster, larger = less noisy objective.
-ENSEMBLE_SIZE_GRID: int = 10000  # used for the vectorized grid evaluation
-ENSEMBLE_SIZE_OPT: int = 10000  # used inside the Scipy optimiser
+ENSEMBLE_SIZE_GRID: int = 100  # used for the vectorized grid evaluation
+ENSEMBLE_SIZE_OPT: int = 100  # used inside the Scipy optimiser
 
 # 2-D search bounds
 COST_EURO0_MIN: float = 0.5
@@ -162,7 +163,7 @@ if __name__ == "__main__":
     #   i_p_cost_euro0  → shape (N_c0, 1)    [PARAMETER axis 0]
     #   i_p_increment   → shape (1, N_incr)   [PARAMETER axis 1]
     #   i_b_p50_cost    → shape (S,)           [ENSEMBLE axis]
-    # and produces income_grid of shape (N_c0, N_incr) after marginalisation.
+    # and produces income_grid / emissions_grid of shape (N_c0, N_incr) after marginalisation.
     ensemble_grid = DistributionEnsemble(model, ENSEMBLE_SIZE_GRID)
     result_grid = Evaluation(model).evaluate(
         ensemble=ensemble_grid,
@@ -170,10 +171,22 @@ if __name__ == "__main__":
             i_p_cost_euro0: cost_euro0_axis,
             i_p_increment: increment_axis,
         },
-        nodes_of_interest=[model.outputs.total_payed],
+        nodes_of_interest=[
+            model.outputs.total_payed,
+            model.outputs.total_modified_emissions,
+            model.outputs.total_emissions,
+        ],
+        functions={"ts_solve": executor.LambdaAdapter(_ts_solve)},
     )
     income_grid = result_grid.marginalize(model.outputs.total_payed)
-    # income_grid.shape == (COST_EURO0_N, INCREMENT_N)
+    emissions_grid = result_grid.marginalize(model.outputs.total_modified_emissions)
+    # total_emissions is policy-independent; all grid cells share the same value
+    # total_emissions is policy-independent (depends only on fixed baseline traffic),
+    # so the engine computes it as a plain scalar with no PARAMETER/ENSEMBLE dims.
+    # marginalize() cannot be used here — use direct state access instead.
+    baseline_emissions = float(np.asarray(result_grid[model.outputs.total_emissions]).flat[0])
+    emission_reduction_grid = baseline_emissions - emissions_grid
+    # income_grid.shape == emissions_grid.shape == (COST_EURO0_N, INCREMENT_N)
 
     t_grid = time.perf_counter() - t_grid_start
 
@@ -181,11 +194,14 @@ if __name__ == "__main__":
     best_c0_grid = float(cost_euro0_axis[best_ij[0]])
     best_incr_grid = float(increment_axis[best_ij[1]])
     best_income_grid = float(income_grid[best_ij])
+    best_emission_reduction_grid = float(emission_reduction_grid[best_ij])
 
     print(
         f"  Best  cost_euro0 = {best_c0_grid:.2f} €   "
         f"increment = {best_incr_grid:.2f} €/class   "
-        f"income = {best_income_grid:.0f} €/day\n"
+        f"income = {best_income_grid:.0f} €/day   "
+        f"emission reduction = {best_emission_reduction_grid:.0f} kg/day\n"
+        f"  Baseline emissions = {baseline_emissions:.0f} kg/day\n"
         f"  Elapsed: {t_grid:.1f} s"
     )
 
@@ -262,42 +278,76 @@ if __name__ == "__main__":
 
     cc, ii = np.meshgrid(cost_euro0_axis, increment_axis, indexing="ij")
 
-    fig, axs = plt.subplots(1, 3, figsize=(18, 6), layout="constrained")
+    fig, axs = plt.subplots(2, 3, figsize=(18, 11), layout="constrained")
     fig.suptitle("Euro-split parking pricing optimisation — Bologna model", fontsize=14)
 
+    # ---- Row 0: Income ----
+
     # 2-D income heatmap
-    im = axs[0].pcolormesh(cc, ii, income_grid, cmap="viridis", shading="auto")
-    fig.colorbar(im, ax=axs[0], label="Income (€/day)")
-    # Feasibility boundary: line where Euro-6 cost = 0  (cost_euro0 = 6 × increment)
+    im0 = axs[0, 0].pcolormesh(cc, ii, income_grid, cmap="viridis", shading="auto")
+    fig.colorbar(im0, ax=axs[0, 0], label="Income (€/day)")
     feas_i = np.linspace(INCREMENT_MIN, min(COST_EURO0_MAX / 6, INCREMENT_MAX), 200)
-    axs[0].plot(6 * feas_i, feas_i, "w--", linewidth=1.5, label="Euro-6 cost = 0 €")
-    axs[0].scatter([best_c0_grid], [best_incr_grid], c="red", marker="*", s=250, zorder=5, label="Grid best")
-    axs[0].scatter([opt_c0], [opt_incr], c="orange", marker="X", s=200, zorder=5, label="Scipy best")
-    axs[0].scatter([REF_C0], [REF_INCR], c="white", marker="o", s=120, zorder=5, label="Default")
-    axs[0].set_xlabel("cost_euro0 (€)")
-    axs[0].set_ylabel("increment (€/class)")
-    axs[0].set_title("Income surface (€/day)")
-    axs[0].legend(fontsize=8)
+    axs[0, 0].plot(6 * feas_i, feas_i, "w--", linewidth=1.5, label="Euro-6 cost = 0 €")
+    axs[0, 0].scatter([best_c0_grid], [best_incr_grid], c="red", marker="*", s=250, zorder=5, label="Grid best")
+    axs[0, 0].scatter([opt_c0], [opt_incr], c="orange", marker="X", s=200, zorder=5, label="Scipy best")
+    axs[0, 0].scatter([REF_C0], [REF_INCR], c="white", marker="o", s=120, zorder=5, label="Default")
+    axs[0, 0].set_xlabel("cost_euro0 (€)")
+    axs[0, 0].set_ylabel("increment (€/class)")
+    axs[0, 0].set_title("Income surface (€/day)")
+    axs[0, 0].legend(fontsize=8)
 
-    # 1-D slice along cost_euro0, at grid-best increment
-    axs[1].plot(cost_euro0_axis, income_grid[:, best_ij[1]], color="steelblue", linewidth=2)
-    axs[1].axvline(best_c0_grid, color="red", linestyle="--", label=f"Grid best ({best_c0_grid:.2f} €)")
-    axs[1].axvline(opt_c0, color="orange", linestyle="--", label=f"Scipy best ({opt_c0:.2f} €)")
-    axs[1].axvline(REF_C0, color="gray", linestyle=":", label=f"Default ({REF_C0:.2f} €)")
-    axs[1].set_xlabel("cost_euro0 (€)")
-    axs[1].set_ylabel("Income (€/day)")
-    axs[1].set_title(f"Slice at increment = {best_incr_grid:.2f} €/class")
-    axs[1].legend(fontsize=8)
+    # 1-D income slice along cost_euro0, at grid-best increment
+    axs[0, 1].plot(cost_euro0_axis, income_grid[:, best_ij[1]], color="steelblue", linewidth=2)
+    axs[0, 1].axvline(best_c0_grid, color="red", linestyle="--", label=f"Grid best ({best_c0_grid:.2f} €)")
+    axs[0, 1].axvline(opt_c0, color="orange", linestyle="--", label=f"Scipy best ({opt_c0:.2f} €)")
+    axs[0, 1].axvline(REF_C0, color="gray", linestyle=":", label=f"Default ({REF_C0:.2f} €)")
+    axs[0, 1].set_xlabel("cost_euro0 (€)")
+    axs[0, 1].set_ylabel("Income (€/day)")
+    axs[0, 1].set_title(f"Income slice at increment = {best_incr_grid:.2f} €/class")
+    axs[0, 1].legend(fontsize=8)
 
-    # 1-D slice along increment, at grid-best cost_euro0
-    axs[2].plot(increment_axis, income_grid[best_ij[0], :], color="darkorange", linewidth=2)
-    axs[2].axvline(best_incr_grid, color="red", linestyle="--", label=f"Grid best ({best_incr_grid:.2f} €)")
-    axs[2].axvline(opt_incr, color="orange", linestyle="--", label=f"Scipy best ({opt_incr:.2f} €)")
-    axs[2].axvline(REF_INCR, color="gray", linestyle=":", label=f"Default ({REF_INCR:.2f} €)")
-    axs[2].set_xlabel("increment (€/class)")
-    axs[2].set_ylabel("Income (€/day)")
-    axs[2].set_title(f"Slice at cost_euro0 = {best_c0_grid:.2f} €")
-    axs[2].legend(fontsize=8)
+    # 1-D income slice along increment, at grid-best cost_euro0
+    axs[0, 2].plot(increment_axis, income_grid[best_ij[0], :], color="darkorange", linewidth=2)
+    axs[0, 2].axvline(best_incr_grid, color="red", linestyle="--", label=f"Grid best ({best_incr_grid:.2f} €)")
+    axs[0, 2].axvline(opt_incr, color="orange", linestyle="--", label=f"Scipy best ({opt_incr:.2f} €)")
+    axs[0, 2].axvline(REF_INCR, color="gray", linestyle=":", label=f"Default ({REF_INCR:.2f} €)")
+    axs[0, 2].set_xlabel("increment (€/class)")
+    axs[0, 2].set_ylabel("Income (€/day)")
+    axs[0, 2].set_title(f"Income slice at cost_euro0 = {best_c0_grid:.2f} €")
+    axs[0, 2].legend(fontsize=8)
+
+    # ---- Row 1: Emission reduction ----
+
+    # 2-D emission-reduction heatmap
+    im1 = axs[1, 0].pcolormesh(cc, ii, emission_reduction_grid, cmap="YlGn", shading="auto")
+    fig.colorbar(im1, ax=axs[1, 0], label="Emission reduction (kg/day)")
+    axs[1, 0].plot(6 * feas_i, feas_i, "k--", linewidth=1.5, label="Euro-6 cost = 0 €")
+    axs[1, 0].scatter(
+        [best_c0_grid], [best_incr_grid], c="red", marker="*", s=250, zorder=5, label="Grid best (income)"
+    )
+    axs[1, 0].scatter([REF_C0], [REF_INCR], c="white", marker="o", s=120, zorder=5, label="Default")
+    axs[1, 0].set_xlabel("cost_euro0 (€)")
+    axs[1, 0].set_ylabel("increment (€/class)")
+    axs[1, 0].set_title("Emission reduction surface (kg/day)")
+    axs[1, 0].legend(fontsize=8)
+
+    # 1-D emission-reduction slice along cost_euro0, at grid-best increment
+    axs[1, 1].plot(cost_euro0_axis, emission_reduction_grid[:, best_ij[1]], color="green", linewidth=2)
+    axs[1, 1].axvline(best_c0_grid, color="red", linestyle="--", label=f"Grid best income ({best_c0_grid:.2f} €)")
+    axs[1, 1].axvline(REF_C0, color="gray", linestyle=":", label=f"Default ({REF_C0:.2f} €)")
+    axs[1, 1].set_xlabel("cost_euro0 (€)")
+    axs[1, 1].set_ylabel("Emission reduction (kg/day)")
+    axs[1, 1].set_title(f"Emission reduction slice at increment = {best_incr_grid:.2f} €/class")
+    axs[1, 1].legend(fontsize=8)
+
+    # 1-D emission-reduction slice along increment, at grid-best cost_euro0
+    axs[1, 2].plot(increment_axis, emission_reduction_grid[best_ij[0], :], color="darkgreen", linewidth=2)
+    axs[1, 2].axvline(best_incr_grid, color="red", linestyle="--", label=f"Grid best income ({best_incr_grid:.2f} €)")
+    axs[1, 2].axvline(REF_INCR, color="gray", linestyle=":", label=f"Default ({REF_INCR:.2f} €)")
+    axs[1, 2].set_xlabel("increment (€/class)")
+    axs[1, 2].set_ylabel("Emission reduction (kg/day)")
+    axs[1, 2].set_title(f"Emission reduction slice at cost_euro0 = {best_c0_grid:.2f} €")
+    axs[1, 2].legend(fontsize=8)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUTPUT_DIR / "optimization_euro_split.png"
