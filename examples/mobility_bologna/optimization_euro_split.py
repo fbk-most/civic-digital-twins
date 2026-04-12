@@ -9,14 +9,17 @@ so Euro-0 vehicles (most polluting) pay the highest fee and each step up
 the Euro ladder grants a discount of *increment* euros.
 
 The Bologna CDT model is treated as a **black box**: the *only* interface
-used to evaluate the objective is ``Evaluation(model).evaluate(…)``,
-wrapped by the existing :func:`evaluate` helper.
+used to evaluate the objective is ``Evaluation(model).evaluate(…)``.
 
 Two optimisation strategies are demonstrated and compared:
 
 1. **Grid sweep** — evaluate the objective on a regular 2-D grid of
-   ``(cost_euro0, increment)`` parameter pairs.  Grid points are computed
-   in parallel with :class:`concurrent.futures.ProcessPoolExecutor`.
+   ``(cost_euro0, increment)`` parameter pairs.  Because ``i_p_cost_euro0``
+   and ``i_p_increment`` are explicit formula nodes inside :class:`BolognaModel`,
+   the entire ``(COST_EURO0_N × INCREMENT_N)`` grid is evaluated in a **single
+   vectorized** :meth:`~dt_model.simulation.evaluation.Evaluation.evaluate` call
+   via the ``parameters=`` axis-sweep mechanism — no per-point re-evaluation,
+   no worker processes.
 
 2. **Scipy** — refine the grid's best point with
    :func:`scipy.optimize.minimize` (Nelder-Mead), a gradient-free method
@@ -32,8 +35,6 @@ Run from the repository root::
 
 from __future__ import annotations
 
-import concurrent.futures
-import os
 import time
 from pathlib import Path
 
@@ -45,14 +46,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from scipy.optimize import minimize
 
-from civic_digital_twins.dt_model import Index
+from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation, Index
 
 try:
     from .mobility_bologna import BolognaModel
-    from .mobility_bologna import evaluate as _bologna_evaluate
 except ImportError:
     from mobility_bologna import BolognaModel  # type: ignore[no-redef]
-    from mobility_bologna import evaluate as _bologna_evaluate  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------------------
@@ -60,79 +59,21 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 # Monte-Carlo ensemble sizes: smaller = faster, larger = less noisy objective.
-ENSEMBLE_SIZE_GRID: int = 50  # used for each grid-point evaluation
-ENSEMBLE_SIZE_OPT: int = 200  # used inside the Scipy optimiser
+ENSEMBLE_SIZE_GRID: int = 10000  # used for the vectorized grid evaluation
+ENSEMBLE_SIZE_OPT: int = 10000  # used inside the Scipy optimiser
 
 # 2-D search bounds
 COST_EURO0_MIN: float = 0.5
-COST_EURO0_MAX: float = 20.0
+COST_EURO0_MAX: float = 60.0
 INCREMENT_MIN: float = 0.0
 INCREMENT_MAX: float = 4.0
 
-# Grid resolution (COST_EURO0_N × INCREMENT_N evaluations total)
-COST_EURO0_N: int = 25
-INCREMENT_N: int = 25
+# Grid resolution (COST_EURO0_N × INCREMENT_N grid points evaluated in one pass)
+COST_EURO0_N: int = 50
+INCREMENT_N: int = 50
 
 # Output directory for plots
 OUTPUT_DIR = Path(__file__).parent / "output"
-
-
-# ---------------------------------------------------------------------------
-# Black-box objective
-# ---------------------------------------------------------------------------
-# Both functions are defined at module level so that ProcessPoolExecutor
-# can pickle them for dispatch to worker processes.
-
-
-def build_model(cost_euro0: float, increment: float) -> BolognaModel:
-    """Build a :class:`BolognaModel` with the given Euro-class fee schedule.
-
-    The fee for a vehicle of Euro class *k* is::
-
-        cost_k = max(0,  cost_euro0 − k × increment)
-
-    All other model parameters are taken from :meth:`BolognaModel.default_inputs`.
-
-    Parameters
-    ----------
-    cost_euro0 : float
-        Parking fee (€/vehicle) for Euro-0 vehicles (highest cost).
-    increment : float
-        Fee reduction (€) per Euro-class step.
-
-    Returns
-    -------
-    BolognaModel
-        Fully configured model instance.
-    """
-    costs = [Index(f"cost euro {k}", float(np.clip(cost_euro0 - k * increment, 0.0, None))) for k in range(7)]
-    return BolognaModel(**{**BolognaModel.default_inputs(), "i_p_cost": costs})
-
-
-def compute_income(cost_euro0: float, increment: float, ensemble_size: int = ENSEMBLE_SIZE_GRID) -> float:
-    """Evaluate expected daily parking revenue via the CDT Evaluation interface.
-
-    This is the **only** function that touches the CDT model layer.  Both the
-    grid sweep and the Scipy optimiser call it to obtain objective values.
-
-    Parameters
-    ----------
-    cost_euro0 : float
-        Parking fee (€) for Euro-0 vehicles.
-    increment : float
-        Fee discount (€) per Euro-class step.
-    ensemble_size : int, optional
-        Number of Monte-Carlo samples drawn by :class:`DistributionEnsemble`
-        to marginalise over the uncertain ``i_b_p50_cost`` index.
-
-    Returns
-    -------
-    float
-        Expected total collected fees (€/day), averaged over the ensemble.
-    """
-    model = build_model(cost_euro0, increment)
-    result = _bologna_evaluate(model, size=ensemble_size)
-    return float(result.marginalize(model.outputs.total_payed))
 
 
 # ---------------------------------------------------------------------------
@@ -140,29 +81,100 @@ def compute_income(cost_euro0: float, increment: float, ensemble_size: int = ENS
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # ------------------------------------------------------------------
+    # Build a single model whose cost parameters will be swept as
+    # PARAMETER axes by Evaluation.evaluate(parameters=...).
+    #
+    # The two Index objects below are passed both to BolognaModel (as the
+    # default concrete values used in plain evaluate() calls) AND later to
+    # Evaluation.evaluate(parameters=...) so the engine can substitute them
+    # with full sweep arrays in a single vectorized pass.
+    #
+    # DistributionEnsemble ignores them because they are concrete (value ≠ None)
+    # and therefore not returned by model.abstract_indexes().
+    # ------------------------------------------------------------------
+    i_p_cost_euro0 = Index("cost euro_0", 5.00)  # default; overridden by parameters=
+    i_p_increment = Index("cost increment", 0.25)  # default; overridden by parameters=
+
+    model = BolognaModel(
+        **{
+            **BolognaModel.default_inputs(),
+            "i_p_cost_euro0": i_p_cost_euro0,
+            "i_p_increment": i_p_increment,
+        }
+    )
+
     cost_euro0_axis = np.linspace(COST_EURO0_MIN, COST_EURO0_MAX, COST_EURO0_N)
     increment_axis = np.linspace(INCREMENT_MIN, INCREMENT_MAX, INCREMENT_N)
-    n_workers = os.cpu_count() or 1
+
+    # ------------------------------------------------------------------
+    # Single-point evaluation helper (used by the Scipy optimiser and by
+    # the reference-scenario evaluation at the end).
+    #
+    # Passes 1-element parameter arrays so the result shape is (1, 1)
+    # after ensemble marginalisation; .item() extracts the Python float.
+    # ------------------------------------------------------------------
+
+    def compute_income(cost_euro0: float, increment: float, ensemble_size: int = ENSEMBLE_SIZE_GRID) -> float:
+        """Return expected daily parking revenue for one ``(cost_euro0, increment)`` point.
+
+        Parameters
+        ----------
+        cost_euro0 : float
+            Parking fee (€) for Euro-0 vehicles.
+        increment : float
+            Fee discount (€) per Euro-class step.
+        ensemble_size : int, optional
+            Number of Monte-Carlo samples for ``i_b_p50_cost``.
+
+        Returns
+        -------
+        float
+            Expected total collected fees (€/day), averaged over the ensemble.
+        """
+        ensemble = DistributionEnsemble(model, ensemble_size)
+        result = Evaluation(model).evaluate(
+            ensemble=ensemble,
+            parameters={
+                i_p_cost_euro0: np.array([cost_euro0]),
+                i_p_increment: np.array([increment]),
+            },
+            nodes_of_interest=[model.outputs.total_payed],
+        )
+        # marginalize() returns shape (1, 1) for two size-1 PARAMETER axes;
+        # .item() converts the single element to a Python float.
+        return float(result.marginalize(model.outputs.total_payed).item())
 
     # -----------------------------------------------------------------------
-    # 1 — Grid sweep
+    # 1 — Grid sweep  (single vectorized evaluation pass)
     # -----------------------------------------------------------------------
 
-    n_evals = COST_EURO0_N * INCREMENT_N
     print(
         f"\n{'=' * 60}\n"
-        f"GRID SWEEP  ({COST_EURO0_N} × {INCREMENT_N} = {n_evals} evaluations, "
-        f"ensemble_size={ENSEMBLE_SIZE_GRID}, workers={n_workers})\n"
+        f"GRID SWEEP  ({COST_EURO0_N} × {INCREMENT_N} = {COST_EURO0_N * INCREMENT_N} grid points, "
+        f"ensemble_size={ENSEMBLE_SIZE_GRID}, single vectorized pass)\n"
         f"{'=' * 60}"
     )
     t_grid_start = time.perf_counter()
 
-    grid_params = [(c0, incr) for c0 in cost_euro0_axis for incr in increment_axis]
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as pool:
-        futures = [pool.submit(compute_income, c0, incr, ENSEMBLE_SIZE_GRID) for c0, incr in grid_params]
-        income_flat = [f.result() for f in futures]  # collected in submission order
+    # One Evaluation.evaluate() call sweeps the full (N_c0, N_incr) grid.
+    # The engine broadcasts:
+    #   i_p_cost_euro0  → shape (N_c0, 1)    [PARAMETER axis 0]
+    #   i_p_increment   → shape (1, N_incr)   [PARAMETER axis 1]
+    #   i_b_p50_cost    → shape (S,)           [ENSEMBLE axis]
+    # and produces income_grid of shape (N_c0, N_incr) after marginalisation.
+    ensemble_grid = DistributionEnsemble(model, ENSEMBLE_SIZE_GRID)
+    result_grid = Evaluation(model).evaluate(
+        ensemble=ensemble_grid,
+        parameters={
+            i_p_cost_euro0: cost_euro0_axis,
+            i_p_increment: increment_axis,
+        },
+        nodes_of_interest=[model.outputs.total_payed],
+    )
+    income_grid = result_grid.marginalize(model.outputs.total_payed)
+    # income_grid.shape == (COST_EURO0_N, INCREMENT_N)
 
-    income_grid = np.array(income_flat, dtype=float).reshape(COST_EURO0_N, INCREMENT_N)
     t_grid = time.perf_counter() - t_grid_start
 
     best_ij = np.unravel_index(np.argmax(income_grid), income_grid.shape)
