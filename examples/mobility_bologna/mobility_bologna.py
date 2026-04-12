@@ -80,7 +80,8 @@ class InflowModel(Model):
         ts: TimeseriesIndex
         i_p_start_time: Index
         i_p_end_time: Index
-        i_p_cost: list[Index]
+        i_p_cost_euro0: Index
+        i_p_increment: Index
         i_p_fraction_exempted: Index
         i_b_p50_cost: DistributionIndex
         i_b_p50_anticipating: Index
@@ -133,7 +134,8 @@ class InflowModel(Model):
         ts: TimeseriesIndex,
         i_p_start_time: Index,
         i_p_end_time: Index,
-        i_p_cost: list[Index],
+        i_p_cost_euro0: Index,
+        i_p_increment: Index,
         i_p_fraction_exempted: Index,
         i_b_p50_cost: DistributionIndex,
         i_b_p50_anticipating: Index,
@@ -146,13 +148,29 @@ class InflowModel(Model):
         Outputs = InflowModel.Outputs
         Expose = InflowModel.Expose
 
+        # Per-Euro-class parking fees derived from the two policy parameters.
+        # cost_k = max(0,  cost_euro0 − k × increment)
+        # Expressed as graph formula nodes so that cost_euro0 / increment can be
+        # swept as PARAMETER axes in a single vectorized Evaluation.evaluate() call.
+        i_p_cost = [
+            Index(
+                f"cost euro {k}",
+                graph.piecewise(
+                    (i_p_cost_euro0 - k * i_p_increment, i_p_cost_euro0 >= k * i_p_increment),
+                    (0.0, True),
+                ),
+            )
+            for k in range(7)
+        ]
+
         inputs = Inputs(
             ts_inflow=ts_inflow,
             ts_starting=ts_starting,
             ts=ts,
             i_p_start_time=i_p_start_time,
             i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
+            i_p_cost_euro0=i_p_cost_euro0,
+            i_p_increment=i_p_increment,
             i_p_fraction_exempted=i_p_fraction_exempted,
             i_b_p50_cost=i_b_p50_cost,
             i_b_p50_anticipating=i_b_p50_anticipating,
@@ -164,19 +182,19 @@ class InflowModel(Model):
 
         avg_cost = Index(
             "average cost",
-            inputs.i_p_cost[0] * euro_class_split["euro_0"]
-            + inputs.i_p_cost[1] * euro_class_split["euro_1"]
-            + inputs.i_p_cost[2] * euro_class_split["euro_2"]
-            + inputs.i_p_cost[3] * euro_class_split["euro_3"]
-            + inputs.i_p_cost[4] * euro_class_split["euro_4"]
-            + inputs.i_p_cost[5] * euro_class_split["euro_5"]
-            + inputs.i_p_cost[6] * euro_class_split["euro_6"],
+            i_p_cost[0] * euro_class_split["euro_0"]
+            + i_p_cost[1] * euro_class_split["euro_1"]
+            + i_p_cost[2] * euro_class_split["euro_2"]
+            + i_p_cost[3] * euro_class_split["euro_3"]
+            + i_p_cost[4] * euro_class_split["euro_4"]
+            + i_p_cost[5] * euro_class_split["euro_5"]
+            + i_p_cost[6] * euro_class_split["euro_6"],
         )
 
         i_fraction_rigid_euro = [
             Index(
                 f"rigid vehicles euro_{e} %",
-                (1 - inputs.i_p_fraction_exempted) * (np.e ** (inputs.i_p_cost[e] / inputs.i_b_p50_cost * np.log(0.5))),
+                (1 - inputs.i_p_fraction_exempted) * (np.e ** (i_p_cost[e] / inputs.i_b_p50_cost * np.log(0.5))),
             )
             for e in range(7)
         ]
@@ -310,7 +328,25 @@ class InflowModel(Model):
             ),
         )
 
-        total_paying = Index("total vehicles paying", number_paying.sum())
+        # Total inflow during the charging window — a scalar that is independent of
+        # the pricing policy and Euro-class composition.  Separating this sum from
+        # the ensemble/parameter-dependent fraction_rigid avoids multiplying a
+        # (N_c0, N_incr, S) tensor by a (T,) timeseries inside the executor, which
+        # would cause a broadcast failure in vectorised grid evaluation.
+        # Mathematical equivalence:
+        #   Σ_t [ fraction_rigid × inflow(t) × mask(t) ]
+        #   = fraction_rigid × Σ_t [ inflow(t) × mask(t) ]
+        _window_inflow = Index(
+            "inflow in charging window",
+            graph.piecewise(
+                (
+                    inputs.ts_inflow.node,
+                    (inputs.ts >= inputs.i_p_start_time) & (inputs.ts <= inputs.i_p_end_time),
+                ),
+                (0, True),
+            ),
+        )
+        total_paying = Index("total vehicles paying", fraction_rigid * _window_inflow.sum())
 
         modified_starting = Index(
             "modified starting",
@@ -328,13 +364,13 @@ class InflowModel(Model):
         avg_cost_paid = Index(
             "average cost paid",
             (
-                i_fraction_rigid_euro[0] * euro_class_split["euro_0"] * inputs.i_p_cost[0]
-                + i_fraction_rigid_euro[1] * euro_class_split["euro_1"] * inputs.i_p_cost[1]
-                + i_fraction_rigid_euro[2] * euro_class_split["euro_2"] * inputs.i_p_cost[2]
-                + i_fraction_rigid_euro[3] * euro_class_split["euro_3"] * inputs.i_p_cost[3]
-                + i_fraction_rigid_euro[4] * euro_class_split["euro_4"] * inputs.i_p_cost[4]
-                + i_fraction_rigid_euro[5] * euro_class_split["euro_5"] * inputs.i_p_cost[5]
-                + i_fraction_rigid_euro[6] * euro_class_split["euro_6"] * inputs.i_p_cost[6]
+                i_fraction_rigid_euro[0] * euro_class_split["euro_0"] * i_p_cost[0]
+                + i_fraction_rigid_euro[1] * euro_class_split["euro_1"] * i_p_cost[1]
+                + i_fraction_rigid_euro[2] * euro_class_split["euro_2"] * i_p_cost[2]
+                + i_fraction_rigid_euro[3] * euro_class_split["euro_3"] * i_p_cost[3]
+                + i_fraction_rigid_euro[4] * euro_class_split["euro_4"] * i_p_cost[4]
+                + i_fraction_rigid_euro[5] * euro_class_split["euro_5"] * i_p_cost[5]
+                + i_fraction_rigid_euro[6] * euro_class_split["euro_6"] * i_p_cost[6]
             )
             / fraction_rigid,
         )
@@ -589,7 +625,8 @@ class BolognaModel(Model):
         # Policy parameters
         i_p_start_time: Index
         i_p_end_time: Index
-        i_p_cost: list[Index]
+        i_p_cost_euro0: Index
+        i_p_increment: Index
         i_p_fraction_exempted: Index
         # Behavioural parameters
         i_b_p50_cost: DistributionIndex
@@ -630,14 +667,16 @@ class BolognaModel(Model):
         Pass directly to :class:`BolognaModel` or override individual entries::
 
             m = BolognaModel(**BolognaModel.default_inputs())
-            m_alt = BolognaModel(**{**BolognaModel.default_inputs(), "i_p_cost": [...]})
+            overrides = {"i_p_cost_euro0": Index("cost euro_0", 8.00), "i_p_increment": Index("cost increment", 0.50)}
+            m_alt = BolognaModel(**{**BolognaModel.default_inputs(), **overrides})
         """
         return {
             "i_p_start_time": Index(
                 "start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds()
             ),
             "i_p_end_time": Index("end time", (pd.Timestamp("19:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
-            "i_p_cost": [Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)],
+            "i_p_cost_euro0": Index("cost euro_0", 5.00),
+            "i_p_increment": Index("cost increment", 0.25),
             "i_p_fraction_exempted": Index("exempted vehicles %", 0.15),
             "i_b_p50_cost": DistributionIndex("cost 50% threshold", stats.uniform, {"loc": 4.00, "scale": 7.00}),
             "i_b_p50_anticipating": Index("anticipation 50% likelihood", 0.5),
@@ -652,7 +691,8 @@ class BolognaModel(Model):
         *,
         i_p_start_time: Index,
         i_p_end_time: Index,
-        i_p_cost: list[Index],
+        i_p_cost_euro0: Index,
+        i_p_increment: Index,
         i_p_fraction_exempted: Index,
         i_b_p50_cost: DistributionIndex,
         i_b_p50_anticipating: Index,
@@ -668,7 +708,8 @@ class BolognaModel(Model):
         inputs = Inputs(
             i_p_start_time=i_p_start_time,
             i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
+            i_p_cost_euro0=i_p_cost_euro0,
+            i_p_increment=i_p_increment,
             i_p_fraction_exempted=i_p_fraction_exempted,
             i_b_p50_cost=i_b_p50_cost,
             i_b_p50_anticipating=i_b_p50_anticipating,
@@ -696,7 +737,8 @@ class BolognaModel(Model):
             ts=ts,
             i_p_start_time=i_p_start_time,
             i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
+            i_p_cost_euro0=i_p_cost_euro0,
+            i_p_increment=i_p_increment,
             i_p_fraction_exempted=i_p_fraction_exempted,
             i_b_p50_cost=i_b_p50_cost,
             i_b_p50_anticipating=i_b_p50_anticipating,
@@ -937,7 +979,8 @@ if __name__ == "__main__":
     m_strict = BolognaModel(
         **{
             **BolognaModel.default_inputs(),
-            "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
+            "i_p_cost_euro0": Index("cost euro_0", 8.00),
+            "i_p_increment": Index("cost increment", 0.50),
         }
     )
     result_strict = evaluate(m_strict, 20)
