@@ -149,12 +149,12 @@ result = Evaluation(co2_model).evaluate(ensemble)
 ```
 
 `result` is an `EvaluationResult`.  Use `result[idx]` for the raw array
-(shape `(S, 1)` here — `S` ENSEMBLE samples, trailing 1 from the DOMAIN
-placeholder) and `result.marginalize(idx)` for the weighted expectation:
+(shape `(S,)` here — `S` ENSEMBLE samples) and `result.marginalize(idx)`
+for the weighted expectation:
 
 ```python
 # Distribution of CO2 across 1000 scenarios
-co2_samples = result[co2]          # np.ndarray, shape (1000, 1)
+co2_samples = result[co2]          # np.ndarray, shape (1000,)
 
 # Expected (mean) CO2
 co2_mean = result.marginalize(co2) # scalar

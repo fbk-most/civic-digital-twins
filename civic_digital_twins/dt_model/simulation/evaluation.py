@@ -333,6 +333,14 @@ class Evaluation:
             else:
                 ensemble = None  # empty list → deterministic
 
+        # Pre-compute linearization and timeseries detection once.
+        # These are reused for executor.evaluate_nodes() and BFS normalisation below.
+        actual_nodes = [idx.node for idx in nodes_of_interest]
+        linearized_nodes = linearize.forest(*actual_nodes)
+        _has_timeseries = any(
+            isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)) for node in linearized_nodes
+        )
+
         n_params = len(parameters)
         axis_layout: dict[Axis, int] = {}
         axis_sizes: dict[Axis, int] = {}
@@ -362,61 +370,96 @@ class Evaluation:
                 factorized_weights[ax] = w
             for idx, batched in ens_assignments.items():
                 # Prepend n_params PARAMETER singletons.
-                # In pure-ensemble mode (no PARAMETER axes), also append a
-                # trailing 1 for scalar assignments so they broadcast with
-                # timeseries (T,) nodes: (S,) → (S, 1) × (T,) → (S, T).
+                # When the model contains timeseries nodes, also append a
+                # trailing 1 for scalar (non-timeseries) assignments so they
+                # broadcast with timeseries (T,) nodes:
+                # (S, 1) × (T,) → (S, T).
                 param_singletons = (1,) * n_params
                 target = param_singletons + batched.shape
-                if n_params == 0 and batched.ndim == n_ensemble:
+                if _has_timeseries and batched.ndim == n_ensemble:
                     target = target + (1,)
                 ens_subs[idx.node] = np.reshape(batched, target)
 
-        # Extend PARAMETER subs with n_ensemble trailing singleton dims.
-        if n_ensemble > 0:
-            ens_singletons = (1,) * n_ensemble
+        # Extend PARAMETER subs with trailing singleton dims:
+        # - one per ENSEMBLE axis (so PARAMETER arrays broadcast against ENSEMBLE arrays),
+        # - plus one extra timeseries placeholder when the graph has timeseries nodes
+        #   (so (N, …, 1) broadcasts against a bare (T,) timeseries).
+        extra_ts = 1 if _has_timeseries else 0
+        trailing_singletons = (1,) * (n_ensemble + extra_ts)
+        if trailing_singletons:
             for node in param_nodes:
-                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + ens_singletons)
+                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + trailing_singletons)
 
         c_subs.update(ens_subs)
 
-        actual_nodes = [idx.node for idx in nodes_of_interest]
-        state = executor.State(c_subs, functions=functions or {})
-        executor.evaluate_nodes(state, *linearize.forest(*actual_nodes))
+        # Snapshot the substituted node keys before the executor mutates state.values
+        # (executor.State takes c_subs by reference and adds all computed nodes into it).
+        substituted_nodes: set[graph.Node] = set(c_subs)
 
-        # Normalize result arrays: inject an explicit ENSEMBLE singleton dim at
-        # every ENSEMBLE axis position for nodes that did NOT receive any ENSEMBLE
-        # substitution (directly or transitively).  Without this, a constant
-        # timeseries node (T,) is indistinguishable from an ENSEMBLE result (S,)
-        # when S == T, causing marginalize() to erroneously contract the time axis.
-        if n_ensemble > 0:
-            ensemble_positions: list[tuple[int, int]] = [
-                (n_params + j, axis_sizes[ax])
-                for j, ax in enumerate(ensemble.ensemble_axes)  # type: ignore[union-attr]
-            ]
-            # Build the set of nodes that are downstream of ENSEMBLE substitutions
-            # (i.e., touched by ENSEMBLE data) via forward BFS through the graph.
-            ens_touched: set[graph.Node] = set(ens_subs)
-            for node in linearize.forest(*actual_nodes):
-                if node in ens_touched:
+        state = executor.State(c_subs, functions=functions or {})
+        executor.evaluate_nodes(state, *linearized_nodes)
+
+        # Normalise result arrays: every actual node must have shape
+        # (*PARAMETER, *ENSEMBLE, *domain) with explicit singletons where
+        # the node does not vary along an axis.
+        #
+        # All-or-nothing property: a node is either
+        #   (a) downstream of some substitution → executor already produced
+        #       the correct shape via numpy broadcasting; or
+        #   (b) not downstream of any substitution → natural shape with zero
+        #       leading dims (scalar () or bare timeseries (T,)).
+        #
+        # A single reshape prepending (n_total - arr.ndim) singletons handles
+        # both subcases of (b), eliminating the need for a per-axis loop.
+        n_full = n_params + n_ensemble
+        n_total = n_full + extra_ts
+
+        if n_total > 0:
+            # all_touched: nodes transitively downstream of any substitution.
+            # Use the pre-executor snapshot so that constant nodes evaluated by
+            # the executor don't accidentally appear as "substituted".
+            all_touched: set[graph.Node] = set(substituted_nodes)
+            for node in linearized_nodes:
+                if node in all_touched:
                     continue
-                if any(dep in ens_touched for dep in linearize._get_dependencies(node)):
-                    ens_touched.add(node)
+                if any(dep in all_touched for dep in linearize._get_dependencies(node)):
+                    all_touched.add(node)
 
             for node in actual_nodes:
-                if node in ens_touched or node not in state.values:
-                    continue  # already has correct ENSEMBLE dims
+                if node in all_touched or node not in state.values:
+                    continue  # already has correct shape via substitution/broadcasting
                 arr = np.asarray(state.values[node])
-                modified = False
-                for pos, _ in ensemble_positions:
-                    # Insert singleton at pos: node has no ENSEMBLE data there.
-                    # Clamp insertion point to arr.ndim (appending at end for
-                    # arrays shorter than pos, e.g. scalars or 1-D constants).
-                    insert_at = min(pos, arr.ndim)
-                    if arr.ndim <= pos or arr.shape[pos] != 1:
-                        arr = np.expand_dims(arr, axis=insert_at)
-                        modified = True
-                if modified:
-                    state.values[node] = arr
+                # All-or-nothing invariant: untouched nodes must have natural
+                # shape (zero leading dims: scalar or bare timeseries).
+                assert arr.ndim in ({0, 1} if _has_timeseries else {0}), (
+                    f"Untouched node {getattr(node, 'name', repr(node))!r}: "
+                    f"unexpected ndim={arr.ndim} (has_timeseries={_has_timeseries})"
+                )
+                # Inject (n_total - arr.ndim) leading singletons.
+                # Scalars get the full n_total prefix (including the timeseries
+                # placeholder when _has_timeseries); timeseries nodes get n_full
+                # singletons and keep their trailing (T,) dimension.
+                n_inject = n_total - arr.ndim
+                state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
+
+        # Post-normalisation invariant: every actual node must carry the
+        # correct number of leading axis dims and valid sizes at each
+        # axis position.  Guarded by __debug__ to avoid the loop overhead
+        # when running with python -O.
+        if __debug__:
+            for node in actual_nodes:
+                if node not in state.values:
+                    continue
+                arr = np.asarray(state.values[node])
+                assert arr.ndim == n_total, (
+                    f"Post-norm: node {getattr(node, 'name', repr(node))!r} ndim={arr.ndim}, expected {n_total}"
+                )
+                for ax, pos in axis_layout.items():
+                    assert arr.shape[pos] in {1, axis_sizes[ax]}, (
+                        f"Post-norm: node {getattr(node, 'name', repr(node))!r} "
+                        f"axis {ax.name!r} at pos {pos}: shape[{pos}]={arr.shape[pos]}, "
+                        f"expected 1 or {axis_sizes[ax]}"
+                    )
 
         return EvaluationResult(
             state,
