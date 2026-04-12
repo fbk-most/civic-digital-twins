@@ -67,14 +67,56 @@ ENSEMBLE_SIZE_OPT: int = 100  # used inside the Scipy optimiser
 COST_EURO0_MIN: float = 0.5
 COST_EURO0_MAX: float = 60.0
 INCREMENT_MIN: float = 0.0
-INCREMENT_MAX: float = 4.0
+INCREMENT_MAX: float = 8.0
 
 # Grid resolution (COST_EURO0_N × INCREMENT_N grid points evaluated in one pass)
-COST_EURO0_N: int = 50
-INCREMENT_N: int = 50
+COST_EURO0_N: int = 100
+INCREMENT_N: int = 100
 
 # Output directory for plots
 OUTPUT_DIR = Path(__file__).parent / "output"
+
+
+# ---------------------------------------------------------------------------
+# Pareto utilities
+# ---------------------------------------------------------------------------
+
+
+def pareto_front(f1: np.ndarray, f2: np.ndarray) -> np.ndarray:
+    """Return a boolean mask of Pareto-optimal points when maximising both objectives.
+
+    A point *i* is Pareto-optimal if no other point *j* satisfies
+    ``f1[j] >= f1[i]`` **and** ``f2[j] >= f2[i]`` with at least one strict
+    inequality (strict-dominance criterion).
+
+    The algorithm is O(N log N): sort by ``f1`` descending (ties broken by
+    ``f2`` descending), then scan left-to-right keeping a running maximum of
+    ``f2``.  A point is non-dominated iff its ``f2`` strictly exceeds every
+    ``f2`` seen at higher (or equal) ``f1`` values.
+
+    Parameters
+    ----------
+    f1 : np.ndarray
+        1-D array of objective-1 values (higher is better).
+    f2 : np.ndarray
+        1-D array of objective-2 values (higher is better), same length as *f1*.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask of the same length; ``True`` marks Pareto-optimal points.
+    """
+    assert f1.shape == f2.shape and f1.ndim == 1, "f1 and f2 must be 1-D arrays of equal length"
+    # Sort by f1 descending; break ties by f2 descending so that among
+    # equal-f1 points the one with the best f2 is seen first.
+    order = np.lexsort((-f2, -f1))
+    mask = np.zeros(len(f1), dtype=bool)
+    running_max_f2 = -np.inf
+    for k in order:
+        if f2[k] > running_max_f2:
+            mask[k] = True
+            running_max_f2 = f2[k]
+    return mask
 
 
 # ---------------------------------------------------------------------------
@@ -353,3 +395,183 @@ if __name__ == "__main__":
     out_path = OUTPUT_DIR / "optimization_euro_split.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"Plot saved to {out_path}")
+
+    # -----------------------------------------------------------------------
+    # 3 — Pareto frontier analysis
+    # -----------------------------------------------------------------------
+
+    print(f"\n{'=' * 60}\nPARETO FRONTIER\n{'=' * 60}")
+
+    # Flatten both objective grids to 1-D vectors of length N = COST_EURO0_N * INCREMENT_N.
+    # cc / ii are the meshgrid coordinate arrays built for the plot above (indexing="ij"),
+    # so c0_flat[k] / incr_flat[k] give the exact parameter pair for flat index k.
+    f_income = income_grid.ravel()  # shape (N,)
+    f_emission = emission_reduction_grid.ravel()  # shape (N,)
+    c0_flat = cc.ravel()
+    incr_flat = ii.ravel()
+
+    pareto_mask = pareto_front(f_income, f_emission)
+    pareto_idx = np.where(pareto_mask)[0]
+
+    # Sort the Pareto front by income ascending so the tradeoff curve reads
+    # left-to-right from max-emission-reduction to max-income.
+    pareto_order = np.argsort(f_income[pareto_idx])
+    pareto_idx = pareto_idx[pareto_order]
+
+    pf_income = f_income[pareto_idx]
+    pf_emission = f_emission[pareto_idx]
+    pf_c0 = c0_flat[pareto_idx]
+    pf_incr = incr_flat[pareto_idx]
+
+    print(f"  Pareto-optimal points: {pareto_mask.sum()} / {len(f_income)}")
+
+    # ------------------------------------------------------------------
+    # Knee-point: the Pareto-front point closest to the utopia point
+    # after min-max normalisation so both objectives contribute equally.
+    # ------------------------------------------------------------------
+    utopia_income = float(pf_income.max())
+    utopia_emission = float(pf_emission.max())
+    nadir_income = float(pf_income.min())
+    nadir_emission = float(pf_emission.min())
+
+    range_income = max(utopia_income - nadir_income, 1.0)
+    range_emission = max(utopia_emission - nadir_emission, 1.0)
+
+    norm_income = (pf_income - nadir_income) / range_income
+    norm_emission = (pf_emission - nadir_emission) / range_emission
+
+    dist_to_utopia = np.hypot(1.0 - norm_income, 1.0 - norm_emission)
+    knee_k = int(np.argmin(dist_to_utopia))
+
+    print(
+        f"  Knee point  cost_euro0 = {pf_c0[knee_k]:.2f} €   "
+        f"increment = {pf_incr[knee_k]:.2f} €/class   "
+        f"income = {pf_income[knee_k]:.0f} €/day   "
+        f"emission reduction = {pf_emission[knee_k]:.0f} kg/day"
+    )
+
+    # Flat indices for annotated reference points
+    ref_flat_idx = int(
+        np.ravel_multi_index(
+            (int(np.argmin(np.abs(cost_euro0_axis - REF_C0))), int(np.argmin(np.abs(increment_axis - REF_INCR)))),
+            income_grid.shape,
+        )
+    )
+    best_income_flat_idx = int(np.ravel_multi_index(best_ij, income_grid.shape))
+
+    # -----------------------------------------------------------------------
+    # Pareto figure — three panels
+    # -----------------------------------------------------------------------
+
+    fig_p, axs_p = plt.subplots(1, 3, figsize=(18, 6), layout="constrained")
+    fig_p.suptitle("Pareto frontier — income vs emission reduction  (Bologna parking model)", fontsize=14)
+
+    # ---- Panel 0: Objective space (all grid points + highlighted front) ----
+    ax = axs_p[0]
+    sc = ax.scatter(
+        f_income,
+        f_emission,
+        c=f_emission,
+        cmap="YlGn",
+        s=8,
+        alpha=0.4,
+        label="All grid points",
+    )
+    fig_p.colorbar(sc, ax=ax, label="Emission reduction (kg/day)")
+    ax.plot(pf_income, pf_emission, "b-o", markersize=5, linewidth=1.5, label="Pareto front")
+    ax.scatter(
+        [f_income[best_income_flat_idx]],
+        [f_emission[best_income_flat_idx]],
+        c="red",
+        marker="*",
+        s=250,
+        zorder=6,
+        label="Max-income point",
+    )
+    ax.scatter(
+        [pf_income[knee_k]],
+        [pf_emission[knee_k]],
+        c="orange",
+        marker="D",
+        s=180,
+        zorder=6,
+        label="Knee point",
+    )
+    ax.scatter(
+        [f_income[ref_flat_idx]],
+        [f_emission[ref_flat_idx]],
+        c="white",
+        edgecolors="black",
+        marker="o",
+        s=120,
+        zorder=6,
+        label="Default policy",
+    )
+    ax.set_xlabel("Income (€/day)")
+    ax.set_ylabel("Emission reduction (kg/day)")
+    ax.set_title("Objective space")
+    ax.legend(fontsize=8)
+
+    # ---- Panel 1: Parameter space — where the Pareto-optimal points live ----
+    ax = axs_p[1]
+    im_p = ax.pcolormesh(cc, ii, income_grid, cmap="viridis", shading="auto", alpha=0.5)
+    fig_p.colorbar(im_p, ax=ax, label="Income (€/day)")
+    ax.scatter(
+        pf_c0,
+        pf_incr,
+        c=pf_emission,
+        cmap="YlGn",
+        s=40,
+        zorder=5,
+        edgecolors="black",
+        linewidths=0.4,
+        label="Pareto-optimal points",
+    )
+    ax.scatter([pf_c0[knee_k]], [pf_incr[knee_k]], c="orange", marker="D", s=180, zorder=6, label="Knee point")
+    ax.scatter([REF_C0], [REF_INCR], c="white", marker="o", s=120, zorder=6, label="Default")
+    feas_i_p = np.linspace(INCREMENT_MIN, min(COST_EURO0_MAX / 6, INCREMENT_MAX), 200)
+    ax.plot(6 * feas_i_p, feas_i_p, "w--", linewidth=1.5, label="Euro-6 cost = 0 €")
+    ax.set_xlabel("cost_euro0 (€)")
+    ax.set_ylabel("increment (€/class)")
+    ax.set_title("Parameter space — Pareto-optimal policies")
+    ax.legend(fontsize=8)
+
+    # ---- Panel 2: Tradeoff curve — clean 1-D view of the Pareto front ----
+    ax = axs_p[2]
+    ax.plot(pf_income, pf_emission, "b-o", markersize=5, linewidth=1.5)
+    ax.scatter(
+        [pf_income[knee_k]],
+        [pf_emission[knee_k]],
+        c="orange",
+        marker="D",
+        s=180,
+        zorder=6,
+        label=f"Knee  ({pf_income[knee_k]:.0f} €/day, {pf_emission[knee_k]:.0f} kg/day)",
+    )
+    ax.scatter(
+        [f_income[best_income_flat_idx]],
+        [f_emission[best_income_flat_idx]],
+        c="red",
+        marker="*",
+        s=250,
+        zorder=6,
+        label=f"Max income  ({f_income[best_income_flat_idx]:.0f} €/day)",
+    )
+    ax.scatter(
+        [f_income[ref_flat_idx]],
+        [f_emission[ref_flat_idx]],
+        c="gray",
+        edgecolors="black",
+        marker="o",
+        s=120,
+        zorder=6,
+        label=f"Default  ({f_income[ref_flat_idx]:.0f} €/day)",
+    )
+    ax.set_xlabel("Income (€/day)")
+    ax.set_ylabel("Emission reduction (kg/day)")
+    ax.set_title("Tradeoff curve (Pareto front)")
+    ax.legend(fontsize=8)
+
+    out_path_p = OUTPUT_DIR / "optimization_pareto.png"
+    fig_p.savefig(out_path_p, dpi=150, bbox_inches="tight")
+    print(f"Pareto plot saved to {out_path_p}")
