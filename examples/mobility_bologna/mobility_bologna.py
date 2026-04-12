@@ -321,8 +321,24 @@ class InflowModel(Model):
         i_total_postponed = Index("total vehicles postponed", i_number_postponed.sum())
         total_shifted = Index("total vehicles shifted", i_total_anticipated + i_total_postponed)
 
-        # TODO: fix, compute real value!
-        total_paid = Index("total paid fees", total_paying * avg_cost)
+        # Rigidity-weighted average cost: the per-class revenue is
+        #   split_k × rigid_k × cost_k
+        # Summing across classes and dividing by fraction_rigid gives the
+        # average cost actually paid per paying vehicle.
+        avg_cost_paid = Index(
+            "average cost paid",
+            (
+                i_fraction_rigid_euro[0] * euro_class_split["euro_0"] * inputs.i_p_cost[0]
+                + i_fraction_rigid_euro[1] * euro_class_split["euro_1"] * inputs.i_p_cost[1]
+                + i_fraction_rigid_euro[2] * euro_class_split["euro_2"] * inputs.i_p_cost[2]
+                + i_fraction_rigid_euro[3] * euro_class_split["euro_3"] * inputs.i_p_cost[3]
+                + i_fraction_rigid_euro[4] * euro_class_split["euro_4"] * inputs.i_p_cost[4]
+                + i_fraction_rigid_euro[5] * euro_class_split["euro_5"] * inputs.i_p_cost[5]
+                + i_fraction_rigid_euro[6] * euro_class_split["euro_6"] * inputs.i_p_cost[6]
+            )
+            / fraction_rigid,
+        )
+        total_paid = Index("total paid fees", total_paying * avg_cost_paid)
 
         super().__init__(
             "Inflow",
