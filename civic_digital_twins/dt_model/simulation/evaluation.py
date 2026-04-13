@@ -466,8 +466,10 @@ class Evaluation:
         # when running with python -O.
         if __debug__:
             for node in actual_nodes:
-                if node not in state.values:
-                    continue
+                assert node in state.values, (
+                    f"Post-norm: node {getattr(node, 'name', repr(node))!r} missing from "
+                    f"state after evaluate_nodes — this is a bug in the executor"
+                )
                 arr = np.asarray(state.values[node])
                 assert arr.ndim == n_total, (
                     f"Post-norm: node {getattr(node, 'name', repr(node))!r} ndim={arr.ndim}, expected {n_total}"
