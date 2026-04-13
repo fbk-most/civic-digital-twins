@@ -209,6 +209,24 @@ class EvaluationResult:
         size 1.  Trailing size-1 DOMAIN placeholder dims are removed so
         that pure-scalar results are returned as 0-d arrays rather than
         shape ``(1,)`` arrays.
+
+        Known limitation — T=1 timeseries
+        ----------------------------------
+        When a model contains timeseries nodes, ``evaluate()`` appends a
+        trailing size-1 placeholder dimension to every scalar substitution
+        so that scalars broadcast correctly against ``(T,)`` arrays.  After
+        ENSEMBLE contraction in :meth:`marginalize`, this placeholder is
+        indistinguishable from a genuine length-1 timeseries trailing dim,
+        and both are squeezed away here.  As a result,
+        ``marginalize(ts)`` for a ``TimeseriesIndex`` of length 1 returns a
+        0-d scalar rather than a shape-``(1,)`` array — the time axis is
+        silently dropped.
+
+        The root cause is the absence of explicit DOMAIN axis tracking: the
+        engine has no way to tag "this dimension is the time axis" vs "this
+        dimension is an internal broadcast placeholder".  A proper fix
+        requires first-class DOMAIN axis support (see issue #157 and the
+        D12/D13 design sprint).
         """
         domain_dims = tuple(i for i in range(n_params, arr.ndim) if arr.shape[i] == 1)
         if domain_dims:
