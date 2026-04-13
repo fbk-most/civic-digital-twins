@@ -188,7 +188,7 @@ def test_assignments_shape_two_axes():
 
 
 def test_evaluation_result_shape_two_axes():
-    """evaluate() with two ENSEMBLE axes gives result shape (S0, S1, 1)."""
+    """evaluate() with two ENSEMBLE axes gives result shape (S0, S1)."""
     i_a = _dist_index("a")
     i_b = _dist_index("b")
     i_result = Index("result", i_a.node + i_b.node)
@@ -204,8 +204,8 @@ def test_evaluation_result_shape_two_axes():
     )
     result = Evaluation(model).evaluate(ensemble=ens)
     arr = result[i_result]
-    # Shape: (S0=10, S1=5, 1) — trailing 1 from domain placeholder
-    assert arr.shape == (10, 5, 1)
+    # Shape: (S0=10, S1=5) — no trailing DOMAIN placeholder in non-timeseries models after bug fix #155
+    assert arr.shape == (10, 5)
 
 
 def test_marginalize_contracts_both_ensemble_axes():

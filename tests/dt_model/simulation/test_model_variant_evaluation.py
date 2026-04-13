@@ -184,15 +184,16 @@ def test_evaluation_emissions_train_only():
 
 
 def test_selector_index_accessible_in_result():
-    """result[mv._selector_index] returns a (S, 1) string array of variant keys."""
+    """result[mv._selector_index] returns a (S,) string array of variant keys."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     mv = _make_mv_with_mode(mode)
     ens = DistributionEnsemble(mv, size=3, rng=np.random.default_rng(0))
     ev = Evaluation(mv)
     result = ev.evaluate(ens, [mv._selector_index, mv.outputs.throughput])
     arr = result[mv._selector_index]
-    # Should be shape (S, 1) with all entries "bike"
-    assert arr.shape == (3, 1)
+    # Should be shape (S,) with all entries "bike"
+    # (No trailing DOMAIN placeholder in non-timeseries models after bug fix #155.)
+    assert arr.shape == (3,)
     assert all(v == "bike" for v in arr.ravel())
 
 

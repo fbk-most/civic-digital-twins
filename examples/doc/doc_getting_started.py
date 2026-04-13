@@ -102,10 +102,10 @@ ensemble = DistributionEnsemble(co2_model, size=1000)
 result = Evaluation(co2_model).evaluate(ensemble)
 
 co2 = co2_model.outputs.co2   # access via contractual output
-co2_samples = result[co2]            # np.ndarray, shape (1000, 1)
+co2_samples = result[co2]            # np.ndarray, shape (1000,)
 co2_mean = result.marginalize(co2)   # scalar
 
-assert co2_samples.shape == (1000, 1)
+assert co2_samples.shape == (1000,)
 # E[CO2] = E[distance / fuel_efficiency * 2.31]
 # distance ~ U(50,80), fuel_efficiency ~ U(10,15)  → reasonable range
 assert 0 < co2_mean < 200, f"Unexpected CO2 mean: {co2_mean:.1f}"

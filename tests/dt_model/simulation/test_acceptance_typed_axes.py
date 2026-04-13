@@ -189,6 +189,120 @@ def test_index_sum_axis_minus1_over_timeseries_with_ensemble():
 
 
 # ---------------------------------------------------------------------------
+# Known gap — PARAMETER + timeseries, no ensemble (#157)
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_timeseries_no_ensemble_broadcast():
+    """PARAMETER sweep × timeseries with no ensemble broadcasts correctly.
+
+    With n_ensemble=0, PARAMETER substitutions get a trailing timeseries
+    placeholder so (N, 1) × (T,) → (N, T).
+    """
+    T = 6
+    N = 3  # deliberately different from T
+    assert N != T
+
+    ts = TimeseriesIndex("ts", np.ones(T))
+    i_p = Index("p", 1.0)
+    i_result = Index("result", i_p.node * ts.node)
+    model = _make_model(ts, i_p, i_result)
+
+    pp = np.array([1.0, 2.0, 3.0])
+    assert pp.size == N
+
+    # No ensemble — pure PARAMETER sweep.  Expected shape: (N, T) = (3, 6).
+    result = Evaluation(model).evaluate(ensemble=None, parameters={i_p: pp})
+    arr = result[i_result]
+    assert arr.shape == (N, T)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — all-axes invariant bugs (#155, #156)
+# ---------------------------------------------------------------------------
+
+
+def test_grid_ensemble_constant_no_indexerror():
+    """grid+ensemble: constant node marginalises correctly without IndexError (#155).
+
+    Bug: with 2 PARAMETER axes and 1 ENSEMBLE axis the old per-axis singleton
+    insertion clamped to position 0 for a scalar constant, producing shape (1,)
+    instead of (1, 1, 1).  marginalize() then tried arr.shape[2] → IndexError.
+    """
+    i_x = Index("x", None)
+    i_y = Index("y", None)
+    i_c = Index("c", 42.0)
+    model = _make_model(i_x, i_y, i_c)
+
+    xs = np.array([1.0, 2.0])
+    ys = np.array([10.0, 20.0, 30.0])
+
+    result = Evaluation(model).evaluate([(1.0, {})], parameters={i_x: xs, i_y: ys})
+    # Must not raise IndexError.  The constant has PARAMETER singleton dims
+    # preserved (shape (1, 1)) so we test all values equal 42.0.
+    marginalised = result.marginalize(i_c)
+    assert np.all(np.isclose(marginalised, 42.0))
+
+
+def test_grid_ensemble_timeseries_broadcast_no_valueerror():
+    """grid+ensemble+timeseries: PARAMETER sub broadcasts with timeseries (#156).
+
+    Bug: with at least one PARAMETER axis the `n_params == 0` guard suppressed
+    the trailing-1 appended to ENSEMBLE substitutions, so an ENSEMBLE scalar
+    assignment got shape (S,) instead of (S, 1).  A formula that multiplied a
+    PARAMETER result (N, S) by a timeseries (T,) then tried to broadcast (N, S)
+    against T → ValueError when S != T.
+    """
+    T = 7
+    S = 4
+    ts = TimeseriesIndex("ts", np.ones(T))
+    i_x = _dist_index("x")
+    i_p = Index("p", 1.0)
+    i_result = Index("result", i_p.node * i_x.node * ts.node)
+    model = _make_model(ts, i_x, i_p, i_result)
+
+    pp = np.array([1.0, 2.0, 3.0])
+    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
+
+    # Must not raise ValueError during evaluate().
+    result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
+    arr = result[i_result]
+    # Shape: (N_p=3, S=4, T=7)
+    assert arr.shape == (3, S, T)
+
+
+def test_grid_ensemble_constant_and_timeseries_both_normalised():
+    """grid+ensemble+timeseries: constant AND timeseries nodes both get correct shape.
+
+    Combines #155 and #156 in one model: 1 PARAMETER axis, 1 ENSEMBLE axis,
+    1 timeseries constant, 1 scalar constant — both must be injectable as
+    singleton dims at all n_full positions.
+    """
+    T = 5
+    S = 3
+    N = 2
+    ts = TimeseriesIndex("ts", np.arange(float(T)))
+    i_c = Index("c", 10.0)
+    i_x = _dist_index("x")
+    i_p = Index("p", 1.0)
+    model = _make_model(ts, i_c, i_x, i_p)
+
+    pp = np.array([1.0, 2.0])
+    assert pp.size == N
+    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
+
+    result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
+    # Constant scalar: PARAMETER singleton dims are preserved by _squeeze_domain,
+    # so shape is (1,) after squeezing the ENSEMBLE dim.  All values equal 10.0.
+    assert np.all(np.isclose(result.marginalize(i_c), 10.0))
+    # Timeseries: not downstream of any substitution → (1, 1, T) after normalisation.
+    # After squeezing ENSEMBLE singleton at pos 1 → (1, T); PARAMETER singleton preserved.
+    marginalised_ts = result.marginalize(ts)
+    assert marginalised_ts.shape == (1, T)
+    assert np.allclose(marginalised_ts, np.arange(float(T))[None, :])
+
+
+# ---------------------------------------------------------------------------
 # Backward compatibility (deprecation window)
 # ---------------------------------------------------------------------------
 

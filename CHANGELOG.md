@@ -59,11 +59,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `EvaluationResult.marginalize()` contracted the wrong axis when the ENSEMBLE size
-  equalled the timeseries length (`S == T`, #142).  The fix injects explicit ENSEMBLE
-  singleton dims post-evaluation so `marginalize()` always contracts the correct axis.
-- `marginalize()` no longer calls `squeeze()` on the result: only ENSEMBLE axes are
-  contracted; PARAMETER dims and non-trivial DOMAIN dims are preserved.
+- `EvaluationResult.marginalize()` raised `IndexError` on constant nodes in
+  grid+ensemble mode (two or more PARAMETER axes plus at least one ENSEMBLE axis)
+  (#155).
+- `Evaluation.evaluate()` raised `ValueError` (numpy broadcast failure) in
+  grid+ensemble+timeseries mode when the ENSEMBLE size differed from the timeseries
+  length (#156).  Also fixed for pure-PARAMETER+timeseries mode (no ensemble).
+- The all-axes invariant (`*PARAMETER, *ENSEMBLE, *domain` shape on every result
+  array) is now enforced for all axis combinations, including pure-PARAMETER mode.
+  Post-normalisation assertions verify the invariant at debug time.
+- **Breaking shape change (scalar ENSEMBLE results, no timeseries)** — in
+  pure-ENSEMBLE mode with no PARAMETER axes and no timeseries nodes, scalar
+  result arrays now have shape `(S,)` instead of `(S, 1)`.  `marginalize()`
+  output is identical; only direct `result[idx].shape` comparisons are affected.
+- `EvaluationResult.marginalize()` contracted the wrong axis when `S == T` (#142);
+  PARAMETER dims and non-trivial DOMAIN dims are now preserved.
 - Dependabot vulnerability alerts resolved: `fonttools` bumped to `>=4.60.2`
   (moderate) and `pillow` to `>=12.1.1` (high) via lockfile regeneration. (#132)
 
