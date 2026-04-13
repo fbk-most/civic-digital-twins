@@ -164,7 +164,7 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
         return deps
 
     if isinstance(node, graph.MultiClauseOp):
-        deps: list[graph.Node] = []
+        deps = []
         for cond, value in node.clauses:
             deps.append(cond)
             deps.append(value)
@@ -172,7 +172,7 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
         return deps
 
     if isinstance(node, graph.variant_selector):
-        deps: list[graph.Node] = [node.selector_node]
+        deps = [node.selector_node]
         for branch_nodes in node.branch_map.values():
             deps.extend(branch_nodes)
         return deps
@@ -187,7 +187,7 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
         return []
 
     if isinstance(node, graph.function_call):
-        deps: list[graph.Node] = []
+        deps = []
         deps.extend(node.args)
         deps.extend(node.kwargs.values())
         return deps

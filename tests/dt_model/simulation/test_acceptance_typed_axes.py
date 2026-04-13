@@ -238,9 +238,10 @@ def test_grid_ensemble_constant_no_indexerror():
     ys = np.array([10.0, 20.0, 30.0])
 
     result = Evaluation(model).evaluate([(1.0, {})], parameters={i_x: xs, i_y: ys})
-    # Must not raise IndexError.  The constant has PARAMETER singleton dims
-    # preserved (shape (1, 1)) so we test all values equal 42.0.
+    # Must not raise IndexError.  The constant has 2 PARAMETER singleton dims
+    # preserved after ENSEMBLE contraction → shape (1, 1).
     marginalised = result.marginalize(i_c)
+    assert marginalised.shape == (1, 1)
     assert np.all(np.isclose(marginalised, 42.0))
 
 
@@ -269,6 +270,9 @@ def test_grid_ensemble_timeseries_broadcast_no_valueerror():
     arr = result[i_result]
     # Shape: (N_p=3, S=4, T=7)
     assert arr.shape == (3, S, T)
+    # marginalize() contracts the ENSEMBLE axis → (N_p, T) = (3, 7)
+    marginalised = result.marginalize(i_result)
+    assert marginalised.shape == (3, T)
 
 
 def test_grid_ensemble_constant_and_timeseries_both_normalised():
@@ -292,9 +296,11 @@ def test_grid_ensemble_constant_and_timeseries_both_normalised():
     ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
 
     result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
-    # Constant scalar: PARAMETER singleton dims are preserved by _squeeze_domain,
-    # so shape is (1,) after squeezing the ENSEMBLE dim.  All values equal 10.0.
-    assert np.all(np.isclose(result.marginalize(i_c), 10.0))
+    # Constant scalar: PARAMETER singleton dim preserved after ENSEMBLE contraction
+    # → shape (1,).  All values equal 10.0.
+    marginalised_c = result.marginalize(i_c)
+    assert marginalised_c.shape == (1,)
+    assert np.all(np.isclose(marginalised_c, 10.0))
     # Timeseries: not downstream of any substitution → (1, 1, T) after normalisation.
     # After squeezing ENSEMBLE singleton at pos 1 → (1, T); PARAMETER singleton preserved.
     marginalised_ts = result.marginalize(ts)
