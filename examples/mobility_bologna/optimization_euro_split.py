@@ -60,8 +60,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 # Monte-Carlo ensemble sizes: smaller = faster, larger = less noisy objective.
-ENSEMBLE_SIZE_GRID: int = 100  # used for the vectorized grid evaluation
-ENSEMBLE_SIZE_OPT: int = 100  # used inside the Scipy optimiser
+ENSEMBLE_SIZE_GRID: int = 50  # used for the vectorized grid evaluation
+ENSEMBLE_SIZE_OPT: int = 50  # used inside the Scipy optimiser
 
 # 2-D search bounds
 COST_EURO0_MIN: float = 0.5
@@ -70,8 +70,8 @@ INCREMENT_MIN: float = 0.0
 INCREMENT_MAX: float = 8.0
 
 # Grid resolution (COST_EURO0_N × INCREMENT_N grid points evaluated in one pass)
-COST_EURO0_N: int = 100
-INCREMENT_N: int = 100
+COST_EURO0_N: int = 50
+INCREMENT_N: int = 50
 
 # Output directory for plots
 OUTPUT_DIR = Path(__file__).parent / "output"
