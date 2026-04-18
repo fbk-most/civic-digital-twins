@@ -286,12 +286,10 @@ class ParkingModel(Model):
 
         i_u_parking = Index(
             "parking usage",
-            inputs.pv_tourists.node
-            * inputs.i_u_tourists_parking.node
-            / (inputs.i_xa_tourists_per_vehicle.node * inputs.i_xo_tourists_parking.node)
-            + inputs.pv_excursionists.node
-            * inputs.i_u_excursionists_parking.node
-            / (inputs.i_xa_excursionists_per_vehicle.node * inputs.i_xo_excursionists_parking.node),
+            inputs.pv_tourists * inputs.i_u_tourists_parking
+            / (inputs.i_xa_tourists_per_vehicle * inputs.i_xo_tourists_parking)
+            + inputs.pv_excursionists * inputs.i_u_excursionists_parking
+            / (inputs.i_xa_excursionists_per_vehicle * inputs.i_xo_excursionists_parking),
         )
 
         super().__init__(
@@ -389,8 +387,8 @@ class BeachModel(Model):
 
         i_u_beach = Index(
             "beach usage",
-            inputs.pv_tourists.node * inputs.i_u_tourists_beach.node / inputs.i_xo_tourists_beach.node
-            + inputs.pv_excursionists.node * inputs.i_u_excursionists_beach.node / inputs.i_xo_excursionists_beach.node,
+            inputs.pv_tourists * inputs.i_u_tourists_beach / inputs.i_xo_tourists_beach
+            + inputs.pv_excursionists * inputs.i_u_excursionists_beach / inputs.i_xo_excursionists_beach,
         )
 
         super().__init__(
@@ -462,7 +460,7 @@ class AccommodationModel(Model):
 
         i_u_accommodation = Index(
             "accommodation usage",
-            inputs.pv_tourists.node * inputs.i_u_tourists_accommodation.node / inputs.i_xa_tourists_accommodation.node,
+            inputs.pv_tourists * inputs.i_u_tourists_accommodation / inputs.i_xa_tourists_accommodation,
         )
 
         super().__init__(
@@ -559,10 +557,10 @@ class FoodModel(Model):
         i_u_food = Index(
             "food usage",
             (
-                inputs.pv_tourists.node * inputs.i_u_tourists_food.node
-                + inputs.pv_excursionists.node * inputs.i_u_excursionists_food.node
+                inputs.pv_tourists * inputs.i_u_tourists_food
+                + inputs.pv_excursionists * inputs.i_u_excursionists_food
             )
-            / (inputs.i_xa_visitors_food.node * inputs.i_xo_visitors_food.node),
+            / (inputs.i_xa_visitors_food * inputs.i_xo_visitors_food),
         )
 
         super().__init__(
