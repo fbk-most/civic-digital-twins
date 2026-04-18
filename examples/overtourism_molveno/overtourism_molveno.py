@@ -6,16 +6,21 @@ We include this model into the source tree as an illustrative example.
 # SPDX-License-Identifier: Apache-2.0
 
 import time
+import warnings
 from functools import reduce
+from pathlib import Path
 
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
 from scipy import interpolate, ndimage, stats
+
+matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 
 from civic_digital_twins.dt_model import Evaluation
 from civic_digital_twins.dt_model.model.index import Distribution
+
+warnings.filterwarnings("ignore", message=".*sample arguments is too small.*")
 
 try:
     from overtourism_molveno.molveno_model import (
@@ -186,13 +191,11 @@ def evaluate_scenario(model, situation) -> tuple:
     return result, ensemble
 
 
-def plot_scenario(ax, model, result, scenarios, title):
-    """Render the sustainability field and KPIs onto *ax*.
+def plot_scenario(model, result, scenarios, title):
+    """Render the sustainability field and KPIs onto a figure.
 
     Parameters
     ----------
-    ax:
-        Matplotlib axes to draw on.
     model:
         The :class:`~overtourism_molveno.model.OvertourismModel` being plotted.
     result:
@@ -203,7 +206,13 @@ def plot_scenario(ax, model, result, scenarios, title):
         presence-sample generation).
     title:
         Plot title prefix.
+
+    Returns
+    -------
+    fig:
+        The matplotlib figure.
     """
+    fig, ax = plt.subplots(figsize=(6, 10), layout="constrained")
     tt = result.parameter_values[PV_tourists]
     ee = result.parameter_values[PV_excursionists]
 
@@ -282,21 +291,28 @@ def plot_scenario(ax, model, result, scenarios, title):
     ax.set_xlim(left=0, right=t_max)
     ax.set_ylim(bottom=0, top=e_max)
 
-
-start_time = time.time()
-
-fig, axs = plt.subplots(1, 3, figsize=(18, 10), layout="constrained")
-result, scenarios = evaluate_scenario(M_Base, S_Base)
-plot_scenario(axs[0], M_Base, result, scenarios, "Base")
-result, scenarios = evaluate_scenario(M_Base, S_Good_Weather)
-plot_scenario(axs[1], M_Base, result, scenarios, "Good weather")
-result, scenarios = evaluate_scenario(M_Base, S_Bad_Weather)
-plot_scenario(axs[2], M_Base, result, scenarios, "Bad weather")
-fig.colorbar(mappable=ScalarMappable(Normalize(0, 1), cmap="coolwarm_r"), ax=axs)
-fig.supxlabel("Tourists", fontsize=18)
-fig.supylabel("Excursionists", fontsize=18)
+    return fig
 
 
-print("--- %s seconds ---" % (time.time() - start_time))
+if __name__ == "__main__":
+    start_time = time.time()
 
-plt.show()
+    _out = Path(__file__).parent / "output"
+    _out.mkdir(exist_ok=True)
+
+    result, scenarios = evaluate_scenario(M_Base, S_Base)
+    fig_base = plot_scenario(M_Base, result, scenarios, "Base")
+    fig_base.savefig(_out / "base.png", dpi=150)
+    plt.close(fig_base)
+
+    result, scenarios = evaluate_scenario(M_Base, S_Good_Weather)
+    fig_good_weather = plot_scenario(M_Base, result, scenarios, "Good weather")
+    fig_good_weather.savefig(_out / "good_weather.png", dpi=150)
+    plt.close(fig_good_weather)
+
+    result, scenarios = evaluate_scenario(M_Base, S_Bad_Weather)
+    fig_bad_weather = plot_scenario(M_Base, result, scenarios, "Bad weather")
+    fig_bad_weather.savefig(_out / "bad_weather.png", dpi=150)
+    plt.close(fig_bad_weather)
+
+    print("--- %s seconds ---" % (time.time() - start_time))
