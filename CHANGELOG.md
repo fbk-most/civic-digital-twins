@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python 3.11 dropped** — minimum supported version is now Python 3.12.
   The CI matrix, `pyproject.toml` classifiers, ruff `target-version`, and
   `pyrightconfig.json` are updated accordingly. (#122)
+- Plotting in `overtourism_molveno` example now uses the same pattern as
+  `mobility_bologna`: non-interactive backend (`Agg`), functions return
+  `fig` objects, main execution wrapped in `if __name__ == "__main__":`.
+  Plots are saved to an `output/` directory.
 - PEP 695 generic syntax adopted throughout: `~30` generic classes in
   `graph.py` converted to `class Foo[T]`; `TypeAlias` declarations in
   `executor.py` and `IOProxy` in `model.py` converted to `type X = ...`.
