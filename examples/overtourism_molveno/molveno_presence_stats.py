@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
+from scipy import stats
 
 season_stats = pd.DataFrame(
     [
@@ -71,30 +72,28 @@ weekday = weekday_stats.index
 
 
 def tourist_presences_stats(weekday, season, weather):
-    """Calculate the statistics for tourist presences."""
-    # Season
+    """Return a truncated-normal distribution for tourist presences."""
     mean = season_stats.loc[season, "mean_tourists"]
     std2 = season_stats.loc[season, "std_tourists"] ** 2
-    # Weather
     mean += weather_stats.loc[weather, "mean_tourists"]
     std2 += weather_stats.loc[weather, "std_tourists"] ** 2
-    # Weekdays
     mean += weekday_stats.loc[weekday, "mean_tourists"]
     std2 += weekday_stats.loc[weekday, "std_tourists"] ** 2
-    # Finalize and return
-    return {"mean": mean, "std": std2 ** (1 / 2)}
+    std = std2 ** (1 / 2)
+    a = -mean / std
+    b = 10.0
+    return stats.truncnorm(a, b, loc=mean, scale=std)
 
 
 def excursionist_presences_stats(weekday, season, weather):
-    """Calculate the statistics for excursionist presences."""
-    # Season
+    """Return a truncated-normal distribution for excursionist presences."""
     mean = season_stats.loc[season, "mean_excursionists"]
     std2 = season_stats.loc[season, "std_excursionists"] ** 2
-    # Weather
     mean += weather_stats.loc[weather, "mean_excursionists"]
     std2 += weather_stats.loc[weather, "std_excursionists"] ** 2
-    # Weekdays
     mean += weekday_stats.loc[weekday, "mean_excursionists"]
     std2 += weekday_stats.loc[weekday, "std_excursionists"] ** 2
-    # Finalize and return
-    return {"mean": mean, "std": std2 ** (1 / 2)}
+    std = std2 ** (1 / 2)
+    a = -mean / std
+    b = 10.0
+    return stats.truncnorm(a, b, loc=mean, scale=std)

@@ -32,7 +32,9 @@ def _demo_00_index_modes() -> None:
     """Block 00: Index modes."""
     from scipy import stats
     from civic_digital_twins.dt_model.model.index import (
-        ConstIndex, DistributionIndex, Index,
+        ConstIndex,
+        DistributionIndex,
+        Index,
     )
 
     # Distribution-backed (abstract — must be resolved in each scenario)
@@ -94,7 +96,7 @@ def _demo_05_legacy_api() -> None:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        model = Model("demo", [x, y, z])   # DeprecationWarning
+        model = Model("demo", [x, y, z])  # DeprecationWarning
 
     assert len(model.abstract_indexes()) == 2
     assert model.is_instantiated() is False
@@ -190,7 +192,7 @@ def _demo_17_constraint() -> None:
     @dataclass(eq=False)
     class Constraint:
         name: str
-        usage: Index     # formula-mode index for usage
+        usage: Index  # formula-mode index for usage
         capacity: Index  # constant or distribution-backed capacity
 
     usage = Index("usage_demo", 1.0)
@@ -222,12 +224,20 @@ def _demo_18_20_overtourism() -> None:
         {"good": 0.5, "unsettled": 0.3, "bad": 0.2},
     )
 
-    PV_tourists = PresenceVariable(
-        "tourists", [CV_weather], lambda w: {"mean": 5000.0, "std": 1000.0}
-    )
-    PV_excursionists = PresenceVariable(
-        "excursionists", [CV_weather], lambda w: {"mean": 3000.0, "std": 500.0}
-    )
+    def tourist_dist(w):
+        mean, std = 5000.0, 1000.0
+        a = -mean / std
+        b = 10.0
+        return stats.truncnorm(a, b, loc=mean, scale=std)
+
+    def excursionist_dist(w):
+        mean, std = 3000.0, 500.0
+        a = -mean / std
+        b = 10.0
+        return stats.truncnorm(a, b, loc=mean, scale=std)
+
+    PV_tourists = PresenceVariable("tourists", [CV_weather], tourist_dist)
+    PV_excursionists = PresenceVariable("excursionists", [CV_weather], excursionist_dist)
 
     usage_idx = Index("usage", PV_tourists + PV_excursionists)
     capacity_idx = ConstIndex("capacity_idx", 100_000.0)
@@ -243,10 +253,10 @@ def _demo_18_20_overtourism() -> None:
     )
 
     # Block 18 — OvertourismModel attribute access
-    model.cvs          # list[ContextVariable]
-    model.pvs          # list[PresenceVariable]
-    model.domain_indexes   # list[Index]  (e.g. scaling factors)
-    model.capacities   # list[Index]      (capacity indexes)
+    model.cvs  # list[ContextVariable]
+    model.pvs  # list[PresenceVariable]
+    model.domain_indexes  # list[Index]  (e.g. scaling factors)
+    model.capacities  # list[Index]      (capacity indexes)
     model.constraints  # list[Constraint]
 
     # Block 19 — OvertourismEnsemble
@@ -257,8 +267,8 @@ def _demo_18_20_overtourism() -> None:
     )
 
     # Block 20 — Grid Evaluation with OvertourismEnsemble
-    tt = np.linspace(0, 50_000, 101)   # tourist presence axis
-    ee = np.linspace(0, 50_000, 101)   # excursionist presence axis
+    tt = np.linspace(0, 50_000, 101)  # tourist presence axis
+    ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
     result = Evaluation(model).evaluate(
         ensemble,

@@ -57,23 +57,28 @@ each scenario.
 ## 2 — Presence variable
 
 ```python
+from scipy import stats
 from overtourism_molveno.overtourism_metamodel import PresenceVariable
 
-# A mapping from (CV assignments) to (mean, std) of a truncated-normal
-# presence distribution, keyed by (season_value, weather_value)
-presence_stats = {
-    ("low",  "good"):      (2_000,  500),
-    ("low",  "unsettled"): (1_500,  400),
-    ("low",  "bad"):       (1_000,  300),
-    ("high", "good"):      (8_000, 2_000),
-    ("high", "unsettled"): (6_000, 1_500),
-    ("high", "bad"):       (4_000, 1_000),
-}
+def visitors_distribution(season, weather):
+    """Return a truncated-normal distribution for visitor presence."""
+    presence_stats = {
+        ("low",  "good"):      (2_000,  500),
+        ("low",  "unsettled"): (1_500,  400),
+        ("low",  "bad"):       (1_000,  300),
+        ("high", "good"):      (8_000, 2_000),
+        ("high", "unsettled"): (6_000, 1_500),
+        ("high", "bad"):       (4_000, 1_000),
+    }
+    mean, std = presence_stats[(season, weather)]
+    a = -mean / std
+    b = 10.0
+    return stats.truncnorm(a, b, loc=mean, scale=std)
 
 PV_visitors = PresenceVariable(
     "visitors",
     [CV_season, CV_weather],
-    presence_stats,
+    visitors_distribution,
 )
 ```
 

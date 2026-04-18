@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
-from scipy import stats
 from scipy.stats import rv_continuous
 from scipy.stats._distn_infrastructure import rv_continuous_frozen
 
@@ -196,16 +195,15 @@ class PresenceVariable(Index):
     cvs:
         Context variables that influence the presence distribution.
     distribution:
-        Callable that accepts the CV values and returns a dict with
-        ``"mean"`` and ``"std"`` keys used to parameterise a truncated
-        normal distribution.
+        Callable that accepts the CV values and returns a frozen scipy
+        distribution (e.g. ``scipy.stats.truncnorm``).
     """
 
     def __init__(
         self,
         name: str,
         cvs: list[ContextVariable],
-        distribution: Callable | None = None,
+        distribution: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__(name, None)
         self.cvs = cvs
@@ -232,16 +230,8 @@ class PresenceVariable(Index):
         if cvs is not None:
             all_cvs = [cvs[cv] for cv in self.cvs if cv in cvs.keys()]
         assert self.distribution is not None
-        distr: dict = self.distribution(*all_cvs)
-        return np.asarray(
-            stats.truncnorm.rvs(
-                -distr["mean"] / distr["std"],
-                10,
-                loc=distr["mean"],
-                scale=distr["std"],
-                size=nr,
-            ),
-        )
+        distr = self.distribution(*all_cvs)
+        return np.asarray(distr.rvs(size=nr))
 
 
 # ---------------------------------------------------------------------------
