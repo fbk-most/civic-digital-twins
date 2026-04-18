@@ -10,10 +10,6 @@ if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
 import numpy as np
-from scipy import stats
-
-from civic_digital_twins.dt_model import Evaluation, piecewise
-from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, Index
 from overtourism_molveno.overtourism_metamodel import (
     CategoricalContextVariable,
     Constraint,
@@ -23,6 +19,9 @@ from overtourism_molveno.overtourism_metamodel import (
     PresenceVariable,
     UniformCategoricalContextVariable,
 )
+from scipy import stats
+
+from civic_digital_twins.dt_model import Distribution, DistributionIndex, Evaluation, Index, graph
 
 # ---------------------------------------------------------------------------
 # overtourism-getting-started.md §1 — Context variables
@@ -80,7 +79,7 @@ I_C_beach = DistributionIndex("beach_capacity", stats.triang, {"loc": 3000.0, "s
 # Usage factor: depends on context variable (bad weather reduces beach use)
 I_U_beach_visitors = Index(
     "beach_usage_factor",
-    piecewise((0.30, CV_weather == "bad"), (0.70, True)),
+    graph.piecewise((0.30, CV_weather == "bad"), (0.70, True)),
 )
 
 # Usage formula: visitors × usage_factor

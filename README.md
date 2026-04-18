@@ -25,9 +25,10 @@ evaluated by a NumPy-based interpreter that maps each node to the
 corresponding `numpy` operation.
 
 ```python
+import numpy as np
+
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-import numpy as np
 
 a = graph.placeholder("a")
 b = graph.placeholder("b")
@@ -62,9 +63,9 @@ abstractions built on top of the engine:
   define the scenario contract consumed by `Evaluation`.
 
 ```python
-from civic_digital_twins.dt_model import Evaluation, Model, DistributionIndex
-from civic_digital_twins.dt_model.model.index import Index
 from scipy import stats
+
+from civic_digital_twins.dt_model import DistributionIndex, Evaluation, Index, Model
 
 # Two distribution-backed indexes
 x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})

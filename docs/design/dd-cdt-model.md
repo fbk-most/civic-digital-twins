@@ -91,9 +91,8 @@ dedicated subclasses (`DistributionIndex`, `ConstIndex`, `CategoricalIndex`) rat
 
 ```python
 from scipy import stats
-from civic_digital_twins.dt_model.model.index import (
-    ConstIndex, DistributionIndex, Index,
-)
+
+from civic_digital_twins.dt_model import ConstIndex, DistributionIndex, Index
 
 # Distribution-backed (abstract — must be resolved in each scenario)
 # Pass any scipy-compatible distribution callable and a params dict:
@@ -154,7 +153,8 @@ For the usage pattern and integration with `ModelVariant`, see
 
 ```python
 import numpy as np
-from civic_digital_twins.dt_model.model.index import TimeseriesIndex
+
+from civic_digital_twins.dt_model import TimeseriesIndex
 
 # Fixed time series
 flow = TimeseriesIndex("flow", np.array([10.0, 20.0, 30.0]))
@@ -220,9 +220,10 @@ constructor parameter must be declared as a field in `Inputs`.  If a
 
 ```python
 from dataclasses import dataclass
-from civic_digital_twins.dt_model import Model
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
 from scipy import stats
+
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 
 class DemoModel(Model):
 
@@ -253,8 +254,8 @@ use the dataclass-based API above.
 
 ```python
 from scipy import stats
-from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 
 x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
 y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
@@ -350,9 +351,10 @@ declared in `Inputs`:
 
 ```python
 from dataclasses import dataclass
-from civic_digital_twins.dt_model import Model
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
 from scipy import stats
+
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 
 class BadModel(Model):
 
@@ -421,7 +423,7 @@ for models whose abstract indexes are all distribution-backed.  It draws
 axis with uniform weights (`1/size` each).
 
 ```python
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+from civic_digital_twins.dt_model import DistributionEnsemble
 
 ensemble = DistributionEnsemble(model, size=100)
 # ensemble.ensemble_axes   → (Axis("x", ENSEMBLE), …)
@@ -444,9 +446,7 @@ model's abstract indexes.  Each `EnsembleAxisSpec` names the axis and
 lists the indexes it covers:
 
 ```python
-from civic_digital_twins.dt_model.simulation.ensemble import (
-    EnsembleAxisSpec, PartitionedEnsemble,
-)
+from civic_digital_twins.dt_model import EnsembleAxisSpec, PartitionedEnsemble
 
 ens = PartitionedEnsemble(
     model,
@@ -531,9 +531,8 @@ grid.
 ```python
 import numpy as np
 from scipy import stats
-from civic_digital_twins.dt_model import Evaluation, Model
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Evaluation, Index, Model
 
 # Define the model
 x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
@@ -645,8 +644,8 @@ The standard overtourism evaluation pattern:
 
 ```python
 import numpy as np
-from civic_digital_twins.dt_model import Evaluation
-from civic_digital_twins.dt_model.model.index import Distribution
+
+from civic_digital_twins.dt_model import Distribution, Evaluation
 
 tt = np.linspace(0, 50_000, 101)   # tourist presence axis
 ee = np.linspace(0, 50_000, 101)   # excursionist presence axis

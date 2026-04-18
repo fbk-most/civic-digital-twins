@@ -11,16 +11,17 @@ from scipy import stats
 
 from civic_digital_twins.dt_model import (
     CategoricalIndex,
+    ConstIndex,
     DistributionIndex,
+    GenericIndex,
     Index,
     InputsContractWarning,
     Model,
     ModelContractWarning,
     ModelVariant,
     TimeseriesIndex,
+    graph,
 )
-from civic_digital_twins.dt_model.engine.frontend import graph
-from civic_digital_twins.dt_model.model.index import ConstIndex, GenericIndex
 
 
 def _id_in(idx: GenericIndex, seq: Sequence[GenericIndex]) -> bool:
@@ -334,7 +335,8 @@ assert any(issubclass(w.category, InputsContractWarning) for w in caught), (
 def _demo_08_filterwarnings() -> None:
     """Block 08: Escalate contract warnings to errors."""
     import warnings
-    from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+    from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
     with warnings.catch_warnings():
         # Escalate all contract warnings to errors (recommended for CI)
@@ -429,11 +431,11 @@ def _demo_10_proxy_attributes() -> None:
         },
         selector="bike",
     )
-    mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
-    mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
-    mv.indexes                  # index list of the active (BikeModel) variant only
-    mv.abstract_indexes()       # delegates to BikeModel.abstract_indexes()
-    mv.is_instantiated()        # delegates to BikeModel.is_instantiated()
+    mv.outputs.emissions  # delegates to BikeModel.outputs.emissions
+    mv.inputs.capacity  # delegates to BikeModel.inputs.capacity
+    mv.indexes  # index list of the active (BikeModel) variant only
+    mv.abstract_indexes()  # delegates to BikeModel.abstract_indexes()
+    mv.is_instantiated()  # delegates to BikeModel.is_instantiated()
 
 
 # ---------------------------------------------------------------------------
@@ -451,8 +453,8 @@ def _demo_11_inactive_variants() -> None:
         },
         selector="bike",
     )
-    mv.variants["train"].outputs.emissions   # explicit — reaches inactive variant
-    mv.variants["train"].indexes             # index list of TrainModel only
+    mv.variants["train"].outputs.emissions  # explicit — reaches inactive variant
+    mv.variants["train"].indexes  # index list of TrainModel only
 
     # Active variant's emissions IS in mv.indexes; inactive's is NOT
     assert _id_in(mv.variants["bike"].outputs.emissions, mv.indexes)
@@ -493,7 +495,7 @@ def _demo_13_categorical_selector() -> None:
     mv = ModelVariant(
         "TransportModel",
         variants={
-            "bike":  BikeModel(),
+            "bike": BikeModel(),
             "train": TrainModel(),
         },
         selector=mode,
@@ -522,18 +524,19 @@ assert peak_factor.value is not None
 
 def _demo_15_piecewise_categorical() -> None:
     """Block 15: CategoricalIndex season guard with four-clause graph.piecewise."""
-    from civic_digital_twins.dt_model import CategoricalIndex
-    from civic_digital_twins.dt_model.engine.frontend import graph
+    from civic_digital_twins.dt_model import CategoricalIndex, graph
 
-    season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25,
-                                          "autumn": 0.25, "winter": 0.25})
+    season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25, "autumn": 0.25, "winter": 0.25})
 
-    peak_factor = Index("peak_factor", graph.piecewise(
-        (1.8, season == "summer"),
-        (1.2, season == "spring"),
-        (1.0, season == "autumn"),
-        (0.7, True),              # winter — default
-    ))
+    peak_factor = Index(
+        "peak_factor",
+        graph.piecewise(
+            (1.8, season == "summer"),
+            (1.2, season == "spring"),
+            (1.0, season == "autumn"),
+            (0.7, True),  # winter — default
+        ),
+    )
 
     assert peak_factor.value is not None
 
@@ -570,7 +573,8 @@ assert _smoothed_node is not None
 def _demo_29_filterwarnings_api() -> None:
     """Block 29: API reference — escalate contract warnings."""
     import warnings
-    from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+    from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
     with warnings.catch_warnings():
         # Recommended for CI — escalate all contract warnings to errors

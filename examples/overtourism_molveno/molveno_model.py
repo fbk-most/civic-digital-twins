@@ -78,9 +78,7 @@ from dataclasses import dataclass
 
 from scipy import stats
 
-from civic_digital_twins.dt_model import piecewise
-from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
-from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model import DistributionIndex, GenericIndex, Index, Model, graph
 
 try:
     from .molveno_presence_stats import (
@@ -286,9 +284,11 @@ class ParkingModel(Model):
 
         i_u_parking = Index(
             "parking usage",
-            inputs.pv_tourists * inputs.i_u_tourists_parking
+            inputs.pv_tourists
+            * inputs.i_u_tourists_parking
             / (inputs.i_xa_tourists_per_vehicle * inputs.i_xo_tourists_parking)
-            + inputs.pv_excursionists * inputs.i_u_excursionists_parking
+            + inputs.pv_excursionists
+            * inputs.i_u_excursionists_parking
             / (inputs.i_xa_excursionists_per_vehicle * inputs.i_xo_excursionists_parking),
         )
 
@@ -556,10 +556,7 @@ class FoodModel(Model):
 
         i_u_food = Index(
             "food usage",
-            (
-                inputs.pv_tourists * inputs.i_u_tourists_food
-                + inputs.pv_excursionists * inputs.i_u_excursionists_food
-            )
+            (inputs.pv_tourists * inputs.i_u_tourists_food + inputs.pv_excursionists * inputs.i_u_excursionists_food)
             / (inputs.i_xa_visitors_food * inputs.i_xo_visitors_food),
         )
 
@@ -628,7 +625,7 @@ class MolvenoModel(OvertourismModel):
         i_u_tourists_parking = Index("tourist parking usage factor", 0.02)
         i_u_excursionists_parking = Index(
             "excursionist parking usage factor",
-            piecewise((0.55, cv_weather == "bad"), (0.80, True)),
+            graph.piecewise((0.55, cv_weather == "bad"), (0.80, True)),
         )
         i_xa_tourists_per_vehicle = Index("tourists per vehicle allocation factor", 2.5)
         i_xa_excursionists_per_vehicle = Index("excursionists per vehicle allocation factor", 2.5)
@@ -639,11 +636,11 @@ class MolvenoModel(OvertourismModel):
         # Beach parameters
         i_u_tourists_beach = Index(
             "tourist beach usage factor",
-            piecewise((0.25, cv_weather == "bad"), (0.50, True)),
+            graph.piecewise((0.25, cv_weather == "bad"), (0.50, True)),
         )
         i_u_excursionists_beach = Index(
             "excursionist beach usage factor",
-            piecewise((0.35, cv_weather == "bad"), (0.80, True)),
+            graph.piecewise((0.35, cv_weather == "bad"), (0.80, True)),
         )
         i_xo_tourists_beach = DistributionIndex(
             "tourists on beach rotation factor",
@@ -666,7 +663,7 @@ class MolvenoModel(OvertourismModel):
         i_u_tourists_food = Index("tourist food service usage factor", 0.20)
         i_u_excursionists_food = Index(
             "excursionist food service usage factor",
-            piecewise((0.80, cv_weather == "bad"), (0.40, True)),
+            graph.piecewise((0.80, cv_weather == "bad"), (0.40, True)),
         )
         i_xa_visitors_food = Index("visitors in food service allocation factor", 0.9)
         i_xo_visitors_food = Index("visitors in food service rotation factor", 2.0)

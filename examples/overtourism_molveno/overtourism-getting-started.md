@@ -88,8 +88,8 @@ dense range of visitor counts.
 
 ```python
 from scipy import stats
-from civic_digital_twins.dt_model import piecewise
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
+from civic_digital_twins.dt_model import DistributionIndex, Index, graph
 from overtourism_molveno.overtourism_metamodel import Constraint
 
 # Capacity with uncertainty
@@ -98,7 +98,7 @@ I_C_beach = DistributionIndex("beach_capacity", stats.triang, {"loc": 3000.0, "s
 # Usage factor: depends on context variable (bad weather reduces beach use)
 I_U_beach_visitors = Index(
     "beach_usage_factor",
-    piecewise((0.30, CV_weather == "bad"), (0.70, True)),
+    graph.piecewise((0.30, CV_weather == "bad"), (0.70, True)),
 )
 
 # Usage formula: visitors × usage_factor
@@ -109,7 +109,7 @@ C_beach = Constraint(
 )
 ```
 
-`piecewise((expr, cond), …)` builds a conditional formula node that the
+`graph.piecewise((expr, cond), …)` builds a conditional formula node that the
 engine evaluates lazily — the condition `CV_weather == "bad"` is a graph
 node that resolves to `True` or `False` once `CV_weather` is assigned a
 concrete value in a scenario.
@@ -135,8 +135,7 @@ flat `indexes` list so that `Evaluation` can find it.
 ## 5 — Ensemble
 
 ```python
-from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
-from civic_digital_twins.dt_model.model.index import ContextVariable
+from overtourism_molveno.overtourism_metamodel import ContextVariable, OvertourismEnsemble
 
 scenario: dict[ContextVariable, list] = {
     CV_season:  ["low", "high"],
@@ -182,7 +181,7 @@ The sustainability field measures what fraction of the weighted scenario
 population considers each visitor count sustainable:
 
 ```python
-from civic_digital_twins.dt_model.model.index import Distribution
+from civic_digital_twins.dt_model import Distribution
 
 field = np.ones(visitors_axis.size)
 

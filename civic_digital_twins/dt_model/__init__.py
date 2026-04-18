@@ -1,6 +1,5 @@
 """Digital twin modeling and simulation library."""
 
-from .engine.frontend.graph import piecewise
 from .model import (
     DOMAIN,
     ENSEMBLE,
@@ -57,5 +56,4 @@ __all__ = [
     "PartitionedEnsemble",
     "TimeseriesIndex",
     "WeightedScenario",
-    "piecewise",
 ]

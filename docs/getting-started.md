@@ -45,8 +45,8 @@ plain `Index` for formulas and constants.
 ```python
 import numpy as np
 from scipy import stats
-from civic_digital_twins.dt_model import Model
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 
 # Two uncertain parameters
 fuel_efficiency = DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0})
@@ -75,8 +75,10 @@ and `DistributionEnsemble` can sample it:
 
 ```python
 from dataclasses import dataclass
-from civic_digital_twins.dt_model import DistributionIndex, Index, Model
+
 from scipy import stats
+
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 
 class Co2Model(Model):
 
@@ -170,8 +172,8 @@ time.
 
 ```python
 import numpy as np
-from civic_digital_twins.dt_model.model.index import TimeseriesIndex
-from civic_digital_twins.dt_model.engine.frontend import graph
+
+from civic_digital_twins.dt_model import TimeseriesIndex, graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 # 24-hour demand time series (one value per hour)

@@ -317,7 +317,8 @@ incrementally.  During development and in CI, escalate it to an error:
 
 ```python
 import warnings
-from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
 # Escalate all contract warnings to errors (recommended for CI)
 warnings.filterwarnings("error", category=ModelContractWarning)
@@ -445,6 +446,7 @@ directly.  Use `ModelVariant.guards_to_selector` to build one from a list of `(k
 
 ```python
 from scipy import stats
+
 from civic_digital_twins.dt_model import DistributionIndex, ModelVariant
 
 cost_threshold = DistributionIndex("cost_threshold", stats.uniform, {"loc": 3.0, "scale": 8.0})
@@ -496,15 +498,17 @@ scenario — useful for post-evaluation analysis.
 `ModelVariant` selector:
 
 ```python
-season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25,
-                                      "autumn": 0.25, "winter": 0.25})
+season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25, "autumn": 0.25, "winter": 0.25})
 
-peak_factor = Index("peak_factor", graph.piecewise(
-    (1.8, season == "summer"),
-    (1.2, season == "spring"),
-    (1.0, season == "autumn"),
-    (0.7, True),              # winter — default
-))
+peak_factor = Index(
+    "peak_factor",
+    graph.piecewise(
+        (1.8, season == "summer"),
+        (1.2, season == "spring"),
+        (1.0, season == "autumn"),
+        (0.7, True),  # winter — default
+    ),
+)
 ```
 
 `season == "summer"` produces a `graph.equal` node that the engine evaluates as a boolean mask
@@ -1320,7 +1324,8 @@ categories:
 
 ```python
 import warnings
-from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
 # Recommended for CI — escalate all contract warnings to errors
 warnings.filterwarnings("error", category=ModelContractWarning)
