@@ -225,16 +225,10 @@ def _demo_18_20_overtourism() -> None:
     )
 
     def tourist_dist(w):
-        mean, std = 5000.0, 1000.0
-        a = -mean / std
-        b = 10.0
-        return stats.truncnorm(a, b, loc=mean, scale=std)
+        return stats.uniform(loc=4000.0, scale=2000.0)
 
     def excursionist_dist(w):
-        mean, std = 3000.0, 500.0
-        a = -mean / std
-        b = 10.0
-        return stats.truncnorm(a, b, loc=mean, scale=std)
+        return stats.uniform(loc=2500.0, scale=1000.0)
 
     PV_tourists = PresenceVariable("tourists", [CV_weather], tourist_dist)
     PV_excursionists = PresenceVariable("excursionists", [CV_weather], excursionist_dist)
