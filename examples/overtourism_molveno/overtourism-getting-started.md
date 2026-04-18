@@ -65,7 +65,7 @@ def visitors_distribution(season, weather):
     presence_stats = {
         ("low",  "good"):      (1_500,  2_500),
         ("low",  "unsettled"): (1_100,  1_900),
-        ("low",  "bad"):       (  700,  1_300),
+        ("low",  "bad"):       (1_000,  1_300),
         ("high", "good"):      (6_000, 10_000),
         ("high", "unsettled"): (4_500,  7_500),
         ("high", "bad"):       (3_000,  5_000),

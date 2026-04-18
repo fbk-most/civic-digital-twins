@@ -175,7 +175,7 @@ class ContinuousContextVariable(ContextVariable):
             assert nr > 0
             return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]
 
-        subset_probability = list(self.rvc.pdf(subset))
+        subset_probability = np.asarray(self.rvc.pdf(subset)).tolist()
         subset_probability_sum = sum(subset_probability)
         return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
 

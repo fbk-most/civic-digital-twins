@@ -72,6 +72,7 @@ dev = [
     "pytest>=7.0.0",        # test runner
     "pytest-cov>=4.0.0",    # code coverage plugin for pytest
     "ruff>=0.11.0",         # formatter + linter
+    "scipy-stubs>=1.17.1.4",
 ]
 
 # Project-specific URLs
@@ -149,7 +150,23 @@ convention = "numpy"
 # Pyright Configuration
 [tool.pyright]
 
+# Type checking mode
+typeCheckingMode = "standard"
+
+# Use library code for types when stub files are not available
+useLibraryCodeForTypes = true
+
+# Target Python version
+pythonVersion = "3.12"
+
+# Directories to include in type checking
+include = ["civic_digital_twins", "tests", "examples"]
+
 # Add examples/ to the search path so pyright can resolve example packages
 # (e.g. overtourism_molveno, mobility_bologna) the same way pytest does via
 # its pythonpath setting.
 extraPaths = ["examples"]
+
+# Virtual environment settings
+venvPath = "."
+venv = ".venv"

@@ -122,16 +122,14 @@ def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict
         (yi, xi) = np.nonzero(matrix)
         # yi = row indices (tourists axis 0), xi = col indices (excursionists axis 1)
 
-        horizontal_regr = None
-        vertical_regr = None
         try:
             horizontal_regr = stats.linregress(axes_list[0][yi], axes_list[1][xi])
         except ValueError:
-            pass
+            horizontal_regr = None
         try:
             vertical_regr = stats.linregress(axes_list[1][xi], axes_list[0][yi])
         except ValueError:
-            pass
+            vertical_regr = None
 
         def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
             if regr.slope < 0.0:
