@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scipy-stubs` added to dev dependencies for improved type checking.
+- Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
+
 **Typed axes — canonical shape contract for evaluation results**
 
 - `Axis(name, role)` and `AxisRole` (`PARAMETER`, `ENSEMBLE`, `DOMAIN`) — explicit
@@ -58,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eliminating source-compilation delays in CI. (#122)
 
 ### Fixed
+
+- `PresenceVariable` now accepts a distribution callable that returns a frozen
+  scipy distribution (e.g. `scipy.stats.truncnorm`) instead of a dict with
+  `mean`/`std` keys. The `sample()` method calls `.rvs()` on the returned
+  distribution. This fixes the pyright type error in the getting started
+  guide (#147).
 
 - `EvaluationResult.marginalize()` raised `IndexError` on constant nodes in
   grid+ensemble mode (two or more PARAMETER axes plus at least one ENSEMBLE axis)
