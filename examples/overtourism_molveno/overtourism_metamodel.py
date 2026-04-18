@@ -6,7 +6,7 @@ This module provides the building blocks for an overtourism model:
   variables that influence the model but are not directly controlled
   (weekday, season, weather, …).
 * :class:`PresenceVariable` — placeholder index representing visitor presence,
-  sampled from a context-dependent truncated-normal distribution.
+  sampled from a context-dependent distribution (e.g. uniform or truncnorm).
 * :class:`Constraint` — named pairing of a usage formula index and a capacity
   index.
 * :class:`OvertourismModel` — :class:`~dt_model.model.model.Model` subclass
@@ -173,7 +173,7 @@ class ContinuousContextVariable(ContextVariable):
         """Sample from the continuous context variable."""
         if force_sample or subset is None or nr < len(subset):
             assert nr > 0
-            return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]  # type: ignore[arg-type]
+            return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]
 
         subset_probability = list(self.rvc.pdf(subset))
         subset_probability_sum = sum(subset_probability)
