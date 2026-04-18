@@ -1,9 +1,0 @@
-{
-  "typeCheckingMode": "standard",
-  "useLibraryCodeForTypes": true,
-  "pythonVersion": "3.12",
-  "include": ["civic_digital_twins", "tests"],
-  "extraPaths": ["examples"],
-  "venvPath": ".",
-  "venv": ".venv"
-}

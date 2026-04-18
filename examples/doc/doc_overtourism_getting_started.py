@@ -38,7 +38,7 @@ CV_weather = UniformCategoricalContextVariable(
     ["good", "unsettled", "bad"],
 )
 
-assert CV_season.value is None    # placeholder
+assert CV_season.value is None  # placeholder
 assert CV_weather.value is None
 
 
@@ -46,19 +46,25 @@ assert CV_weather.value is None
 # overtourism-getting-started.md §2 — Presence variable
 # ---------------------------------------------------------------------------
 
-presence_stats = {
-    ("low", "good"): (2_000, 500),
-    ("low", "unsettled"): (1_500, 400),
-    ("low", "bad"): (1_000, 300),
-    ("high", "good"): (8_000, 2_000),
-    ("high", "unsettled"): (6_000, 1_500),
-    ("high", "bad"): (4_000, 1_000),
-}
+
+def visitors_distribution(season, weather):
+    """Return a uniform distribution for visitor presence."""
+    presence_stats = {
+        ("low", "good"): (1_500, 2_500),
+        ("low", "unsettled"): (1_100, 1_900),
+        ("low", "bad"): (1_000, 1_300),
+        ("high", "good"): (6_000, 10_000),
+        ("high", "unsettled"): (4_500, 7_500),
+        ("high", "bad"): (3_000, 5_000),
+    }
+    low, high = presence_stats[(season, weather)]
+    return stats.uniform(loc=low, scale=high - low)
+
 
 PV_visitors = PresenceVariable(
     "visitors",
     [CV_season, CV_weather],
-    presence_stats,
+    visitors_distribution,
 )
 
 assert PV_visitors.value is None  # placeholder (axis in grid evaluation)
@@ -166,7 +172,4 @@ assert field[0] > 0.9
 
 
 if __name__ == "__main__":
-    print(
-        f"doc_overtourism_getting_started.py: all snippets OK  "
-        f"(field[0]={field[0]:.3f}, field[-1]={field[-1]:.3f})"
-    )
+    print(f"doc_overtourism_getting_started.py: all snippets OK  (field[0]={field[0]:.3f}, field[-1]={field[-1]:.3f})")

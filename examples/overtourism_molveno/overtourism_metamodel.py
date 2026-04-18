@@ -6,7 +6,7 @@ This module provides the building blocks for an overtourism model:
   variables that influence the model but are not directly controlled
   (weekday, season, weather, …).
 * :class:`PresenceVariable` — placeholder index representing visitor presence,
-  sampled from a context-dependent truncated-normal distribution.
+  sampled from a context-dependent distribution (e.g. uniform or truncnorm).
 * :class:`Constraint` — named pairing of a usage formula index and a capacity
   index.
 * :class:`OvertourismModel` — :class:`~dt_model.model.model.Model` subclass
@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
-from scipy import stats
 from scipy.stats import rv_continuous
 from scipy.stats._distn_infrastructure import rv_continuous_frozen
 
@@ -174,9 +173,9 @@ class ContinuousContextVariable(ContextVariable):
         """Sample from the continuous context variable."""
         if force_sample or subset is None or nr < len(subset):
             assert nr > 0
-            return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]  # type: ignore[arg-type]
+            return [(1 / nr, r) for r in list(self.rvc.rvs(size=nr))]
 
-        subset_probability = list(self.rvc.pdf(subset))
+        subset_probability = np.asarray(self.rvc.pdf(subset)).tolist()
         subset_probability_sum = sum(subset_probability)
         return [(p / subset_probability_sum, v) for (p, v) in zip(subset_probability, subset)]
 
@@ -196,16 +195,15 @@ class PresenceVariable(Index):
     cvs:
         Context variables that influence the presence distribution.
     distribution:
-        Callable that accepts the CV values and returns a dict with
-        ``"mean"`` and ``"std"`` keys used to parameterise a truncated
-        normal distribution.
+        Callable that accepts the CV values and returns a frozen scipy
+        distribution (e.g. ``scipy.stats.truncnorm``).
     """
 
     def __init__(
         self,
         name: str,
         cvs: list[ContextVariable],
-        distribution: Callable | None = None,
+        distribution: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__(name, None)
         self.cvs = cvs
@@ -232,16 +230,8 @@ class PresenceVariable(Index):
         if cvs is not None:
             all_cvs = [cvs[cv] for cv in self.cvs if cv in cvs.keys()]
         assert self.distribution is not None
-        distr: dict = self.distribution(*all_cvs)
-        return np.asarray(
-            stats.truncnorm.rvs(
-                -distr["mean"] / distr["std"],
-                10,
-                loc=distr["mean"],
-                scale=distr["std"],
-                size=nr,
-            ),
-        )
+        distr = self.distribution(*all_cvs)
+        return np.asarray(distr.rvs(size=nr))
 
 
 # ---------------------------------------------------------------------------
