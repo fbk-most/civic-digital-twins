@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ambiguity (#142).
 - `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
 
-**Document snippes - test alignment check**
+**Document snippets - test alignment check**
 
 - `tests/test_doc_sync.py` — automated snippet-alignment test that compares
   every Python code block in the design docs and guides against its paired
@@ -42,9 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compact per-pair summary (`= OK` / `~ OK` / `~ Warn` / `✗ Fail`); pass a
   doc-name fragment for a verbose block-by-block report.  Stub and
   reference-only blocks are detected and skipped automatically.
+  `= OK` now requires 100% score and all per-line ratios ≥ 0.99; any `~ OK`
+  or `~ Warn` block fails the test unless listed in `_EXPECTED_NEAR_VERBATIM`.
 - `examples/doc/doc_readme.py` — new script covering the two README code
   snippets (engine layer and model/simulation layer).
 - `examples/doc/` scripts updated to better match the docs.
+- `civic_digital_twins.dt_model.graph` shim — `graph` is now importable
+  directly from the top-level `dt_model` package (`from
+  civic_digital_twins.dt_model import graph`), closing #123.
+- SPDX-License-Identifier headers added to all tracked Python and Markdown
+  files; pre-release verification step added to README checklist.
 
 ### Changed
 
@@ -73,7 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mean`/`std` keys. The `sample()` method calls `.rvs()` on the returned
   distribution. This fixes the pyright type error in the getting started
   guide (#147).
-
 - `EvaluationResult.marginalize()` raised `IndexError` on constant nodes in
   grid+ensemble mode (two or more PARAMETER axes plus at least one ENSEMBLE axis)
   (#155).
@@ -91,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PARAMETER dims and non-trivial DOMAIN dims are now preserved.
 - Dependabot vulnerability alerts resolved: `fonttools` bumped to `>=4.60.2`
   (moderate) and `pillow` to `>=12.1.1` (high) via lockfile regeneration. (#132)
+- Documents and `examples/doc/` scripts updated so that the scripts no longer emit
+  warnings at runtime.
 
 ### Deprecated
 
