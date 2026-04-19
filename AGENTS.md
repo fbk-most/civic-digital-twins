@@ -39,4 +39,5 @@ uv run python examples/doc/doc_readme.py
 - **Pyright config**: `pyproject.toml` includes `examples` in both `include` (type-checked) and `extraPaths` (import resolution).
 - **Release process**: Update version in `pyproject.toml`, run `uv lock`, update `CHANGELOG.md`, verify doc examples, then tag and push.
 - **Doc/example alignment**: Every script under `examples/doc/` must be kept verbatim-aligned with its counterpart in `docs/`. This is enforced as a release checklist step — run the doc examples and confirm no drift.
+- **SPDX headers**: Every `.py` file must open with `# SPDX-License-Identifier: Apache-2.0`; every `.md` file must open with `<!-- SPDX-License-Identifier: Apache-2.0 -->`. Add the header whenever you create a new file. Pre-release, verify with `git ls-files '*.py' '*.md' | xargs grep -rL "SPDX-License-Identifier"` (should print nothing).
 - **Minimum Python**: 3.12 (defined in pyproject.toml).
