@@ -1,4 +1,5 @@
 """Runnable snippets from docs/getting-started.md."""
+# SPDX-License-Identifier: Apache-2.0
 
 import warnings
 from dataclasses import dataclass
@@ -6,10 +7,16 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation, Model
-from civic_digital_twins.dt_model.engine.frontend import graph
+from civic_digital_twins.dt_model import (
+    DistributionEnsemble,
+    DistributionIndex,
+    Evaluation,
+    Index,
+    Model,
+    TimeseriesIndex,
+    graph,
+)
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index, TimeseriesIndex
 
 # ---------------------------------------------------------------------------
 # getting-started.md §1 — Define the model (legacy flat-list API)
@@ -26,7 +33,7 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
     model = Model("co2_model", [fuel_efficiency, distance, litres, co2_per_litre, co2])
 
-assert len(model.abstract_indexes()) == 2   # fuel_efficiency, distance
+assert len(model.abstract_indexes()) == 2  # fuel_efficiency, distance
 assert model.is_instantiated() is False
 
 
@@ -58,8 +65,8 @@ class Co2Model(Model):
         Outputs = Co2Model.Outputs
 
         inputs = Inputs(
-            fuel_efficiency = DistributionIndex("fuel_efficiency_km_l2", stats.uniform, {"loc": 10.0, "scale": 5.0}),
-            distance = DistributionIndex("distance_km2", stats.uniform, {"loc": 50.0, "scale": 30.0}),
+            fuel_efficiency=DistributionIndex("fuel_efficiency_km_l2", stats.uniform, {"loc": 10.0, "scale": 5.0}),
+            distance=DistributionIndex("distance_km2", stats.uniform, {"loc": 50.0, "scale": 30.0}),
         )
 
         litres = Index("litres2", inputs.distance / inputs.fuel_efficiency)
@@ -79,7 +86,7 @@ class Co2Model(Model):
 
 co2_model = Co2Model()
 
-assert len(co2_model.abstract_indexes()) == 2   # fuel_efficiency, distance
+assert len(co2_model.abstract_indexes()) == 2  # fuel_efficiency, distance
 assert co2_model.is_instantiated() is False
 assert co2_model.outputs.co2 is not None
 assert co2_model.outputs.litres is not None
@@ -99,11 +106,11 @@ ensemble = DistributionEnsemble(co2_model, size=1000)
 # getting-started.md §3 — Evaluate
 # ---------------------------------------------------------------------------
 
-result = Evaluation(co2_model).evaluate(ensemble)
+result = Evaluation(co2_model).evaluate(ensemble=ensemble)
 
-co2 = co2_model.outputs.co2   # access via contractual output
-co2_samples = result[co2]            # np.ndarray, shape (1000,)
-co2_mean = result.marginalize(co2)   # scalar
+co2 = co2_model.outputs.co2  # access via contractual output
+co2_samples = result[co2]  # np.ndarray, shape (1000,)
+co2_mean = result.marginalize(co2)  # scalar
 
 assert co2_samples.shape == (1000,)
 # E[CO2] = E[distance / fuel_efficiency * 2.31]
@@ -115,8 +122,8 @@ assert 0 < co2_mean < 200, f"Unexpected CO2 mean: {co2_mean:.1f}"
 # getting-started.md §1 — abstract_indexes / is_instantiated (Block 02)
 # ---------------------------------------------------------------------------
 
-co2_model.abstract_indexes()   # → [fuel_efficiency, distance]
-co2_model.is_instantiated()    # → False
+co2_model.abstract_indexes()  # → [fuel_efficiency, distance]
+co2_model.is_instantiated()  # → False
 
 
 # ---------------------------------------------------------------------------
@@ -136,20 +143,18 @@ smoothed = TimeseriesIndex(
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
     model = Model("ts_model", [demand_ts, smoothed])
-    ensemble = [(1.0, {})]
 
-# Single scenario with no abstract indexes
+# No abstract indexes — omit ensemble (deterministic evaluation)
 result = Evaluation(model).evaluate(
-    ensemble,
     functions={
         "smooth": executor.LambdaAdapter(
-            lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
-        )
+            lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same"),
+        ),
     },
 )
 
 smoothed_values = result[smoothed]
-assert smoothed_values.shape[-1] == 24   # 24 time steps
+assert smoothed_values.shape[-1] == 24  # 24 time steps
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-""" Runnable snippets from docs/design/dd-cdt-engine.md."""
+"""Runnable snippets from docs/design/dd-cdt-engine.md."""
 
 # SPDX-License-Identifier: Apache-2.0
 
@@ -7,7 +7,6 @@ import numpy as np
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-
 
 # ---------------------------------------------------------------------------
 # Block 00 — End-to-End Example
@@ -154,18 +153,18 @@ def _demo_ssa_and_sorting() -> None:
     # --- Blocks 08, 09, 10: individual node SSA form ---
     # These are the lines that print(a), print(scale), and print(c) would produce
     # in a fresh context where `a` is node #1 and `scale` is node #3.
-    n1 = graph.placeholder(name='a', default_value=None)
-    n3 = graph.constant(value=1024, name='')
-    n4 = graph.exp(node=n1, name='')
-    n5 = graph.constant(value=55, name='')
-    n6 = graph.divide(left=n5, right=n1, name='')
-    n7 = graph.add(left=n4, right=n6, name='c')   # block 10: print(c) — named root
+    n1 = graph.placeholder(name="a", default_value=None)
+    n3 = graph.constant(value=1024, name="")
+    n4 = graph.exp(node=n1, name="")
+    n5 = graph.constant(value=55, name="")
+    n6 = graph.divide(left=n5, right=n1, name="")
+    n7 = graph.add(left=n4, right=n6, name="c")  # block 10: print(c) — named root
 
     assert n3 is not None
 
     # --- Block 12: topological sort of c = graph.exp(a) + 55/a ---
     # Same structural nodes; the root add-node has an empty name in this context.
-    n7 = graph.add(left=n4, right=n6, name='')    # noqa: F841  block 12 line 5
+    n7 = graph.add(left=n4, right=n6, name="")  # noqa: F841  block 12 line 5
 
     # --- Blocks 11, 13: shorthand notation and linearize.forest ---
     a = graph.placeholder("a")

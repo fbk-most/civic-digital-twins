@@ -13,6 +13,7 @@ This approach offers several advantages over walking the AST:
 The executor expects all placeholder values to be provided in the initial
 state and evaluates each node exactly once, storing results for later reuse.
 """
+# SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable
 from dataclasses import dataclass, field

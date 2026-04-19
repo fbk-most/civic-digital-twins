@@ -17,8 +17,7 @@ from scipy import interpolate, ndimage, stats
 
 matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 
-from civic_digital_twins.dt_model import Evaluation
-from civic_digital_twins.dt_model.model.index import Distribution
+from civic_digital_twins.dt_model import Distribution, Evaluation
 
 warnings.filterwarnings("ignore", message=".*sample arguments is too small.*")
 

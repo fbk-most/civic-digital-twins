@@ -31,9 +31,7 @@ import numpy as np
 from scipy.stats import rv_continuous
 from scipy.stats._distn_infrastructure import rv_continuous_frozen
 
-from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
-from civic_digital_twins.dt_model.model.index import Distribution, GenericIndex, Index
-from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model import ENSEMBLE, Axis, Distribution, GenericIndex, Index, Model
 
 # ---------------------------------------------------------------------------
 # Context variables

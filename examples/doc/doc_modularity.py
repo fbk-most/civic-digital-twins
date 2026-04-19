@@ -11,16 +11,17 @@ from scipy import stats
 
 from civic_digital_twins.dt_model import (
     CategoricalIndex,
+    ConstIndex,
     DistributionIndex,
+    GenericIndex,
     Index,
     InputsContractWarning,
     Model,
     ModelContractWarning,
     ModelVariant,
     TimeseriesIndex,
+    graph,
 )
-from civic_digital_twins.dt_model.engine.frontend import graph
-from civic_digital_twins.dt_model.model.index import ConstIndex, GenericIndex
 
 
 def _id_in(idx: GenericIndex, seq: Sequence[GenericIndex]) -> bool:
@@ -223,6 +224,12 @@ class PipelineModel(Model):
     """Root model that wires StageAModel → StageBModel as a pipeline."""
 
     @dataclass
+    class Inputs:
+        """Inputs of :class:`PipelineModel`."""
+
+        raw_data: DistributionIndex
+
+    @dataclass
     class Outputs:
         """Outputs of :class:`PipelineModel`."""
 
@@ -235,13 +242,10 @@ class PipelineModel(Model):
         stage_a_indexes: list[GenericIndex]
         stage_b_indexes: list[GenericIndex]
 
-    def __init__(self) -> None:
-        raw_data = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+    def __init__(self, raw_data: DistributionIndex) -> None:
+        inputs = PipelineModel.Inputs(raw_data=raw_data)
 
-        Outputs = PipelineModel.Outputs
-        Expose = PipelineModel.Expose
-
-        stage_a = StageAModel(raw_data=raw_data)
+        stage_a = StageAModel(raw_data=inputs.raw_data)
         stage_b = StageBModel(
             processed=stage_a.outputs.processed,
             ratio=stage_a.outputs.ratio,
@@ -249,15 +253,17 @@ class PipelineModel(Model):
 
         super().__init__(
             "Pipeline",
-            outputs=Outputs(result=stage_b.outputs.result),
-            expose=Expose(
+            inputs=inputs,
+            outputs=PipelineModel.Outputs(result=stage_b.outputs.result),
+            expose=PipelineModel.Expose(
                 stage_a_indexes=list(stage_a.indexes),
                 stage_b_indexes=list(stage_b.indexes),
             ),
         )
 
 
-pipeline = PipelineModel()
+_raw_data = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+pipeline = PipelineModel(raw_data=_raw_data)
 
 assert pipeline.outputs.result is not None
 # raw_data is a DistributionIndex (abstract) → model is not fully instantiated
@@ -334,7 +340,8 @@ assert any(issubclass(w.category, InputsContractWarning) for w in caught), (
 def _demo_08_filterwarnings() -> None:
     """Block 08: Escalate contract warnings to errors."""
     import warnings
-    from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+    from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
     with warnings.catch_warnings():
         # Escalate all contract warnings to errors (recommended for CI)
@@ -429,11 +436,11 @@ def _demo_10_proxy_attributes() -> None:
         },
         selector="bike",
     )
-    mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
-    mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
-    mv.indexes                  # index list of the active (BikeModel) variant only
-    mv.abstract_indexes()       # delegates to BikeModel.abstract_indexes()
-    mv.is_instantiated()        # delegates to BikeModel.is_instantiated()
+    mv.outputs.emissions  # delegates to BikeModel.outputs.emissions
+    mv.inputs.capacity  # delegates to BikeModel.inputs.capacity
+    mv.indexes  # index list of the active (BikeModel) variant only
+    mv.abstract_indexes()  # delegates to BikeModel.abstract_indexes()
+    mv.is_instantiated()  # delegates to BikeModel.is_instantiated()
 
 
 # ---------------------------------------------------------------------------
@@ -451,8 +458,8 @@ def _demo_11_inactive_variants() -> None:
         },
         selector="bike",
     )
-    mv.variants["train"].outputs.emissions   # explicit — reaches inactive variant
-    mv.variants["train"].indexes             # index list of TrainModel only
+    mv.variants["train"].outputs.emissions  # explicit — reaches inactive variant
+    mv.variants["train"].indexes  # index list of TrainModel only
 
     # Active variant's emissions IS in mv.indexes; inactive's is NOT
     assert _id_in(mv.variants["bike"].outputs.emissions, mv.indexes)
@@ -493,7 +500,7 @@ def _demo_13_categorical_selector() -> None:
     mv = ModelVariant(
         "TransportModel",
         variants={
-            "bike":  BikeModel(),
+            "bike": BikeModel(),
             "train": TrainModel(),
         },
         selector=mode,
@@ -522,18 +529,19 @@ assert peak_factor.value is not None
 
 def _demo_15_piecewise_categorical() -> None:
     """Block 15: CategoricalIndex season guard with four-clause graph.piecewise."""
-    from civic_digital_twins.dt_model import CategoricalIndex
-    from civic_digital_twins.dt_model.engine.frontend import graph
+    from civic_digital_twins.dt_model import CategoricalIndex, graph
 
-    season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25,
-                                          "autumn": 0.25, "winter": 0.25})
+    season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25, "autumn": 0.25, "winter": 0.25})
 
-    peak_factor = Index("peak_factor", graph.piecewise(
-        (1.8, season == "summer"),
-        (1.2, season == "spring"),
-        (1.0, season == "autumn"),
-        (0.7, True),              # winter — default
-    ))
+    peak_factor = Index(
+        "peak_factor",
+        graph.piecewise(
+            (1.8, season == "summer"),
+            (1.2, season == "spring"),
+            (1.0, season == "autumn"),
+            (0.7, True),  # winter — default
+        ),
+    )
 
     assert peak_factor.value is not None
 
@@ -545,9 +553,9 @@ def _demo_15_piecewise_categorical() -> None:
 from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation  # noqa: E402
 
 # PipelineModel has a DistributionIndex (raw_data), so DistributionEnsemble works.
-_pipeline_eval = PipelineModel()
+_pipeline_eval = PipelineModel(raw_data=DistributionIndex("x_eval", stats.uniform, {"loc": 0.0, "scale": 10.0}))
 _ensemble_eval = DistributionEnsemble(_pipeline_eval, size=50)
-_result_eval = Evaluation(_pipeline_eval).evaluate(_ensemble_eval)
+_result_eval = Evaluation(_pipeline_eval).evaluate(ensemble=_ensemble_eval)
 
 mean_pipeline_result = _result_eval.marginalize(_pipeline_eval.outputs.result)
 assert mean_pipeline_result > 0
@@ -570,7 +578,8 @@ assert _smoothed_node is not None
 def _demo_29_filterwarnings_api() -> None:
     """Block 29: API reference — escalate contract warnings."""
     import warnings
-    from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+    from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
     with warnings.catch_warnings():
         # Recommended for CI — escalate all contract warnings to errors

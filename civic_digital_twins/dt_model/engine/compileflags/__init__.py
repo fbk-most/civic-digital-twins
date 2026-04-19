@@ -13,6 +13,7 @@ of flag names before starting Python.  For example::
 
 Available flag names: ``trace``, ``dump``, ``break``.
 """
+# SPDX-License-Identifier: Apache-2.0
 
 import os
 from collections.abc import Callable

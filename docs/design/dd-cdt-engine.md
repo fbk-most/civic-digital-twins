@@ -1,10 +1,12 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # DSL Compiler Engine
 
 |              | Document data                                  |
 |--------------|------------------------------------------------|
 | Author       | [@bassosimone](https://github.com/bassosimone) |
 | Co-authors   | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-04-04                                     |
+| Last-Updated | 2026-04-19                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -458,7 +460,7 @@ using `print` on each node in the DAG.
 For example, `print(a)` produces the following output:
 
 ```python
-n1 = graph.placeholder(name='a', default_value=None)
+n1 = graph.placeholder(name="a", default_value=None)
 ```
 
 As you can see, a node's string representation is valid Python
@@ -482,14 +484,14 @@ value associated with the placeholder.
 Similarly, `print(scale)` produces the following output:
 
 ```python
-n3 = graph.constant(value=1024, name='')
+n3 = graph.constant(value=1024, name="")
 ```
 
 So far, we have dumped constants and placeholders, which are
 simple to understand. If we `print(c)`, instead, we get:
 
 ```python
-n7 = graph.add(left=n4, right=n6, name='c')
+n7 = graph.add(left=n4, right=n6, name="c")
 ```
 
 This tells us that `c` corresponds to a node with ID `7` that
@@ -536,11 +538,11 @@ linearizing a forest of trees embedded into the DAG.)
 This is the output that we get:
 
 ```python
-n1 = graph.placeholder(name='a', default_value=None)
-n4 = graph.exp(node=n1, name='')
-n5 = graph.constant(value=55, name='')
-n6 = graph.divide(left=n5, right=n1, name='')
-n7 = graph.add(left=n4, right=n6, name='')
+n1 = graph.placeholder(name="a", default_value=None)
+n4 = graph.exp(node=n1, name="")
+n5 = graph.constant(value=55, name="")
+n6 = graph.divide(left=n5, right=n1, name="")
+n7 = graph.add(left=n4, right=n6, name="")
 ```
 
 This plan basically tells us that to produce `c`, which is
@@ -612,10 +614,10 @@ how you can use the executor in your code:
 ```python
 # ...
 
+import numpy as np
+
 from civic_digital_twins.dt_model.engine.frontend import linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-
-import numpy as np
 
 # create state with placeholder values
 state = executor.State(

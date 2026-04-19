@@ -1,4 +1,5 @@
 """Data for the Mobility Bologna example."""
+# SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
 

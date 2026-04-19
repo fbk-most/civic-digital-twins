@@ -7,10 +7,9 @@ import warnings
 import numpy as np
 from scipy import stats
 
-from civic_digital_twins.dt_model import Model
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 
 # ---------------------------------------------------------------------------
 # README — Engine layer snippet

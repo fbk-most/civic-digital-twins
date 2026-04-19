@@ -1,6 +1,6 @@
 """Digital twin modeling and simulation library."""
+# SPDX-License-Identifier: Apache-2.0
 
-from .engine.frontend.graph import piecewise
 from .model import (
     DOMAIN,
     ENSEMBLE,
@@ -57,5 +57,4 @@ __all__ = [
     "PartitionedEnsemble",
     "TimeseriesIndex",
     "WeightedScenario",
-    "piecewise",
 ]

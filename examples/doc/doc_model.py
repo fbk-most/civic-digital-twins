@@ -1,4 +1,5 @@
 """Runnable snippets from docs/design/dd-cdt-model.md."""
+# SPDX-License-Identifier: Apache-2.0
 
 import sys
 import warnings
@@ -12,16 +13,17 @@ _examples_dir = Path(__file__).parent.parent
 if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
-from civic_digital_twins.dt_model import Evaluation, Model, ModelContractWarning
-from civic_digital_twins.dt_model.model.index import (
+from civic_digital_twins.dt_model import (
     ConstIndex,
+    Distribution,
+    DistributionEnsemble,
     DistributionIndex,
+    Evaluation,
     Index,
+    Model,
+    ModelContractWarning,
     TimeseriesIndex,
 )
-from civic_digital_twins.dt_model.model.index import Distribution
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
-
 
 # ---------------------------------------------------------------------------
 # Block 00: dd-cdt-model.md — Index Types: Index modes
@@ -31,11 +33,8 @@ from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsembl
 def _demo_00_index_modes() -> None:
     """Block 00: Index modes."""
     from scipy import stats
-    from civic_digital_twins.dt_model.model.index import (
-        ConstIndex,
-        DistributionIndex,
-        Index,
-    )
+
+    from civic_digital_twins.dt_model import ConstIndex, DistributionIndex, Index
 
     # Distribution-backed (abstract — must be resolved in each scenario)
     # Pass any scipy-compatible distribution callable and a params dict:
@@ -67,7 +66,8 @@ def _demo_00_index_modes() -> None:
 def _demo_02_timeseries_index() -> None:
     """Block 02: TimeseriesIndex."""
     import numpy as np
-    from civic_digital_twins.dt_model.model.index import TimeseriesIndex
+
+    from civic_digital_twins.dt_model import TimeseriesIndex
 
     # Fixed time series
     flow = TimeseriesIndex("flow", np.array([10.0, 20.0, 30.0]))
@@ -87,8 +87,8 @@ def _demo_02_timeseries_index() -> None:
 def _demo_05_legacy_api() -> None:
     """Block 05: Legacy indexes= API."""
     from scipy import stats
-    from civic_digital_twins.dt_model.model.model import Model
-    from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
+    from civic_digital_twins.dt_model import DistributionIndex, Index, Model
 
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
@@ -110,6 +110,7 @@ def _demo_05_legacy_api() -> None:
 def _demo_08_contract_warnings() -> None:
     """Block 08: Contract warnings — filterwarnings."""
     import warnings
+
     from civic_digital_twins.dt_model import ModelContractWarning
 
     with warnings.catch_warnings():
@@ -125,8 +126,8 @@ def _demo_08_contract_warnings() -> None:
 def _demo_12_distribution_ensemble() -> None:
     """Block 12: DistributionEnsemble."""
     from scipy import stats
-    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
-    from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+
+    from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index
 
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
@@ -155,21 +156,22 @@ def _demo_14_15_end_to_end() -> None:
     """Blocks 14+15: Grid-mode marginalize + End-to-End Example (1-D mode)."""
     import numpy as np
     from scipy import stats
-    from civic_digital_twins.dt_model import Evaluation, Model
-    from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
-    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
+    from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Evaluation, Index, Model
 
     # Define the model
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
     z = Index("z", x + y)
-    model = Model("demo", [x, y, z])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        model = Model("demo", [x, y, z])
 
     # Build an ensemble of 200 scenarios
     ensemble = DistributionEnsemble(model, size=200)
 
     # Evaluate
-    result = Evaluation(model).evaluate(ensemble)
+    result = Evaluation(model).evaluate(ensemble=ensemble)
 
     # Weighted mean of z across all scenarios
     print(result.marginalize(z))  # ≈ 10.0
@@ -209,8 +211,6 @@ def _demo_17_constraint() -> None:
 def _demo_18_20_overtourism() -> None:
     """Blocks 18+19+20: OvertourismModel attributes + Grid Evaluation."""
     import numpy as np
-    from civic_digital_twins.dt_model import Evaluation
-    from civic_digital_twins.dt_model.model.index import ConstIndex, Distribution, Index
     from overtourism_molveno.overtourism_metamodel import (
         CategoricalContextVariable,
         Constraint,
@@ -218,6 +218,8 @@ def _demo_18_20_overtourism() -> None:
         OvertourismModel,
         PresenceVariable,
     )
+
+    from civic_digital_twins.dt_model import ConstIndex, Distribution, Evaluation, Index
 
     CV_weather = CategoricalContextVariable(
         "weather",
@@ -265,7 +267,7 @@ def _demo_18_20_overtourism() -> None:
     ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
     result = Evaluation(model).evaluate(
-        ensemble,
+        ensemble=ensemble,
         parameters={PV_tourists: tt, PV_excursionists: ee},
     )
 

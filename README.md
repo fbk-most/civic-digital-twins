@@ -25,9 +25,10 @@ evaluated by a NumPy-based interpreter that maps each node to the
 corresponding `numpy` operation.
 
 ```python
+import numpy as np
+
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-import numpy as np
 
 a = graph.placeholder("a")
 b = graph.placeholder("b")
@@ -62,9 +63,9 @@ abstractions built on top of the engine:
   define the scenario contract consumed by `Evaluation`.
 
 ```python
-from civic_digital_twins.dt_model import Evaluation, Model, DistributionIndex
-from civic_digital_twins.dt_model.model.index import Index
 from scipy import stats
+
+from civic_digital_twins.dt_model import DistributionIndex, Evaluation, Index, Model
 
 # Two distribution-backed indexes
 x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
@@ -177,7 +178,7 @@ uv sync --upgrade
 
 ## Releasing
 
-Per-release checklist (six manual steps):
+Per-release checklist (seven manual steps):
 
 1. Make sure the version number in `pyproject.toml` is correct.
 
@@ -209,7 +210,18 @@ Per-release checklist (six manual steps):
    uv run python examples/doc/doc_getting_started.py
    ```
 
-6. Commit the changes above, then create and push a version tag:
+6. Verify that every tracked Python and Markdown file carries an SPDX header:
+   ```bash
+   # Python files — should print nothing (no files missing the header)
+   git ls-files '*.py' | xargs grep -rL "SPDX-License-Identifier"
+   # Markdown files — should print nothing
+   git ls-files '*.md' | xargs grep -rL "SPDX-License-Identifier"
+   ```
+   Add `# SPDX-License-Identifier: Apache-2.0` (Python) or
+   `<!-- SPDX-License-Identifier: Apache-2.0 -->` (Markdown) to any file
+   that is missing the header.
+
+7. Commit the changes above, then create and push a version tag:
    ```bash
    git add pyproject.toml uv.lock CHANGELOG.md docs/
    git commit -m "chore: prepare v<version> release"

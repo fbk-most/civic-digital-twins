@@ -1,9 +1,11 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Model Modularity
 
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-04-04                                     |
+| Last-Updated | 2026-04-19                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -209,6 +211,10 @@ indexes from one to the next.
 class PipelineModel(Model):
 
     @dataclass
+    class Inputs:
+        raw_data: DistributionIndex
+
+    @dataclass
     class Outputs:
         result: Index
 
@@ -217,13 +223,12 @@ class PipelineModel(Model):
         stage_a_indexes: list[GenericIndex]
         stage_b_indexes: list[GenericIndex]
 
-    def __init__(self) -> None:
-        Outputs = PipelineModel.Outputs
-        Expose  = PipelineModel.Expose
+    def __init__(self, raw_data: DistributionIndex) -> None:
+        inputs = PipelineModel.Inputs(raw_data=raw_data)
 
         # Step 1 — construct sub-models in dependency order.
         # All leaf indexes are created here; sub-models receive them as arguments.
-        stage_a = StageAModel(raw_data=raw_data)
+        stage_a = StageAModel(raw_data=inputs.raw_data)
 
         # Step 2 — thread Level-1 outputs of stage A into stage B
         stage_b = StageBModel(
@@ -234,8 +239,9 @@ class PipelineModel(Model):
         # Step 3 — promote KPI outputs and collect sub-model indexes for engine visibility
         super().__init__(
             "Pipeline",
-            outputs=Outputs(result=stage_b.outputs.result),
-            expose=Expose(
+            inputs=inputs,
+            outputs=PipelineModel.Outputs(result=stage_b.outputs.result),
+            expose=PipelineModel.Expose(
                 stage_a_indexes=list(stage_a.indexes),
                 stage_b_indexes=list(stage_b.indexes),
             ),
@@ -317,7 +323,8 @@ incrementally.  During development and in CI, escalate it to an error:
 
 ```python
 import warnings
-from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
 # Escalate all contract warnings to errors (recommended for CI)
 warnings.filterwarnings("error", category=ModelContractWarning)
@@ -445,6 +452,7 @@ directly.  Use `ModelVariant.guards_to_selector` to build one from a list of `(k
 
 ```python
 from scipy import stats
+
 from civic_digital_twins.dt_model import DistributionIndex, ModelVariant
 
 cost_threshold = DistributionIndex("cost_threshold", stats.uniform, {"loc": 3.0, "scale": 8.0})
@@ -496,15 +504,17 @@ scenario — useful for post-evaluation analysis.
 `ModelVariant` selector:
 
 ```python
-season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25,
-                                      "autumn": 0.25, "winter": 0.25})
+season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25, "autumn": 0.25, "winter": 0.25})
 
-peak_factor = Index("peak_factor", graph.piecewise(
-    (1.8, season == "summer"),
-    (1.2, season == "spring"),
-    (1.0, season == "autumn"),
-    (0.7, True),              # winter — default
-))
+peak_factor = Index(
+    "peak_factor",
+    graph.piecewise(
+        (1.8, season == "summer"),
+        (1.2, season == "spring"),
+        (1.0, season == "autumn"),
+        (0.7, True),  # winter — default
+    ),
+)
 ```
 
 `season == "summer"` produces a `graph.equal` node that the engine evaluates as a boolean mask
@@ -1320,7 +1330,8 @@ categories:
 
 ```python
 import warnings
-from civic_digital_twins.dt_model import ModelContractWarning, InputsContractWarning
+
+from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
 
 # Recommended for CI — escalate all contract warnings to errors
 warnings.filterwarnings("error", category=ModelContractWarning)

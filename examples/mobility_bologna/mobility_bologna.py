@@ -21,10 +21,23 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index, Model, TimeseriesIndex
-from civic_digital_twins.dt_model.engine.frontend import graph
+from civic_digital_twins.dt_model import (
+    DistributionEnsemble,
+    DistributionIndex,
+    Evaluation,
+    EvaluationResult,
+    Index,
+    Model,
+    TimeseriesIndex,
+    graph,
+)
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, EvaluationResult
+
+_LN2: float = math.log(2)
+"""Natural logarithm of 2 (≈ 0.6931). Normalisation constant in half-life decay formulas."""
+
+_LN_HALF: float = -_LN2
+"""Natural logarithm of 0.5 (= −ln 2). Exponent base for half-life decay: exp(Δt / p50 · ln½) = ½^(Δt/p50)."""
 
 try:
     from .mobility_bologna_data import euro_class_emission, euro_class_split, vehicle_inflow, vehicle_starting
@@ -176,7 +189,7 @@ class InflowModel(Model):
         i_fraction_rigid_euro = [
             Index(
                 f"rigid vehicles euro_{e} %",
-                (1 - inputs.i_p_fraction_exempted) * (np.e ** (inputs.i_p_cost[e] / inputs.i_b_p50_cost * np.log(0.5))),
+                (1 - inputs.i_p_fraction_exempted) * graph.exp(inputs.i_p_cost[e] / inputs.i_b_p50_cost * _LN_HALF),
             )
             for e in range(7)
         ]
@@ -215,7 +228,7 @@ class InflowModel(Model):
 
         i_fraction_anticipating = TimeseriesIndex(
             "anticipating vehicles %",
-            np.e ** (i_delta_from_start / inputs.i_b_p50_anticipating * np.log(0.5))
+            graph.exp(i_delta_from_start / inputs.i_b_p50_anticipating * _LN_HALF)
             * (1 - inputs.i_p_fraction_exempted - fraction_rigid),
         )
 
@@ -234,7 +247,7 @@ class InflowModel(Model):
 
         i_fraction_postponing = TimeseriesIndex(
             "postponing vehicles %",
-            np.e ** (i_delta_to_end / inputs.i_b_p50_postponing * np.log(0.5))
+            graph.exp(i_delta_to_end / inputs.i_b_p50_postponing * _LN_HALF)
             * (1 - inputs.i_p_fraction_exempted - fraction_rigid),
         )
 
@@ -256,9 +269,9 @@ class InflowModel(Model):
 
         i_number_anticipated = TimeseriesIndex(
             "anticipated vehicles",
-            np.e ** (i_delta_before_start / inputs.i_b_p50_anticipation * np.log(0.5))
+            graph.exp(i_delta_before_start / inputs.i_b_p50_anticipation * _LN_HALF)
             / inputs.i_b_p50_anticipation
-            * np.log(2)
+            * _LN2
             / 12
             * i_total_anticipating,
         )
@@ -276,9 +289,9 @@ class InflowModel(Model):
 
         i_number_postponed = TimeseriesIndex(
             "postponed vehicles",
-            np.e ** (i_delta_after_end / inputs.i_b_p50_postponement * np.log(0.5))
+            graph.exp(i_delta_after_end / inputs.i_b_p50_postponement * _LN_HALF)
             / inputs.i_b_p50_postponement
-            * np.log(2)
+            * _LN2
             / 12
             * i_total_postponing,
         )
