@@ -28,12 +28,13 @@ example script as a *snippet-to-example* check:
 
 Deviation levels (per snippet):
 
-* Score ≥ ``_ALIGNED_THRESHOLD`` (0.85) — snippet is aligned; no action.
-* ``_MINOR_THRESHOLD`` (0.60) ≤ score < ``_ALIGNED_THRESHOLD`` — minor
-  deviation; a ``UserWarning`` is emitted listing the unmatched lines together
-  with their best candidate in the example.
-* Score < ``_MINOR_THRESHOLD`` — major deviation; the test **fails** with a
-  report of every problematic snippet and its unmatched lines.
+* Score = 100 % AND every matched line ratio ≥ 0.99 — ``= OK``; test passes silently.
+* Score = 100 % but at least one near-verbatim match (ratio < 0.99) — ``~ OK``; treated as a deviation.
+* ``_MINOR_THRESHOLD`` (0.60) ≤ score < 100 % — ``~ Warn``; treated as a deviation.
+* Score < ``_MINOR_THRESHOLD`` — ``✗ Fail``; always fails.
+
+``~ OK`` and ``~ Warn`` deviations **fail** the test unless the block is listed in
+``_EXPECTED_NEAR_VERBATIM``, in which case the test is marked ``xfail``.
 
 Reference-only blocks
 ---------------------
@@ -73,7 +74,6 @@ the best match in the script), and each unmatched line as ``✗``.
 
 import difflib
 import re
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -111,12 +111,16 @@ DOC_TO_SCRIPT: dict[str, str] = {
 #: suffixes / minor literal changes.
 _LINE_THRESHOLD: float = 0.75
 
-#: Per-snippet score above which the snippet is treated as aligned (no action).
-_ALIGNED_THRESHOLD: float = 0.85
-
-#: Per-snippet score below which the deviation is *major* (test fails).
-#: Scores in [_MINOR_THRESHOLD, _ALIGNED_THRESHOLD) are *minor* (warning).
+#: Per-snippet score below which the deviation is *major* (test fails regardless
+#: of ``_EXPECTED_NEAR_VERBATIM``).  Scores in [_MINOR_THRESHOLD, 1.0) are
+#: *minor* (``~ Warn``); score == 1.0 with all ratios ≥ 0.99 is ``= OK``.
 _MINOR_THRESHOLD: float = 0.60
+
+#: ``(doc_rel, block_index)`` pairs that are intentionally near-verbatim rather
+#: than verbatim-exact.  The test is marked ``xfail`` for these blocks instead
+#: of failing.  Add an entry here only when a ``~ OK`` or ``~ Warn`` result is
+#: genuinely expected and fixing the drift is not worthwhile.
+_EXPECTED_NEAR_VERBATIM: set[tuple[str, int]] = set()
 
 # ---------------------------------------------------------------------------
 # Compiled regular expressions
@@ -139,6 +143,13 @@ _PLACEHOLDER_RE = re.compile(r"^\s*[\w.]+\s*=\s*\.\.\.\s*$")
 
 # print(…) statement
 _PRINT_STMT_RE = re.compile(r"^\s*print\s*\(")
+
+# Trailing inline comment:  <code>  # …   (any whitespace before #, space after)
+# The PEP 8 pattern ``\s+#\s`` matches ``# scalar``, ``# noqa: F841``, etc.
+# while avoiding bare ``#noqa`` (no space) and in-string ``#`` tokens.
+# Stripping these from both doc and script lines prevents helper annotations
+# from reducing the match ratio against lines that lack such annotations.
+_INLINE_COMMENT_RE = re.compile(r"\s+#\s.*$")
 
 # Class definition (captures name):  class Foo
 _CLASS_DEF_RE = re.compile(r"^\s*class\s+([A-Z]\w*)")
@@ -303,7 +314,7 @@ def _is_reference_only_block(code: str, example_text: str) -> bool:
 
 
 def _normalize_line(line: str) -> str:
-    """Strip leading/trailing whitespace and collapse internal runs to one space.
+    """Strip leading/trailing whitespace, trailing inline comments, and collapse spaces.
 
     Parameters
     ----------
@@ -314,7 +325,15 @@ def _normalize_line(line: str) -> str:
     -------
     str
         Normalised line suitable for fuzzy comparison.
+
+    Notes
+    -----
+    Trailing inline comments (whitespace + ``#`` + space + rest, PEP 8 style)
+    are stripped before collapsing whitespace so annotations such as
+    ``# noqa: F841`` in scripts or ``# scalar`` in doc snippets do not reduce
+    the match ratio when the code part is otherwise identical.
     """
+    line = _INLINE_COMMENT_RE.sub("", line)
     return " ".join(line.split())
 
 
@@ -508,16 +527,25 @@ def _format_snippet_report(result: SnippetResult, doc_rel: str) -> str:
     str
         Multi-line text suitable for inclusion in a warning or failure message.
     """
+    score = result.match_score
     lines = [
         f"  Block {result.block_index} of {doc_rel}  "
-        f"(score {result.match_score:.0%}: "
+        f"(score {score:.0%}: "
         f"{len(result.matched)} matched, {len(result.missed)} unmatched "
         f"out of {result.total_key_lines} key lines)",
         f"    First line: {result.preview!r}",
-        "    Unmatched lines (doc line  →  best candidate in example):",
     ]
-    for doc_line, best_ratio in sorted(result.missed, key=lambda t: t[1]):
-        lines.append(f"      [{best_ratio:.2f}]  {doc_line!r}")
+    if result.missed:
+        lines.append("    Unmatched lines (doc line  →  best candidate in example):")
+        for doc_line, best_ratio in sorted(result.missed, key=lambda t: t[1]):
+            lines.append(f"      [{best_ratio:.2f}]  {doc_line!r}")
+    else:
+        # score == 1.0 but near-verbatim (~ OK): show the near-verbatim matches
+        lines.append("    Near-verbatim matches (ratio < 0.99, doc line  →  best match in example):")
+        for doc_line, ex_line, ratio in result.matched:
+            if ratio < 0.99:
+                lines.append(f"      [{ratio:.2f}]  {doc_line!r}")
+                lines.append(f"              →  {ex_line!r}")
     return "\n".join(lines)
 
 
@@ -537,9 +565,9 @@ class PairStats:
     total : int
         Total number of Python code blocks in the document.
     perfect : int
-        Aligned blocks where every matched key line has ratio >= 0.99 (all ``=``).
+        Blocks where score == 100 % and every matched line ratio >= 0.99 (``= OK``).
     aligned : int
-        Aligned blocks that have at least one near-verbatim (``~``) matched line.
+        Blocks where score == 100 % but at least one near-verbatim match (``~ OK``).
     minor : int
         Blocks with ``_MINOR_THRESHOLD`` <= score < ``_ALIGNED_THRESHOLD``.
     fail : int
@@ -608,7 +636,7 @@ def _collect_pair_stats(doc_rel: str, script_rel: str) -> PairStats:
             continue
 
         score = result.match_score
-        if score >= _ALIGNED_THRESHOLD:
+        if score == 1.0:
             if all(ratio >= 0.99 for _, _, ratio in result.matched):
                 stats.perfect += 1
             else:
@@ -629,10 +657,10 @@ def _print_summary_table() -> None:
     the bottom.  Pairs with no failures are prefixed ``✓``; pairs with
     failures ``✗``.
 
-    The ``= OK`` column counts blocks where every matched key line is an exact
-    or near-exact match (ratio >= 0.99).  The ``~ OK`` column counts blocks
-    that are aligned overall but contain at least one near-verbatim (``~``)
-    matched line.
+    The ``= OK`` column counts blocks where score == 100 % and every matched
+    line has ratio >= 0.99.  The ``~ OK`` column counts blocks where score ==
+    100 % but at least one match is near-verbatim (ratio < 0.99) — these are
+    deviations.
     """
     _COL = 32  # width of the doc-name column (covers longest name + prefix)
 
@@ -730,13 +758,13 @@ def _report_pair(doc_rel: str, script_rel: str) -> None:
             continue
 
         score = result.match_score
-        if score >= _ALIGNED_THRESHOLD:
+        if score == 1.0:
             if all(ratio >= 0.99 for _, _, ratio in result.matched):
                 tag = "PERFECT"
             else:
-                tag = "ALIGNED"
+                tag = "~OK"
         elif score >= _MINOR_THRESHOLD:
-            tag = "minor"
+            tag = "~Warn"
         else:
             tag = "FAIL"
 
@@ -785,15 +813,18 @@ def test_doc_sync(doc_rel: str, script_rel: str) -> None:
       ``difflib.SequenceMatcher`` with threshold ``_LINE_THRESHOLD`` (0.75).
     * The *snippet match score* = matched / total key lines.
 
-    **Major deviation** (score < ``_MINOR_THRESHOLD`` = 0.60)
-        The test **fails** and reports every problematic snippet with the
-        unmatched lines and their best available similarity scores.
+    **Perfect** (score = 100 % and all per-line ratios ≥ 0.99)
+        ``= OK``; the test passes silently.
 
-    **Minor deviation** (``_MINOR_THRESHOLD`` ≤ score < ``_ALIGNED_THRESHOLD`` = 0.85)
-        A ``UserWarning`` is emitted listing the unmatched lines; the test passes.
+    **Near-verbatim** (score = 100 % but at least one ratio < 0.99) — ``~ OK``
+        Treated as a deviation.  The test **fails** unless the block is listed
+        in ``_EXPECTED_NEAR_VERBATIM``, in which case it is marked ``xfail``.
 
-    **Aligned** (score ≥ ``_ALIGNED_THRESHOLD``)
-        No output; the test passes silently.
+    **Minor deviation** (``_MINOR_THRESHOLD`` ≤ score < 100 %) — ``~ Warn``
+        Treated as a deviation (same as ``~ OK``).
+
+    **Major deviation** (score < ``_MINOR_THRESHOLD``) — ``✗ Fail``
+        Always fails, regardless of ``_EXPECTED_NEAR_VERBATIM``.
 
     The test is **skipped** (rather than failing with an error) when either
     file does not exist at the expected path.
@@ -812,8 +843,7 @@ def test_doc_sync(doc_rel: str, script_rel: str) -> None:
     blocks = _extract_python_blocks(doc_text)
     example_lines_norm = [_normalize_line(ln) for ln in script_text.splitlines() if ln.strip()]
 
-    major_deviations: list[SnippetResult] = []
-    minor_deviations: list[SnippetResult] = []
+    deviations: list[SnippetResult] = []
 
     for idx, block in enumerate(blocks):
         # Skip stub / pseudo-code blocks (API-reference signatures, TL;DR pseudo-code, …)
@@ -829,40 +859,38 @@ def test_doc_sync(doc_rel: str, script_rel: str) -> None:
             continue  # no key lines → nothing to check
 
         score = result.match_score
-        if score < _MINOR_THRESHOLD:
-            major_deviations.append(result)
-        elif score < _ALIGNED_THRESHOLD:
-            minor_deviations.append(result)
+        is_perfect = score == 1.0 and all(ratio >= 0.99 for _, _, ratio in result.matched)
+        if not is_perfect:
+            deviations.append(result)
+
+    if not deviations:
+        return  # all blocks are = OK
 
     # ------------------------------------------------------------------ #
-    # Emit UserWarning for minor deviations (test still passes)           #
+    # Split into major (always fail), unexpected, and expected (xfail)   #
     # ------------------------------------------------------------------ #
-    for result in minor_deviations:
-        warnings.warn(
-            f"Minor deviation in {doc_rel}:\n" + _format_snippet_report(result, doc_rel),
-            UserWarning,
-            stacklevel=2,
-        )
+    major = [r for r in deviations if r.match_score < _MINOR_THRESHOLD]
+    non_major = [r for r in deviations if r.match_score >= _MINOR_THRESHOLD]
+    unexpected = [r for r in non_major if (doc_rel, r.block_index) not in _EXPECTED_NEAR_VERBATIM]
+    expected = [r for r in non_major if (doc_rel, r.block_index) in _EXPECTED_NEAR_VERBATIM]
 
-    # ------------------------------------------------------------------ #
-    # Fail on major deviations                                            #
-    # ------------------------------------------------------------------ #
-    if major_deviations:
+    if major or unexpected:
+        failing = major + unexpected
         report_lines = [
-            f"Major deviation(s) detected — {len(major_deviations)} snippet(s) in",
-            f"  {doc_rel}",
-            "are not present as near-verbatim copies in",
-            f"  {script_rel}.",
+            f"{len(failing)} snippet(s) in {doc_rel} deviate from their",
+            f"near-verbatim copy in {script_rel}.",
             "",
             "Each documentation Python code block should appear in the example",
             "script with at most minor adaptations (variable renames, added",
             "assertions, wrapping context).  The core logic must match.",
             "",
-            "Problematic snippets:",
+            "Deviating snippets:",
             "",
         ]
-        for result in major_deviations:
-            report_lines.append(_format_snippet_report(result, doc_rel))
+        for result in failing:
+            score = result.match_score
+            kind = "✗ Fail" if score < _MINOR_THRESHOLD else ("~ OK" if score == 1.0 else "~ Warn")
+            report_lines.append(f"  [{kind}]" + _format_snippet_report(result, doc_rel)[1:])
             report_lines.append("")
         report_lines += [
             "To fix, either:",
@@ -870,8 +898,14 @@ def test_doc_sync(doc_rel: str, script_rel: str) -> None:
             f"    of the flagged code blocks from {doc_rel}, or",
             f"  • Update {doc_rel} to match what is actually demonstrated in",
             f"    {script_rel}.",
+            "  • If the deviation is intentional, add (doc_rel, block_index) to",
+            "    _EXPECTED_NEAR_VERBATIM.",
         ]
         pytest.fail("\n".join(report_lines))
+
+    # Only expected (xfail) deviations remain.
+    xfail_indices = [r.block_index for r in expected]
+    pytest.xfail(reason=f"known near-verbatim block(s) in {doc_rel}: indices {xfail_indices}")
 
 
 # ---------------------------------------------------------------------------
