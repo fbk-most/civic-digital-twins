@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Getting Started with the Overtourism Model
 
 This guide walks through the **vertical extension pattern** of the

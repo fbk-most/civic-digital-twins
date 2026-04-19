@@ -1,4 +1,5 @@
 """Digital twin modeling and simulation library."""
+# SPDX-License-Identifier: Apache-2.0
 
 from .model import (
     DOMAIN,

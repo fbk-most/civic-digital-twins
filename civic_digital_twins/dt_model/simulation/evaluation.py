@@ -1,4 +1,5 @@
 """Generic model evaluation."""
+# SPDX-License-Identifier: Apache-2.0
 
 import warnings
 from collections.abc import Mapping

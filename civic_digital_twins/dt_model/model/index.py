@@ -5,6 +5,7 @@ An index variable is a variable that is used to represent a conversion factor or
 parameter that is used to calculate the value of a symbol. The index variable can
 be a constant, a distribution, or a symbolic expression.
 """
+# SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable

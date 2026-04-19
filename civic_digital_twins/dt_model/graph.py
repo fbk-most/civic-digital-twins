@@ -11,6 +11,7 @@ intended for use in model definitions.  Import it as::
 The raw engine path (``dt_model.engine.frontend.graph``) remains available
 for engine-level work (DAG construction, backends, debugging).
 """
+# SPDX-License-Identifier: Apache-2.0
 
 from .engine.frontend.graph import (
     Node,

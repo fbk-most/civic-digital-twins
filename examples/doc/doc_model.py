@@ -1,4 +1,5 @@
 """Runnable snippets from docs/design/dd-cdt-model.md."""
+# SPDX-License-Identifier: Apache-2.0
 
 import sys
 import warnings

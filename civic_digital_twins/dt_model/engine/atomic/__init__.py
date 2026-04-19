@@ -2,6 +2,7 @@
 
 It implements an atomic integer counter class similar to Go's atomic.Int64.
 """
+# SPDX-License-Identifier: Apache-2.0
 
 import threading
 

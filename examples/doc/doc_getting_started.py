@@ -1,4 +1,5 @@
 """Runnable snippets from docs/getting-started.md."""
+# SPDX-License-Identifier: Apache-2.0
 
 import warnings
 from dataclasses import dataclass

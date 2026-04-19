@@ -1,4 +1,5 @@
 """Runnable snippets from examples/overtourism_molveno/overtourism-getting-started.md."""
+# SPDX-License-Identifier: Apache-2.0
 
 import sys
 from pathlib import Path
