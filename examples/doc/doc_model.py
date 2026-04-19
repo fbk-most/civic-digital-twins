@@ -162,13 +162,15 @@ def _demo_14_15_end_to_end() -> None:
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
     z = Index("z", x + y)
-    model = Model("demo", [x, y, z])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        model = Model("demo", [x, y, z])
 
     # Build an ensemble of 200 scenarios
     ensemble = DistributionEnsemble(model, size=200)
 
     # Evaluate
-    result = Evaluation(model).evaluate(ensemble)
+    result = Evaluation(model).evaluate(ensemble=ensemble)
 
     # Weighted mean of z across all scenarios
     print(result.marginalize(z))  # ≈ 10.0
@@ -264,7 +266,7 @@ def _demo_18_20_overtourism() -> None:
     ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
     result = Evaluation(model).evaluate(
-        ensemble,
+        ensemble=ensemble,
         parameters={PV_tourists: tt, PV_excursionists: ee},
     )
 

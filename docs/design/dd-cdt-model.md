@@ -544,7 +544,7 @@ model = Model("demo", [x, y, z])
 ensemble = DistributionEnsemble(model, size=200)
 
 # Evaluate
-result = Evaluation(model).evaluate(ensemble)
+result = Evaluation(model).evaluate(ensemble=ensemble)
 
 # Weighted mean of z across all scenarios
 print(result.marginalize(z))  # ≈ 10.0
@@ -651,7 +651,7 @@ tt = np.linspace(0, 50_000, 101)   # tourist presence axis
 ee = np.linspace(0, 50_000, 101)   # excursionist presence axis
 
 result = Evaluation(model).evaluate(
-    ensemble,
+    ensemble=ensemble,
     parameters={PV_tourists: tt, PV_excursionists: ee},
 )
 

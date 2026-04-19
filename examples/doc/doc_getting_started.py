@@ -105,7 +105,7 @@ ensemble = DistributionEnsemble(co2_model, size=1000)
 # getting-started.md §3 — Evaluate
 # ---------------------------------------------------------------------------
 
-result = Evaluation(co2_model).evaluate(ensemble)
+result = Evaluation(co2_model).evaluate(ensemble=ensemble)
 
 co2 = co2_model.outputs.co2  # access via contractual output
 co2_samples = result[co2]  # np.ndarray, shape (1000,)
@@ -142,11 +142,9 @@ smoothed = TimeseriesIndex(
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
     model = Model("ts_model", [demand_ts, smoothed])
-    ensemble = [(1.0, {})]
 
-# Single scenario with no abstract indexes
+# No abstract indexes — omit ensemble (deterministic evaluation)
 result = Evaluation(model).evaluate(
-    ensemble,
     functions={
         "smooth": executor.LambdaAdapter(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same"),

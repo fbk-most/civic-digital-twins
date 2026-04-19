@@ -550,7 +550,7 @@ from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation  # noq
 # PipelineModel has a DistributionIndex (raw_data), so DistributionEnsemble works.
 _pipeline_eval = PipelineModel()
 _ensemble_eval = DistributionEnsemble(_pipeline_eval, size=50)
-_result_eval = Evaluation(_pipeline_eval).evaluate(_ensemble_eval)
+_result_eval = Evaluation(_pipeline_eval).evaluate(ensemble=_ensemble_eval)
 
 mean_pipeline_result = _result_eval.marginalize(_pipeline_eval.outputs.result)
 assert mean_pipeline_result > 0

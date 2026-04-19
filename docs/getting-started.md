@@ -147,7 +147,7 @@ ensemble = DistributionEnsemble(co2_model, size=1000)
 ```python
 from civic_digital_twins.dt_model import Evaluation
 
-result = Evaluation(co2_model).evaluate(ensemble)
+result = Evaluation(co2_model).evaluate(ensemble=ensemble)
 ```
 
 `result` is an `EvaluationResult`.  Use `result[idx]` for the raw array
@@ -185,12 +185,10 @@ smoothed = TimeseriesIndex(
     graph.function_call("smooth", demand_ts.node),
 )
 
-model    = ...  # define a suitable model that includes demand_ts and smoothed
-ensemble = ...  # define a suitable ensemble (or pass [(1.0, {})] if there are no abstract indexes)
+model = ...  # define a suitable model that includes demand_ts and smoothed
 
-# Register the implementation at evaluation time
+# Register the implementation at evaluation time — no abstract indexes, so no ensemble needed
 result = Evaluation(model).evaluate(
-    ensemble,
     functions={
         "smooth": executor.LambdaAdapter(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
