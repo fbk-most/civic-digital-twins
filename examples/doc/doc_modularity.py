@@ -224,6 +224,12 @@ class PipelineModel(Model):
     """Root model that wires StageAModel → StageBModel as a pipeline."""
 
     @dataclass
+    class Inputs:
+        """Inputs of :class:`PipelineModel`."""
+
+        raw_data: DistributionIndex
+
+    @dataclass
     class Outputs:
         """Outputs of :class:`PipelineModel`."""
 
@@ -236,13 +242,10 @@ class PipelineModel(Model):
         stage_a_indexes: list[GenericIndex]
         stage_b_indexes: list[GenericIndex]
 
-    def __init__(self) -> None:
-        raw_data = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+    def __init__(self, raw_data: DistributionIndex) -> None:
+        inputs = PipelineModel.Inputs(raw_data=raw_data)
 
-        Outputs = PipelineModel.Outputs
-        Expose = PipelineModel.Expose
-
-        stage_a = StageAModel(raw_data=raw_data)
+        stage_a = StageAModel(raw_data=inputs.raw_data)
         stage_b = StageBModel(
             processed=stage_a.outputs.processed,
             ratio=stage_a.outputs.ratio,
@@ -250,15 +253,17 @@ class PipelineModel(Model):
 
         super().__init__(
             "Pipeline",
-            outputs=Outputs(result=stage_b.outputs.result),
-            expose=Expose(
+            inputs=inputs,
+            outputs=PipelineModel.Outputs(result=stage_b.outputs.result),
+            expose=PipelineModel.Expose(
                 stage_a_indexes=list(stage_a.indexes),
                 stage_b_indexes=list(stage_b.indexes),
             ),
         )
 
 
-pipeline = PipelineModel()
+_raw_data = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+pipeline = PipelineModel(raw_data=_raw_data)
 
 assert pipeline.outputs.result is not None
 # raw_data is a DistributionIndex (abstract) → model is not fully instantiated
@@ -548,7 +553,7 @@ def _demo_15_piecewise_categorical() -> None:
 from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation  # noqa: E402
 
 # PipelineModel has a DistributionIndex (raw_data), so DistributionEnsemble works.
-_pipeline_eval = PipelineModel()
+_pipeline_eval = PipelineModel(raw_data=DistributionIndex("x_eval", stats.uniform, {"loc": 0.0, "scale": 10.0}))
 _ensemble_eval = DistributionEnsemble(_pipeline_eval, size=50)
 _result_eval = Evaluation(_pipeline_eval).evaluate(ensemble=_ensemble_eval)
 
