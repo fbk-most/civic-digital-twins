@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import random
+import warnings
 
 import numpy as np
 import pytest
@@ -20,20 +21,16 @@ from overtourism_molveno.molveno_model import (
     M_Base,
     MolvenoModel,
     ParkingModel,
-    PresenceModel,
     PV_excursionists,
     PV_tourists,
 )
 from overtourism_molveno.overtourism_metamodel import (
-    CategoricalContextVariable,
     Constraint,
-    ContextVariable,
     OvertourismEnsemble,
     PresenceVariable,
-    UniformCategoricalContextVariable,
 )
 
-from civic_digital_twins.dt_model import Evaluation
+from civic_digital_twins.dt_model import CategoricalIndex, Evaluation, ModelContractWarning
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
 
 # ---------------------------------------------------------------------------
@@ -49,7 +46,7 @@ def compute_field(model, ensemble, tt, ee):
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}
@@ -185,7 +182,7 @@ def test_ensemble_based_evaluation(tourists, excursionists):
     """OvertourismEnsemble-based evaluation produces a valid sustainability field."""
     np.random.seed(42)
     random.seed(42)
-    scenario: dict[ContextVariable, list] = {CV_weather: ["good", "bad"]}
+    scenario: dict[CategoricalIndex, list[str]] = {CV_weather: ["good", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=5)
 
     field, field_elements, _ = compute_field(M_Base, ensemble, tourists, excursionists)
@@ -278,7 +275,7 @@ def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
     np.random.seed(0)
     random.seed(0)
-    scenario: dict[ContextVariable, list] = {CV_weather: ["good", "bad"]}
+    scenario: dict[CategoricalIndex, list[str]] = {CV_weather: ["good", "bad"]}
     ens = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=10)
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
@@ -291,74 +288,75 @@ def test_multiple_ensemble_members():
 
 
 # ---------------------------------------------------------------------------
-# Sub-model hierarchy — structure and typing
+# MolvenoModel structure — CVs, PVs, sub-models
 # ---------------------------------------------------------------------------
 
 
-def test_molveno_model_has_five_sub_models():
-    """MolvenoModel exposes all five concern sub-models as named attributes."""
+def test_molveno_model_has_four_sub_models():
+    """MolvenoModel exposes all four concern sub-models as named attributes."""
     m = MolvenoModel()
-    assert isinstance(m.presence, PresenceModel)
     assert isinstance(m.parking, ParkingModel)
     assert isinstance(m.beach, BeachModel)
     assert isinstance(m.accommodation, AccommodationModel)
     assert isinstance(m.food, FoodModel)
 
 
-def test_presence_model_outputs_pvs():
-    """PresenceModel.outputs exposes pv_tourists and pv_excursionists."""
+def test_molveno_model_exposes_pvs():
+    """MolvenoModel exposes pv_tourists and pv_excursionists as attributes."""
     m = MolvenoModel()
-    assert isinstance(m.presence.outputs.pv_tourists, PresenceVariable)
-    assert isinstance(m.presence.outputs.pv_excursionists, PresenceVariable)
-    assert m.presence.outputs.pv_tourists.name == "tourists"
-    assert m.presence.outputs.pv_excursionists.name == "excursionists"
+    assert isinstance(m.pv_tourists, PresenceVariable)
+    assert isinstance(m.pv_excursionists, PresenceVariable)
+    assert m.pv_tourists.name == "tourists"
+    assert m.pv_excursionists.name == "excursionists"
 
 
-def test_presence_model_outputs_context_variables():
-    """PresenceModel.outputs holds all three context variables."""
+def test_molveno_model_exposes_context_variables():
+    """MolvenoModel exposes the three context variables as attributes."""
     m = MolvenoModel()
-    assert isinstance(m.presence.outputs.cv_weekday, UniformCategoricalContextVariable)
-    assert isinstance(m.presence.outputs.cv_season, CategoricalContextVariable)
-    assert isinstance(m.presence.outputs.cv_weather, CategoricalContextVariable)
-    assert m.presence.outputs.cv_weekday.name == "weekday"
-    assert m.presence.outputs.cv_season.name == "season"
-    assert m.presence.outputs.cv_weather.name == "weather"
+    assert isinstance(m.cv_weekday, CategoricalIndex)
+    assert isinstance(m.cv_season, CategoricalIndex)
+    assert isinstance(m.cv_weather, CategoricalIndex)
+    assert m.cv_weekday.name == "weekday"
+    assert m.cv_season.name == "season"
+    assert m.cv_weather.name == "weather"
 
 
-def test_presence_model_has_no_expose():
-    """PresenceModel has no Expose — all outputs are contractual."""
+def test_cv_probabilities_sum_to_one():
+    """Each CategoricalIndex CV has outcomes summing to 1.0."""
     m = MolvenoModel()
-    assert len(m.presence.expose) == 0
+    for cv in (m.cv_weekday, m.cv_season, m.cv_weather):
+        total = sum(cv.outcomes.values())
+        assert abs(total - 1.0) < 1e-9, f"{cv.name}: outcomes sum to {total}"
 
 
-def test_parking_model_inputs_wired_from_presence():
-    """ParkingModel presence inputs are the same objects as PresenceModel outputs."""
+def test_parking_model_inputs_wired_from_root():
+    """ParkingModel presence inputs are the same objects as MolvenoModel attributes."""
     m = MolvenoModel()
-    assert m.parking.inputs.pv_tourists is m.presence.outputs.pv_tourists
-    assert m.parking.inputs.pv_excursionists is m.presence.outputs.pv_excursionists
-    assert m.parking.inputs.cv_weather is m.presence.outputs.cv_weather
+    assert m.parking.inputs.pv_tourists is m.pv_tourists
+    assert m.parking.inputs.pv_excursionists is m.pv_excursionists
+    assert m.parking.inputs.cv_weather is m.cv_weather
 
 
-def test_beach_model_inputs_wired_from_presence():
-    """BeachModel presence inputs are the same objects as PresenceModel outputs."""
+def test_beach_model_inputs_wired_from_root():
+    """BeachModel presence inputs are the same objects as MolvenoModel attributes."""
     m = MolvenoModel()
-    assert m.beach.inputs.pv_tourists is m.presence.outputs.pv_tourists
-    assert m.beach.inputs.pv_excursionists is m.presence.outputs.pv_excursionists
-    assert m.beach.inputs.cv_weather is m.presence.outputs.cv_weather
+    assert m.beach.inputs.pv_tourists is m.pv_tourists
+    assert m.beach.inputs.pv_excursionists is m.pv_excursionists
+    assert m.beach.inputs.cv_weather is m.cv_weather
 
 
-def test_accommodation_model_inputs_wired_from_presence():
-    """AccommodationModel.inputs.pv_tourists is the same object as PresenceModel outputs."""
+def test_accommodation_model_inputs_wired_from_root():
+    """AccommodationModel.inputs.pv_tourists is the same object as MolvenoModel attribute."""
     m = MolvenoModel()
-    assert m.accommodation.inputs.pv_tourists is m.presence.outputs.pv_tourists
+    assert m.accommodation.inputs.pv_tourists is m.pv_tourists
 
 
-def test_food_model_inputs_wired_from_presence():
-    """FoodModel presence inputs are the same objects as PresenceModel outputs."""
+def test_food_model_inputs_wired_from_root():
+    """FoodModel presence inputs are the same objects as MolvenoModel attributes."""
     m = MolvenoModel()
-    assert m.food.inputs.pv_tourists is m.presence.outputs.pv_tourists
-    assert m.food.inputs.pv_excursionists is m.presence.outputs.pv_excursionists
-    assert m.food.inputs.cv_weather is m.presence.outputs.cv_weather
+    assert m.food.inputs.pv_tourists is m.pv_tourists
+    assert m.food.inputs.pv_excursionists is m.pv_excursionists
+    assert m.food.inputs.cv_weather is m.cv_weather
 
 
 def test_concern_model_outputs_are_generic_indexes_only():
@@ -451,27 +449,33 @@ def test_food_outputs_index_types():
 
 
 # ---------------------------------------------------------------------------
-# Sub-model hierarchy — indexes coverage
+# No contract warnings at construction
+# ---------------------------------------------------------------------------
+
+
+def test_molveno_model_construction_is_warning_free():
+    """Constructing MolvenoModel emits no ModelContractWarning or DeprecationWarning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModelContractWarning)
+        warnings.simplefilter("error", DeprecationWarning)
+        MolvenoModel()
+
+
+# ---------------------------------------------------------------------------
+# Root-model indexes coverage
 # ---------------------------------------------------------------------------
 
 
 def test_presence_cvs_in_root_indexes():
-    """All three context variables from PresenceModel appear in M_Base.indexes."""
-    cv_ids = {
-        id(M_Base.presence.outputs.cv_weekday),
-        id(M_Base.presence.outputs.cv_season),
-        id(M_Base.presence.outputs.cv_weather),
-    }
+    """All three context variables appear in M_Base.indexes."""
+    cv_ids = {id(M_Base.cv_weekday), id(M_Base.cv_season), id(M_Base.cv_weather)}
     root_ids = {id(idx) for idx in M_Base.indexes}
     assert cv_ids <= root_ids
 
 
 def test_presence_pvs_in_root_indexes():
-    """Both presence variables from PresenceModel appear in M_Base.indexes."""
-    pv_ids = {
-        id(M_Base.presence.outputs.pv_tourists),
-        id(M_Base.presence.outputs.pv_excursionists),
-    }
+    """Both presence variables appear in M_Base.indexes."""
+    pv_ids = {id(M_Base.pv_tourists), id(M_Base.pv_excursionists)}
     root_ids = {id(idx) for idx in M_Base.indexes}
     assert pv_ids <= root_ids
 
@@ -527,17 +531,17 @@ def test_molveno_model_cvs_list():
     """M_Base.cvs contains exactly the three context variables."""
     assert len(M_Base.cvs) == 3
     cv_ids = {id(cv) for cv in M_Base.cvs}
-    assert id(M_Base.presence.outputs.cv_weekday) in cv_ids
-    assert id(M_Base.presence.outputs.cv_season) in cv_ids
-    assert id(M_Base.presence.outputs.cv_weather) in cv_ids
+    assert id(M_Base.cv_weekday) in cv_ids
+    assert id(M_Base.cv_season) in cv_ids
+    assert id(M_Base.cv_weather) in cv_ids
 
 
 def test_molveno_model_pvs_list():
     """M_Base.pvs contains exactly the two presence variables."""
     assert len(M_Base.pvs) == 2
     pv_ids = {id(pv) for pv in M_Base.pvs}
-    assert id(M_Base.presence.outputs.pv_tourists) in pv_ids
-    assert id(M_Base.presence.outputs.pv_excursionists) in pv_ids
+    assert id(M_Base.pv_tourists) in pv_ids
+    assert id(M_Base.pv_excursionists) in pv_ids
 
 
 def test_molveno_model_constraints_list():
@@ -566,16 +570,16 @@ def test_molveno_model_constraints_match_sub_model_attributes():
 
 
 def test_module_aliases_cv_identity():
-    """Module-level CV_* aliases are identical to PresenceModel.outputs attributes."""
-    assert CV_weekday is M_Base.presence.outputs.cv_weekday
-    assert CV_season is M_Base.presence.outputs.cv_season
-    assert CV_weather is M_Base.presence.outputs.cv_weather
+    """Module-level CV_* aliases are identical to MolvenoModel attributes."""
+    assert CV_weekday is M_Base.cv_weekday
+    assert CV_season is M_Base.cv_season
+    assert CV_weather is M_Base.cv_weather
 
 
 def test_module_aliases_pv_identity():
-    """Module-level PV_* aliases are identical to the presence sub-model outputs."""
-    assert PV_tourists is M_Base.presence.outputs.pv_tourists
-    assert PV_excursionists is M_Base.presence.outputs.pv_excursionists
+    """Module-level PV_* aliases are identical to MolvenoModel attributes."""
+    assert PV_tourists is M_Base.pv_tourists
+    assert PV_excursionists is M_Base.pv_excursionists
 
 
 def test_module_aliases_presence_transformation_identity():
@@ -605,7 +609,7 @@ def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
     np.random.seed(0)
     random.seed(0)
-    situation: dict[ContextVariable, list] = {CV_weather: ["good", "unsettled", "bad"]}
+    situation: dict[CategoricalIndex, list[str]] = {CV_weather: ["good", "unsettled", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, situation, cv_ensemble_size=20)
 
     tourists = np.array([1000, 5000, 10000])

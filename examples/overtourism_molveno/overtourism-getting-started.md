@@ -34,25 +34,22 @@ engine layer see
 ## 1 — Context variables
 
 ```python
-from overtourism_molveno.overtourism_metamodel import (
-    CategoricalContextVariable,
-    UniformCategoricalContextVariable,
-)
+from civic_digital_twins.dt_model import CategoricalIndex
 
 # Season: weighted categorical
-CV_season = CategoricalContextVariable(
+CV_season = CategoricalIndex(
     "season",
     {"low": 0.6, "high": 0.4},
 )
 
-# Weather: uniform categorical
-CV_weather = UniformCategoricalContextVariable(
+# Weather: uniform categorical (probabilities provided explicitly)
+CV_weather = CategoricalIndex(
     "weather",
-    ["good", "unsettled", "bad"],
+    {"good": 1 / 3, "unsettled": 1 / 3, "bad": 1 / 3},
 )
 ```
 
-A `ContextVariable` is an `Index` with `value=None` (it acts as a
+A `CategoricalIndex` is an `Index` with `value=None` (it acts as a
 placeholder); `OvertourismEnsemble` fills it in with a concrete value for
 each scenario.
 
@@ -137,9 +134,9 @@ flat `indexes` list so that `Evaluation` can find it.
 ## 5 — Ensemble
 
 ```python
-from overtourism_molveno.overtourism_metamodel import ContextVariable, OvertourismEnsemble
+from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
 
-scenario: dict[ContextVariable, list] = {
+scenario: dict[CategoricalIndex, list[str]] = {
     CV_season:  ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }

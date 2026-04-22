@@ -12,30 +12,34 @@ if str(_examples_dir) not in sys.path:
 
 import numpy as np
 from overtourism_molveno.overtourism_metamodel import (
-    CategoricalContextVariable,
     Constraint,
-    ContextVariable,
     OvertourismEnsemble,
     OvertourismModel,
     PresenceVariable,
-    UniformCategoricalContextVariable,
 )
 from scipy import stats
 
-from civic_digital_twins.dt_model import Distribution, DistributionIndex, Evaluation, Index, graph
+from civic_digital_twins.dt_model import (
+    CategoricalIndex,
+    Distribution,
+    DistributionIndex,
+    Evaluation,
+    Index,
+    graph,
+)
 
 # ---------------------------------------------------------------------------
 # overtourism-getting-started.md §1 — Context variables
 # ---------------------------------------------------------------------------
 
-CV_season = CategoricalContextVariable(
+CV_season = CategoricalIndex(
     "season",
     {"low": 0.6, "high": 0.4},
 )
 
-CV_weather = UniformCategoricalContextVariable(
+CV_weather = CategoricalIndex(
     "weather",
-    ["good", "unsettled", "bad"],
+    {"good": 1 / 3, "unsettled": 1 / 3, "bad": 1 / 3},
 )
 
 assert CV_season.value is None  # placeholder
@@ -114,7 +118,7 @@ assert model.constraints[0] is C_beach
 # overtourism-getting-started.md §5 — Ensemble
 # ---------------------------------------------------------------------------
 
-scenario: dict[ContextVariable, list] = {
+scenario: dict[CategoricalIndex, list[str]] = {
     CV_season: ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }

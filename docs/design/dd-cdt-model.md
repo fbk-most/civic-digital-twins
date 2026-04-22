@@ -562,22 +562,20 @@ The overtourism example
 (`examples/overtourism_molveno/overtourism_metamodel.py`) illustrates the
 pattern.  The key classes are:
 
-### ContextVariable
+### Context variables
 
-A `ContextVariable` is an `Index` with `value=None` (explicit
-placeholder) and a `sample(nr, subset, force_sample)` method that
-returns a list of `(probability, value)` pairs.
+Context variables are ordinary `CategoricalIndex` instances: an `Index`
+with `value=None` (explicit placeholder) whose `outcomes` map gives the
+per-value probabilities.  `OvertourismEnsemble` fills each CV in with a
+concrete value for every scenario.
 
-Three concrete subclasses are provided:
-
-| Class | Distribution |
-| ----- | ------------ |
-| `UniformCategoricalContextVariable` | Uniform over a finite set of values. |
-| `CategoricalContextVariable` | Categorical with explicit probabilities. |
-| `ContinuousContextVariable` | Backed by a `scipy` continuous distribution. |
+Uniform distributions are expressed by passing equal weights in the
+`outcomes` dict (there is no dedicated "uniform" subclass):
 
 ```python
-CV_weather = CategoricalContextVariable(
+from civic_digital_twins.dt_model import CategoricalIndex
+
+CV_weather = CategoricalIndex(
     "weather",
     {"good": 0.5, "unsettled": 0.3, "bad": 0.2},
 )
@@ -609,7 +607,7 @@ objects can be used as dictionary keys.
 indexes into labeled subsets:
 
 ```python
-model.cvs          # list[ContextVariable]
+model.cvs          # list[CategoricalIndex]
 model.pvs          # list[PresenceVariable]
 model.domain_indexes   # list[Index]  (e.g. scaling factors)
 model.capacities   # list[Index]      (capacity indexes)

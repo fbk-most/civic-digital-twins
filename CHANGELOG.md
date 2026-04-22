@@ -14,6 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scipy-stubs` added to dev dependencies for improved type checking.
 - Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
 
+**Overtourism metamodel modernization**
+
+- `OvertourismModel` now uses the dataclass-based `Inputs`/`Outputs` API
+  (closing #152): all abstract indexes (CVs, PVs, capacities,
+  distribution-backed domain indexes) are declared in `Inputs`, so
+  construction no longer emits `AbstractIndexNotInInputsWarning` nor needs
+  the `catch_warnings` suppressor.
+- `MolvenoModel` constructs context and presence variables directly; the
+  intermediate `PresenceModel` sub-model has been dissolved.  CVs/PVs are
+  exposed as attributes (`m.cv_weekday`, `m.pv_tourists`, …).
+
+### Changed
+
+- **Breaking: `ContextVariable` hierarchy removed (closing #139).**
+  `ContextVariable`, `CategoricalContextVariable`,
+  `UniformCategoricalContextVariable`, and `ContinuousContextVariable` have
+  been deleted from `overtourism_metamodel.py`.  Context variables are now
+  ordinary `CategoricalIndex` instances from
+  `civic_digital_twins.dt_model`; uniform CVs use an explicit equal-weight
+  `outcomes` dict (e.g. `{"good": 1/3, "unsettled": 1/3, "bad": 1/3}`).
+  `OvertourismEnsemble` now accepts `dict[CategoricalIndex, list[str]]`
+  scenarios and hosts the enumerate-vs-sample and subset renormalisation
+  logic that previously lived on the CV classes.
+
 **Typed axes — canonical shape contract for evaluation results**
 
 - `Axis(name, role)` and `AxisRole` (`PARAMETER`, `ENSEMBLE`, `DOMAIN`) — explicit

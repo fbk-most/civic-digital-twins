@@ -59,6 +59,21 @@ def _demo_00_index_modes() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Block 01: dd-cdt-model.md — Index Types: CategoricalIndex
+# ---------------------------------------------------------------------------
+
+
+def _demo_01_categorical_index() -> None:
+    """Block 01: CategoricalIndex placeholder."""
+    from civic_digital_twins.dt_model import CategoricalIndex
+
+    mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
+
+    assert mode.value is None
+    assert mode.support == ["bike", "train"]
+
+
+# ---------------------------------------------------------------------------
 # Block 02: dd-cdt-model.md — TimeseriesIndex
 # ---------------------------------------------------------------------------
 
@@ -212,16 +227,21 @@ def _demo_18_20_overtourism() -> None:
     """Blocks 18+19+20: OvertourismModel attributes + Grid Evaluation."""
     import numpy as np
     from overtourism_molveno.overtourism_metamodel import (
-        CategoricalContextVariable,
         Constraint,
         OvertourismEnsemble,
         OvertourismModel,
         PresenceVariable,
     )
 
-    from civic_digital_twins.dt_model import ConstIndex, Distribution, Evaluation, Index
+    from civic_digital_twins.dt_model import (
+        CategoricalIndex,
+        ConstIndex,
+        Distribution,
+        Evaluation,
+        Index,
+    )
 
-    CV_weather = CategoricalContextVariable(
+    CV_weather = CategoricalIndex(
         "weather",
         {"good": 0.5, "unsettled": 0.3, "bad": 0.2},
     )
@@ -249,7 +269,7 @@ def _demo_18_20_overtourism() -> None:
     )
 
     # Block 18 — OvertourismModel attribute access
-    model.cvs  # list[ContextVariable]
+    model.cvs  # list[CategoricalIndex]
     model.pvs  # list[PresenceVariable]
     model.domain_indexes  # list[Index]  (e.g. scaling factors)
     model.capacities  # list[Index]      (capacity indexes)
@@ -290,6 +310,7 @@ def _demo_18_20_overtourism() -> None:
 # ---------------------------------------------------------------------------
 
 _demo_00_index_modes()
+_demo_01_categorical_index()
 _demo_02_timeseries_index()
 _demo_05_legacy_api()
 _demo_08_contract_warnings()
