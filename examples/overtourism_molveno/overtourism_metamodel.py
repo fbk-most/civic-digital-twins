@@ -337,11 +337,6 @@ class OvertourismEnsemble:
         """Return the weight array for the single ENSEMBLE axis."""
         return (self._weights,)
 
-    @property
-    def weights(self) -> np.ndarray:
-        """Joint weight array (alias for the single ENSEMBLE axis weights)."""
-        return self._weights
-
     def assignments(self) -> dict[GenericIndex, np.ndarray]:
         """Return batched assignments for all CVs and distribution-backed indexes."""
         return self._assignments

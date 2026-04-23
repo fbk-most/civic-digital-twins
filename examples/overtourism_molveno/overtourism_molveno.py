@@ -6,7 +6,6 @@ We include this model into the source tree as an illustrative example.
 # SPDX-License-Identifier: Apache-2.0
 
 import time
-import warnings
 from functools import reduce
 from pathlib import Path
 
@@ -18,8 +17,6 @@ from scipy import interpolate, ndimage, stats
 matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 
 from civic_digital_twins.dt_model import Distribution, Evaluation
-
-warnings.filterwarnings("ignore", message=".*sample arguments is too small.*")
 
 try:
     from overtourism_molveno.molveno_model import (
@@ -240,7 +237,7 @@ def plot_scenario(model, result, scenarios, title):
     rf_e = float(np.mean(result[I_P_excursionists_reduction_factor]))
     sl_e = float(np.mean(result[I_P_excursionists_saturation_level]))
 
-    ens_weights = scenarios.weights
+    ens_weights = scenarios.ensemble_weights[0]
     ens_assignments = scenarios.assignments()
     # Iterate scenario-by-scenario: zip per-index arrays into per-scenario dicts.
     scenario_keys = list(ens_assignments.keys())

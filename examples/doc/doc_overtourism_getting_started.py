@@ -128,7 +128,7 @@ ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
 # so all CV values are enumerated rather than sampled randomly)
 assert len(ensemble) == 6
 
-assert abs(ensemble.weights.sum() - 1.0) < 1e-10
+assert abs(ensemble.ensemble_weights[0].sum() - 1.0) < 1e-10
 
 
 # ---------------------------------------------------------------------------
