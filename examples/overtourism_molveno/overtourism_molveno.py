@@ -109,8 +109,9 @@ def _compute_sustainability_index_with_ci_per_constraint(
 
 
 def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict:
-    """Compute the modal line for each constraint."""
+    """Compute the modal line for each constraint via orthogonal regression (first PC)."""
     axes_list = list(axes.values())  # [tt, ee]
+    bounds = [axes_list[0].max(), axes_list[1].max()]
     modal_lines = {}
 
     for c, fe in field_elements.items():
@@ -123,36 +124,31 @@ def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict
         (yi, xi) = np.nonzero(matrix)
         # yi = row indices (tourists axis 0), xi = col indices (excursionists axis 1)
 
-        try:
-            horizontal_regr = stats.linregress(axes_list[0][yi], axes_list[1][xi])
-        except ValueError:
-            horizontal_regr = None
-        try:
-            vertical_regr = stats.linregress(axes_list[1][xi], axes_list[0][yi])
-        except ValueError:
-            vertical_regr = None
+        if len(yi) < 3:
+            # Too few boundary points to fit a line.
+            continue
 
-        def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-            if regr.slope < 0.0:
-                return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
-            else:
-                return ((regr.intercept, regr.intercept), (0.0, 10000.0))
+        # Orthogonal regression: first principal component of the boundary cloud.
+        pts = np.stack([axes_list[0][yi], axes_list[1][xi]], axis=1)  # (N, 2)
+        centroid = pts.mean(axis=0)
+        _, _, Vt = np.linalg.svd(pts - centroid, full_matrices=False)
+        direction = Vt[0]  # unit vector in [tourists, excursionists] space
 
-        def _horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-            if regr.slope < 0.0:
-                return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
-            else:
-                return ((0.0, 10000.0), (regr.intercept, regr.intercept))
+        # Clip the infinite line to the grid box [0, t_max] × [0, e_max].
+        t_lo, t_hi = -np.inf, np.inf
+        for i, bound in enumerate(bounds):
+            if abs(direction[i]) > 1e-10:
+                ta = -centroid[i] / direction[i]
+                tb = (bound - centroid[i]) / direction[i]
+                t_lo = max(t_lo, min(ta, tb))
+                t_hi = min(t_hi, max(ta, tb))
 
-        if horizontal_regr and vertical_regr:
-            if vertical_regr.rvalue >= horizontal_regr.rvalue:
-                modal_lines[c] = _vertical(vertical_regr)
-            else:
-                modal_lines[c] = _horizontal(horizontal_regr)
-        elif horizontal_regr:
-            modal_lines[c] = _horizontal(horizontal_regr)
-        elif vertical_regr:
-            modal_lines[c] = _vertical(vertical_regr)
+        if t_lo >= t_hi:
+            continue
+
+        p0 = centroid + t_lo * direction  # [tourists, excursionists]
+        p1 = centroid + t_hi * direction
+        modal_lines[c] = ((p0[0], p1[0]), (p0[1], p1[1]))
 
     return modal_lines
 
