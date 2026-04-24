@@ -209,24 +209,15 @@ def plot_scenario(model, result, scenarios, title):
 
     ens_weights = scenarios.ensemble_weights[0]
     ens_assignments = scenarios.assignments()
-    # Iterate scenario-by-scenario: zip per-index arrays into per-scenario dicts.
     scenario_keys = list(ens_assignments.keys())
-    sample_tourists = [
-        presence_transformation(sample, rf_t, sl_t)
-        for i, w in enumerate(ens_weights)
-        for sample in model.pv_tourists.sample(
-            cvs={k: ens_assignments[k][i] for k in scenario_keys},
-            nr=max(1, round(w * target_presence_samples)),
-        )
-    ]
-    sample_excursionists = [
-        presence_transformation(sample, rf_e, sl_e)
-        for i, w in enumerate(ens_weights)
-        for sample in model.pv_excursionists.sample(
-            cvs={k: ens_assignments[k][i] for k in scenario_keys},
-            nr=max(1, round(w * target_presence_samples)),
-        )
-    ]
+    sample_tourists, sample_excursionists = [], []
+    for i, w in enumerate(ens_weights):
+        cvs_i = {k: ens_assignments[k][i] for k in scenario_keys}
+        nr = max(1, round(w * target_presence_samples))
+        for s in model.pv_tourists.sample(cvs=cvs_i, nr=nr):
+            sample_tourists.append(presence_transformation(s, rf_t, sl_t))
+        for s in model.pv_excursionists.sample(cvs=cvs_i, nr=nr):
+            sample_excursionists.append(presence_transformation(s, rf_e, sl_e))
 
     axes_dict = {model.pv_tourists: tt, model.pv_excursionists: ee}
 
