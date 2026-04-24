@@ -10,19 +10,10 @@ import pytest
 from overtourism_molveno.molveno_model import (
     AccommodationModel,
     BeachModel,
-    CV_season,
-    CV_weather,
-    CV_weekday,
     FoodModel,
-    I_P_excursionists_reduction_factor,
-    I_P_excursionists_saturation_level,
-    I_P_tourists_reduction_factor,
-    I_P_tourists_saturation_level,
     M_Base,
     MolvenoModel,
     ParkingModel,
-    PV_excursionists,
-    PV_tourists,
 )
 from overtourism_molveno.overtourism_metamodel import (
     Constraint,
@@ -46,7 +37,7 @@ def compute_field(model, ensemble, tt, ee):
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee})
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}
@@ -131,9 +122,9 @@ def good_weather_scenarios():
     return OvertourismEnsemble(
         M_Base,
         {
-            CV_weekday: ["monday"],
-            CV_season: ["high"],
-            CV_weather: ["good"],
+            M_Base.cv_weekday: ["monday"],
+            M_Base.cv_season: ["high"],
+            M_Base.cv_weather: ["good"],
         },
     )
 
@@ -182,7 +173,7 @@ def test_ensemble_based_evaluation(tourists, excursionists):
     """OvertourismEnsemble-based evaluation produces a valid sustainability field."""
     np.random.seed(42)
     random.seed(42)
-    scenario: dict[CategoricalIndex, list[str]] = {CV_weather: ["good", "bad"]}
+    scenario: dict[CategoricalIndex, list[str]] = {M_Base.cv_weather: ["good", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=5)
 
     field, field_elements, _ = compute_field(M_Base, ensemble, tourists, excursionists)
@@ -212,9 +203,9 @@ def test_fixed_ensemble():
     ensemble = OvertourismEnsemble(
         M_Base,
         {
-            CV_weekday: ["monday"],
-            CV_season: ["high"],
-            CV_weather: ["good"],
+            M_Base.cv_weekday: ["monday"],
+            M_Base.cv_season: ["high"],
+            M_Base.cv_weather: ["good"],
         },
     )
     _, got, _ = compute_field(M_Base, ensemble, tourists, excursionists)
@@ -275,7 +266,7 @@ def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
     np.random.seed(0)
     random.seed(0)
-    scenario: dict[CategoricalIndex, list[str]] = {CV_weather: ["good", "bad"]}
+    scenario: dict[CategoricalIndex, list[str]] = {M_Base.cv_weather: ["good", "bad"]}
     ens = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=10)
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
@@ -564,39 +555,13 @@ def test_molveno_model_constraints_match_sub_model_attributes():
     assert {id(c) for c in sub_constraints} == {id(c) for c in root_constraints}
 
 
-# ---------------------------------------------------------------------------
-# Backward-compat module-level aliases
-# ---------------------------------------------------------------------------
-
-
-def test_module_aliases_cv_identity():
-    """Module-level CV_* aliases are identical to MolvenoModel attributes."""
-    assert CV_weekday is M_Base.cv_weekday
-    assert CV_season is M_Base.cv_season
-    assert CV_weather is M_Base.cv_weather
-
-
-def test_module_aliases_pv_identity():
-    """Module-level PV_* aliases are identical to MolvenoModel attributes."""
-    assert PV_tourists is M_Base.pv_tourists
-    assert PV_excursionists is M_Base.pv_excursionists
-
-
-def test_module_aliases_presence_transformation_identity():
-    """Module-level I_P_* aliases are identical to the root model attributes."""
-    assert I_P_tourists_reduction_factor is M_Base.I_P_tourists_reduction_factor
-    assert I_P_excursionists_reduction_factor is M_Base.I_P_excursionists_reduction_factor
-    assert I_P_tourists_saturation_level is M_Base.I_P_tourists_saturation_level
-    assert I_P_excursionists_saturation_level is M_Base.I_P_excursionists_saturation_level
-
-
 def test_presence_transformation_indexes_in_root_indexes():
     """The four presence-transformation indexes appear in M_Base.indexes."""
     pt_ids = {
-        id(I_P_tourists_reduction_factor),
-        id(I_P_excursionists_reduction_factor),
-        id(I_P_tourists_saturation_level),
-        id(I_P_excursionists_saturation_level),
+        id(M_Base.i_p_tourists_reduction_factor),
+        id(M_Base.i_p_excursionists_reduction_factor),
+        id(M_Base.i_p_tourists_saturation_level),
+        id(M_Base.i_p_excursionists_saturation_level),
     }
     root_ids = {id(idx) for idx in M_Base.indexes}
     assert pt_ids <= root_ids
@@ -609,7 +574,7 @@ def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
     np.random.seed(0)
     random.seed(0)
-    situation: dict[CategoricalIndex, list[str]] = {CV_weather: ["good", "unsettled", "bad"]}
+    situation: dict[CategoricalIndex, list[str]] = {M_Base.cv_weather: ["good", "unsettled", "bad"]}
     ensemble = OvertourismEnsemble(M_Base, situation, cv_ensemble_size=20)
 
     tourists = np.array([1000, 5000, 10000])

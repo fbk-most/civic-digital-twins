@@ -19,38 +19,20 @@ matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 from civic_digital_twins.dt_model import Distribution, Evaluation
 
 try:
-    from overtourism_molveno.molveno_model import (
-        CV_weather,
-        I_P_excursionists_reduction_factor,
-        I_P_excursionists_saturation_level,
-        I_P_tourists_reduction_factor,
-        I_P_tourists_saturation_level,
-        M_Base,
-        PV_excursionists,
-        PV_tourists,
-    )
+    from overtourism_molveno.molveno_model import M_Base
     from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
 except ImportError:
-    from molveno_model import (
-        CV_weather,
-        I_P_excursionists_reduction_factor,
-        I_P_excursionists_saturation_level,
-        I_P_tourists_reduction_factor,
-        I_P_tourists_saturation_level,
-        M_Base,
-        PV_excursionists,
-        PV_tourists,
-    )
+    from molveno_model import M_Base
     from overtourism_metamodel import OvertourismEnsemble
 
 # Base situation
 S_Base = {}
 
 # Good weather situation
-S_Good_Weather = {CV_weather: ["good", "unsettled"]}
+S_Good_Weather = {M_Base.cv_weather: ["good", "unsettled"]}
 
 # Bad weather situation
-S_Bad_Weather = {CV_weather: ["bad"]}
+S_Bad_Weather = {M_Base.cv_weather: ["bad"]}
 
 # PLOTTING
 
@@ -179,7 +161,7 @@ def evaluate_scenario(model, situation) -> tuple:
     ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={M_Base.pv_tourists: tt, M_Base.pv_excursionists: ee})
     return result, ensemble
 
 
@@ -205,8 +187,8 @@ def plot_scenario(model, result, scenarios, title):
         The matplotlib figure.
     """
     fig, ax = plt.subplots(figsize=(6, 10), layout="constrained")
-    tt = result.parameter_values[PV_tourists]
-    ee = result.parameter_values[PV_excursionists]
+    tt = result.parameter_values[M_Base.pv_tourists]
+    ee = result.parameter_values[M_Base.pv_excursionists]
 
     # Compute sustainability field.
     # field[t_idx, e_idx] = P(all constraints satisfied | tourists=tt[t_idx], excursionists=ee[e_idx])
@@ -228,10 +210,10 @@ def plot_scenario(model, result, scenarios, title):
         tmp = presence * reduction_factor
         return tmp * saturation_level / ((tmp**sharpness + saturation_level**sharpness) ** (1 / sharpness))
 
-    rf_t = float(np.mean(result[I_P_tourists_reduction_factor]))
-    sl_t = float(np.mean(result[I_P_tourists_saturation_level]))
-    rf_e = float(np.mean(result[I_P_excursionists_reduction_factor]))
-    sl_e = float(np.mean(result[I_P_excursionists_saturation_level]))
+    rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
+    sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
+    rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
+    sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
 
     ens_weights = scenarios.ensemble_weights[0]
     ens_assignments = scenarios.assignments()
@@ -240,7 +222,7 @@ def plot_scenario(model, result, scenarios, title):
     sample_tourists = [
         presence_transformation(sample, rf_t, sl_t)
         for i, w in enumerate(ens_weights)
-        for sample in PV_tourists.sample(
+        for sample in M_Base.pv_tourists.sample(
             cvs={k: ens_assignments[k][i] for k in scenario_keys},
             nr=max(1, round(w * target_presence_samples)),
         )
@@ -248,13 +230,13 @@ def plot_scenario(model, result, scenarios, title):
     sample_excursionists = [
         presence_transformation(sample, rf_e, sl_e)
         for i, w in enumerate(ens_weights)
-        for sample in PV_excursionists.sample(
+        for sample in M_Base.pv_excursionists.sample(
             cvs={k: ens_assignments[k][i] for k in scenario_keys},
             nr=max(1, round(w * target_presence_samples)),
         )
     ]
 
-    axes_dict = {PV_tourists: tt, PV_excursionists: ee}
+    axes_dict = {M_Base.pv_tourists: tt, M_Base.pv_excursionists: ee}
 
     area = _compute_sustainable_area(field, axes_dict)
     (i, c_ci) = _compute_sustainability_index_with_ci(

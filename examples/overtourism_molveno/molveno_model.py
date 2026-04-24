@@ -725,34 +725,10 @@ class MolvenoModel(OvertourismModel):
         self.accommodation = accommodation
         self.food = food
 
-        # Presence-transformation parameters — kept as top-level attributes
-        # so that overtourism_molveno.py can reference them by the original
-        # names without modification.
-        self.I_P_tourists_reduction_factor = i_p_tourists_reduction_factor
-        self.I_P_excursionists_reduction_factor = i_p_excursionists_reduction_factor
-        self.I_P_tourists_saturation_level = i_p_tourists_saturation_level
-        self.I_P_excursionists_saturation_level = i_p_excursionists_saturation_level
+        self.i_p_tourists_reduction_factor = i_p_tourists_reduction_factor
+        self.i_p_excursionists_reduction_factor = i_p_excursionists_reduction_factor
+        self.i_p_tourists_saturation_level = i_p_tourists_saturation_level
+        self.i_p_excursionists_saturation_level = i_p_excursionists_saturation_level
 
 
-# ---------------------------------------------------------------------------
-# Module-level aliases — preserved for backward compatibility with
-# overtourism_molveno.py and the existing test suite
-# ---------------------------------------------------------------------------
-
-#: Shared model instance (mirrors the previous ``M_Base`` module-level object).
 M_Base = MolvenoModel()
-
-# Context variables — exposed at module level for the script / test imports
-CV_weekday = M_Base.cv_weekday
-CV_season = M_Base.cv_season
-CV_weather = M_Base.cv_weather
-
-# Presence variables
-PV_tourists = M_Base.pv_tourists
-PV_excursionists = M_Base.pv_excursionists
-
-# Presence-transformation parameters
-I_P_tourists_reduction_factor = M_Base.I_P_tourists_reduction_factor
-I_P_excursionists_reduction_factor = M_Base.I_P_excursionists_reduction_factor
-I_P_tourists_saturation_level = M_Base.I_P_tourists_saturation_level
-I_P_excursionists_saturation_level = M_Base.I_P_excursionists_saturation_level
