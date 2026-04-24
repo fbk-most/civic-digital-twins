@@ -140,16 +140,6 @@ def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict
 # ---------------------------------------------------------------------------
 
 
-def scale(p, v):
-    """Scale a probability by a value."""
-    return p * v
-
-
-def threshold(p, t):
-    """Threshold a probability by a value."""
-    return min(p, t) + 0.05 / (1 + np.exp(-(p - t)))
-
-
 def evaluate_scenario(model, situation) -> tuple:
     """Evaluate the sustainability field for *situation*.
 
