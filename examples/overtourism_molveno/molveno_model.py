@@ -1,11 +1,9 @@
 """Molveno overtourism model definition — modular decomposition.
 
-The model is split into five concern sub-models:
-
-:class:`PresenceModel` — *Stage 1, context and presence*
-    **Inputs**: —
-    **Outputs**: ``cv_weekday``, ``cv_season``, ``cv_weather``,
-    ``pv_tourists``, ``pv_excursionists``
+The model is split into four concern sub-models plus a root model.  Context
+variables (``cv_*``) and presence variables (``pv_*``) are constructed
+directly on the root :class:`MolvenoModel` and wired down to each concern
+sub-model through its ``Inputs`` dataclass.
 
 :class:`ParkingModel` — *Parking usage*
     **Inputs**: ``pv_tourists``, ``pv_excursionists``, ``cv_weather``,
@@ -34,13 +32,13 @@ The model is split into five concern sub-models:
     ``i_xa_visitors_food``, ``i_xo_visitors_food``, ``i_c_food``
     **Outputs**: ``i_u_food``
 
-:class:`MolvenoModel` — *Root, owns all* ``i_*`` *defaults*
-    Creates all ``i_*`` indexes with their default values and passes them
-    to the concern sub-models.  Forwards ``PresenceModel`` outputs as
-    needed.  Retains the domain attributes (``cvs``, ``pvs``,
-    ``constraints``) required by
+:class:`MolvenoModel` — *Root, owns CVs, PVs, and all* ``i_*`` *defaults*
+    Creates the three context variables
+    (:class:`~civic_digital_twins.dt_model.CategoricalIndex`), the two
+    presence variables, and all ``i_*`` indexes with their default values,
+    then passes them to the four concern sub-models.  Retains the domain
+    attributes (``cvs``, ``pvs``, ``constraints``) required by
     :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`.
-
 
 Design rules:
 
@@ -49,10 +47,9 @@ Design rules:
   values are created by :class:`MolvenoModel` and passed down via
   constructors.  A caller who wants to override a parameter simply
   supplies a different index object at construction time.
-* All context variables (``cv_*``) and presence variables (``pv_*``) are
-  ``Outputs`` of :class:`PresenceModel`.  ``cv_weather`` is also wired as
-  an ``Input`` to the three concern sub-models that contain
-  weather-dependent piecewise formulas.
+* Context variables (``cv_*``) and presence variables (``pv_*``) are
+  attributes of :class:`MolvenoModel` and are wired as ``Inputs`` to the
+  concern sub-models that consume them.
 * Each concern sub-model's ``Outputs`` contains only the usage-formula
   index (``i_u_*``).  Capacity indexes (``i_c_*``) remain as ``Inputs``
   because they are parameters, not computed results.
@@ -62,12 +59,10 @@ Design rules:
   :class:`~overtourism_molveno.overtourism_metamodel.Constraint` is not a
   :class:`~dt_model.model.index.GenericIndex` and must not appear inside
   an :class:`~dt_model.model.model.IOProxy`.
-* :class:`MolvenoModel` subclasses
-  :class:`~overtourism_molveno.overtourism_metamodel.OvertourismModel` so
-  that the existing
-  :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
-  and :func:`~overtourism_molveno.overtourism_molveno.evaluate_scenario`
-  code works without modification.
+* :class:`MolvenoModel` subclasses :class:`~dt_model.model.model.Model`
+  directly and exposes ``.cvs``, ``.pvs``, and ``.constraints`` attributes
+  so that :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
+  and the evaluation code can consume them without modification.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -78,7 +73,14 @@ from dataclasses import dataclass
 
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionIndex, GenericIndex, Index, Model, graph
+from civic_digital_twins.dt_model import (
+    CategoricalIndex,
+    DistributionIndex,
+    GenericIndex,
+    Index,
+    Model,
+    graph,
+)
 
 try:
     from .molveno_presence_stats import (
@@ -89,11 +91,8 @@ try:
         weekday,
     )
     from .overtourism_metamodel import (
-        CategoricalContextVariable,
         Constraint,
-        OvertourismModel,
         PresenceVariable,
-        UniformCategoricalContextVariable,
     )
 except ImportError:
     from molveno_presence_stats import (
@@ -104,86 +103,9 @@ except ImportError:
         weekday,
     )
     from overtourism_metamodel import (
-        CategoricalContextVariable,
         Constraint,
-        OvertourismModel,
         PresenceVariable,
-        UniformCategoricalContextVariable,
     )
-
-
-# ---------------------------------------------------------------------------
-# PresenceModel
-# ---------------------------------------------------------------------------
-
-
-class PresenceModel(Model):
-    """Stage 1 — context variables and presence variables.
-
-    Has no inputs of its own: the context variables and presence variables
-    are self-contained.  All five are declared as ``Outputs`` so that
-    :class:`MolvenoModel` can pick them up and forward them as needed.
-
-    ``cv_weather`` is forwarded as an ``Input`` to :class:`ParkingModel`,
-    :class:`BeachModel`, and :class:`FoodModel`.  ``cv_weekday`` and
-    ``cv_season`` are consumed only by
-    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
-    (via :meth:`~dt_model.model.model.Model.abstract_indexes` on the root
-    model) but are declared in ``Outputs`` for consistency and so that the
-    root model can hand them to the ensemble explicitly.
-
-    Outputs
-    -------
-    cv_weekday : UniformCategoricalContextVariable
-        Day-of-week context variable.
-    cv_season : CategoricalContextVariable
-        Season context variable.
-    cv_weather : CategoricalContextVariable
-        Weather context variable.
-    pv_tourists : PresenceVariable
-        Tourist presence (grid axis in evaluation).
-    pv_excursionists : PresenceVariable
-        Excursionist presence (grid axis in evaluation).
-    """
-
-    @dataclass
-    class Outputs:
-        """Contractual outputs of :class:`PresenceModel`."""
-
-        cv_weekday: UniformCategoricalContextVariable
-        cv_season: CategoricalContextVariable
-        cv_weather: CategoricalContextVariable
-        pv_tourists: PresenceVariable
-        pv_excursionists: PresenceVariable
-
-    def __init__(self) -> None:
-        Outputs = PresenceModel.Outputs
-
-        cv_weekday = UniformCategoricalContextVariable("weekday", list(weekday))
-        cv_season = CategoricalContextVariable("season", {v: season[v] for v in season.keys()})
-        cv_weather = CategoricalContextVariable("weather", {v: weather[v] for v in weather.keys()})
-
-        pv_tourists = PresenceVariable(
-            "tourists",
-            [cv_weekday, cv_season, cv_weather],
-            tourist_presences_stats,
-        )
-        pv_excursionists = PresenceVariable(
-            "excursionists",
-            [cv_weekday, cv_season, cv_weather],
-            excursionist_presences_stats,
-        )
-
-        super().__init__(
-            "Presence",
-            outputs=Outputs(
-                cv_weekday=cv_weekday,
-                cv_season=cv_season,
-                cv_weather=cv_weather,
-                pv_tourists=pv_tourists,
-                pv_excursionists=pv_excursionists,
-            ),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -206,10 +128,10 @@ class ParkingModel(Model):
     Parameters
     ----------
     pv_tourists : PresenceVariable
-        Tourist presence (wired from :class:`PresenceModel`).
+        Tourist presence (wired from :class:`MolvenoModel`).
     pv_excursionists : PresenceVariable
-        Excursionist presence (wired from :class:`PresenceModel`).
-    cv_weather : CategoricalContextVariable
+        Excursionist presence (wired from :class:`MolvenoModel`).
+    cv_weather : CategoricalIndex
         Weather context variable (needed for the piecewise usage factor).
     i_u_tourists_parking : Index
         Tourist parking usage factor.
@@ -238,7 +160,7 @@ class ParkingModel(Model):
 
         pv_tourists: PresenceVariable
         pv_excursionists: PresenceVariable
-        cv_weather: CategoricalContextVariable
+        cv_weather: CategoricalIndex
         i_u_tourists_parking: Index
         i_u_excursionists_parking: Index
         i_xa_tourists_per_vehicle: Index
@@ -257,7 +179,7 @@ class ParkingModel(Model):
         self,
         pv_tourists: PresenceVariable,
         pv_excursionists: PresenceVariable,
-        cv_weather: CategoricalContextVariable,
+        cv_weather: CategoricalIndex,
         i_u_tourists_parking: Index,
         i_u_excursionists_parking: Index,
         i_xa_tourists_per_vehicle: Index,
@@ -319,10 +241,10 @@ class BeachModel(Model):
     Parameters
     ----------
     pv_tourists : PresenceVariable
-        Tourist presence (wired from :class:`PresenceModel`).
+        Tourist presence (wired from :class:`MolvenoModel`).
     pv_excursionists : PresenceVariable
-        Excursionist presence (wired from :class:`PresenceModel`).
-    cv_weather : CategoricalContextVariable
+        Excursionist presence (wired from :class:`MolvenoModel`).
+    cv_weather : CategoricalIndex
         Weather context variable (needed for the piecewise usage factors).
     i_u_tourists_beach : Index
         Tourist beach usage factor (piecewise on weather).
@@ -347,7 +269,7 @@ class BeachModel(Model):
 
         pv_tourists: PresenceVariable
         pv_excursionists: PresenceVariable
-        cv_weather: CategoricalContextVariable
+        cv_weather: CategoricalIndex
         i_u_tourists_beach: Index
         i_u_excursionists_beach: Index
         i_xo_tourists_beach: DistributionIndex
@@ -364,7 +286,7 @@ class BeachModel(Model):
         self,
         pv_tourists: PresenceVariable,
         pv_excursionists: PresenceVariable,
-        cv_weather: CategoricalContextVariable,
+        cv_weather: CategoricalIndex,
         i_u_tourists_beach: Index,
         i_u_excursionists_beach: Index,
         i_xo_tourists_beach: DistributionIndex,
@@ -412,7 +334,7 @@ class AccommodationModel(Model):
     Parameters
     ----------
     pv_tourists : PresenceVariable
-        Tourist presence (wired from :class:`PresenceModel`).
+        Tourist presence (wired from :class:`MolvenoModel`).
     i_u_tourists_accommodation : Index
         Tourist accommodation usage factor.
     i_xa_tourists_accommodation : Index
@@ -488,10 +410,10 @@ class FoodModel(Model):
     Parameters
     ----------
     pv_tourists : PresenceVariable
-        Tourist presence (wired from :class:`PresenceModel`).
+        Tourist presence (wired from :class:`MolvenoModel`).
     pv_excursionists : PresenceVariable
-        Excursionist presence (wired from :class:`PresenceModel`).
-    cv_weather : CategoricalContextVariable
+        Excursionist presence (wired from :class:`MolvenoModel`).
+    cv_weather : CategoricalIndex
         Weather context variable (needed for the piecewise usage factor).
     i_u_tourists_food : Index
         Tourist food-service usage factor.
@@ -516,7 +438,7 @@ class FoodModel(Model):
 
         pv_tourists: PresenceVariable
         pv_excursionists: PresenceVariable
-        cv_weather: CategoricalContextVariable
+        cv_weather: CategoricalIndex
         i_u_tourists_food: Index
         i_u_excursionists_food: Index
         i_xa_visitors_food: Index
@@ -533,7 +455,7 @@ class FoodModel(Model):
         self,
         pv_tourists: PresenceVariable,
         pv_excursionists: PresenceVariable,
-        cv_weather: CategoricalContextVariable,
+        cv_weather: CategoricalIndex,
         i_u_tourists_food: Index,
         i_u_excursionists_food: Index,
         i_xa_visitors_food: Index,
@@ -575,47 +497,65 @@ class FoodModel(Model):
 # ---------------------------------------------------------------------------
 
 
-class MolvenoModel(OvertourismModel):
-    """Root overtourism model that wires the five concern sub-models.
+class MolvenoModel(Model):
+    """Root overtourism model that wires the four concern sub-models.
 
-    ``MolvenoModel`` owns the default values for every ``i_*`` parameter.
+    ``MolvenoModel`` owns:
+
+    * the three context variables (``cv_weekday``, ``cv_season``, ``cv_weather``);
+    * the two presence variables (``pv_tourists``, ``pv_excursionists``);
+    * the default values for every ``i_*`` parameter.
+
     Callers who need to override a parameter can subclass ``MolvenoModel``
     or construct the concern sub-models directly with different values.
 
-    ``MolvenoModel`` is a subclass of
-    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismModel` so
-    that it is fully compatible with the existing
-    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
-    and :func:`~overtourism_molveno.overtourism_molveno.evaluate_scenario`
-    code.
+    The ``cvs``, ``pvs``, and ``constraints`` attributes are required by
+    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`.
 
-    Sub-models are accessible as named attributes:
-
-    * ``model.presence``      — :class:`PresenceModel`
-    * ``model.parking``       — :class:`ParkingModel`
-    * ``model.beach``         — :class:`BeachModel`
-    * ``model.accommodation`` — :class:`AccommodationModel`
-    * ``model.food``          — :class:`FoodModel`
-
-    Example usage::
+    CVs, PVs, and sub-models are accessible as named attributes::
 
         m = MolvenoModel()
+        m.cv_weather                      # CategoricalIndex
+        m.pv_tourists                     # PresenceVariable
         m.parking.inputs.i_c_parking      # capacity DistributionIndex
         m.beach.inputs.i_xo_tourists_beach  # rotation DistributionIndex
         m.parking.outputs.i_u_parking     # usage formula Index
-        m.presence.outputs.pv_tourists    # PresenceVariable
         m.parking.constraint              # Constraint object
     """
 
+    @dataclass
+    class Inputs:
+        """Contractual inputs of :class:`MolvenoModel`."""
+
+        cvs: list[CategoricalIndex]
+        pvs: list[PresenceVariable]
+        domain_indexes: list[GenericIndex]
+        capacities: list[GenericIndex]
+
+    @dataclass
+    class Outputs:
+        """Contractual outputs of :class:`MolvenoModel`."""
+
+        usage_indexes: list[GenericIndex]
+
     def __init__(self) -> None:
         # ------------------------------------------------------------------
-        # Stage 1 — presence
+        # Stage 1 — context and presence variables
         # ------------------------------------------------------------------
-        presence = PresenceModel()
+        cv_weekday = CategoricalIndex("weekday", {d: 1.0 / len(weekday) for d in weekday})
+        cv_season = CategoricalIndex("season", {v: season[v] for v in season})
+        cv_weather = CategoricalIndex("weather", {v: weather[v] for v in weather})
 
-        pv_tourists = presence.outputs.pv_tourists
-        pv_excursionists = presence.outputs.pv_excursionists
-        cv_weather = presence.outputs.cv_weather
+        pv_tourists = PresenceVariable(
+            "tourists",
+            [cv_weekday, cv_season, cv_weather],
+            tourist_presences_stats,
+        )
+        pv_excursionists = PresenceVariable(
+            "excursionists",
+            [cv_weekday, cv_season, cv_weather],
+            excursionist_presences_stats,
+        )
 
         # ------------------------------------------------------------------
         # Default i_* parameters — created here so callers can override them
@@ -722,10 +662,10 @@ class MolvenoModel(OvertourismModel):
         )
 
         # ------------------------------------------------------------------
-        # Collect domain lists expected by OvertourismModel / OvertourismEnsemble
+        # Collect domain lists consumed by OvertourismEnsemble
         # ------------------------------------------------------------------
-        cvs = [presence.outputs.cv_weekday, presence.outputs.cv_season, presence.outputs.cv_weather]
-        pvs = [pv_tourists, pv_excursionists]
+        cvs: list[CategoricalIndex] = [cv_weekday, cv_season, cv_weather]
+        pvs: list[PresenceVariable] = [pv_tourists, pv_excursionists]
         constraints = [
             parking.constraint,
             beach.constraint,
@@ -740,8 +680,7 @@ class MolvenoModel(OvertourismModel):
         seen: set[int] = set()
         all_indexes: list[GenericIndex] = []
         for idx in (
-            list(presence.indexes)
-            + list(parking.indexes)
+            list(parking.indexes)
             + list(beach.indexes)
             + list(accommodation.indexes)
             + list(food.indexes)
@@ -756,8 +695,7 @@ class MolvenoModel(OvertourismModel):
                 seen.add(id(idx))
                 all_indexes.append(idx)
 
-        # domain_indexes: everything that is not a CV, PV, capacity, or
-        # usage-formula index (OvertourismModel keeps those lists separate).
+        # domain_indexes: everything that is not a CV, PV, capacity, or usage-formula index.
         cv_pv_ids = {id(x) for x in cvs + pvs}
         cap_ids = {id(x) for x in capacities}
         usage_ids = {id(c.usage) for c in constraints}
@@ -768,55 +706,42 @@ class MolvenoModel(OvertourismModel):
         ]
 
         # ------------------------------------------------------------------
-        # Initialise OvertourismModel (the DeprecationWarning for the legacy
-        # flat-list path is suppressed inside OvertourismModel.__init__)
+        # Initialise Model with the declarative Inputs/Outputs API
         # ------------------------------------------------------------------
+        Inputs = MolvenoModel.Inputs
+        Outputs = MolvenoModel.Outputs
         super().__init__(
             "base model",
-            cvs=cvs,
-            pvs=pvs,
-            indexes=domain_indexes,
-            capacities=capacities,
-            constraints=constraints,
+            inputs=Inputs(
+                cvs=cvs,
+                pvs=pvs,
+                domain_indexes=domain_indexes,
+                capacities=capacities,
+            ),
+            outputs=Outputs(usage_indexes=[c.usage for c in constraints]),
         )
 
+        self.cvs = cvs
+        self.pvs = pvs
+        self.domain_indexes = domain_indexes
+        self.capacities = capacities
+        self.constraints = constraints
+
         # ------------------------------------------------------------------
-        # Attach sub-models as named attributes for structured access
+        # Attach CVs, PVs, and sub-models as named attributes
         # ------------------------------------------------------------------
-        self.presence = presence
+        self.cv_weekday = cv_weekday
+        self.cv_season = cv_season
+        self.cv_weather = cv_weather
+        self.pv_tourists = pv_tourists
+        self.pv_excursionists = pv_excursionists
+
         self.parking = parking
         self.beach = beach
         self.accommodation = accommodation
         self.food = food
 
-        # Presence-transformation parameters — kept as top-level attributes
-        # so that overtourism_molveno.py can reference them by the original
-        # names without modification.
-        self.I_P_tourists_reduction_factor = i_p_tourists_reduction_factor
-        self.I_P_excursionists_reduction_factor = i_p_excursionists_reduction_factor
-        self.I_P_tourists_saturation_level = i_p_tourists_saturation_level
-        self.I_P_excursionists_saturation_level = i_p_excursionists_saturation_level
-
-
-# ---------------------------------------------------------------------------
-# Module-level aliases — preserved for backward compatibility with
-# overtourism_molveno.py and the existing test suite
-# ---------------------------------------------------------------------------
-
-#: Shared model instance (mirrors the previous ``M_Base`` module-level object).
-M_Base = MolvenoModel()
-
-# Context variables — exposed at module level for the script / test imports
-CV_weekday = M_Base.presence.outputs.cv_weekday
-CV_season = M_Base.presence.outputs.cv_season
-CV_weather = M_Base.presence.outputs.cv_weather
-
-# Presence variables
-PV_tourists = M_Base.presence.outputs.pv_tourists
-PV_excursionists = M_Base.presence.outputs.pv_excursionists
-
-# Presence-transformation parameters
-I_P_tourists_reduction_factor = M_Base.I_P_tourists_reduction_factor
-I_P_excursionists_reduction_factor = M_Base.I_P_excursionists_reduction_factor
-I_P_tourists_saturation_level = M_Base.I_P_tourists_saturation_level
-I_P_excursionists_saturation_level = M_Base.I_P_excursionists_saturation_level
+        self.i_p_tourists_reduction_factor = i_p_tourists_reduction_factor
+        self.i_p_excursionists_reduction_factor = i_p_excursionists_reduction_factor
+        self.i_p_tourists_saturation_level = i_p_tourists_saturation_level
+        self.i_p_excursionists_saturation_level = i_p_excursionists_saturation_level

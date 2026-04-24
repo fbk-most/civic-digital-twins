@@ -13,9 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scipy-stubs` added to dev dependencies for improved type checking.
 - Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
-
-**Typed axes — canonical shape contract for evaluation results**
-
 - `Axis(name, role)` and `AxisRole` (`PARAMETER`, `ENSEMBLE`, `DOMAIN`) — explicit
   named dimensions for result arrays; exported from `civic_digital_twins.dt_model`.
 - `AxisEnsemble` protocol — batched ensemble interface exposing `ensemble_axes`,
@@ -32,10 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every result array is guaranteed to carry explicit ENSEMBLE singleton dims for
   nodes not downstream of ENSEMBLE substitutions, eliminating the `S == T` shape
   ambiguity (#142).
-- `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
-
-**Document snippets - test alignment check**
-
 - `tests/test_doc_sync.py` — automated snippet-alignment test that compares
   every Python code block in the design docs and guides against its paired
   runnable example script in `examples/doc/`.  Run without arguments for a
@@ -46,7 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `~ Warn` block fails the test unless listed in `_EXPECTED_NEAR_VERBATIM`.
 - `examples/doc/doc_readme.py` — new script covering the two README code
   snippets (engine layer and model/simulation layer).
-- `examples/doc/` scripts updated to better match the docs.
 - `civic_digital_twins.dt_model.graph` shim — `graph` is now importable
   directly from the top-level `dt_model` package (`from
   civic_digital_twins.dt_model import graph`), closing #123.
@@ -58,10 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python 3.11 dropped** — minimum supported version is now Python 3.12.
   The CI matrix, `pyproject.toml` classifiers, ruff `target-version`, and
   `pyrightconfig.json` are updated accordingly. (#122)
-- Plotting in `overtourism_molveno` example now uses the same pattern as
-  `mobility_bologna`: non-interactive backend (`Agg`), functions return
-  `fig` objects, main execution wrapped in `if __name__ == "__main__":`.
-  Plots are saved to an `output/` directory.
 - PEP 695 generic syntax adopted throughout: `~30` generic classes in
   `graph.py` converted to `class Foo[T]`; `TypeAlias` declarations in
   `executor.py` and `IOProxy` in `model.py` converted to `type X = ...`.
@@ -72,6 +60,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependencies (used only by example models, not the library itself). Both
   floors now guarantee pre-compiled wheels for Python 3.12, 3.13, and 3.14,
   eliminating source-compilation delays in CI. (#122)
+- **Breaking: `ContextVariable` hierarchy removed from `overtourism_metamodel`
+  (closing #139).** `ContextVariable`, `CategoricalContextVariable`,
+  `UniformCategoricalContextVariable`, and `ContinuousContextVariable` have
+  been deleted.  Context variables are now ordinary `CategoricalIndex`
+  instances; `OvertourismEnsemble` now accepts
+  `dict[CategoricalIndex, list[str]]` scenarios and hosts the
+  enumerate-vs-sample and subset-renormalisation logic that previously lived
+  on the CV classes.
+- **Overtourism metamodel modernization (#152):** `OvertourismModel` removed;
+  `MolvenoModel` now subclasses `Model` directly with its own
+  `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into
+  `MolvenoModel`; `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
+- **Molveno example slim-down:** module-level aliases removed; modal-line
+  regression replaced by orthogonal regression (SVD); miscellaneous dead code
+  removed.
+- Plotting in `overtourism_molveno` example now uses the same pattern as
+  `mobility_bologna`: non-interactive backend (`Agg`), functions return
+  `fig` objects, main execution wrapped in `if __name__ == "__main__":`.
+  Plots are saved to an `output/` directory.
 
 ### Fixed
 

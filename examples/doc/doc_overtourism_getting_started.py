@@ -10,32 +10,39 @@ _examples_dir = Path(__file__).parent.parent
 if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
+from dataclasses import dataclass
+
 import numpy as np
 from overtourism_molveno.overtourism_metamodel import (
-    CategoricalContextVariable,
     Constraint,
-    ContextVariable,
     OvertourismEnsemble,
-    OvertourismModel,
     PresenceVariable,
-    UniformCategoricalContextVariable,
 )
 from scipy import stats
 
-from civic_digital_twins.dt_model import Distribution, DistributionIndex, Evaluation, Index, graph
+from civic_digital_twins.dt_model import (
+    CategoricalIndex,
+    Distribution,
+    DistributionIndex,
+    Evaluation,
+    GenericIndex,
+    Index,
+    Model,
+    graph,
+)
 
 # ---------------------------------------------------------------------------
 # overtourism-getting-started.md §1 — Context variables
 # ---------------------------------------------------------------------------
 
-CV_season = CategoricalContextVariable(
+CV_season = CategoricalIndex(
     "season",
     {"low": 0.6, "high": 0.4},
 )
 
-CV_weather = UniformCategoricalContextVariable(
+CV_weather = CategoricalIndex(
     "weather",
-    ["good", "unsettled", "bad"],
+    {"good": 1 / 3, "unsettled": 1 / 3, "bad": 1 / 3},
 )
 
 assert CV_season.value is None  # placeholder
@@ -94,10 +101,34 @@ assert C_beach.name == "beach"
 
 
 # ---------------------------------------------------------------------------
-# overtourism-getting-started.md §4 — OvertourismModel
+# overtourism-getting-started.md §4 — Model
 # ---------------------------------------------------------------------------
 
-model = OvertourismModel(
+
+class MinimalOvertourismModel(Model):
+    @dataclass
+    class Inputs:
+        cvs: list[CategoricalIndex]
+        pvs: list[PresenceVariable]
+        domain_indexes: list[GenericIndex]
+        capacities: list[GenericIndex]
+
+    @dataclass
+    class Outputs:
+        usage_indexes: list[GenericIndex]
+
+    def __init__(self, name, *, cvs, pvs, indexes, capacities, constraints):
+        super().__init__(
+            name,
+            inputs=self.Inputs(cvs=cvs, pvs=pvs, domain_indexes=indexes, capacities=capacities),
+            outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
+        )
+        self.cvs = cvs
+        self.pvs = pvs
+        self.constraints = constraints
+
+
+model = MinimalOvertourismModel(
     name="minimal_overtourism",
     cvs=[CV_season, CV_weather],
     pvs=[PV_visitors],
@@ -114,7 +145,7 @@ assert model.constraints[0] is C_beach
 # overtourism-getting-started.md §5 — Ensemble
 # ---------------------------------------------------------------------------
 
-scenario: dict[ContextVariable, list] = {
+scenario: dict[CategoricalIndex, list[str]] = {
     CV_season: ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }
@@ -124,7 +155,7 @@ ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
 # so all CV values are enumerated rather than sampled randomly)
 assert len(ensemble) == 6
 
-assert abs(ensemble.weights.sum() - 1.0) < 1e-10
+assert abs(ensemble.ensemble_weights[0].sum() - 1.0) < 1e-10
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,6 @@ We include this model into the source tree as an illustrative example.
 # SPDX-License-Identifier: Apache-2.0
 
 import time
-import warnings
 from functools import reduce
 from pathlib import Path
 
@@ -19,41 +18,23 @@ matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 
 from civic_digital_twins.dt_model import Distribution, Evaluation
 
-warnings.filterwarnings("ignore", message=".*sample arguments is too small.*")
-
 try:
-    from overtourism_molveno.molveno_model import (
-        CV_weather,
-        I_P_excursionists_reduction_factor,
-        I_P_excursionists_saturation_level,
-        I_P_tourists_reduction_factor,
-        I_P_tourists_saturation_level,
-        M_Base,
-        PV_excursionists,
-        PV_tourists,
-    )
+    from overtourism_molveno.molveno_model import MolvenoModel
     from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
 except ImportError:
-    from molveno_model import (
-        CV_weather,
-        I_P_excursionists_reduction_factor,
-        I_P_excursionists_saturation_level,
-        I_P_tourists_reduction_factor,
-        I_P_tourists_saturation_level,
-        M_Base,
-        PV_excursionists,
-        PV_tourists,
-    )
+    from molveno_model import MolvenoModel
     from overtourism_metamodel import OvertourismEnsemble
+
+model = MolvenoModel()
 
 # Base situation
 S_Base = {}
 
 # Good weather situation
-S_Good_Weather = {CV_weather: ["good", "unsettled"]}
+S_Good_Weather = {model.cv_weather: ["good", "unsettled"]}
 
 # Bad weather situation
-S_Bad_Weather = {CV_weather: ["bad"]}
+S_Bad_Weather = {model.cv_weather: ["bad"]}
 
 # PLOTTING
 
@@ -112,8 +93,9 @@ def _compute_sustainability_index_with_ci_per_constraint(
 
 
 def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict:
-    """Compute the modal line for each constraint."""
+    """Compute the modal line for each constraint via orthogonal regression (first PC)."""
     axes_list = list(axes.values())  # [tt, ee]
+    bounds = [axes_list[0].max(), axes_list[1].max()]
     modal_lines = {}
 
     for c, fe in field_elements.items():
@@ -126,36 +108,31 @@ def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict
         (yi, xi) = np.nonzero(matrix)
         # yi = row indices (tourists axis 0), xi = col indices (excursionists axis 1)
 
-        try:
-            horizontal_regr = stats.linregress(axes_list[0][yi], axes_list[1][xi])
-        except ValueError:
-            horizontal_regr = None
-        try:
-            vertical_regr = stats.linregress(axes_list[1][xi], axes_list[0][yi])
-        except ValueError:
-            vertical_regr = None
+        if len(yi) < 3:
+            # Too few boundary points to fit a line.
+            continue
 
-        def _vertical(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-            if regr.slope < 0.0:
-                return ((regr.intercept, 0.0), (0.0, -regr.intercept / regr.slope))
-            else:
-                return ((regr.intercept, regr.intercept), (0.0, 10000.0))
+        # Orthogonal regression: first principal component of the boundary cloud.
+        pts = np.stack([axes_list[0][yi], axes_list[1][xi]], axis=1)  # (N, 2)
+        centroid = pts.mean(axis=0)
+        _, _, Vt = np.linalg.svd(pts - centroid, full_matrices=False)
+        direction = Vt[0]  # unit vector in [tourists, excursionists] space
 
-        def _horizontal(regr) -> tuple[tuple[float, float], tuple[float, float]]:
-            if regr.slope < 0.0:
-                return ((0.0, -regr.intercept / regr.slope), (regr.intercept, 0.0))
-            else:
-                return ((0.0, 10000.0), (regr.intercept, regr.intercept))
+        # Clip the infinite line to the grid box [0, t_max] × [0, e_max].
+        t_lo, t_hi = -np.inf, np.inf
+        for i, bound in enumerate(bounds):
+            if abs(direction[i]) > 1e-10:
+                ta = -centroid[i] / direction[i]
+                tb = (bound - centroid[i]) / direction[i]
+                t_lo = max(t_lo, min(ta, tb))
+                t_hi = min(t_hi, max(ta, tb))
 
-        if horizontal_regr and vertical_regr:
-            if vertical_regr.rvalue >= horizontal_regr.rvalue:
-                modal_lines[c] = _vertical(vertical_regr)
-            else:
-                modal_lines[c] = _horizontal(horizontal_regr)
-        elif horizontal_regr:
-            modal_lines[c] = _horizontal(horizontal_regr)
-        elif vertical_regr:
-            modal_lines[c] = _vertical(vertical_regr)
+        if t_lo >= t_hi:
+            continue
+
+        p0 = centroid + t_lo * direction  # [tourists, excursionists]
+        p1 = centroid + t_hi * direction
+        modal_lines[c] = ((p0[0], p1[0]), (p0[1], p1[1]))
 
     return modal_lines
 
@@ -163,16 +140,6 @@ def _compute_modal_line_per_constraint(field_elements: dict, axes: dict) -> dict
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
-
-
-def scale(p, v):
-    """Scale a probability by a value."""
-    return p * v
-
-
-def threshold(p, t):
-    """Threshold a probability by a value."""
-    return min(p, t) + 0.05 / (1 + np.exp(-(p - t)))
 
 
 def evaluate_scenario(model, situation) -> tuple:
@@ -186,7 +153,9 @@ def evaluate_scenario(model, situation) -> tuple:
     ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={PV_tourists: tt, PV_excursionists: ee})
+    result = Evaluation(model).evaluate(
+        ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee}
+    )
     return result, ensemble
 
 
@@ -196,7 +165,7 @@ def plot_scenario(model, result, scenarios, title):
     Parameters
     ----------
     model:
-        The :class:`~overtourism_molveno.model.OvertourismModel` being plotted.
+        The :class:`~overtourism_molveno.molveno_model.MolvenoModel` being plotted.
     result:
         :class:`~dt_model.simulation.evaluation.EvaluationResult` from
         :func:`evaluate_scenario`.
@@ -212,8 +181,8 @@ def plot_scenario(model, result, scenarios, title):
         The matplotlib figure.
     """
     fig, ax = plt.subplots(figsize=(6, 10), layout="constrained")
-    tt = result.parameter_values[PV_tourists]
-    ee = result.parameter_values[PV_excursionists]
+    tt = result.parameter_values[model.pv_tourists]
+    ee = result.parameter_values[model.pv_excursionists]
 
     # Compute sustainability field.
     # field[t_idx, e_idx] = P(all constraints satisfied | tourists=tt[t_idx], excursionists=ee[e_idx])
@@ -235,33 +204,24 @@ def plot_scenario(model, result, scenarios, title):
         tmp = presence * reduction_factor
         return tmp * saturation_level / ((tmp**sharpness + saturation_level**sharpness) ** (1 / sharpness))
 
-    rf_t = float(np.mean(result[I_P_tourists_reduction_factor]))
-    sl_t = float(np.mean(result[I_P_tourists_saturation_level]))
-    rf_e = float(np.mean(result[I_P_excursionists_reduction_factor]))
-    sl_e = float(np.mean(result[I_P_excursionists_saturation_level]))
+    rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
+    sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
+    rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
+    sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
 
-    ens_weights = scenarios.weights
+    ens_weights = scenarios.ensemble_weights[0]
     ens_assignments = scenarios.assignments()
-    # Iterate scenario-by-scenario: zip per-index arrays into per-scenario dicts.
     scenario_keys = list(ens_assignments.keys())
-    sample_tourists = [
-        presence_transformation(sample, rf_t, sl_t)
-        for i, w in enumerate(ens_weights)
-        for sample in PV_tourists.sample(
-            cvs={k: ens_assignments[k][i] for k in scenario_keys},
-            nr=max(1, round(w * target_presence_samples)),
-        )
-    ]
-    sample_excursionists = [
-        presence_transformation(sample, rf_e, sl_e)
-        for i, w in enumerate(ens_weights)
-        for sample in PV_excursionists.sample(
-            cvs={k: ens_assignments[k][i] for k in scenario_keys},
-            nr=max(1, round(w * target_presence_samples)),
-        )
-    ]
+    sample_tourists, sample_excursionists = [], []
+    for i, w in enumerate(ens_weights):
+        cvs_i = {k: ens_assignments[k][i] for k in scenario_keys}
+        nr = max(1, round(w * target_presence_samples))
+        for s in model.pv_tourists.sample(cvs=cvs_i, nr=nr):
+            sample_tourists.append(presence_transformation(s, rf_t, sl_t))
+        for s in model.pv_excursionists.sample(cvs=cvs_i, nr=nr):
+            sample_excursionists.append(presence_transformation(s, rf_e, sl_e))
 
-    axes_dict = {PV_tourists: tt, PV_excursionists: ee}
+    axes_dict = {model.pv_tourists: tt, model.pv_excursionists: ee}
 
     area = _compute_sustainable_area(field, axes_dict)
     (i, c_ci) = _compute_sustainability_index_with_ci(
@@ -299,18 +259,18 @@ if __name__ == "__main__":
     _out = Path(__file__).parent / "output"
     _out.mkdir(exist_ok=True)
 
-    result, scenarios = evaluate_scenario(M_Base, S_Base)
-    fig_base = plot_scenario(M_Base, result, scenarios, "Base")
+    result, scenarios = evaluate_scenario(model, S_Base)
+    fig_base = plot_scenario(model, result, scenarios, "Base")
     fig_base.savefig(_out / "base.png", dpi=150)
     plt.close(fig_base)
 
-    result, scenarios = evaluate_scenario(M_Base, S_Good_Weather)
-    fig_good_weather = plot_scenario(M_Base, result, scenarios, "Good weather")
+    result, scenarios = evaluate_scenario(model, S_Good_Weather)
+    fig_good_weather = plot_scenario(model, result, scenarios, "Good weather")
     fig_good_weather.savefig(_out / "good_weather.png", dpi=150)
     plt.close(fig_good_weather)
 
-    result, scenarios = evaluate_scenario(M_Base, S_Bad_Weather)
-    fig_bad_weather = plot_scenario(M_Base, result, scenarios, "Bad weather")
+    result, scenarios = evaluate_scenario(model, S_Bad_Weather)
+    fig_bad_weather = plot_scenario(model, result, scenarios, "Bad weather")
     fig_bad_weather.savefig(_out / "bad_weather.png", dpi=150)
     plt.close(fig_bad_weather)
 

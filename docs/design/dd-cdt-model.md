@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-04-19                                     |
+| Last-Updated | 2026-04-24                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -562,22 +562,20 @@ The overtourism example
 (`examples/overtourism_molveno/overtourism_metamodel.py`) illustrates the
 pattern.  The key classes are:
 
-### ContextVariable
+### Context variables
 
-A `ContextVariable` is an `Index` with `value=None` (explicit
-placeholder) and a `sample(nr, subset, force_sample)` method that
-returns a list of `(probability, value)` pairs.
+Context variables are ordinary `CategoricalIndex` instances: an `Index`
+with `value=None` (explicit placeholder) whose `outcomes` map gives the
+per-value probabilities.  `OvertourismEnsemble` fills each CV in with a
+concrete value for every scenario.
 
-Three concrete subclasses are provided:
-
-| Class | Distribution |
-| ----- | ------------ |
-| `UniformCategoricalContextVariable` | Uniform over a finite set of values. |
-| `CategoricalContextVariable` | Categorical with explicit probabilities. |
-| `ContinuousContextVariable` | Backed by a `scipy` continuous distribution. |
+Uniform distributions are expressed by passing equal weights in the
+`outcomes` dict (there is no dedicated "uniform" subclass):
 
 ```python
-CV_weather = CategoricalContextVariable(
+from civic_digital_twins.dt_model import CategoricalIndex
+
+CV_weather = CategoricalIndex(
     "weather",
     {"good": 0.5, "unsettled": 0.3, "bad": 0.2},
 )
@@ -603,34 +601,17 @@ class Constraint:
 `eq=False` preserves identity-based `__hash__` so that `Constraint`
 objects can be used as dictionary keys.
 
-### OvertourismModel
-
-`OvertourismModel(Model)` is a `Model` subclass that organises its
-indexes into labeled subsets:
-
-```python
-model.cvs          # list[ContextVariable]
-model.pvs          # list[PresenceVariable]
-model.domain_indexes   # list[Index]  (e.g. scaling factors)
-model.capacities   # list[Index]      (capacity indexes)
-model.constraints  # list[Constraint]
-```
-
-The constructor automatically adds the usage index of each constraint
-to the flat `indexes` list so that `abstract_indexes()` and
-`Evaluation` can find them.
-
 ### OvertourismEnsemble
 
-`OvertourismEnsemble(model, scenario, cv_ensemble_size)` yields
-`WeightedScenario` instances by:
+`OvertourismEnsemble(model, scenario, cv_ensemble_size)` implements
+`AxisEnsemble`.  It materialises a batched ENSEMBLE axis by:
 
 1. Enumerating all combinations of CV values from `scenario`
-   (using `itertools.product`).
-2. For each combination, sampling `cv_ensemble_size` values from every
-   distribution-backed non-PV non-CV abstract index.
-3. Yielding `(weight, assignments)` pairs with equal weight across
-   all `|CV combinations| × cv_ensemble_size` scenarios.
+   (using `itertools.product`); probability weights are the product of
+   per-CV outcome probabilities.
+2. Pre-sampling `S` values for every distribution-backed non-PV non-CV
+   abstract index (e.g. stochastic capacities), where `S` is the total
+   number of CV combinations.
 
 ```python
 ensemble = OvertourismEnsemble(

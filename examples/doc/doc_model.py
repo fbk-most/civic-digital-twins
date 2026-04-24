@@ -59,6 +59,21 @@ def _demo_00_index_modes() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Block 01: dd-cdt-model.md — Index Types: CategoricalIndex
+# ---------------------------------------------------------------------------
+
+
+def _demo_01_categorical_index() -> None:
+    """Block 01: CategoricalIndex placeholder."""
+    from civic_digital_twins.dt_model import CategoricalIndex
+
+    mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
+
+    assert mode.value is None
+    assert mode.support == ["bike", "train"]
+
+
+# ---------------------------------------------------------------------------
 # Block 02: dd-cdt-model.md — TimeseriesIndex
 # ---------------------------------------------------------------------------
 
@@ -204,24 +219,32 @@ def _demo_17_constraint() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Blocks 18 + 19 + 20: dd-cdt-model.md — OvertourismModel + Grid Evaluation
+# Blocks 18 + 19: dd-cdt-model.md — OvertourismEnsemble + Grid Evaluation
 # ---------------------------------------------------------------------------
 
 
-def _demo_18_20_overtourism() -> None:
-    """Blocks 18+19+20: OvertourismModel attributes + Grid Evaluation."""
+def _demo_18_19_overtourism() -> None:
+    """Blocks 18+19: OvertourismEnsemble + Grid Evaluation."""
+    from dataclasses import dataclass
+
     import numpy as np
     from overtourism_molveno.overtourism_metamodel import (
-        CategoricalContextVariable,
         Constraint,
         OvertourismEnsemble,
-        OvertourismModel,
         PresenceVariable,
     )
 
-    from civic_digital_twins.dt_model import ConstIndex, Distribution, Evaluation, Index
+    from civic_digital_twins.dt_model import (
+        CategoricalIndex,
+        ConstIndex,
+        Distribution,
+        Evaluation,
+        GenericIndex,
+        Index,
+        Model,
+    )
 
-    CV_weather = CategoricalContextVariable(
+    CV_weather = CategoricalIndex(
         "weather",
         {"good": 0.5, "unsettled": 0.3, "bad": 0.2},
     )
@@ -239,30 +262,42 @@ def _demo_18_20_overtourism() -> None:
     capacity_idx = ConstIndex("capacity_idx", 100_000.0)
     c_beach = Constraint("beach", usage_idx, capacity_idx)
 
-    model = OvertourismModel(
-        "demo",
+    class _MinimalModel(Model):
+        @dataclass
+        class Inputs:
+            cvs: list[CategoricalIndex]
+            pvs: list[PresenceVariable]
+            capacities: list[GenericIndex]
+
+        @dataclass
+        class Outputs:
+            usage_indexes: list[GenericIndex]
+
+        def __init__(self, cvs, pvs, capacities, constraints):
+            super().__init__(
+                "demo",
+                inputs=self.Inputs(cvs=cvs, pvs=pvs, capacities=capacities),
+                outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
+            )
+            self.cvs = cvs
+            self.pvs = pvs
+            self.constraints = constraints
+
+    model = _MinimalModel(
         cvs=[CV_weather],
         pvs=[PV_tourists, PV_excursionists],
-        indexes=[],
         capacities=[capacity_idx],
         constraints=[c_beach],
     )
 
-    # Block 18 — OvertourismModel attribute access
-    model.cvs  # list[ContextVariable]
-    model.pvs  # list[PresenceVariable]
-    model.domain_indexes  # list[Index]  (e.g. scaling factors)
-    model.capacities  # list[Index]      (capacity indexes)
-    model.constraints  # list[Constraint]
-
-    # Block 19 — OvertourismEnsemble
+    # Block 18 — OvertourismEnsemble
     ensemble = OvertourismEnsemble(
         model,
         {CV_weather: ["good", "unsettled", "bad"]},
         cv_ensemble_size=20,
     )
 
-    # Block 20 — Grid Evaluation with OvertourismEnsemble
+    # Block 19 — Grid Evaluation with OvertourismEnsemble
     tt = np.linspace(0, 50_000, 101)  # tourist presence axis
     ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
@@ -290,13 +325,14 @@ def _demo_18_20_overtourism() -> None:
 # ---------------------------------------------------------------------------
 
 _demo_00_index_modes()
+_demo_01_categorical_index()
 _demo_02_timeseries_index()
 _demo_05_legacy_api()
 _demo_08_contract_warnings()
 _demo_12_distribution_ensemble()
 _demo_14_15_end_to_end()
 _demo_17_constraint()
-_demo_18_20_overtourism()
+_demo_18_19_overtourism()
 
 if __name__ == "__main__":
     print("doc_model.py: all snippets OK")
