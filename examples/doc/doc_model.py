@@ -219,17 +219,18 @@ def _demo_17_constraint() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Blocks 18 + 19 + 20: dd-cdt-model.md — OvertourismModel + Grid Evaluation
+# Blocks 18 + 19: dd-cdt-model.md — OvertourismEnsemble + Grid Evaluation
 # ---------------------------------------------------------------------------
 
 
-def _demo_18_20_overtourism() -> None:
-    """Blocks 18+19+20: OvertourismModel attributes + Grid Evaluation."""
+def _demo_18_19_overtourism() -> None:
+    """Blocks 18+19: OvertourismEnsemble + Grid Evaluation."""
+    from dataclasses import dataclass
+
     import numpy as np
     from overtourism_molveno.overtourism_metamodel import (
         Constraint,
         OvertourismEnsemble,
-        OvertourismModel,
         PresenceVariable,
     )
 
@@ -238,7 +239,9 @@ def _demo_18_20_overtourism() -> None:
         ConstIndex,
         Distribution,
         Evaluation,
+        GenericIndex,
         Index,
+        Model,
     )
 
     CV_weather = CategoricalIndex(
@@ -259,30 +262,42 @@ def _demo_18_20_overtourism() -> None:
     capacity_idx = ConstIndex("capacity_idx", 100_000.0)
     c_beach = Constraint("beach", usage_idx, capacity_idx)
 
-    model = OvertourismModel(
-        "demo",
+    class _MinimalModel(Model):
+        @dataclass
+        class Inputs:
+            cvs: list[CategoricalIndex]
+            pvs: list[PresenceVariable]
+            capacities: list[GenericIndex]
+
+        @dataclass
+        class Outputs:
+            usage_indexes: list[GenericIndex]
+
+        def __init__(self, cvs, pvs, capacities, constraints):
+            super().__init__(
+                "demo",
+                inputs=self.Inputs(cvs=cvs, pvs=pvs, capacities=capacities),
+                outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
+            )
+            self.cvs = cvs
+            self.pvs = pvs
+            self.constraints = constraints
+
+    model = _MinimalModel(
         cvs=[CV_weather],
         pvs=[PV_tourists, PV_excursionists],
-        indexes=[],
         capacities=[capacity_idx],
         constraints=[c_beach],
     )
 
-    # Block 18 — OvertourismModel attribute access
-    model.cvs  # list[CategoricalIndex]
-    model.pvs  # list[PresenceVariable]
-    model.domain_indexes  # list[Index]  (e.g. scaling factors)
-    model.capacities  # list[Index]      (capacity indexes)
-    model.constraints  # list[Constraint]
-
-    # Block 19 — OvertourismEnsemble
+    # Block 18 — OvertourismEnsemble
     ensemble = OvertourismEnsemble(
         model,
         {CV_weather: ["good", "unsettled", "bad"]},
         cv_ensemble_size=20,
     )
 
-    # Block 20 — Grid Evaluation with OvertourismEnsemble
+    # Block 19 — Grid Evaluation with OvertourismEnsemble
     tt = np.linspace(0, 50_000, 101)  # tourist presence axis
     ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
@@ -317,7 +332,7 @@ _demo_08_contract_warnings()
 _demo_12_distribution_ensemble()
 _demo_14_15_end_to_end()
 _demo_17_constraint()
-_demo_18_20_overtourism()
+_demo_18_19_overtourism()
 
 if __name__ == "__main__":
     print("doc_model.py: all snippets OK")

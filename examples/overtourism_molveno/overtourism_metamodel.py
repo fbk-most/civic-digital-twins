@@ -6,17 +6,14 @@ This module provides the building blocks for an overtourism model:
   sampled from a context-dependent distribution (e.g. uniform or truncnorm).
 * :class:`Constraint` — named pairing of a usage formula index and a capacity
   index.
-* :class:`OvertourismModel` — :class:`~dt_model.model.model.Model` subclass
-  with overtourism domain structure (CVs, PVs, usage indexes, capacity
-  indexes, constraints).
-* :class:`OvertourismEnsemble` — iterable that yields weighted scenarios by
-  enumerating CV combinations and pre-sampling distribution-backed indexes.
+* :class:`OvertourismEnsemble` — batched ensemble that enumerates CV
+  combinations and pre-samples distribution-backed indexes.
 
-Context variables are now plain
-:class:`~civic_digital_twins.dt_model.CategoricalIndex` instances: the
-dedicated ``ContextVariable`` hierarchy that previously lived here has been
-removed, since ``CategoricalIndex`` already provides the same
-string-keyed finite-support sampling semantics with a declarative API.
+Context variables are plain
+:class:`~civic_digital_twins.dt_model.CategoricalIndex` instances.
+Concrete models subclass :class:`~dt_model.model.model.Model` directly and
+declare their CVs, PVs, and capacities via ``Inputs`` / ``Outputs``
+dataclasses — see ``MolvenoModel`` in ``molveno_model.py`` for an example.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -117,90 +114,6 @@ class Constraint:
     name: str
     usage: Index  # formula-mode Index wrapping the usage expression
     capacity: Index  # constant, distribution-backed, or formula-mode Index
-
-
-# ---------------------------------------------------------------------------
-# OvertourismModel
-# ---------------------------------------------------------------------------
-
-
-class OvertourismModel(Model):
-    """A :class:`~dt_model.model.model.Model` with overtourism domain structure.
-
-    Wraps the core :class:`~dt_model.model.model.Model` with named lists for
-    the overtourism-specific categories (CVs, PVs, capacities, domain
-    indexes, constraints).  Internally uses the dataclass-based
-    ``Inputs`` / ``Outputs`` API so all abstract indexes are declared in the
-    inputs contract: no :class:`~dt_model.model.model.ModelContractWarning`
-    is emitted at construction time.
-
-    Parameters
-    ----------
-    name:
-        Human-readable name for the model.
-    cvs:
-        Context variables (sampled externally by the ensemble).  These are
-        ``CategoricalIndex`` objects.
-    pvs:
-        Presence variables (grid axes in evaluation).
-    indexes:
-        Plain model indexes (conversion factors, usage factors, …).
-    capacities:
-        Capacity indexes for each constraint.
-    constraints:
-        Named usage/capacity constraint pairs.
-    """
-
-    @dataclass
-    class Inputs:
-        """Contractual inputs of :class:`OvertourismModel`.
-
-        The field order matches the legacy
-        ``cvs + pvs + indexes + capacities`` flat-list ordering so that the
-        :class:`OvertourismEnsemble` RNG draw order is preserved for
-        downstream reproducibility.
-        """
-
-        cvs: list[CategoricalIndex]
-        pvs: list[PresenceVariable]
-        domain_indexes: list[GenericIndex]
-        capacities: list[GenericIndex]
-
-    @dataclass
-    class Outputs:
-        """Contractual outputs of :class:`OvertourismModel`."""
-
-        usage_indexes: list[GenericIndex]
-
-    def __init__(
-        self,
-        name: str,
-        *,
-        cvs: list[CategoricalIndex],
-        pvs: list[PresenceVariable],
-        indexes: list[GenericIndex],
-        capacities: list[GenericIndex],
-        constraints: list[Constraint],
-    ) -> None:
-        Inputs = OvertourismModel.Inputs
-        Outputs = OvertourismModel.Outputs
-
-        super().__init__(
-            name,
-            inputs=Inputs(
-                cvs=list(cvs),
-                pvs=list(pvs),
-                domain_indexes=list(indexes),
-                capacities=list(capacities),
-            ),
-            outputs=Outputs(usage_indexes=[c.usage for c in constraints]),
-        )
-
-        self.cvs = cvs
-        self.pvs = pvs
-        self.domain_indexes = indexes
-        self.capacities = capacities
-        self.constraints = constraints
 
 
 # ---------------------------------------------------------------------------

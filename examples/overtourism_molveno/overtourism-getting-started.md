@@ -113,12 +113,44 @@ engine evaluates lazily — the condition `CV_weather == "bad"` is a graph
 node that resolves to `True` or `False` once `CV_weather` is assigned a
 concrete value in a scenario.
 
-## 4 — OvertourismModel
+## 4 — Model
+
+Define a `Model` subclass with `Inputs` and `Outputs` dataclasses that
+declare the abstract-index contract.  Expose `.cvs`, `.pvs`, and
+`.constraints` attributes so that `OvertourismEnsemble` and the
+sustainability-field loop can find them.
 
 ```python
-from overtourism_molveno.overtourism_metamodel import OvertourismModel
+from dataclasses import dataclass
 
-model = OvertourismModel(
+from civic_digital_twins.dt_model import CategoricalIndex, GenericIndex, Model
+from overtourism_molveno.overtourism_metamodel import Constraint, PresenceVariable
+
+
+class MinimalOvertourismModel(Model):
+    @dataclass
+    class Inputs:
+        cvs: list[CategoricalIndex]
+        pvs: list[PresenceVariable]
+        domain_indexes: list[GenericIndex]
+        capacities: list[GenericIndex]
+
+    @dataclass
+    class Outputs:
+        usage_indexes: list[GenericIndex]
+
+    def __init__(self, name, *, cvs, pvs, indexes, capacities, constraints):
+        super().__init__(
+            name,
+            inputs=self.Inputs(cvs=cvs, pvs=pvs, domain_indexes=indexes, capacities=capacities),
+            outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
+        )
+        self.cvs = cvs
+        self.pvs = pvs
+        self.constraints = constraints
+
+
+model = MinimalOvertourismModel(
     name="minimal_overtourism",
     cvs=[CV_season, CV_weather],
     pvs=[PV_visitors],
@@ -128,8 +160,11 @@ model = OvertourismModel(
 )
 ```
 
-`OvertourismModel` automatically adds each constraint's usage index to the
-flat `indexes` list so that `Evaluation` can find it.
+All abstract indexes (CVs, PVs, domain indexes, capacities) are declared in
+`Inputs`; usage indexes in `Outputs`.  `OvertourismEnsemble` duck-types on
+`.cvs` and `.pvs`; the sustainability-field loop uses `.constraints`.  For a
+production model with multiple sub-models see `MolvenoModel` in
+`molveno_model.py`.
 
 ## 5 — Ensemble
 

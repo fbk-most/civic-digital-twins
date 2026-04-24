@@ -14,8 +14,6 @@ from overtourism_molveno.molveno_model import (
     MolvenoModel,
     ParkingModel,
 )
-
-model = MolvenoModel()
 from overtourism_molveno.overtourism_metamodel import (
     Constraint,
     OvertourismEnsemble,
@@ -24,6 +22,8 @@ from overtourism_molveno.overtourism_metamodel import (
 
 from civic_digital_twins.dt_model import CategoricalIndex, Evaluation, ModelContractWarning
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
+
+model = MolvenoModel()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +38,9 @@ def compute_field(model, ensemble, tt, ee):
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee})
+    result = Evaluation(model).evaluate(
+        ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee}
+    )
 
     field = np.ones((tt.size, ee.size))
     field_elements = {}

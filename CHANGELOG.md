@@ -68,13 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dict[CategoricalIndex, list[str]]` scenarios and hosts the
   enumerate-vs-sample and subset-renormalisation logic that previously lived
   on the CV classes.
-- **Overtourism metamodel modernization (#152):** `OvertourismModel` uses the
-  dataclass-based `Inputs`/`Outputs` API; `PresenceModel` dissolved into
+- **Overtourism metamodel modernization (#152):** `OvertourismModel` removed;
+  `MolvenoModel` now subclasses `Model` directly with its own
+  `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into
   `MolvenoModel`; `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
-- **Molveno example slim-down:** `MolvenoModel` now inherits `Model` directly
-  (dissolving `OvertourismModel` from the hierarchy); module-level aliases
-  removed; modal-line regression replaced by orthogonal regression (SVD);
-  miscellaneous dead code and redundant aliases removed.
+- **Molveno example slim-down:** module-level aliases removed; modal-line
+  regression replaced by orthogonal regression (SVD); miscellaneous dead code
+  removed.
 - Plotting in `overtourism_molveno` example now uses the same pattern as
   `mobility_bologna`: non-interactive backend (`Agg`), functions return
   `fig` objects, main execution wrapped in `if __name__ == "__main__":`.

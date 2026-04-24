@@ -10,11 +10,12 @@ _examples_dir = Path(__file__).parent.parent
 if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
+from dataclasses import dataclass
+
 import numpy as np
 from overtourism_molveno.overtourism_metamodel import (
     Constraint,
     OvertourismEnsemble,
-    OvertourismModel,
     PresenceVariable,
 )
 from scipy import stats
@@ -24,7 +25,9 @@ from civic_digital_twins.dt_model import (
     Distribution,
     DistributionIndex,
     Evaluation,
+    GenericIndex,
     Index,
+    Model,
     graph,
 )
 
@@ -98,10 +101,34 @@ assert C_beach.name == "beach"
 
 
 # ---------------------------------------------------------------------------
-# overtourism-getting-started.md §4 — OvertourismModel
+# overtourism-getting-started.md §4 — Model
 # ---------------------------------------------------------------------------
 
-model = OvertourismModel(
+
+class MinimalOvertourismModel(Model):
+    @dataclass
+    class Inputs:
+        cvs: list[CategoricalIndex]
+        pvs: list[PresenceVariable]
+        domain_indexes: list[GenericIndex]
+        capacities: list[GenericIndex]
+
+    @dataclass
+    class Outputs:
+        usage_indexes: list[GenericIndex]
+
+    def __init__(self, name, *, cvs, pvs, indexes, capacities, constraints):
+        super().__init__(
+            name,
+            inputs=self.Inputs(cvs=cvs, pvs=pvs, domain_indexes=indexes, capacities=capacities),
+            outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
+        )
+        self.cvs = cvs
+        self.pvs = pvs
+        self.constraints = constraints
+
+
+model = MinimalOvertourismModel(
     name="minimal_overtourism",
     cvs=[CV_season, CV_weather],
     pvs=[PV_visitors],

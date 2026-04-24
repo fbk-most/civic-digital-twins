@@ -90,10 +90,10 @@ weighted scenarios; `Evaluation.evaluate()` runs the engine and returns an
 `EvaluationResult`.
 
 **Vertical extension pattern** (`examples/overtourism_molveno/`) — the
-domain-specific layer introduces `PresenceVariable`, `Constraint`, and
-`OvertourismModel` on top of the core types, using `CategoricalIndex`
-directly as the context-variable type.  `OvertourismEnsemble` samples
-context variables and produces weighted scenarios.
+domain-specific layer introduces `PresenceVariable` and `Constraint` on top
+of the core types, using `CategoricalIndex` as the context-variable
+type.  Concrete models subclass `Model`; `OvertourismEnsemble`
+samples context variables and produces weighted scenarios.
 `Evaluation.evaluate(axes={pv: array, …})` evaluates the model on a
 multi-dimensional grid, returning arrays of shape `(N₀, …, Nₖ, S)` where
 `S` is the number of scenarios and each `Nᵢ` corresponds to one presence

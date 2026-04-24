@@ -153,7 +153,9 @@ def evaluate_scenario(model, situation) -> tuple:
     ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee})
+    result = Evaluation(model).evaluate(
+        ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee}
+    )
     return result, ensemble
 
 
@@ -163,7 +165,7 @@ def plot_scenario(model, result, scenarios, title):
     Parameters
     ----------
     model:
-        The :class:`~overtourism_molveno.model.OvertourismModel` being plotted.
+        The :class:`~overtourism_molveno.molveno_model.MolvenoModel` being plotted.
     result:
         :class:`~dt_model.simulation.evaluation.EvaluationResult` from
         :func:`evaluate_scenario`.

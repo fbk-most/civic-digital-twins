@@ -59,12 +59,10 @@ Design rules:
   :class:`~overtourism_molveno.overtourism_metamodel.Constraint` is not a
   :class:`~dt_model.model.index.GenericIndex` and must not appear inside
   an :class:`~dt_model.model.model.IOProxy`.
-* :class:`MolvenoModel` subclasses
-  :class:`~overtourism_molveno.overtourism_metamodel.OvertourismModel` so
-  that the existing
-  :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
-  and :func:`~overtourism_molveno.overtourism_molveno.evaluate_scenario`
-  code works without modification.
+* :class:`MolvenoModel` subclasses :class:`~dt_model.model.model.Model`
+  directly and exposes ``.cvs``, ``.pvs``, and ``.constraints`` attributes
+  so that :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
+  and the evaluation code can consume them without modification.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -664,7 +662,7 @@ class MolvenoModel(Model):
         )
 
         # ------------------------------------------------------------------
-        # Collect domain lists expected by OvertourismModel / OvertourismEnsemble
+        # Collect domain lists consumed by OvertourismEnsemble
         # ------------------------------------------------------------------
         cvs: list[CategoricalIndex] = [cv_weekday, cv_season, cv_weather]
         pvs: list[PresenceVariable] = [pv_tourists, pv_excursionists]
@@ -697,8 +695,7 @@ class MolvenoModel(Model):
                 seen.add(id(idx))
                 all_indexes.append(idx)
 
-        # domain_indexes: everything that is not a CV, PV, capacity, or
-        # usage-formula index (OvertourismModel keeps those lists separate).
+        # domain_indexes: everything that is not a CV, PV, capacity, or usage-formula index.
         cv_pv_ids = {id(x) for x in cvs + pvs}
         cap_ids = {id(x) for x in capacities}
         usage_ids = {id(c.usage) for c in constraints}
