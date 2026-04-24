@@ -515,7 +515,7 @@ def test_beach_rotation_factor_is_abstract():
 
 
 # ---------------------------------------------------------------------------
-# OvertourismModel domain attributes preserved on MolvenoModel
+# MolvenoModel domain attributes (cvs, pvs, constraints)
 # ---------------------------------------------------------------------------
 
 

@@ -238,7 +238,7 @@ def _sample_categorical(
 
 
 class OvertourismEnsemble:
-    """Batched ensemble for an :class:`OvertourismModel`.
+    """Batched ensemble for a model with ``cvs`` and ``pvs`` attributes.
 
     Implements :class:`~dt_model.simulation.ensemble.AxisEnsemble`.
 
@@ -262,7 +262,9 @@ class OvertourismEnsemble:
     Parameters
     ----------
     model:
-        The overtourism model whose CVs are to be sampled.
+        A :class:`~dt_model.model.model.Model` that exposes ``.cvs``
+        (list of :class:`~dt_model.CategoricalIndex`) and ``.pvs``
+        (list of :class:`PresenceVariable`) as attributes.
     scenario:
         Maps a CV to a list of specific values to use instead of sampling
         from its full support.
@@ -273,7 +275,7 @@ class OvertourismEnsemble:
 
     def __init__(
         self,
-        model: OvertourismModel,
+        model: Model,
         scenario: dict[CategoricalIndex, list[str]],
         cv_ensemble_size: int = 20,
     ) -> None:
@@ -281,7 +283,7 @@ class OvertourismEnsemble:
 
         # Per-CV list of (probability, value) pairs.
         cv_samples: dict[CategoricalIndex, list[tuple[float, str]]] = {}
-        for cv in model.cvs:
+        for cv in model.cvs:  # type: ignore[attr-defined]
             if cv in scenario:
                 subset = scenario[cv]
                 if len(subset) == 1:
@@ -302,7 +304,7 @@ class OvertourismEnsemble:
         # NOTE: use identity comparison (id()) to exclude PVs and CVs because
         # GenericIndex.__eq__ returns a graph.Node (always truthy), making
         # the list `in` operator unreliable for these objects.
-        cv_pv_ids = {id(cv) for cv in model.cvs} | {id(pv) for pv in model.pvs}
+        cv_pv_ids = {id(cv) for cv in model.cvs} | {id(pv) for pv in model.pvs}  # type: ignore[attr-defined]
         dist_indexes: list[Index] = [
             idx  # type: ignore[misc]
             for idx in model.abstract_indexes()

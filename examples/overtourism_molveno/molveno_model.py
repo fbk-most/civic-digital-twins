@@ -94,7 +94,6 @@ try:
     )
     from .overtourism_metamodel import (
         Constraint,
-        OvertourismModel,
         PresenceVariable,
     )
 except ImportError:
@@ -107,7 +106,6 @@ except ImportError:
     )
     from overtourism_metamodel import (
         Constraint,
-        OvertourismModel,
         PresenceVariable,
     )
 
@@ -501,7 +499,7 @@ class FoodModel(Model):
 # ---------------------------------------------------------------------------
 
 
-class MolvenoModel(OvertourismModel):
+class MolvenoModel(Model):
     """Root overtourism model that wires the four concern sub-models.
 
     ``MolvenoModel`` owns:
@@ -513,12 +511,8 @@ class MolvenoModel(OvertourismModel):
     Callers who need to override a parameter can subclass ``MolvenoModel``
     or construct the concern sub-models directly with different values.
 
-    ``MolvenoModel`` is a subclass of
-    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismModel` so
-    that it is fully compatible with the existing
-    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`
-    and :func:`~overtourism_molveno.overtourism_molveno.evaluate_scenario`
-    code.
+    The ``cvs``, ``pvs``, and ``constraints`` attributes are required by
+    :class:`~overtourism_molveno.overtourism_metamodel.OvertourismEnsemble`.
 
     CVs, PVs, and sub-models are accessible as named attributes::
 
@@ -530,6 +524,21 @@ class MolvenoModel(OvertourismModel):
         m.parking.outputs.i_u_parking     # usage formula Index
         m.parking.constraint              # Constraint object
     """
+
+    @dataclass
+    class Inputs:
+        """Contractual inputs of :class:`MolvenoModel`."""
+
+        cvs: list[CategoricalIndex]
+        pvs: list[PresenceVariable]
+        domain_indexes: list[GenericIndex]
+        capacities: list[GenericIndex]
+
+    @dataclass
+    class Outputs:
+        """Contractual outputs of :class:`MolvenoModel`."""
+
+        usage_indexes: list[GenericIndex]
 
     def __init__(self) -> None:
         # ------------------------------------------------------------------
@@ -700,16 +709,26 @@ class MolvenoModel(OvertourismModel):
         ]
 
         # ------------------------------------------------------------------
-        # Initialise OvertourismModel with the declarative Inputs/Outputs API
+        # Initialise Model with the declarative Inputs/Outputs API
         # ------------------------------------------------------------------
+        Inputs = MolvenoModel.Inputs
+        Outputs = MolvenoModel.Outputs
         super().__init__(
             "base model",
-            cvs=cvs,
-            pvs=pvs,
-            indexes=domain_indexes,
-            capacities=capacities,
-            constraints=constraints,
+            inputs=Inputs(
+                cvs=cvs,
+                pvs=pvs,
+                domain_indexes=domain_indexes,
+                capacities=capacities,
+            ),
+            outputs=Outputs(usage_indexes=[c.usage for c in constraints]),
         )
+
+        self.cvs = cvs
+        self.pvs = pvs
+        self.domain_indexes = domain_indexes
+        self.capacities = capacities
+        self.constraints = constraints
 
         # ------------------------------------------------------------------
         # Attach CVs, PVs, and sub-models as named attributes
