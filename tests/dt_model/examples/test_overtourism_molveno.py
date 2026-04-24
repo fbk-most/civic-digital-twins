@@ -11,10 +11,11 @@ from overtourism_molveno.molveno_model import (
     AccommodationModel,
     BeachModel,
     FoodModel,
-    M_Base,
     MolvenoModel,
     ParkingModel,
 )
+
+model = MolvenoModel()
 from overtourism_molveno.overtourism_metamodel import (
     Constraint,
     OvertourismEnsemble,
@@ -120,11 +121,11 @@ def good_weather_scenarios():
     np.random.seed(0)
     random.seed(0)
     return OvertourismEnsemble(
-        M_Base,
+        model,
         {
-            M_Base.cv_weekday: ["monday"],
-            M_Base.cv_season: ["high"],
-            M_Base.cv_weather: ["good"],
+            model.cv_weekday: ["monday"],
+            model.cv_season: ["high"],
+            model.cv_weather: ["good"],
         },
     )
 
@@ -136,28 +137,28 @@ def good_weather_scenarios():
 
 def test_evaluate_axes_returns_correct_shape(good_weather_scenarios, tourists, excursionists):
     """evaluate(axes=...) produces field with shape (tt.size, ee.size)."""
-    field, _, _ = compute_field(M_Base, good_weather_scenarios, tourists, excursionists)
+    field, _, _ = compute_field(model, good_weather_scenarios, tourists, excursionists)
     assert field.shape == (tourists.size, excursionists.size)
 
 
 def test_evaluate_axes_field_values_in_range(good_weather_scenarios, tourists, excursionists):
     """Sustainability field values are in [0, 1]."""
-    field, _, _ = compute_field(M_Base, good_weather_scenarios, tourists, excursionists)
+    field, _, _ = compute_field(model, good_weather_scenarios, tourists, excursionists)
     assert np.all(field >= 0.0)
     assert np.all(field <= 1.0)
 
 
 def test_evaluate_axes_field_elements_match_constraints(good_weather_scenarios, tourists, excursionists):
     """field_elements has one entry per constraint."""
-    _, field_elements, _ = compute_field(M_Base, good_weather_scenarios, tourists, excursionists)
-    assert len(field_elements) == len(M_Base.constraints)
+    _, field_elements, _ = compute_field(model, good_weather_scenarios, tourists, excursionists)
+    assert len(field_elements) == len(model.constraints)
 
 
 def test_evaluate_axes_low_presence_is_sustainable(good_weather_scenarios):
     """Very low presence values should be fully sustainable (field ≈ 1)."""
     tt = np.array([1, 2])
     ee = np.array([1, 2])
-    field, _, _ = compute_field(M_Base, good_weather_scenarios, tt, ee)
+    field, _, _ = compute_field(model, good_weather_scenarios, tt, ee)
     assert np.allclose(field, 1.0)
 
 
@@ -165,7 +166,7 @@ def test_evaluate_axes_high_presence_is_unsustainable(good_weather_scenarios):
     """Very high presence values should be unsustainable (field ≈ 0)."""
     tt = np.array([500000])
     ee = np.array([500000])
-    field, _, _ = compute_field(M_Base, good_weather_scenarios, tt, ee)
+    field, _, _ = compute_field(model, good_weather_scenarios, tt, ee)
     assert np.allclose(field, 0.0)
 
 
@@ -173,15 +174,15 @@ def test_ensemble_based_evaluation(tourists, excursionists):
     """OvertourismEnsemble-based evaluation produces a valid sustainability field."""
     np.random.seed(42)
     random.seed(42)
-    scenario: dict[CategoricalIndex, list[str]] = {M_Base.cv_weather: ["good", "bad"]}
-    ensemble = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=5)
+    scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
+    ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=5)
 
-    field, field_elements, _ = compute_field(M_Base, ensemble, tourists, excursionists)
+    field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
 
     assert field.shape == (tourists.size, excursionists.size)
     assert np.all(field >= 0.0)
     assert np.all(field <= 1.0)
-    assert len(field_elements) == len(M_Base.constraints)
+    assert len(field_elements) == len(model.constraints)
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +202,14 @@ def test_fixed_ensemble():
 
     # Build single-member scenarios with distribution-backed index samples.
     ensemble = OvertourismEnsemble(
-        M_Base,
+        model,
         {
-            M_Base.cv_weekday: ["monday"],
-            M_Base.cv_season: ["high"],
-            M_Base.cv_weather: ["good"],
+            model.cv_weekday: ["monday"],
+            model.cv_season: ["high"],
+            model.cv_weather: ["good"],
         },
     )
-    _, got, _ = compute_field(M_Base, ensemble, tourists, excursionists)
+    _, got, _ = compute_field(model, ensemble, tourists, excursionists)
 
     # Expected: field_elements[t_idx, e_idx] — tourists on axis 0, excursionists on axis 1.
     # Parking: mostly excursionist-dominated; parking violated when excursionists > ~2000.
@@ -259,19 +260,19 @@ def test_fixed_ensemble():
     if failures:
         assert False, "Model comparison failed:\n" + "\n".join(failures)
 
-    assert M_Base.name == "base model"
+    assert model.name == "base model"
 
 
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
     np.random.seed(0)
     random.seed(0)
-    scenario: dict[CategoricalIndex, list[str]] = {M_Base.cv_weather: ["good", "bad"]}
-    ens = OvertourismEnsemble(M_Base, scenario, cv_ensemble_size=10)
+    scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
+    ens = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
-    field, field_elements, _ = compute_field(M_Base, ens, tourists, excursionists)
+    field, field_elements, _ = compute_field(model, ens, tourists, excursionists)
 
     assert field is not None
     assert field_elements is not None
@@ -458,59 +459,59 @@ def test_molveno_model_construction_is_warning_free():
 
 
 def test_presence_cvs_in_root_indexes():
-    """All three context variables appear in M_Base.indexes."""
-    cv_ids = {id(M_Base.cv_weekday), id(M_Base.cv_season), id(M_Base.cv_weather)}
-    root_ids = {id(idx) for idx in M_Base.indexes}
+    """All three context variables appear in model.indexes."""
+    cv_ids = {id(model.cv_weekday), id(model.cv_season), id(model.cv_weather)}
+    root_ids = {id(idx) for idx in model.indexes}
     assert cv_ids <= root_ids
 
 
 def test_presence_pvs_in_root_indexes():
-    """Both presence variables appear in M_Base.indexes."""
-    pv_ids = {id(M_Base.pv_tourists), id(M_Base.pv_excursionists)}
-    root_ids = {id(idx) for idx in M_Base.indexes}
+    """Both presence variables appear in model.indexes."""
+    pv_ids = {id(model.pv_tourists), id(model.pv_excursionists)}
+    root_ids = {id(idx) for idx in model.indexes}
     assert pv_ids <= root_ids
 
 
 def test_all_capacity_indexes_in_root_indexes():
-    """All four capacity DistributionIndexes appear in M_Base.indexes."""
+    """All four capacity DistributionIndexes appear in model.indexes."""
     cap_ids = {
-        id(M_Base.parking.inputs.i_c_parking),
-        id(M_Base.beach.inputs.i_c_beach),
-        id(M_Base.accommodation.inputs.i_c_accommodation),
-        id(M_Base.food.inputs.i_c_food),
+        id(model.parking.inputs.i_c_parking),
+        id(model.beach.inputs.i_c_beach),
+        id(model.accommodation.inputs.i_c_accommodation),
+        id(model.food.inputs.i_c_food),
     }
-    root_ids = {id(idx) for idx in M_Base.indexes}
+    root_ids = {id(idx) for idx in model.indexes}
     assert cap_ids <= root_ids
 
 
 def test_beach_rotation_factor_in_root_indexes():
-    """i_xo_tourists_beach (DistributionIndex in BeachModel.Inputs) is in M_Base.indexes."""
-    rotation_id = id(M_Base.beach.inputs.i_xo_tourists_beach)
-    root_ids = {id(idx) for idx in M_Base.indexes}
+    """i_xo_tourists_beach (DistributionIndex in BeachModel.Inputs) is in model.indexes."""
+    rotation_id = id(model.beach.inputs.i_xo_tourists_beach)
+    root_ids = {id(idx) for idx in model.indexes}
     assert rotation_id in root_ids
 
 
 def test_usage_formula_indexes_in_root_indexes():
-    """All four usage formula indexes appear in M_Base.indexes."""
+    """All four usage formula indexes appear in model.indexes."""
     usage_ids = {
-        id(M_Base.parking.outputs.i_u_parking),
-        id(M_Base.beach.outputs.i_u_beach),
-        id(M_Base.accommodation.outputs.i_u_accommodation),
-        id(M_Base.food.outputs.i_u_food),
+        id(model.parking.outputs.i_u_parking),
+        id(model.beach.outputs.i_u_beach),
+        id(model.accommodation.outputs.i_u_accommodation),
+        id(model.food.outputs.i_u_food),
     }
-    root_ids = {id(idx) for idx in M_Base.indexes}
+    root_ids = {id(idx) for idx in model.indexes}
     assert usage_ids <= root_ids
 
 
 def test_root_indexes_has_no_duplicates():
-    """M_Base.indexes contains no duplicate objects (identity check)."""
-    ids = [id(idx) for idx in M_Base.indexes]
+    """model.indexes contains no duplicate objects (identity check)."""
+    ids = [id(idx) for idx in model.indexes]
     assert len(ids) == len(set(ids))
 
 
 def test_beach_rotation_factor_is_abstract():
     """i_xo_tourists_beach is distribution-backed and therefore abstract."""
-    assert M_Base.beach.inputs.i_xo_tourists_beach in M_Base.abstract_indexes()
+    assert model.beach.inputs.i_xo_tourists_beach in model.abstract_indexes()
 
 
 # ---------------------------------------------------------------------------
@@ -519,51 +520,51 @@ def test_beach_rotation_factor_is_abstract():
 
 
 def test_molveno_model_cvs_list():
-    """M_Base.cvs contains exactly the three context variables."""
-    assert len(M_Base.cvs) == 3
-    cv_ids = {id(cv) for cv in M_Base.cvs}
-    assert id(M_Base.cv_weekday) in cv_ids
-    assert id(M_Base.cv_season) in cv_ids
-    assert id(M_Base.cv_weather) in cv_ids
+    """model.cvs contains exactly the three context variables."""
+    assert len(model.cvs) == 3
+    cv_ids = {id(cv) for cv in model.cvs}
+    assert id(model.cv_weekday) in cv_ids
+    assert id(model.cv_season) in cv_ids
+    assert id(model.cv_weather) in cv_ids
 
 
 def test_molveno_model_pvs_list():
-    """M_Base.pvs contains exactly the two presence variables."""
-    assert len(M_Base.pvs) == 2
-    pv_ids = {id(pv) for pv in M_Base.pvs}
-    assert id(M_Base.pv_tourists) in pv_ids
-    assert id(M_Base.pv_excursionists) in pv_ids
+    """model.pvs contains exactly the two presence variables."""
+    assert len(model.pvs) == 2
+    pv_ids = {id(pv) for pv in model.pvs}
+    assert id(model.pv_tourists) in pv_ids
+    assert id(model.pv_excursionists) in pv_ids
 
 
 def test_molveno_model_constraints_list():
-    """M_Base.constraints contains exactly four Constraint objects, one per concern."""
-    assert len(M_Base.constraints) == 4
-    names = {c.name for c in M_Base.constraints}
+    """model.constraints contains exactly four Constraint objects, one per concern."""
+    assert len(model.constraints) == 4
+    names = {c.name for c in model.constraints}
     assert names == {"parking", "beach", "accommodation", "food"}
 
 
 def test_molveno_model_constraints_match_sub_model_attributes():
-    """M_Base.constraints entries are the same objects as sub-model .constraint attributes."""
+    """model.constraints entries are the same objects as sub-model .constraint attributes."""
     sub_constraints = {
-        M_Base.parking.constraint,
-        M_Base.beach.constraint,
-        M_Base.accommodation.constraint,
-        M_Base.food.constraint,
+        model.parking.constraint,
+        model.beach.constraint,
+        model.accommodation.constraint,
+        model.food.constraint,
     }
-    root_constraints = set(M_Base.constraints)
+    root_constraints = set(model.constraints)
     # Identity check via id()
     assert {id(c) for c in sub_constraints} == {id(c) for c in root_constraints}
 
 
 def test_presence_transformation_indexes_in_root_indexes():
-    """The four presence-transformation indexes appear in M_Base.indexes."""
+    """The four presence-transformation indexes appear in model.indexes."""
     pt_ids = {
-        id(M_Base.i_p_tourists_reduction_factor),
-        id(M_Base.i_p_excursionists_reduction_factor),
-        id(M_Base.i_p_tourists_saturation_level),
-        id(M_Base.i_p_excursionists_saturation_level),
+        id(model.i_p_tourists_reduction_factor),
+        id(model.i_p_excursionists_reduction_factor),
+        id(model.i_p_tourists_saturation_level),
+        id(model.i_p_excursionists_saturation_level),
     }
-    root_ids = {id(idx) for idx in M_Base.indexes}
+    root_ids = {id(idx) for idx in model.indexes}
     assert pt_ids <= root_ids
 
 
@@ -574,13 +575,13 @@ def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
     np.random.seed(0)
     random.seed(0)
-    situation: dict[CategoricalIndex, list[str]] = {M_Base.cv_weather: ["good", "unsettled", "bad"]}
-    ensemble = OvertourismEnsemble(M_Base, situation, cv_ensemble_size=20)
+    situation: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "unsettled", "bad"]}
+    ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=20)
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
-    field, field_elements, _ = compute_field(M_Base, ensemble, tourists, excursionists)
+    field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
 
     assert field is not None
     assert field_elements is not None

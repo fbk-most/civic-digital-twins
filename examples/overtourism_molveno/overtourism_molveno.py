@@ -19,20 +19,22 @@ matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 from civic_digital_twins.dt_model import Distribution, Evaluation
 
 try:
-    from overtourism_molveno.molveno_model import M_Base
+    from overtourism_molveno.molveno_model import MolvenoModel
     from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
 except ImportError:
-    from molveno_model import M_Base
+    from molveno_model import MolvenoModel
     from overtourism_metamodel import OvertourismEnsemble
+
+model = MolvenoModel()
 
 # Base situation
 S_Base = {}
 
 # Good weather situation
-S_Good_Weather = {M_Base.cv_weather: ["good", "unsettled"]}
+S_Good_Weather = {model.cv_weather: ["good", "unsettled"]}
 
 # Bad weather situation
-S_Bad_Weather = {M_Base.cv_weather: ["bad"]}
+S_Bad_Weather = {model.cv_weather: ["bad"]}
 
 # PLOTTING
 
@@ -151,7 +153,7 @@ def evaluate_scenario(model, situation) -> tuple:
     ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
-    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={M_Base.pv_tourists: tt, M_Base.pv_excursionists: ee})
+    result = Evaluation(model).evaluate(ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee})
     return result, ensemble
 
 
@@ -177,8 +179,8 @@ def plot_scenario(model, result, scenarios, title):
         The matplotlib figure.
     """
     fig, ax = plt.subplots(figsize=(6, 10), layout="constrained")
-    tt = result.parameter_values[M_Base.pv_tourists]
-    ee = result.parameter_values[M_Base.pv_excursionists]
+    tt = result.parameter_values[model.pv_tourists]
+    ee = result.parameter_values[model.pv_excursionists]
 
     # Compute sustainability field.
     # field[t_idx, e_idx] = P(all constraints satisfied | tourists=tt[t_idx], excursionists=ee[e_idx])
@@ -212,7 +214,7 @@ def plot_scenario(model, result, scenarios, title):
     sample_tourists = [
         presence_transformation(sample, rf_t, sl_t)
         for i, w in enumerate(ens_weights)
-        for sample in M_Base.pv_tourists.sample(
+        for sample in model.pv_tourists.sample(
             cvs={k: ens_assignments[k][i] for k in scenario_keys},
             nr=max(1, round(w * target_presence_samples)),
         )
@@ -220,13 +222,13 @@ def plot_scenario(model, result, scenarios, title):
     sample_excursionists = [
         presence_transformation(sample, rf_e, sl_e)
         for i, w in enumerate(ens_weights)
-        for sample in M_Base.pv_excursionists.sample(
+        for sample in model.pv_excursionists.sample(
             cvs={k: ens_assignments[k][i] for k in scenario_keys},
             nr=max(1, round(w * target_presence_samples)),
         )
     ]
 
-    axes_dict = {M_Base.pv_tourists: tt, M_Base.pv_excursionists: ee}
+    axes_dict = {model.pv_tourists: tt, model.pv_excursionists: ee}
 
     area = _compute_sustainable_area(field, axes_dict)
     (i, c_ci) = _compute_sustainability_index_with_ci(
@@ -264,18 +266,18 @@ if __name__ == "__main__":
     _out = Path(__file__).parent / "output"
     _out.mkdir(exist_ok=True)
 
-    result, scenarios = evaluate_scenario(M_Base, S_Base)
-    fig_base = plot_scenario(M_Base, result, scenarios, "Base")
+    result, scenarios = evaluate_scenario(model, S_Base)
+    fig_base = plot_scenario(model, result, scenarios, "Base")
     fig_base.savefig(_out / "base.png", dpi=150)
     plt.close(fig_base)
 
-    result, scenarios = evaluate_scenario(M_Base, S_Good_Weather)
-    fig_good_weather = plot_scenario(M_Base, result, scenarios, "Good weather")
+    result, scenarios = evaluate_scenario(model, S_Good_Weather)
+    fig_good_weather = plot_scenario(model, result, scenarios, "Good weather")
     fig_good_weather.savefig(_out / "good_weather.png", dpi=150)
     plt.close(fig_good_weather)
 
-    result, scenarios = evaluate_scenario(M_Base, S_Bad_Weather)
-    fig_bad_weather = plot_scenario(M_Base, result, scenarios, "Bad weather")
+    result, scenarios = evaluate_scenario(model, S_Bad_Weather)
+    fig_bad_weather = plot_scenario(model, result, scenarios, "Bad weather")
     fig_bad_weather.savefig(_out / "bad_weather.png", dpi=150)
     plt.close(fig_bad_weather)
 

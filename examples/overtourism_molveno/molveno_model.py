@@ -729,6 +729,3 @@ class MolvenoModel(OvertourismModel):
         self.i_p_excursionists_reduction_factor = i_p_excursionists_reduction_factor
         self.i_p_tourists_saturation_level = i_p_tourists_saturation_level
         self.i_p_excursionists_saturation_level = i_p_excursionists_saturation_level
-
-
-M_Base = MolvenoModel()
