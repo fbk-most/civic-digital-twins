@@ -669,8 +669,7 @@ class ConditionalCategoricalIndex(Index):
         total = sum(outcomes.values())
         if not np.isclose(total, 1.0):
             raise ValueError(
-                f"ConditionalCategoricalIndex {self.name!r}: factory probabilities sum to "
-                f"{total}, expected 1.0."
+                f"ConditionalCategoricalIndex {self.name!r}: factory probabilities sum to {total}, expected 1.0."
             )
         return outcomes
 
@@ -730,10 +729,7 @@ class ConditionalDistributionIndex(Index):
         for p in parents:
             if not isinstance(
                 p,
-                CategoricalIndex
-                | ConditionalCategoricalIndex
-                | DistributionIndex
-                | ConditionalDistributionIndex,
+                CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex,
             ):
                 raise TypeError(
                     f"ConditionalDistributionIndex {name!r}: parent {p!r} must be a "
@@ -747,7 +743,9 @@ class ConditionalDistributionIndex(Index):
         super().__init__(name, None)  # placeholder mode — no unconditional distribution
 
     @property
-    def parents(self) -> "list[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]":  # noqa: E501
+    def parents(
+        self,
+    ) -> "list[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]":  # noqa: E501
         """Parent indexes whose values are passed to the factory."""
         return list(self._parents)
 
@@ -768,7 +766,4 @@ class ConditionalDistributionIndex(Index):
 
     def __repr__(self) -> str:
         """Return a string representation of the conditional distribution index."""
-        return (
-            f"ConditionalDistributionIndex({self.name!r}, "
-            f"parents={[p.name for p in self._parents]!r})"
-        )
+        return f"ConditionalDistributionIndex({self.name!r}, parents={[p.name for p in self._parents]!r})"

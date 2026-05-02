@@ -11,8 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scipy-stubs` added to dev dependencies for improved type checking.
-- Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
 - `Axis(name, role)` and `AxisRole` (`PARAMETER`, `ENSEMBLE`, `DOMAIN`) — explicit
   named dimensions for result arrays; exported from `civic_digital_twins.dt_model`.
 - `AxisEnsemble` protocol — batched ensemble interface exposing `ensemble_axes`,
@@ -29,21 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every result array is guaranteed to carry explicit ENSEMBLE singleton dims for
   nodes not downstream of ENSEMBLE substitutions, eliminating the `S == T` shape
   ambiguity (#142).
-- `tests/test_doc_sync.py` — automated snippet-alignment test that compares
-  every Python code block in the design docs and guides against its paired
-  runnable example script in `examples/doc/`.  Run without arguments for a
-  compact per-pair summary (`= OK` / `~ OK` / `~ Warn` / `✗ Fail`); pass a
-  doc-name fragment for a verbose block-by-block report.  Stub and
-  reference-only blocks are detected and skipped automatically.
-  `= OK` now requires 100% score and all per-line ratios ≥ 0.99; any `~ OK`
-  or `~ Warn` block fails the test unless listed in `_EXPECTED_NEAR_VERBATIM`.
-- `examples/doc/doc_readme.py` — new script covering the two README code
-  snippets (engine layer and model/simulation layer).
-- `civic_digital_twins.dt_model.graph` shim — `graph` is now importable
-  directly from the top-level `dt_model` package (`from
-  civic_digital_twins.dt_model import graph`), closing #123.
-- SPDX-License-Identifier headers added to all tracked Python and Markdown
-  files; pre-release verification step added to README checklist.
 - `ConditionalCategoricalIndex(name, parents, probs_fn)` — categorical index
   whose per-outcome probabilities depend on the resolved values of parent
   indexes; exported from `civic_digital_twins.dt_model`.
@@ -59,22 +42,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sample_across(index, ensemble, n, rng)` — draw `n` samples from a
   `ConditionalDistributionIndex` across all scenarios of an `AxisEnsemble`,
   returning a weighted array aligned with the ensemble axis.
+- `scipy-stubs` added to dev dependencies for improved type checking.
+- Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
+- `tests/test_doc_sync.py` — automated snippet-alignment test that compares
+  every Python code block in the design docs and guides against its paired
+  runnable example script in `examples/doc/`.  Run without arguments for a
+  compact per-pair summary (`= OK` / `~ OK` / `~ Warn` / `✗ Fail`); pass a
+  doc-name fragment for a verbose block-by-block report.  Stub and
+  reference-only blocks are detected and skipped automatically.
+  `= OK` now requires 100% score and all per-line ratios ≥ 0.99; any `~ OK`
+  or `~ Warn` block fails the test unless listed in `_EXPECTED_NEAR_VERBATIM`.
+- `examples/doc/doc_readme.py` — new script covering the two README code
+  snippets (engine layer and model/simulation layer).
+- `civic_digital_twins.dt_model.graph` shim — `graph` is now importable
+  directly from the top-level `dt_model` package (`from
+  civic_digital_twins.dt_model import graph`), closing #123.
+- SPDX-License-Identifier headers added to all tracked Python and Markdown
+  files; pre-release verification step added to README checklist.
 
 ### Changed
 
 - **Python 3.11 dropped** — minimum supported version is now Python 3.12.
   The CI matrix, `pyproject.toml` classifiers, ruff `target-version`, and
   `pyrightconfig.json` are updated accordingly. (#122)
-- PEP 695 generic syntax adopted throughout: `~30` generic classes in
-  `graph.py` converted to `class Foo[T]`; `TypeAlias` declarations in
-  `executor.py` and `IOProxy` in `model.py` converted to `type X = ...`.
-  `from __future__ import annotations` removed from five modules; `Callable`
-  and `Iterator` migrated from `typing` to `collections.abc` where
-  applicable. (#114)
-- `numpy` floor raised to `>=2.3.2`; `pandas` moved from runtime to `dev`
-  dependencies (used only by example models, not the library itself). Both
-  floors now guarantee pre-compiled wheels for Python 3.12, 3.13, and 3.14,
-  eliminating source-compilation delays in CI. (#122)
 - **Breaking: `ContextVariable` hierarchy removed (closing #139).**
   `ContextVariable`, `CategoricalContextVariable`,
   `UniformCategoricalContextVariable`, and `ContinuousContextVariable` deleted.
@@ -89,6 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Overtourism metamodel modernization (#152):** `OvertourismModel` removed;
   `MolvenoModel` now subclasses `Model` directly with its own
   `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into `MolvenoModel`.
+- PEP 695 generic syntax adopted throughout: `~30` generic classes in
+  `graph.py` converted to `class Foo[T]`; `TypeAlias` declarations in
+  `executor.py` and `IOProxy` in `model.py` converted to `type X = ...`.
+  `from __future__ import annotations` removed from five modules; `Callable`
+  and `Iterator` migrated from `typing` to `collections.abc` where
+  applicable. (#114)
+- `numpy` floor raised to `>=2.3.2`; `pandas` moved from runtime to `dev`
+  dependencies (used only by example models, not the library itself). Both
+  floors now guarantee pre-compiled wheels for Python 3.12, 3.13, and 3.14,
+  eliminating source-compilation delays in CI. (#122)
 - **Molveno example slim-down:** module-level aliases removed; modal-line
   regression replaced by orthogonal regression (SVD); miscellaneous dead code
   removed.
@@ -105,6 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Evaluation.evaluate()` raised `ValueError` (numpy broadcast failure) in
   grid+ensemble+timeseries mode when the ENSEMBLE size differed from the timeseries
   length (#156).  Also fixed for pure-PARAMETER+timeseries mode (no ensemble).
+- `EvaluationResult.marginalize()` contracted the wrong axis when `S == T` (#142);
+  PARAMETER dims and non-trivial DOMAIN dims are now preserved.
 - The all-axes invariant (`*PARAMETER, *ENSEMBLE, *domain` shape on every result
   array) is now enforced for all axis combinations, including pure-PARAMETER mode.
   Post-normalisation assertions verify the invariant at debug time.
@@ -112,8 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pure-ENSEMBLE mode with no PARAMETER axes and no timeseries nodes, scalar
   result arrays now have shape `(S,)` instead of `(S, 1)`.  `marginalize()`
   output is identical; only direct `result[idx].shape` comparisons are affected.
-- `EvaluationResult.marginalize()` contracted the wrong axis when `S == T` (#142);
-  PARAMETER dims and non-trivial DOMAIN dims are now preserved.
 - Dependabot vulnerability alerts resolved: `fonttools` bumped to `>=4.60.2`
   (moderate) and `pillow` to `>=12.1.1` (high) via lockfile regeneration. (#132)
 - Documents and `examples/doc/` scripts updated so that the scripts no longer emit

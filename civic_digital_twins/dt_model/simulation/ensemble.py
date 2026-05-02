@@ -694,10 +694,7 @@ def sample_across(
         index is not present in the ensemble assignments.
     """
     if len(ensemble.ensemble_axes) != 1:
-        raise ValueError(
-            f"sample_across requires a single-axis ensemble; "
-            f"got {len(ensemble.ensemble_axes)} axes."
-        )
+        raise ValueError(f"sample_across requires a single-axis ensemble; got {len(ensemble.ensemble_axes)} axes.")
     weights = ensemble.ensemble_weights[0]  # shape (S,)
     assignments = ensemble.assignments()
 
@@ -708,8 +705,7 @@ def sample_across(
         if missing:
             names = ", ".join(getattr(p, "name", repr(p)) for p in missing)
             raise ValueError(
-                f"sample_across: parent(s) {names!r} of index {idx.name!r} "
-                "are not present in the ensemble assignments."
+                f"sample_across: parent(s) {names!r} of index {idx.name!r} are not present in the ensemble assignments."
             )
 
     result: dict[ConditionalDistributionIndex, list[float]] = {idx: [] for idx in indexes}
