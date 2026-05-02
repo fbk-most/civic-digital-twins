@@ -17,7 +17,6 @@ from civic_digital_twins.dt_model import (
     Index,
     InputsContractWarning,
     Model,
-    ModelContractWarning,
     ModelVariant,
     TimeseriesIndex,
     graph,
@@ -313,7 +312,7 @@ class BadModel(Model):
     def __init__(self, inflow: TimeseriesIndex) -> None:
         # InputsContractWarning fires here: 'inflow' holds a GenericIndex
         # that is not declared in Inputs.
-        total = Index("total_bad", inflow.sum())
+        total = Index("total_bad", inflow.sum())  # noqa: F841
         super().__init__("Bad", inputs=BadModel.Inputs())
 
 

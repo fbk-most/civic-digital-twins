@@ -44,6 +44,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   civic_digital_twins.dt_model import graph`), closing #123.
 - SPDX-License-Identifier headers added to all tracked Python and Markdown
   files; pre-release verification step added to README checklist.
+- `ConditionalCategoricalIndex(name, parents, probs_fn)` — categorical index
+  whose per-outcome probabilities depend on the resolved values of parent
+  indexes; exported from `civic_digital_twins.dt_model`.
+- `ConditionalDistributionIndex(name, parents, dist_fn)` — distribution-backed
+  index whose scipy distribution factory depends on resolved parent values;
+  replaces `PresenceVariable` in the overtourism example and is available to
+  any domain model.  Exported from `civic_digital_twins.dt_model`.
+- `CrossProductEnsemble(model, restrictions, max_categorical_size, exclude, rng)`
+  — ensemble that enumerates (or samples) the full cross-product of
+  `CategoricalIndex` / `ConditionalCategoricalIndex` values discovered via
+  model dependency analysis; replaces `OvertourismEnsemble`.  Indexes listed
+  in `exclude` are treated as PARAMETER axes rather than ENSEMBLE axes.
+- `sample_across(index, ensemble, n, rng)` — draw `n` samples from a
+  `ConditionalDistributionIndex` across all scenarios of an `AxisEnsemble`,
+  returning a weighted array aligned with the ensemble axis.
 
 ### Changed
 
@@ -60,18 +75,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependencies (used only by example models, not the library itself). Both
   floors now guarantee pre-compiled wheels for Python 3.12, 3.13, and 3.14,
   eliminating source-compilation delays in CI. (#122)
-- **Breaking: `ContextVariable` hierarchy removed from `overtourism_metamodel`
-  (closing #139).** `ContextVariable`, `CategoricalContextVariable`,
-  `UniformCategoricalContextVariable`, and `ContinuousContextVariable` have
-  been deleted.  Context variables are now ordinary `CategoricalIndex`
-  instances; `OvertourismEnsemble` now accepts
-  `dict[CategoricalIndex, list[str]]` scenarios and hosts the
-  enumerate-vs-sample and subset-renormalisation logic that previously lived
-  on the CV classes.
+- **Breaking: `ContextVariable` hierarchy removed (closing #139).**
+  `ContextVariable`, `CategoricalContextVariable`,
+  `UniformCategoricalContextVariable`, and `ContinuousContextVariable` deleted.
+  Context variables are now ordinary `CategoricalIndex` instances.
+- **Breaking: `PresenceVariable` removed.** Presence variables are now
+  `ConditionalDistributionIndex` instances from the core library.
+- **Breaking: `OvertourismEnsemble` removed.** Replaced by `CrossProductEnsemble`
+  (see Added), which handles enumerate-vs-sample, subset restriction, and
+  weight renormalisation for any model using `CategoricalIndex` CVs.
+- **Breaking: `overtourism_metamodel.py` removed.** `Constraint` (the only
+  remaining class) is now defined directly in `molveno_model.py`.
 - **Overtourism metamodel modernization (#152):** `OvertourismModel` removed;
   `MolvenoModel` now subclasses `Model` directly with its own
-  `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into
-  `MolvenoModel`; `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
+  `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into `MolvenoModel`.
 - **Molveno example slim-down:** module-level aliases removed; modal-line
   regression replaced by orthogonal regression (SVD); miscellaneous dead code
   removed.
@@ -82,11 +99,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `PresenceVariable` now accepts a distribution callable that returns a frozen
-  scipy distribution (e.g. `scipy.stats.truncnorm`) instead of a dict with
-  `mean`/`std` keys. The `sample()` method calls `.rvs()` on the returned
-  distribution. This fixes the pyright type error in the getting started
-  guide (#147).
 - `EvaluationResult.marginalize()` raised `IndexError` on constant nodes in
   grid+ensemble mode (two or more PARAMETER axes plus at least one ENSEMBLE axis)
   (#155).

@@ -9,6 +9,8 @@ from .model import (
     Axis,
     AxisRole,
     CategoricalIndex,
+    ConditionalCategoricalIndex,
+    ConditionalDistributionIndex,
     ConstIndex,
     Distribution,
     DistributionIndex,
@@ -22,6 +24,7 @@ from .model import (
 )
 from .simulation import (
     AxisEnsemble,
+    CrossProductEnsemble,
     DistributionEnsemble,
     Ensemble,
     EnsembleAxisSpec,
@@ -29,6 +32,7 @@ from .simulation import (
     EvaluationResult,
     PartitionedEnsemble,
     WeightedScenario,
+    sample_across,
 )
 
 __all__ = [
@@ -37,7 +41,10 @@ __all__ = [
     "AxisEnsemble",
     "AxisRole",
     "CategoricalIndex",
+    "ConditionalCategoricalIndex",
+    "ConditionalDistributionIndex",
     "ConstIndex",
+    "CrossProductEnsemble",
     "Distribution",
     "DOMAIN",
     "DistributionEnsemble",
@@ -57,4 +64,5 @@ __all__ = [
     "PartitionedEnsemble",
     "TimeseriesIndex",
     "WeightedScenario",
+    "sample_across",
 ]

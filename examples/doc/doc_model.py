@@ -5,25 +5,12 @@ import sys
 import warnings
 from pathlib import Path
 
-import numpy as np
-from scipy import stats
-
 # Add examples/ to sys.path so overtourism_molveno can be imported.
 _examples_dir = Path(__file__).parent.parent
 if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
-from civic_digital_twins.dt_model import (
-    ConstIndex,
-    Distribution,
-    DistributionEnsemble,
-    DistributionIndex,
-    Evaluation,
-    Index,
-    Model,
-    ModelContractWarning,
-    TimeseriesIndex,
-)
+from civic_digital_twins.dt_model import ConstIndex, Index, Model  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Block 00: dd-cdt-model.md — Index Types: Index modes
@@ -71,6 +58,48 @@ def _demo_01_categorical_index() -> None:
 
     assert mode.value is None
     assert mode.support == ["bike", "train"]
+
+
+# ---------------------------------------------------------------------------
+# Block 03: dd-cdt-model.md — ConditionalCategoricalIndex
+# ---------------------------------------------------------------------------
+
+
+def _demo_03_conditional_categorical_index() -> None:
+    """Block 03: ConditionalCategoricalIndex."""
+    from civic_digital_twins.dt_model import CategoricalIndex, ConditionalCategoricalIndex
+
+    cv_season = CategoricalIndex("season", {"low": 0.6, "high": 0.4})
+
+    def weekend_probs(season):
+        return {"yes": 0.4, "no": 0.6} if season == "low" else {"yes": 0.3, "no": 0.7}
+
+    cv_weekend = ConditionalCategoricalIndex("weekend", [cv_season], ["yes", "no"], weekend_probs)
+
+    assert cv_weekend.value is None  # abstract
+
+
+# ---------------------------------------------------------------------------
+# Block 04: dd-cdt-model.md — ConditionalDistributionIndex
+# ---------------------------------------------------------------------------
+
+
+def _demo_04_conditional_distribution_index() -> None:
+    """Block 04: ConditionalDistributionIndex."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex
+
+    cv_weather = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+
+    def load_dist(weather):
+        if weather == "good":
+            return stats.uniform(loc=100.0, scale=200.0)
+        return stats.uniform(loc=50.0, scale=100.0)
+
+    pv_load = ConditionalDistributionIndex("load", [cv_weather], load_dist)
+
+    assert pv_load.value is None  # abstract — resolved per-scenario by the ensemble
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +198,6 @@ def _demo_12_distribution_ensemble() -> None:
 
 def _demo_14_15_end_to_end() -> None:
     """Blocks 14+15: Grid-mode marginalize + End-to-End Example (1-D mode)."""
-    import numpy as np
     from scipy import stats
 
     from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Evaluation, Index, Model
@@ -206,6 +234,8 @@ def _demo_17_constraint() -> None:
     """Block 17: Constraint dataclass definition."""
     from dataclasses import dataclass
 
+    from civic_digital_twins.dt_model import Index
+
     @dataclass(eq=False)
     class Constraint:
         name: str
@@ -219,24 +249,23 @@ def _demo_17_constraint() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Blocks 18 + 19: dd-cdt-model.md — OvertourismEnsemble + Grid Evaluation
+# Blocks 18 + 19: dd-cdt-model.md — CrossProductEnsemble + Grid Evaluation
 # ---------------------------------------------------------------------------
 
 
 def _demo_18_19_overtourism() -> None:
-    """Blocks 18+19: OvertourismEnsemble + Grid Evaluation."""
+    """Blocks 18+19: CrossProductEnsemble + Grid Evaluation."""
     from dataclasses import dataclass
 
     import numpy as np
-    from overtourism_molveno.overtourism_metamodel import (
-        Constraint,
-        OvertourismEnsemble,
-        PresenceVariable,
-    )
+    from overtourism_molveno.molveno_model import Constraint
+    from scipy import stats
 
     from civic_digital_twins.dt_model import (
         CategoricalIndex,
+        ConditionalDistributionIndex,
         ConstIndex,
+        CrossProductEnsemble,
         Distribution,
         Evaluation,
         GenericIndex,
@@ -255,8 +284,8 @@ def _demo_18_19_overtourism() -> None:
     def excursionist_dist(w):
         return stats.uniform(loc=2500.0, scale=1000.0)
 
-    PV_tourists = PresenceVariable("tourists", [CV_weather], tourist_dist)
-    PV_excursionists = PresenceVariable("excursionists", [CV_weather], excursionist_dist)
+    PV_tourists = ConditionalDistributionIndex("tourists", [CV_weather], tourist_dist)
+    PV_excursionists = ConditionalDistributionIndex("excursionists", [CV_weather], excursionist_dist)
 
     usage_idx = Index("usage", PV_tourists + PV_excursionists)
     capacity_idx = ConstIndex("capacity_idx", 100_000.0)
@@ -266,7 +295,7 @@ def _demo_18_19_overtourism() -> None:
         @dataclass
         class Inputs:
             cvs: list[CategoricalIndex]
-            pvs: list[PresenceVariable]
+            pvs: list[ConditionalDistributionIndex]
             capacities: list[GenericIndex]
 
         @dataclass
@@ -290,14 +319,15 @@ def _demo_18_19_overtourism() -> None:
         constraints=[c_beach],
     )
 
-    # Block 18 — OvertourismEnsemble
-    ensemble = OvertourismEnsemble(
+    # Block 18 — CrossProductEnsemble
+    ensemble = CrossProductEnsemble(
         model,
-        {CV_weather: ["good", "unsettled", "bad"]},
-        cv_ensemble_size=20,
+        restrictions={CV_weather: ["good", "unsettled", "bad"]},
+        max_categorical_size=20,
+        exclude=model.pvs,
     )
 
-    # Block 19 — Grid Evaluation with OvertourismEnsemble
+    # Block 19 — Grid Evaluation with CrossProductEnsemble
     tt = np.linspace(0, 50_000, 101)  # tourist presence axis
     ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
@@ -326,6 +356,8 @@ def _demo_18_19_overtourism() -> None:
 
 _demo_00_index_modes()
 _demo_01_categorical_index()
+_demo_03_conditional_categorical_index()
+_demo_04_conditional_distribution_index()
 _demo_02_timeseries_index()
 _demo_05_legacy_api()
 _demo_08_contract_warnings()

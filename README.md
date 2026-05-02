@@ -77,35 +77,30 @@ model = Model("example", [x, y, result])
 
 See [docs/design/dd-cdt-model.md](docs/design/dd-cdt-model.md) for the full
 reference: index types, `Model` API, `ModelVariant`, `Evaluation`, and the
-vertical extension pattern.
+domain modeling pattern.
 
 ### Usage patterns
 
-Three concrete usage patterns are illustrated in the `examples/` directory.
+The `examples/` directory contains two illustrative examples, distinguished
+by whether the model has external categorical context.  Both use the
+dataclass-based modularity API (`Inputs`, `Outputs`, `Expose`,
+`ModelVariant`) — see
+[docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md).
 
-**Direct pattern** (`examples/mobility_bologna/`) — the model consists
-entirely of `Index` and `TimeseriesIndex` objects;
-`DistributionEnsemble` samples each distribution-backed index to produce
-weighted scenarios; `Evaluation.evaluate()` runs the engine and returns an
+**Direct pattern** (`examples/mobility_bologna/`) — no context variables.
+Uncertainty enters only through `DistributionIndex` parameters.
+`DistributionEnsemble` draws *S* Monte-Carlo samples to produce weighted
+scenarios; `Evaluation.evaluate()` runs the engine and returns an
 `EvaluationResult`.
 
-**Vertical extension pattern** (`examples/overtourism_molveno/`) — the
-domain-specific layer introduces `PresenceVariable` and `Constraint` on top
-of the core types, using `CategoricalIndex` as the context-variable
-type.  Concrete models subclass `Model`; `OvertourismEnsemble`
-samples context variables and produces weighted scenarios.
-`Evaluation.evaluate(axes={pv: array, …})` evaluates the model on a
-multi-dimensional grid, returning arrays of shape `(N₀, …, Nₖ, S)` where
-`S` is the number of scenarios and each `Nᵢ` corresponds to one presence
-axis.
-
-**Model modularity** — for larger models, the dataclass-based I/O API
-(`Inputs`, `Outputs`, `Expose`) makes inter-model wiring explicit and
-machine-checkable.  `ModelVariant` enables swapping between alternative
-implementations at construction time.  Both the Bologna and Molveno examples
-are rewritten using this API.  See
-[docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md)
-for the full guide.
+**Context-variable pattern** (`examples/overtourism_molveno/`) — the model
+has categorical scenario factors outside the modeller's control (season,
+weather, …), expressed as `CategoricalIndex`, and quantities whose
+distribution depends on context, expressed as
+`ConditionalDistributionIndex`.  `CrossProductEnsemble` enumerates the
+context combinations into weighted scenarios; presence quantities are
+swept over a multi-dimensional grid via
+`Evaluation.evaluate(parameters={pv: array, …})`.
 
 ## Installation
 
@@ -137,7 +132,7 @@ from civic_digital_twins import dt_model
 
 ## Minimum Python Version
 
-Python 3.11. Tested against Python 3.11, 3.12, 3.13, and 3.14.
+Python 3.12. Tested against Python 3.12, 3.13, and 3.14.
 
 ## API Stability Guarantees
 
@@ -244,9 +239,9 @@ no manual build or upload step is needed.
 
 | Document | Description |
 | -------- | ----------- |
-| [Getting Started](docs/getting-started.md) | Step-by-step guide covering the direct and vertical extension usage patterns. |
+| [Getting Started](docs/getting-started.md) | Step-by-step guide covering the direct and context-variable usage patterns. |
 | [dd-cdt-engine.md](docs/design/dd-cdt-engine.md) | DSL compiler engine — graph nodes, topological sorting, NumPy executor. |
-| [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model / simulation layer — `Model`, `Evaluation`, `WeightedScenario`, and the vertical extension pattern. |
+| [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model / simulation layer — `Model`, `Evaluation`, `CrossProductEnsemble`, and the domain modeling pattern. |
 | [dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md) | Model modularity concept guide — dataclass I/O API, `ModelVariant`, decomposition patterns, and Bologna worked example. |
 
 ## License

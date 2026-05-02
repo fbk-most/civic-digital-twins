@@ -10,18 +10,15 @@ _examples_dir = Path(__file__).parent.parent
 if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: E402
 
-import numpy as np
-from overtourism_molveno.overtourism_metamodel import (
-    Constraint,
-    OvertourismEnsemble,
-    PresenceVariable,
-)
-from scipy import stats
+import numpy as np  # noqa: E402
+from scipy import stats  # noqa: E402
 
-from civic_digital_twins.dt_model import (
+from civic_digital_twins.dt_model import (  # noqa: E402
     CategoricalIndex,
+    ConditionalDistributionIndex,
+    CrossProductEnsemble,
     Distribution,
     DistributionIndex,
     Evaluation,
@@ -68,7 +65,7 @@ def visitors_distribution(season, weather):
     return stats.uniform(loc=low, scale=high - low)
 
 
-PV_visitors = PresenceVariable(
+PV_visitors = ConditionalDistributionIndex(
     "visitors",
     [CV_season, CV_weather],
     visitors_distribution,
@@ -80,6 +77,16 @@ assert PV_visitors.value is None  # placeholder (axis in grid evaluation)
 # ---------------------------------------------------------------------------
 # overtourism-getting-started.md §3 — Constraints
 # ---------------------------------------------------------------------------
+
+
+@dataclass(eq=False)
+class Constraint:
+    """Named pairing of a usage formula index and a capacity index."""
+
+    name: str
+    usage: Index
+    capacity: Index
+
 
 # Capacity with uncertainty
 I_C_beach = DistributionIndex("beach_capacity", stats.triang, {"loc": 3000.0, "scale": 2000.0, "c": 0.5})
@@ -105,16 +112,16 @@ assert C_beach.name == "beach"
 # ---------------------------------------------------------------------------
 
 
-class MinimalOvertourismModel(Model):
+class MinimalOvertourismModel(Model):  # noqa: D101
     @dataclass
-    class Inputs:
+    class Inputs:  # noqa: D106
         cvs: list[CategoricalIndex]
-        pvs: list[PresenceVariable]
+        pvs: list[ConditionalDistributionIndex]
         domain_indexes: list[GenericIndex]
         capacities: list[GenericIndex]
 
     @dataclass
-    class Outputs:
+    class Outputs:  # noqa: D106
         usage_indexes: list[GenericIndex]
 
     def __init__(self, name, *, cvs, pvs, indexes, capacities, constraints):
@@ -150,8 +157,8 @@ scenario: dict[CategoricalIndex, list[str]] = {
     CV_weather: ["good", "unsettled", "bad"],
 }
 
-ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
-# 2 × 3 = 6 scenarios (cv_ensemble_size=10 >= support sizes 2 and 3,
+ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
+# 2 × 3 = 6 scenarios (max_categorical_size=10 >= support sizes 2 and 3,
 # so all CV values are enumerated rather than sampled randomly)
 assert len(ensemble) == 6
 

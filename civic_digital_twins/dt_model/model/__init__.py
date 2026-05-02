@@ -4,6 +4,8 @@
 from .axis import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
 from .index import (
     CategoricalIndex,
+    ConditionalCategoricalIndex,
+    ConditionalDistributionIndex,
     ConstIndex,
     Distribution,
     DistributionIndex,
@@ -19,6 +21,8 @@ __all__ = [
     "Axis",
     "AxisRole",
     "CategoricalIndex",
+    "ConditionalCategoricalIndex",
+    "ConditionalDistributionIndex",
     "ConstIndex",
     "Distribution",
     "DistributionIndex",
