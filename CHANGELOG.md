@@ -11,8 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scipy-stubs` added to dev dependencies for improved type checking.
-- Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
 - `Axis(name, role)` and `AxisRole` (`PARAMETER`, `ENSEMBLE`, `DOMAIN`) — explicit
   named dimensions for result arrays; exported from `civic_digital_twins.dt_model`.
 - `AxisEnsemble` protocol — batched ensemble interface exposing `ensemble_axes`,
@@ -29,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every result array is guaranteed to carry explicit ENSEMBLE singleton dims for
   nodes not downstream of ENSEMBLE substitutions, eliminating the `S == T` shape
   ambiguity (#142).
+- `ConditionalCategoricalIndex(name, parents, probs_fn)` — categorical index
+  whose per-outcome probabilities depend on the resolved values of parent
+  indexes; exported from `civic_digital_twins.dt_model`.
+- `ConditionalDistributionIndex(name, parents, dist_fn)` — distribution-backed
+  index whose scipy distribution factory depends on resolved parent values;
+  replaces `PresenceVariable` in the overtourism example and is available to
+  any domain model.  Exported from `civic_digital_twins.dt_model`.
+- `CrossProductEnsemble(model, restrictions, max_categorical_size, exclude, rng)`
+  — ensemble that enumerates (or samples) the full cross-product of
+  `CategoricalIndex` / `ConditionalCategoricalIndex` values discovered via
+  model dependency analysis; replaces `OvertourismEnsemble`.  Indexes listed
+  in `exclude` are treated as PARAMETER axes rather than ENSEMBLE axes.
+- `sample_across(index, ensemble, n, rng)` — draw `n` samples from a
+  `ConditionalDistributionIndex` across all scenarios of an `AxisEnsemble`,
+  returning a weighted array aligned with the ensemble axis.
+- `scipy-stubs` added to dev dependencies for improved type checking.
+- Pyright now checks `examples/` directory (previously only `civic_digital_twins` and `tests`).
 - `tests/test_doc_sync.py` — automated snippet-alignment test that compares
   every Python code block in the design docs and guides against its paired
   runnable example script in `examples/doc/`.  Run without arguments for a
@@ -50,6 +65,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python 3.11 dropped** — minimum supported version is now Python 3.12.
   The CI matrix, `pyproject.toml` classifiers, ruff `target-version`, and
   `pyrightconfig.json` are updated accordingly. (#122)
+- **Breaking: `ContextVariable` hierarchy removed (closing #139).**
+  `ContextVariable`, `CategoricalContextVariable`,
+  `UniformCategoricalContextVariable`, and `ContinuousContextVariable` deleted.
+  Context variables are now ordinary `CategoricalIndex` instances.
+- **Breaking: `PresenceVariable` removed.** Presence variables are now
+  `ConditionalDistributionIndex` instances from the core library.
+- **Breaking: `OvertourismEnsemble` removed.** Replaced by `CrossProductEnsemble`
+  (see Added), which handles enumerate-vs-sample, subset restriction, and
+  weight renormalisation for any model using `CategoricalIndex` CVs.
+- **Breaking: `overtourism_metamodel.py` removed.** `Constraint` (the only
+  remaining class) is now defined directly in `molveno_model.py`.
+- **Overtourism metamodel modernization (#152):** `OvertourismModel` removed;
+  `MolvenoModel` now subclasses `Model` directly with its own
+  `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into `MolvenoModel`.
 - PEP 695 generic syntax adopted throughout: `~30` generic classes in
   `graph.py` converted to `class Foo[T]`; `TypeAlias` declarations in
   `executor.py` and `IOProxy` in `model.py` converted to `type X = ...`.
@@ -60,18 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependencies (used only by example models, not the library itself). Both
   floors now guarantee pre-compiled wheels for Python 3.12, 3.13, and 3.14,
   eliminating source-compilation delays in CI. (#122)
-- **Breaking: `ContextVariable` hierarchy removed from `overtourism_metamodel`
-  (closing #139).** `ContextVariable`, `CategoricalContextVariable`,
-  `UniformCategoricalContextVariable`, and `ContinuousContextVariable` have
-  been deleted.  Context variables are now ordinary `CategoricalIndex`
-  instances; `OvertourismEnsemble` now accepts
-  `dict[CategoricalIndex, list[str]]` scenarios and hosts the
-  enumerate-vs-sample and subset-renormalisation logic that previously lived
-  on the CV classes.
-- **Overtourism metamodel modernization (#152):** `OvertourismModel` removed;
-  `MolvenoModel` now subclasses `Model` directly with its own
-  `Inputs`/`Outputs` dataclasses; `PresenceModel` dissolved into
-  `MolvenoModel`; `OvertourismEnsemble` refactored to implement `AxisEnsemble`.
 - **Molveno example slim-down:** module-level aliases removed; modal-line
   regression replaced by orthogonal regression (SVD); miscellaneous dead code
   removed.
@@ -82,17 +99,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `PresenceVariable` now accepts a distribution callable that returns a frozen
-  scipy distribution (e.g. `scipy.stats.truncnorm`) instead of a dict with
-  `mean`/`std` keys. The `sample()` method calls `.rvs()` on the returned
-  distribution. This fixes the pyright type error in the getting started
-  guide (#147).
 - `EvaluationResult.marginalize()` raised `IndexError` on constant nodes in
   grid+ensemble mode (two or more PARAMETER axes plus at least one ENSEMBLE axis)
   (#155).
 - `Evaluation.evaluate()` raised `ValueError` (numpy broadcast failure) in
   grid+ensemble+timeseries mode when the ENSEMBLE size differed from the timeseries
   length (#156).  Also fixed for pure-PARAMETER+timeseries mode (no ensemble).
+- `EvaluationResult.marginalize()` contracted the wrong axis when `S == T` (#142);
+  PARAMETER dims and non-trivial DOMAIN dims are now preserved.
 - The all-axes invariant (`*PARAMETER, *ENSEMBLE, *domain` shape on every result
   array) is now enforced for all axis combinations, including pure-PARAMETER mode.
   Post-normalisation assertions verify the invariant at debug time.
@@ -100,8 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pure-ENSEMBLE mode with no PARAMETER axes and no timeseries nodes, scalar
   result arrays now have shape `(S,)` instead of `(S, 1)`.  `marginalize()`
   output is identical; only direct `result[idx].shape` comparisons are affected.
-- `EvaluationResult.marginalize()` contracted the wrong axis when `S == T` (#142);
-  PARAMETER dims and non-trivial DOMAIN dims are now preserved.
 - Dependabot vulnerability alerts resolved: `fonttools` bumped to `>=4.60.2`
   (moderate) and `pillow` to `>=12.1.1` (high) via lockfile regeneration. (#132)
 - Documents and `examples/doc/` scripts updated so that the scripts no longer emit

@@ -8,7 +8,7 @@ be a constant, a distribution, or a symbolic expression.
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol, cast, runtime_checkable
 
 import numpy as np
@@ -556,3 +556,214 @@ class CategoricalIndex(Index):
     def __repr__(self) -> str:
         """Return a string representation of the categorical index."""
         return f"CategoricalIndex({self.name!r}, {self._outcomes!r})"
+
+
+class ConditionalCategoricalIndex(Index):
+    """Categorical index whose outcome probabilities depend on resolved parent values.
+
+    Like :class:`CategoricalIndex`, it is always abstract (placeholder mode):
+    the underlying node is a ``graph.placeholder``.  The *support* (set of
+    possible outcome keys) is fixed at construction time; only the probability
+    distribution over that support varies with the parent configuration.
+
+    The *factory* is called by the ensemble once per joint parent configuration
+    with keyword arguments keyed by parent names::
+
+        P_weather_given_season = ConditionalCategoricalIndex(
+            "weather",
+            parents=[cv_season],
+            support=["good", "unsettled", "bad"],
+            factory=lambda season: {
+                "good":     0.6 if season == "summer" else 0.2,
+                "unsettled": 0.3 if season == "summer" else 0.3,
+                "bad":       0.1 if season == "summer" else 0.5,
+            },
+        )
+
+    Parameters
+    ----------
+    name:
+        Human-readable name.
+    parents:
+        Ordered list of :class:`CategoricalIndex` or
+        :class:`ConditionalCategoricalIndex` instances whose resolved values
+        are forwarded to *factory* as keyword arguments.
+    support:
+        Fixed, non-empty list of string outcome keys.  The *factory* must
+        return a probability dict with exactly these keys.
+    factory:
+        Callable ``(**parent_values: str) -> dict[str, float]``.  The returned
+        dict must have the same keys as *support* with strictly positive values
+        summing to 1.0 (validated at each call).
+
+    Raises
+    ------
+    ValueError
+        If *support* is empty, *parents* contains an invalid type, or the
+        *factory* return value fails validation.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        parents: "Sequence[CategoricalIndex | ConditionalCategoricalIndex]",
+        support: list[str],
+        factory: "Callable[..., dict[str, float]]",
+    ) -> None:
+        if not support:
+            raise ValueError(f"ConditionalCategoricalIndex {name!r}: 'support' must not be empty.")
+        for p in parents:
+            if not isinstance(p, CategoricalIndex | ConditionalCategoricalIndex):
+                raise TypeError(
+                    f"ConditionalCategoricalIndex {name!r}: parent {p!r} must be a "
+                    "CategoricalIndex or ConditionalCategoricalIndex."
+                )
+        self._parents: list[CategoricalIndex | ConditionalCategoricalIndex] = list(parents)
+        self._support: list[str] = list(support)
+        self._factory = factory
+        super().__init__(name, None)  # placeholder mode
+
+    @property
+    def parents(self) -> "list[CategoricalIndex | ConditionalCategoricalIndex]":
+        """Parent indexes whose values are passed to the factory."""
+        return list(self._parents)
+
+    @property
+    def support(self) -> list[str]:
+        """Fixed ordered list of outcome keys."""
+        return list(self._support)
+
+    def outcomes_for(self, **parent_values: str) -> dict[str, float]:
+        """Return the outcome probabilities for a given parent configuration.
+
+        Parameters
+        ----------
+        **parent_values:
+            Keyword arguments keyed by parent :attr:`~Index.name`, one per
+            parent in :attr:`parents`.
+
+        Returns
+        -------
+        dict[str, float]
+            Outcome probabilities summing to 1.0, with keys matching
+            :attr:`support`.
+
+        Raises
+        ------
+        ValueError
+            If the factory returns an invalid distribution.
+        """
+        outcomes = self._factory(**parent_values)
+        keys_ok = set(outcomes) == set(self._support)
+        if not keys_ok:
+            raise ValueError(
+                f"ConditionalCategoricalIndex {self.name!r}: factory returned keys "
+                f"{sorted(outcomes)} but support is {self._support}."
+            )
+        non_positive = [k for k, p in outcomes.items() if p <= 0]
+        if non_positive:
+            raise ValueError(
+                f"ConditionalCategoricalIndex {self.name!r}: factory returned non-positive "
+                f"probabilities for keys: {non_positive}."
+            )
+        total = sum(outcomes.values())
+        if not np.isclose(total, 1.0):
+            raise ValueError(
+                f"ConditionalCategoricalIndex {self.name!r}: factory probabilities sum to {total}, expected 1.0."
+            )
+        return outcomes
+
+    def __repr__(self) -> str:
+        """Return a string representation of the conditional categorical index."""
+        return (
+            f"ConditionalCategoricalIndex({self.name!r}, "
+            f"parents={[p.name for p in self._parents]!r}, "
+            f"support={self._support!r})"
+        )
+
+
+class ConditionalDistributionIndex(Index):
+    """Distribution-backed index whose distribution depends on resolved parent values.
+
+    Always abstract (placeholder mode): the underlying node is a
+    ``graph.placeholder``, like an unconditional abstract :class:`Index`.
+    The ensemble resolves parent values first, then calls *factory* to obtain
+    the frozen :class:`Distribution` for each joint parent configuration.
+
+    The *factory* is called with keyword arguments keyed by parent names::
+
+        temp_given_weather = ConditionalDistributionIndex(
+            "temperature",
+            parents=[cv_weather],
+            factory=lambda weather: (
+                stats.norm(loc=25.0, scale=3.0) if weather == "good"
+                else stats.norm(loc=15.0, scale=5.0)
+            ),
+        )
+
+    Parameters
+    ----------
+    name:
+        Human-readable name.
+    parents:
+        Ordered list of parent indexes whose resolved values are forwarded to
+        *factory* as keyword arguments.  Valid parent types are
+        :class:`CategoricalIndex`, :class:`ConditionalCategoricalIndex`,
+        :class:`DistributionIndex`, and :class:`ConditionalDistributionIndex`.
+    factory:
+        Callable ``(**parent_values) -> Distribution``.  Should return a frozen
+        scipy-compatible distribution (satisfies :class:`Distribution` protocol).
+
+    Raises
+    ------
+    TypeError
+        If any parent is not of a supported type.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        parents: "Sequence[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]",  # noqa: E501
+        factory: "Callable[..., Any]",
+    ) -> None:
+        for p in parents:
+            if not isinstance(
+                p,
+                CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex,
+            ):
+                raise TypeError(
+                    f"ConditionalDistributionIndex {name!r}: parent {p!r} must be a "
+                    "CategoricalIndex, ConditionalCategoricalIndex, DistributionIndex, "
+                    "or ConditionalDistributionIndex."
+                )
+        self._parents: list[
+            CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex
+        ] = list(parents)
+        self._factory = factory
+        super().__init__(name, None)  # placeholder mode — no unconditional distribution
+
+    @property
+    def parents(
+        self,
+    ) -> "list[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]":  # noqa: E501
+        """Parent indexes whose values are passed to the factory."""
+        return list(self._parents)
+
+    def distribution_for(self, **parent_values: object) -> Distribution:
+        """Return the frozen distribution for a given parent configuration.
+
+        Parameters
+        ----------
+        **parent_values:
+            Keyword arguments keyed by parent :attr:`~Index.name`.
+
+        Returns
+        -------
+        Distribution
+            A frozen scipy-compatible distribution.
+        """
+        return cast(Distribution, self._factory(**parent_values))
+
+    def __repr__(self) -> str:
+        """Return a string representation of the conditional distribution index."""
+        return f"ConditionalDistributionIndex({self.name!r}, parents={[p.name for p in self._parents]!r})"

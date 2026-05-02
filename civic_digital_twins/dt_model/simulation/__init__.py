@@ -3,16 +3,19 @@
 
 from .ensemble import (
     AxisEnsemble,
+    CrossProductEnsemble,
     DistributionEnsemble,
     Ensemble,
     EnsembleAxisSpec,
     PartitionedEnsemble,
     WeightedScenario,
+    sample_across,
 )
 from .evaluation import Evaluation, EvaluationResult
 
 __all__ = [
     "AxisEnsemble",
+    "CrossProductEnsemble",
     "DistributionEnsemble",
     "Ensemble",
     "EnsembleAxisSpec",
@@ -20,4 +23,5 @@ __all__ = [
     "EvaluationResult",
     "PartitionedEnsemble",
     "WeightedScenario",
+    "sample_across",
 ]

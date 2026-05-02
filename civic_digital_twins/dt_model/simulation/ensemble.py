@@ -2,14 +2,21 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
 from ..model.axis import ENSEMBLE, Axis
-from ..model.index import CategoricalIndex, Distribution, GenericIndex, Index
+from ..model.index import (
+    CategoricalIndex,
+    ConditionalCategoricalIndex,
+    ConditionalDistributionIndex,
+    Distribution,
+    GenericIndex,
+    Index,
+)
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
 
@@ -397,3 +404,319 @@ class DistributionEnsemble:
         for i in range(self._size):
             assignments: dict[GenericIndex, Any] = {idx: samples[idx][i] for idx in abstract}
             yield weight, assignments
+
+
+# ---------------------------------------------------------------------------
+# CrossProductEnsemble — helpers
+# ---------------------------------------------------------------------------
+
+
+def _topo_sort_categoricals(
+    cats: list[CategoricalIndex | ConditionalCategoricalIndex],
+) -> list[CategoricalIndex | ConditionalCategoricalIndex]:
+    """Return *cats* in topological order (parents before children)."""
+    cat_ids = {id(c) for c in cats}
+    visited: set[int] = set()
+    order: list[CategoricalIndex | ConditionalCategoricalIndex] = []
+
+    def visit(c: CategoricalIndex | ConditionalCategoricalIndex) -> None:
+        if id(c) in visited:
+            return
+        visited.add(id(c))
+        if isinstance(c, ConditionalCategoricalIndex):
+            for p in c.parents:
+                if id(p) in cat_ids:
+                    visit(p)
+        order.append(c)
+
+    for c in cats:
+        visit(c)
+    return order
+
+
+def _topo_sort_dists(
+    dists: list[Index],
+) -> list[Index]:
+    """Return *dists* in topological order (parents before children).
+
+    Only distribution-to-distribution edges are followed; categorical parents
+    are already resolved before this sort runs.
+    """
+    dist_ids = {id(d) for d in dists}
+    visited: set[int] = set()
+    order: list[Index] = []
+
+    def visit(d: Index) -> None:
+        if id(d) in visited:
+            return
+        visited.add(id(d))
+        if isinstance(d, ConditionalDistributionIndex):
+            for p in d.parents:
+                if id(p) in dist_ids:
+                    visit(p)  # type: ignore[arg-type]
+        order.append(d)
+
+    for d in dists:
+        visit(d)
+    return order
+
+
+def _cat_samples(
+    values: list[str],
+    probs: list[float],
+    max_categorical_size: int,
+    rng: np.random.Generator | None,
+) -> list[tuple[float, str]]:
+    """Return ``(weight, value)`` pairs for one categorical iteration.
+
+    Enumerates when ``max_categorical_size >= len(values)``; Monte-Carlo samples
+    otherwise.  Probabilities are renormalised over *values* (handles subsets).
+    """
+    total = sum(probs)
+    norm_probs = [p / total for p in probs]
+    if max_categorical_size < len(values):
+        arr = np.array(values, dtype=object)
+        if rng is not None:
+            choices = rng.choice(arr, size=max_categorical_size, p=norm_probs)
+        else:
+            choices = np.random.choice(arr, size=max_categorical_size, p=norm_probs)
+        return [(1.0 / max_categorical_size, str(c)) for c in choices]
+    return [(p / total, v) for p, v in zip(probs, values)]
+
+
+# ---------------------------------------------------------------------------
+# CrossProductEnsemble
+# ---------------------------------------------------------------------------
+
+
+class CrossProductEnsemble:
+    """Ensemble that enumerates categorical combinations and samples distribution-backed indexes.
+
+    Handles any combination of
+    :class:`~model.index.CategoricalIndex`,
+    :class:`~model.index.ConditionalCategoricalIndex`,
+    :class:`~model.index.DistributionIndex`, and
+    :class:`~model.index.ConditionalDistributionIndex`.
+
+    Abstract indexes that are neither categorical nor distribution-backed
+    (e.g. a plain placeholder
+    :class:`~model.index.Index`) are silently excluded from the ensemble — they
+    must be supplied as PARAMETER axes to
+    :meth:`~simulation.evaluation.Evaluation.evaluate`.
+
+    **Restrictions** project the categorical cross-product onto a subset of
+    outcomes for selected categorical indexes, renormalising probabilities so
+    that ensemble weights still sum to 1.0::
+
+        ensemble = CrossProductEnsemble(
+            model,
+            restrictions={cv_weather: ["good", "unsettled"]},
+        )
+
+    Parameters
+    ----------
+    model:
+        Model whose abstract indexes are enumerated / sampled.
+    restrictions:
+        Maps a categorical index to the subset of support values to use
+        instead of its full support.  Omitted or absent entries use the full
+        support.
+    max_categorical_size:
+        Maximum number of samples per categorical axis.  When the support (or
+        restricted subset) is larger than this threshold, the axis is Monte-Carlo
+        sampled *max_categorical_size* times.
+    exclude:
+        Indexes to exclude from ensemble enumeration / sampling.  Use this to
+        mark PARAMETER-axis indexes (e.g. presence variables supplied as grid
+        axes to :meth:`~simulation.evaluation.Evaluation.evaluate`) that should
+        not be part of the cross-product.  Identity-based exclusion.
+    rng:
+        Optional :class:`numpy.random.Generator` for reproducibility.
+
+    Implements :class:`AxisEnsemble`.
+    """
+
+    def __init__(
+        self,
+        model: Model | ModelVariant,
+        restrictions: Mapping[Any, Sequence[str]] | None = None,
+        max_categorical_size: int = 20,
+        exclude: Sequence[GenericIndex] | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> None:
+        if restrictions is None:
+            restrictions = {}
+        excluded_ids = {id(idx) for idx in (exclude or [])}
+
+        abstract = list(model.abstract_indexes())
+
+        # Classify abstract indexes.
+        cats_unordered: list[CategoricalIndex | ConditionalCategoricalIndex] = []
+        dists_unordered: list[Index] = []
+        for idx in abstract:
+            if id(idx) in excluded_ids:
+                continue  # skip PARAMETER-axis indexes
+            if isinstance(idx, CategoricalIndex | ConditionalCategoricalIndex):
+                cats_unordered.append(idx)
+            elif isinstance(idx, ConditionalDistributionIndex):
+                dists_unordered.append(idx)
+            elif isinstance(idx, Index) and isinstance(idx.value, Distribution):
+                dists_unordered.append(idx)
+            # else: plain placeholder Index — skip silently
+
+        categoricals = _topo_sort_categoricals(cats_unordered)
+        distributions = _topo_sort_dists(dists_unordered)
+
+        # Build cross-product of categorical values.
+        # Each entry: (joint_weight, {id(cat): value_str}) — id keys avoid
+        # GenericIndex.__eq__ returning a graph node.
+        combos: list[tuple[float, dict[int, str]]] = [(1.0, {})]
+
+        for cat in categoricals:
+            new_combos: list[tuple[float, dict[int, str]]] = []
+            for w, assignments in combos:
+                if isinstance(cat, ConditionalCategoricalIndex):
+                    parent_values = {p.name: assignments[id(p)] for p in cat.parents}
+                    outcomes = cat.outcomes_for(**parent_values)
+                else:
+                    outcomes = cat.outcomes
+                subset = restrictions.get(cat)
+                values = cat.support if subset is None else list(subset)
+                probs = [outcomes[v] for v in values]
+                for sub_w, val in _cat_samples(values, probs, max_categorical_size, rng):
+                    new_combos.append((w * sub_w, {**assignments, id(cat): val}))
+            combos = new_combos
+
+        S = len(combos)
+        weights = np.array([w for (w, _) in combos])
+        weights /= weights.sum()  # normalise against FP drift
+
+        # Build categorical assignment arrays.
+        self._assignments: dict[GenericIndex, np.ndarray] = {}
+        for cat in categoricals:
+            self._assignments[cat] = np.array([combo[1][id(cat)] for combo in combos], dtype=object)
+
+        # Sample distribution-backed indexes (topo order — parents before children).
+        for idx in distributions:
+            if isinstance(idx, ConditionalDistributionIndex):
+                samples = np.empty(S)
+                for i, (_, combo_cats) in enumerate(combos):
+                    parent_vals: dict[str, Any] = {}
+                    for p in idx.parents:
+                        if isinstance(p, CategoricalIndex | ConditionalCategoricalIndex):
+                            parent_vals[p.name] = combo_cats[id(p)]
+                        else:
+                            parent_vals[p.name] = float(self._assignments[p][i])
+                    d = idx.distribution_for(**parent_vals)
+                    samples[i] = float(d.rvs(random_state=rng) if rng is not None else d.rvs())
+                self._assignments[idx] = samples
+            else:
+                assert isinstance(idx.value, Distribution)
+                if rng is not None:
+                    self._assignments[idx] = np.asarray(idx.value.rvs(size=S, random_state=rng))
+                else:
+                    self._assignments[idx] = np.asarray(idx.value.rvs(size=S))
+
+        self._axis = Axis("_cross_product", ENSEMBLE)
+        self._weights_arr = weights
+        self.size = S
+
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        """Single ENSEMBLE axis spanning all cross-product combinations."""
+        return (self._axis,)
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        """Weight array of shape ``(S,)`` summing to 1.0."""
+        return (self._weights_arr,)
+
+    def assignments(self) -> dict[GenericIndex, np.ndarray]:
+        """Return batched assignments for all enumerated / sampled indexes."""
+        return self._assignments
+
+    def __len__(self) -> int:
+        """Return the total number of scenarios."""
+        return self.size
+
+
+# ---------------------------------------------------------------------------
+# sample_across — weighted presence sampling
+# ---------------------------------------------------------------------------
+
+
+def sample_across(
+    ensemble: AxisEnsemble,
+    indexes: list[ConditionalDistributionIndex],
+    total: int = 200,
+    rng: np.random.Generator | None = None,
+) -> dict[ConditionalDistributionIndex, np.ndarray]:
+    """Draw weighted samples from conditional-distribution indexes across an ensemble.
+
+    For each scenario *i* in the ensemble, draws ``max(1, round(w_i × total))``
+    samples from every index, where *w_i* is the scenario weight.  The result is
+    a concatenated array of approximately *total* samples per index, distributed
+    according to the ensemble's marginal distribution.
+
+    Typical use: generating scatter-dot samples for visualising the distribution
+    of presence variables against a sustainability field::
+
+        samples = sample_across(
+            ensemble,
+            [pv_tourists, pv_excursionists],
+            total=200,
+        )
+        ax.scatter(samples[pv_excursionists], samples[pv_tourists])
+
+    Parameters
+    ----------
+    ensemble:
+        A single-axis :class:`AxisEnsemble` (e.g. :class:`CrossProductEnsemble`).
+        Multi-axis ensembles are not currently supported.
+    indexes:
+        Conditional-distribution indexes to sample.  Their parents must be
+        present in ``ensemble.assignments()``.
+    total:
+        Target total number of samples per index.  Actual count may differ
+        slightly due to rounding.
+    rng:
+        Optional :class:`numpy.random.Generator` for reproducibility.
+
+    Returns
+    -------
+    dict[ConditionalDistributionIndex, np.ndarray]
+        Maps each index to a 1-D array of float samples.
+
+    Raises
+    ------
+    ValueError
+        If *ensemble* has more than one ENSEMBLE axis, or if a parent of any
+        index is not present in the ensemble assignments.
+    """
+    if len(ensemble.ensemble_axes) != 1:
+        raise ValueError(f"sample_across requires a single-axis ensemble; got {len(ensemble.ensemble_axes)} axes.")
+    weights = ensemble.ensemble_weights[0]  # shape (S,)
+    assignments = ensemble.assignments()
+
+    # Validate parents upfront.
+    assignment_ids = {id(k) for k in assignments}
+    for idx in indexes:
+        missing = [p for p in idx.parents if id(p) not in assignment_ids]
+        if missing:
+            names = ", ".join(getattr(p, "name", repr(p)) for p in missing)
+            raise ValueError(
+                f"sample_across: parent(s) {names!r} of index {idx.name!r} are not present in the ensemble assignments."
+            )
+
+    result: dict[ConditionalDistributionIndex, list[float]] = {idx: [] for idx in indexes}
+
+    for i, w in enumerate(weights):
+        nr = max(1, round(float(w) * total))
+        for idx in indexes:
+            parent_vals = {p.name: assignments[p][i] for p in idx.parents}
+            d = idx.distribution_for(**parent_vals)
+            raw = d.rvs(size=nr, random_state=rng) if rng is not None else d.rvs(size=nr)
+            arr = np.asarray(raw).ravel()
+            result[idx].extend(arr.tolist())
+
+    return {idx: np.asarray(v) for idx, v in result.items()}

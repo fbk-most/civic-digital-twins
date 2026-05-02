@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-04-24                                     |
+| Last-Updated | 2026-04-27                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -33,11 +33,19 @@ placeholder index whose value must be supplied externally before the
 model can be evaluated.  It is *instantiated* when all indexes are
 fully concrete.
 
+**Conditional indexes.** `ConditionalCategoricalIndex` and
+`ConditionalDistributionIndex` are indexes whose distribution or probability
+table depends on the resolved values of *parent* indexes.  They are used
+for context-dependent quantities such as visitor counts that vary by season
+and weather.
+
 **AxisEnsemble.** The bridge from abstract to instantiated is an
 *ensemble*: a batched object that assigns concrete arrays to every abstract
-index.  `DistributionEnsemble` and `PartitionedEnsemble` implement the
-`AxisEnsemble` protocol, which exposes named ENSEMBLE axes with factorized
-weight vectors.
+index.  `DistributionEnsemble`, `PartitionedEnsemble`, and
+`CrossProductEnsemble` implement the `AxisEnsemble` protocol, which exposes
+named ENSEMBLE axes with factorized weight vectors.  `CrossProductEnsemble`
+is purpose-built for models with categorical context variables: it enumerates
+all category combinations and pre-samples stochastic capacities.
 
 **Evaluation.** `Evaluation(model).evaluate(ensemble=…, parameters=…)`
 consumes an ensemble, builds the engine substitution dictionary from the
@@ -59,9 +67,11 @@ defines all index types.  The class hierarchy is:
 ```
 GenericIndex  (ABC)
 ├── Index
-│   ├── DistributionIndex
 │   ├── ConstIndex
-│   └── CategoricalIndex
+│   ├── DistributionIndex
+│   ├── ConditionalDistributionIndex
+│   ├── CategoricalIndex
+│   └── ConditionalCategoricalIndex
 └── TimeseriesIndex
 ```
 
@@ -120,6 +130,34 @@ update via the Python dict-merge operator (`idx.params |= {"loc": 200}`).
 `ConstIndex` is a convenience wrapper that accepts a scalar constant and
 passes it to `Index.__init__`.
 
+### ConditionalDistributionIndex
+
+`ConditionalDistributionIndex(name, parents, factory)` is always abstract
+(placeholder mode).  The `factory` is called with the current parent values as
+keyword arguments and must return a frozen scipy distribution.  The ensemble
+calls the factory per-scenario to obtain the distribution; during grid evaluation
+the index is supplied as a PARAMETER axis and is not resolved per-scenario.
+
+```python
+from scipy import stats
+
+from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex
+
+cv_weather = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+
+def load_dist(weather):
+    if weather == "good":
+        return stats.uniform(loc=100.0, scale=200.0)
+    return stats.uniform(loc=50.0, scale=100.0)
+
+pv_load = ConditionalDistributionIndex("load", [cv_weather], load_dist)
+
+assert pv_load.value is None  # abstract — resolved per-scenario by the ensemble
+```
+
+The factory receives string values for `CategoricalIndex` parents and float values
+for `DistributionIndex` parents, matching the types stored in `ensemble.assignments()`.
+
 ### CategoricalIndex
 
 `CategoricalIndex(name, outcomes)` is a placeholder `Index` whose per-scenario values are strings
@@ -142,6 +180,30 @@ Because the full `GenericIndex` algebra protocol is inherited, `mode == "bike"` 
 
 For the usage pattern and integration with `ModelVariant`, see
 [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection).
+
+### ConditionalCategoricalIndex
+
+`ConditionalCategoricalIndex(name, parents, support, factory)` is a `CategoricalIndex`
+whose per-outcome probabilities depend on the resolved values of *parent* indexes.
+The `support` list declares all possible outcome strings.  The `factory` is called
+with parent values as keyword arguments and must return a `dict[str, float]` mapping
+each support value to its probability (must sum to 1.0).
+
+```python
+from civic_digital_twins.dt_model import CategoricalIndex, ConditionalCategoricalIndex
+
+cv_season = CategoricalIndex("season", {"low": 0.6, "high": 0.4})
+
+def weekend_probs(season):
+    return {"yes": 0.4, "no": 0.6} if season == "low" else {"yes": 0.3, "no": 0.7}
+
+cv_weekend = ConditionalCategoricalIndex("weekend", [cv_season], ["yes", "no"], weekend_probs)
+
+assert cv_weekend.value is None  # abstract
+```
+
+Like `CategoricalIndex`, `cv_weekend == "yes"` returns a `graph.equal` node usable
+in `graph.piecewise` guards.
 
 ### TimeseriesIndex
 
@@ -460,6 +522,41 @@ ens = PartitionedEnsemble(
 # Result arrays have shape (*PARAMETER, 50, 20) — two independent ENSEMBLE dims.
 ```
 
+### CrossProductEnsemble
+
+`CrossProductEnsemble(model, restrictions, max_categorical_size, exclude, rng)` implements
+`AxisEnsemble`.  It materialises a batched ENSEMBLE axis by:
+
+1. Discovering the model's abstract indexes via `model.abstract_indexes()`.
+2. Enumerating all combinations of `CategoricalIndex` /
+   `ConditionalCategoricalIndex` values (filtered by `restrictions`);
+   probability weights are the product of per-category outcome probabilities.
+   When a categorical's support exceeds `max_categorical_size`, values are
+   Monte-Carlo sampled instead.
+3. Pre-sampling one value per distribution-backed abstract index
+   (e.g. stochastic capacities) for each scenario.
+
+Indexes passed via `exclude` are skipped in steps 2–3 — they are provided
+as PARAMETER axes at evaluation time.  See [Domain Modeling Pattern](#domain-modeling-pattern)
+for a worked example.
+
+```python
+class CrossProductEnsemble:
+    def __init__(
+        self,
+        model: Model | ModelVariant,
+        restrictions: Mapping[Any, Sequence[str]] | None = None,
+        max_categorical_size: int = 20,
+        exclude: Sequence[GenericIndex] | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> None: ...
+    def __len__(self) -> int: ...
+```
+
+`sample_across(ensemble, indexes, total=200, rng=None)` draws weighted samples
+from `ConditionalDistributionIndex` indexes across all scenarios — useful for
+scatter-plot visualisation of presence variables against the sustainability field.
+
 ## Evaluation
 
 [`simulation/evaluation.py`](../../civic_digital_twins/dt_model/simulation/evaluation.py)
@@ -531,7 +628,6 @@ grid.
 ### End-to-End Example
 
 ```python
-import numpy as np
 from scipy import stats
 
 from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Evaluation, Index, Model
@@ -552,83 +648,87 @@ result = Evaluation(model).evaluate(ensemble=ensemble)
 print(result.marginalize(z))  # ≈ 10.0
 ```
 
-## Vertical Extension
+## Domain Modeling Pattern
 
-The core library (`dt_model`) is domain-agnostic.  Domain-specific
-models are built by subclassing `Model` and composing `Index` objects
-with domain semantics, without modifying the core library.
+Many real applications share a common shape:
 
-The overtourism example
-(`examples/overtourism_molveno/overtourism_metamodel.py`) illustrates the
-pattern.  The key classes are:
+- the system has **categorical scenario factors** outside the modeller's
+  control (season, weather, day type, …);
+- one or more quantities of interest have **distributions that depend on
+  those factors** (e.g. visitor counts that depend on season and weather);
+- the modeller wants to know, for every value of those quantities, the
+  **probability that all domain constraints are satisfied** under the
+  weighted population of scenarios.
 
-### Context variables
+The library supports this shape directly.  The categorical factors are
+`CategoricalIndex` instances (called *context variables* — CVs); the
+quantities of interest are `ConditionalDistributionIndex` instances (called
+*presence variables* — PVs); `CrossProductEnsemble` enumerates the CV
+combinations into weighted scenarios; `Evaluation.evaluate(parameters=…)`
+sweeps each PV across a numerical axis.  The remaining ingredient — pairing
+each output with an admissibility limit — is domain-specific and described
+below.
 
-Context variables are ordinary `CategoricalIndex` instances: an `Index`
-with `value=None` (explicit placeholder) whose `outcomes` map gives the
-per-value probabilities.  `OvertourismEnsemble` fills each CV in with a
-concrete value for every scenario.
+The sections that follow walk through the four steps of the pattern,
+using overtourism as the running example.  For an end-to-end walkthrough
+with concrete CV/PV definitions and plotting code, see the
+[overtourism getting-started guide](../../examples/overtourism_molveno/overtourism-getting-started.md).
 
-Uniform distributions are expressed by passing equal weights in the
-`outcomes` dict (there is no dedicated "uniform" subclass):
+### Step 1 — Constraints (domain-defined)
 
-```python
-from civic_digital_twins.dt_model import CategoricalIndex
-
-CV_weather = CategoricalIndex(
-    "weather",
-    {"good": 0.5, "unsettled": 0.3, "bad": 0.2},
-)
-```
-
-### PresenceVariable
-
-A `PresenceVariable` is an `Index` with `value=None` and a
-`sample(cvs, nr)` method that draws `nr` presence values from a
-context-dependent truncated-normal distribution.  The distribution
-parameters are functions of the current CV assignments.
-
-### Constraint
+A *constraint* pairs a usage formula with a capacity limit; the system is
+considered admissible when usage stays below capacity.  Each domain defines
+its own `Constraint` dataclass inline — the core library provides no base
+class, since the fields a domain needs (extra metadata, units, severity)
+vary:
 
 ```python
+from dataclasses import dataclass
+
+from civic_digital_twins.dt_model import Index
+
+
 @dataclass(eq=False)
 class Constraint:
     name: str
-    usage: Index     # formula-mode index for usage
+    usage: Index     # formula-mode index — typically PV × per-CV usage factor
     capacity: Index  # constant or distribution-backed capacity
 ```
 
 `eq=False` preserves identity-based `__hash__` so that `Constraint`
-objects can be used as dictionary keys.
+objects can be used as dictionary keys, matching the convention of
+`graph.Node` and `GenericIndex`.
 
-### OvertourismEnsemble
+### Step 2 — Ensemble (CV cross-product)
 
-`OvertourismEnsemble(model, scenario, cv_ensemble_size)` implements
-`AxisEnsemble`.  It materialises a batched ENSEMBLE axis by:
-
-1. Enumerating all combinations of CV values from `scenario`
-   (using `itertools.product`); probability weights are the product of
-   per-CV outcome probabilities.
-2. Pre-sampling `S` values for every distribution-backed non-PV non-CV
-   abstract index (e.g. stochastic capacities), where `S` is the total
-   number of CV combinations.
+`CrossProductEnsemble` enumerates the joint support of the model's
+`CategoricalIndex` instances into weighted scenarios.  Each scenario also
+includes one Monte-Carlo sample of every distribution-backed abstract index
+that is *not* listed in `exclude` (PVs are excluded because they are swept
+on the grid in step 3 instead):
 
 ```python
-ensemble = OvertourismEnsemble(
+from civic_digital_twins.dt_model import CrossProductEnsemble
+
+ensemble = CrossProductEnsemble(
     model,
-    {CV_weather: ["good", "unsettled", "bad"]},
-    cv_ensemble_size=20,
+    restrictions={CV_weather: ["good", "unsettled", "bad"]},
+    max_categorical_size=20,
+    exclude=model.pvs,
 )
 ```
 
-### Grid Evaluation with OvertourismEnsemble
+### Step 3 — Grid evaluation (PV sweep)
 
-The standard overtourism evaluation pattern:
+PVs are not resolved per-scenario; they define the **grid axes** along
+which the sustainability field is computed.  `Evaluation` sweeps each PV
+across the supplied numerical axis, returning result arrays with one
+parameter axis per PV plus the trailing scenario axis `S`:
 
 ```python
 import numpy as np
 
-from civic_digital_twins.dt_model import Distribution, Evaluation
+from civic_digital_twins.dt_model import Evaluation
 
 tt = np.linspace(0, 50_000, 101)   # tourist presence axis
 ee = np.linspace(0, 50_000, 101)   # excursionist presence axis
@@ -637,21 +737,39 @@ result = Evaluation(model).evaluate(
     ensemble=ensemble,
     parameters={PV_tourists: tt, PV_excursionists: ee},
 )
+# result[c.usage] has shape (tt.size, ee.size, S)
+```
 
-# Compute sustainability field per constraint
+### Step 4 — Sustainability field
+
+For each scenario and each grid point, every constraint produces a
+*satisfaction mask* — `1.0` where usage ≤ capacity, `0.0` otherwise (or
+the analytic survival probability when the capacity is itself a
+distribution).  Marginalising the mask over the scenario axis with the
+ensemble weights yields, per grid point, the **probability that the
+constraint is satisfied** under the weighted scenario population.
+Multiplying the per-constraint probabilities gives the joint
+*sustainability field* over the grid:
+
+```python
+from civic_digital_twins.dt_model import Distribution
+
 field = np.ones((tt.size, ee.size))
 for c in model.constraints:
     usage = np.broadcast_to(result[c.usage], result.full_shape)
     if isinstance(c.capacity.value, Distribution):
-        mask = 1.0 - c.capacity.value.cdf(usage)
+        mask = 1.0 - c.capacity.value.cdf(usage)        # P(usage ≤ capacity)
     else:
         cap = np.broadcast_to(result[c.capacity], result.full_shape)
         mask = (usage <= cap).astype(float)
     field *= np.tensordot(mask, result.weights, axes=([-1], [0]))
+
+# field[i, j] ∈ [0, 1] — joint sustainability score at (tt[i], ee[j])
 ```
 
-Result arrays have shape `(tt.size, ee.size, S)`; after `tensordot`
-marginalisation over `S`, the field has shape `(tt.size, ee.size)`.
+The product across constraints assumes per-constraint independence given
+the scenario; if a domain needs joint constraints, it can build a single
+combined mask before marginalising instead.
 
 ## Design Rationale
 
@@ -682,7 +800,7 @@ Making `AxisEnsemble` a structural `Protocol` (rather than a base class)
 means that any class exposing `ensemble_axes`, `ensemble_weights`, and
 `assignments()` satisfies the contract without inheritance.
 `DistributionEnsemble`, `PartitionedEnsemble`, and domain-specific
-ensemble classes (e.g. `OvertourismEnsemble`) all work transparently.
+ensemble classes (e.g. `CrossProductEnsemble`) all work transparently.
 The legacy `Iterable[WeightedScenario]` path is still supported via a
 deprecation adapter.
 
@@ -694,11 +812,11 @@ than `bool`.  This is intentional — it allows writing formulas such as
 must not call `__eq__`; identity-based hashing is the standard Python
 fallback and is exactly what `graph.Node` itself uses.
 
-### Why `Constraint` uses `@dataclass(eq=False)`
+### Why domain `Constraint` uses `@dataclass(eq=False)`
 
 The `@dataclass` decorator normally generates `__eq__` (and suppresses
 `__hash__`).  Since `Constraint` objects are used as dict keys in the
-overtourism field computation, `@dataclass(eq=False)` suppresses the
+domain field computation, `@dataclass(eq=False)` suppresses the
 generated `__eq__` and preserves the identity-based `__hash__` inherited
 from `object`.
 
@@ -755,9 +873,11 @@ field names).  The active instance is chosen by a plain string
 model's contractual outputs — the indexes that downstream models or the
 evaluation layer may read.
 
-**Vertical extension**: the pattern of subclassing `Model` (and
-composing domain-specific `Index` subclasses) to add domain semantics
-without modifying the core library.
+**Domain modeling pattern**: the pattern of subclassing `Model` with
+`Inputs` / `Outputs` dataclasses and composing core index types
+(`CategoricalIndex`, `ConditionalDistributionIndex`, etc.) to add domain
+semantics without modifying the core library.  See
+[Domain Modeling Pattern](#domain-modeling-pattern).
 
 **WeightedScenario** (deprecated): `tuple[float, dict[GenericIndex, Any]]` — a
 probability weight paired with an assignment dict.  The legacy iterable

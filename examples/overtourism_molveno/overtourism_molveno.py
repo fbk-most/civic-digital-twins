@@ -16,14 +16,12 @@ from scipy import interpolate, ndimage, stats
 
 matplotlib.use("Agg")  # must be called before any other matplotlib sub-imports
 
-from civic_digital_twins.dt_model import Distribution, Evaluation
+from civic_digital_twins.dt_model import CrossProductEnsemble, Distribution, Evaluation, sample_across
 
 try:
     from overtourism_molveno.molveno_model import MolvenoModel
-    from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
 except ImportError:
     from molveno_model import MolvenoModel
-    from overtourism_metamodel import OvertourismEnsemble
 
 model = MolvenoModel()
 
@@ -147,10 +145,15 @@ def evaluate_scenario(model, situation) -> tuple:
 
     Returns ``(result, ensemble)`` where *result* is an
     :class:`~dt_model.simulation.evaluation.EvaluationResult` and *ensemble*
-    is the :class:`~overtourism_molveno.OvertourismEnsemble` used (needed
-    downstream for presence-sample generation).
+    is the :class:`~dt_model.CrossProductEnsemble` used (needed downstream
+    for presence-sample generation via :func:`~dt_model.sample_across`).
     """
-    ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=ensemble_size)
+    ensemble = CrossProductEnsemble(
+        model,
+        restrictions=situation,
+        max_categorical_size=ensemble_size,
+        exclude=model.pvs,
+    )
     tt = np.linspace(0, t_max, t_sample + 1)
     ee = np.linspace(0, e_max, e_sample + 1)
     result = Evaluation(model).evaluate(
@@ -209,17 +212,9 @@ def plot_scenario(model, result, scenarios, title):
     rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
     sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
 
-    ens_weights = scenarios.ensemble_weights[0]
-    ens_assignments = scenarios.assignments()
-    scenario_keys = list(ens_assignments.keys())
-    sample_tourists, sample_excursionists = [], []
-    for i, w in enumerate(ens_weights):
-        cvs_i = {k: ens_assignments[k][i] for k in scenario_keys}
-        nr = max(1, round(w * target_presence_samples))
-        for s in model.pv_tourists.sample(cvs=cvs_i, nr=nr):
-            sample_tourists.append(presence_transformation(s, rf_t, sl_t))
-        for s in model.pv_excursionists.sample(cvs=cvs_i, nr=nr):
-            sample_excursionists.append(presence_transformation(s, rf_e, sl_e))
+    pv_samples = sample_across(scenarios, [model.pv_tourists, model.pv_excursionists], total=target_presence_samples)
+    sample_tourists = [presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
+    sample_excursionists = [presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
 
     axes_dict = {model.pv_tourists: tt, model.pv_excursionists: ee}
 

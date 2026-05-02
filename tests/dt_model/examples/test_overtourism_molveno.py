@@ -2,7 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import random
 import warnings
 
 import numpy as np
@@ -10,17 +9,19 @@ import pytest
 from overtourism_molveno.molveno_model import (
     AccommodationModel,
     BeachModel,
+    Constraint,
     FoodModel,
     MolvenoModel,
     ParkingModel,
 )
-from overtourism_molveno.overtourism_metamodel import (
-    Constraint,
-    OvertourismEnsemble,
-    PresenceVariable,
-)
 
-from civic_digital_twins.dt_model import CategoricalIndex, Evaluation, ModelContractWarning
+from civic_digital_twins.dt_model import (
+    CategoricalIndex,
+    ConditionalDistributionIndex,
+    CrossProductEnsemble,
+    Evaluation,
+    ModelContractWarning,
+)
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
 
 model = MolvenoModel()
@@ -120,15 +121,14 @@ def excursionists():
 @pytest.fixture
 def good_weather_scenarios():
     """Single-member ensemble: good weather, monday, high season."""
-    np.random.seed(0)
-    random.seed(0)
-    return OvertourismEnsemble(
+    return CrossProductEnsemble(
         model,
-        {
+        restrictions={
             model.cv_weekday: ["monday"],
             model.cv_season: ["high"],
             model.cv_weather: ["good"],
         },
+        exclude=model.pvs,
     )
 
 
@@ -173,11 +173,9 @@ def test_evaluate_axes_high_presence_is_unsustainable(good_weather_scenarios):
 
 
 def test_ensemble_based_evaluation(tourists, excursionists):
-    """OvertourismEnsemble-based evaluation produces a valid sustainability field."""
-    np.random.seed(42)
-    random.seed(42)
+    """CrossProductEnsemble-based evaluation produces a valid sustainability field."""
     scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
-    ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=5)
+    ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=5, exclude=model.pvs)
 
     field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
 
@@ -199,17 +197,16 @@ def test_fixed_ensemble():
     tourists = np.array([1000, 2000, 5000, 10000, 20000, 50000])
     excursionists = np.array([1000, 2000, 5000, 10000, 20000, 50000])
 
-    np.random.seed(4)
-    random.seed(4)
-
     # Build single-member scenarios with distribution-backed index samples.
-    ensemble = OvertourismEnsemble(
+    ensemble = CrossProductEnsemble(
         model,
-        {
+        restrictions={
             model.cv_weekday: ["monday"],
             model.cv_season: ["high"],
             model.cv_weather: ["good"],
         },
+        exclude=model.pvs,
+        rng=np.random.default_rng(4),
     )
     _, got, _ = compute_field(model, ensemble, tourists, excursionists)
 
@@ -267,10 +264,8 @@ def test_fixed_ensemble():
 
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
-    np.random.seed(0)
-    random.seed(0)
     scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
-    ens = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
+    ens = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
@@ -298,8 +293,8 @@ def test_molveno_model_has_four_sub_models():
 def test_molveno_model_exposes_pvs():
     """MolvenoModel exposes pv_tourists and pv_excursionists as attributes."""
     m = MolvenoModel()
-    assert isinstance(m.pv_tourists, PresenceVariable)
-    assert isinstance(m.pv_excursionists, PresenceVariable)
+    assert isinstance(m.pv_tourists, ConditionalDistributionIndex)
+    assert isinstance(m.pv_excursionists, ConditionalDistributionIndex)
     assert m.pv_tourists.name == "tourists"
     assert m.pv_excursionists.name == "excursionists"
 
@@ -575,10 +570,8 @@ def test_presence_transformation_indexes_in_root_indexes():
 
 def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
-    np.random.seed(0)
-    random.seed(0)
     situation: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "unsettled", "bad"]}
-    ensemble = OvertourismEnsemble(model, situation, cv_ensemble_size=20)
+    ensemble = CrossProductEnsemble(model, restrictions=situation, max_categorical_size=20, exclude=model.pvs)
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])

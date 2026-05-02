@@ -2,24 +2,23 @@
 
 # Getting Started with the Overtourism Model
 
-This guide walks through the **vertical extension pattern** of the
+This guide walks through the **context-variable pattern** of the
 `civic_digital_twins.dt_model` package, using the overtourism domain as
-the running example.
+the running example.  The pattern applies whenever a model has:
 
-The vertical extension pattern adds domain-specific semantics on top of
-the core model layer.  The overtourism domain introduces:
+- **Context variables** — categorical factors outside the modeller's
+  control (season, weather, day of the week, …), modelled as
+  `CategoricalIndex` instances from the core library.
+- **Presence variables** — visitor counts whose distribution depends on
+  the current context, modelled as `ConditionalDistributionIndex` instances
+  from the core library.
+- **Constraints** — named (usage formula, capacity) pairs; satisfaction of
+  each constraint contributes to the sustainability field.  Each domain
+  defines its own `Constraint` dataclass.
 
-- **Context variables** — categorical or continuous factors outside the
-  modeller's control (season, weather, day of the week, …).
-- **Presence variables** — visitor counts, distributed according to the
-  current context variable values.
-- **Constraints** — named (usage formula, capacity) pairs; satisfaction
-  of each constraint contributes to the sustainability field.
-
-The classes below live in
-[`overtourism_metamodel.py`](overtourism_metamodel.py)
-because they are domain-specific.  The core library provides the
-foundation (`Index`, `Model`, `Evaluation`); the domain layer builds on top.
+The core library provides `CategoricalIndex`, `ConditionalDistributionIndex`,
+`CrossProductEnsemble`, and the evaluation pipeline.  The domain contributes
+the `Constraint` definition and the `Model` subclass.
 
 For the **direct pattern** (no context variables, plain distribution
 sampling) see [`docs/getting-started.md`](../../docs/getting-started.md).
@@ -50,14 +49,15 @@ CV_weather = CategoricalIndex(
 ```
 
 A `CategoricalIndex` is an `Index` with `value=None` (it acts as a
-placeholder); `OvertourismEnsemble` fills it in with a concrete value for
+placeholder); `CrossProductEnsemble` fills it in with a concrete value for
 each scenario.
 
 ## 2 — Presence variable
 
 ```python
 from scipy import stats
-from overtourism_molveno.overtourism_metamodel import PresenceVariable
+
+from civic_digital_twins.dt_model import ConditionalDistributionIndex
 
 def visitors_distribution(season, weather):
     """Return a uniform distribution for visitor presence."""
@@ -72,7 +72,7 @@ def visitors_distribution(season, weather):
     low, high = presence_stats[(season, weather)]
     return stats.uniform(loc=low, scale=high - low)
 
-PV_visitors = PresenceVariable(
+PV_visitors = ConditionalDistributionIndex(
     "visitors",
     [CV_season, CV_weather],
     visitors_distribution,
@@ -85,11 +85,26 @@ dense range of visitor counts.
 
 ## 3 — Constraints
 
+A `Constraint` is a domain-specific concept: a named pairing of a usage
+formula and a capacity.  Each domain defines its own dataclass — the core
+library only knows about `Index` and `Model`.  The pattern is a one-liner:
+
 ```python
+from dataclasses import dataclass
+
 from scipy import stats
 
 from civic_digital_twins.dt_model import DistributionIndex, Index, graph
-from overtourism_molveno.overtourism_metamodel import Constraint
+
+
+@dataclass(eq=False)
+class Constraint:
+    """Named pairing of a usage formula index and a capacity index."""
+
+    name: str
+    usage: Index
+    capacity: Index
+
 
 # Capacity with uncertainty
 I_C_beach = DistributionIndex("beach_capacity", stats.triang, {"loc": 3000.0, "scale": 2000.0, "c": 0.5})
@@ -108,6 +123,9 @@ C_beach = Constraint(
 )
 ```
 
+`@dataclass(eq=False)` keeps `Constraint` instances usable as dict keys via
+identity, matching the convention used by `graph.Node` and `GenericIndex`.
+
 `graph.piecewise((expr, cond), …)` builds a conditional formula node that the
 engine evaluates lazily — the condition `CV_weather == "bad"` is a graph
 node that resolves to `True` or `False` once `CV_weather` is assigned a
@@ -117,21 +135,20 @@ concrete value in a scenario.
 
 Define a `Model` subclass with `Inputs` and `Outputs` dataclasses that
 declare the abstract-index contract.  Expose `.cvs`, `.pvs`, and
-`.constraints` attributes so that `OvertourismEnsemble` and the
+`.constraints` attributes so that `CrossProductEnsemble` and the
 sustainability-field loop can find them.
 
 ```python
 from dataclasses import dataclass
 
-from civic_digital_twins.dt_model import CategoricalIndex, GenericIndex, Model
-from overtourism_molveno.overtourism_metamodel import Constraint, PresenceVariable
+from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex, GenericIndex, Model
 
 
 class MinimalOvertourismModel(Model):
     @dataclass
     class Inputs:
         cvs: list[CategoricalIndex]
-        pvs: list[PresenceVariable]
+        pvs: list[ConditionalDistributionIndex]
         domain_indexes: list[GenericIndex]
         capacities: list[GenericIndex]
 
@@ -161,35 +178,38 @@ model = MinimalOvertourismModel(
 ```
 
 All abstract indexes (CVs, PVs, domain indexes, capacities) are declared in
-`Inputs`; usage indexes in `Outputs`.  `OvertourismEnsemble` duck-types on
-`.cvs` and `.pvs`; the sustainability-field loop uses `.constraints`.  For a
-production model with multiple sub-models see `MolvenoModel` in
-`molveno_model.py`.
+`Inputs`; usage indexes in `Outputs`.  `CrossProductEnsemble` discovers
+abstract indexes via `model.abstract_indexes()`; the sustainability-field loop
+uses `.constraints`.  For a production model with multiple sub-models see
+`MolvenoModel` in `molveno_model.py`.
 
 ## 5 — Ensemble
 
 ```python
-from overtourism_molveno.overtourism_metamodel import OvertourismEnsemble
+from civic_digital_twins.dt_model import CrossProductEnsemble
 
 scenario: dict[CategoricalIndex, list[str]] = {
     CV_season:  ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }
 
-ensemble = OvertourismEnsemble(model, scenario, cv_ensemble_size=10)
+ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
 # 2 × 3 = 6 scenarios (all CV combinations enumerated)
 ```
 
-`OvertourismEnsemble` implements `AxisEnsemble`: it enumerates all
-combinations of CV values and materialises the results into a single batched
-ENSEMBLE axis — here 2 × 3 = 6 scenarios, one per (season, weather) pair.
-Each scenario also includes one sample of every distribution-backed
-non-PV non-CV abstract index (here: `I_C_beach`).
+`CrossProductEnsemble` implements `AxisEnsemble`: it discovers the model's
+abstract indexes, enumerates all combinations of categorical CV values, and
+materialises the results into a single batched ENSEMBLE axis — here
+2 × 3 = 6 scenarios, one per (season, weather) pair.  Each scenario also
+includes one sample of every distribution-backed non-excluded abstract index
+(here: `I_C_beach`).
 
-The `cv_ensemble_size` parameter controls random sampling only when a CV's
-support is too large (or continuous) to enumerate fully.  For the small
-finite CVs above every value is enumerated and `cv_ensemble_size` is
-unused.
+The `restrictions` parameter projects each categorical to a subset of its
+support.  The `exclude` parameter marks PARAMETER-axis indexes (presence
+variables) so they are not included in the ensemble cross-product.
+`max_categorical_size` controls random sampling when a categorical's support
+exceeds the size threshold; for the small finite CVs above every value is
+enumerated and `max_categorical_size` is unused.
 
 ## 6 — Grid evaluation
 
@@ -246,5 +266,5 @@ for the full Molveno implementation.
 
 - Browse the full Molveno example: [`overtourism_molveno.py`](overtourism_molveno.py) — four constraints, 2-D grid, visualisation.
 - Read the reference documentation:
-  - [Model / simulation layer](../../docs/design/dd-cdt-model.md) — `Model`, `Evaluation`, `EvaluationResult`, vertical extension pattern, design rationale.
+  - [Model / simulation layer](../../docs/design/dd-cdt-model.md) — `Model`, `Evaluation`, `EvaluationResult`, `CrossProductEnsemble`, domain modeling pattern, design rationale.
   - [Engine layer](../../docs/design/dd-cdt-engine.md) — graph nodes, topological sorting, NumPy executor.
