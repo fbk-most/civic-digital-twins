@@ -100,6 +100,14 @@ def test_cpe_no_abstract_indexes():
     assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
 
 
+def test_cpe_len():
+    """__len__ returns the number of scenarios."""
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    model = _simple_model(season)
+    ens = CrossProductEnsemble(model)
+    assert len(ens) == ens.size
+
+
 # ---------------------------------------------------------------------------
 # Restrictions
 # ---------------------------------------------------------------------------
@@ -247,6 +255,30 @@ def test_cpe_conditional_distribution_sampled_per_categorical():
             assert 25.0 < t < 35.0, f"Expected hot temp near 30, got {t}"
         else:
             assert 0.0 < t < 10.0, f"Expected cold temp near 5, got {t}"
+
+
+def test_cpe_conditional_dist_with_distribution_parent():
+    """ConditionalDistributionIndex whose parent is a DistributionIndex.
+
+    Exercises _topo_sort_dists recursive visit (line 456), the already-visited
+    early return (line 451), and the non-categorical parent lookup (line 609).
+    """
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    base = DistributionIndex("base", stats.uniform, {"loc": 1.0, "scale": 2.0})
+    derived = ConditionalDistributionIndex(
+        "derived",
+        parents=[season, base],
+        factory=lambda **kw: stats.norm(loc=float(kw["base"]), scale=0.1),
+    )
+    model = _simple_model(season, base, derived)
+    rng = np.random.default_rng(0)
+    ens = CrossProductEnsemble(model, rng=rng)
+    assert ens.size == 2  # 2 seasons
+    a = ens.assignments()
+    assert base in a
+    assert derived in a
+    assert a[derived].shape == (2,)
+    assert np.all(np.isfinite(a[derived]))
 
 
 # ---------------------------------------------------------------------------
