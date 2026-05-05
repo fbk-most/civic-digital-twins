@@ -546,6 +546,53 @@ def _demo_15_piecewise_categorical() -> None:
 
 
 # ---------------------------------------------------------------------------
+# dd-cdt-modularity.md — Presence-aware variant models for 2-D parameter sweep
+# ---------------------------------------------------------------------------
+
+
+class BikeModelPres(Model):
+    """Bike variant whose emissions scale with an abstract presence index."""
+
+    @dataclass
+    class Inputs:
+        """Inputs of :class:`BikeModelPres`."""
+
+        presence: Index
+
+    @dataclass
+    class Outputs:
+        """Outputs of :class:`BikeModelPres`."""
+
+        emissions: Index
+
+    def __init__(self, presence: Index) -> None:
+        inputs = BikeModelPres.Inputs(presence=presence)
+        emissions = Index("bike_pres_emissions", inputs.presence * 3.0)
+        super().__init__("BikePres", inputs=inputs, outputs=BikeModelPres.Outputs(emissions=emissions))
+
+
+class TrainModelPres(Model):
+    """Train variant whose emissions scale with an abstract presence index."""
+
+    @dataclass
+    class Inputs:
+        """Inputs of :class:`TrainModelPres`."""
+
+        presence: Index
+
+    @dataclass
+    class Outputs:
+        """Outputs of :class:`TrainModelPres`."""
+
+        emissions: Index
+
+    def __init__(self, presence: Index) -> None:
+        inputs = TrainModelPres.Inputs(presence=presence)
+        emissions = Index("train_pres_emissions", inputs.presence * 1.0)
+        super().__init__("TrainPres", inputs=inputs, outputs=TrainModelPres.Outputs(emissions=emissions))
+
+
+# ---------------------------------------------------------------------------
 # dd-cdt-modularity.md — End-to-End evaluation with marginalize
 # ---------------------------------------------------------------------------
 
@@ -558,6 +605,66 @@ _result_eval = Evaluation(_pipeline_eval).evaluate(ensemble=_ensemble_eval)
 
 mean_pipeline_result = _result_eval.marginalize(_pipeline_eval.outputs.result)
 assert mean_pipeline_result > 0
+
+
+# ---------------------------------------------------------------------------
+# dd-cdt-modularity.md — CategoricalIndex as PARAMETER axis (1-D sweep)
+# ---------------------------------------------------------------------------
+
+
+def _demo_catidx_param_axis_1d() -> None:
+    """1-D deterministic sweep: mode ∈ {bike, train}, constant capacity variants."""
+    mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+    mv_param = ModelVariant(
+        "TransportParam",
+        variants={"bike": BikeModel(), "train": TrainModel()},
+        selector=mode_param,
+    )
+
+    result = Evaluation(mv_param).evaluate(
+        ensemble=None,
+        parameters={mode_param: np.array(["bike", "train"])},
+    )
+    # result.marginalize(mv_param.outputs.emissions) → shape (2,)
+    # index 0 = bike emissions, index 1 = train emissions
+    arr = result.marginalize(mv_param.outputs.emissions)
+    assert arr.shape == (2,)
+    assert np.isclose(arr[0], 100.0 * 3.0)  # BikeModel: capacity=100, factor=3
+    assert np.isclose(arr[1], 500.0 * 1.0)  # TrainModel: capacity=500, factor=1
+
+
+# ---------------------------------------------------------------------------
+# dd-cdt-modularity.md — CategoricalIndex as PARAMETER axis (2-D grid)
+# ---------------------------------------------------------------------------
+
+
+def _demo_catidx_param_axis_2d() -> None:
+    """2-D deterministic grid: mode × presence, presence-aware variants."""
+    mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+    presence = Index("presence", None)  # abstract — swept by the grid
+    mv_grid = ModelVariant(
+        "TransportGrid",
+        variants={
+            "bike": BikeModelPres(presence),
+            "train": TrainModelPres(presence),
+        },
+        selector=mode_param,
+    )
+
+    result = Evaluation(mv_grid).evaluate(
+        ensemble=None,
+        parameters={
+            mode_param: np.array(["bike", "train"]),
+            presence:   np.array([100.0, 200.0, 300.0]),
+        },
+    )
+    # result.marginalize(mv_grid.outputs.emissions) → shape (2, 3)
+    # row 0 = bike emissions for each presence level
+    # row 1 = train emissions for each presence level
+    arr = result.marginalize(mv_grid.outputs.emissions)
+    assert arr.shape == (2, 3)
+    assert np.allclose(arr[0], [100.0 * 3, 200.0 * 3, 300.0 * 3])  # bike: presence * 3
+    assert np.allclose(arr[1], [100.0 * 1, 200.0 * 1, 300.0 * 1])  # train: presence * 1
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +706,8 @@ _demo_10_proxy_attributes()
 _demo_11_inactive_variants()
 _demo_13_categorical_selector()
 _demo_15_piecewise_categorical()
+_demo_catidx_param_axis_1d()
+_demo_catidx_param_axis_2d()
 _demo_29_filterwarnings_api()
 
 
