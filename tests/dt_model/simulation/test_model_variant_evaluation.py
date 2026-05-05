@@ -283,3 +283,52 @@ def test_grid_mode_node_selector_from_axis():
     # presence=200 → train → 200*10=2000
     # presence=300 → train → 300*10=3000
     assert np.allclose(result.marginalize(mv.outputs.throughput), [100.0, 2000.0, 3000.0])
+
+
+# ===========================================================================
+# Grid mode — CategoricalIndex selector as the PARAMETER axis itself
+# ===========================================================================
+
+
+def test_grid_mode_categorical_index_as_sole_parameter_axis():
+    """CategoricalIndex used as the sole PARAMETER axis (no ensemble).
+
+    Sweeping mode over ["bike", "train"] produces a (2,) result:
+      bike  → throughput = capacity * 1  = 100
+      train → throughput = capacity * 10 = 1000
+    """
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv_with_mode(mode)
+
+    result = Evaluation(mv).evaluate(
+        ensemble=None,
+        nodes_of_interest=[mv.outputs.throughput],
+        parameters={mode: np.array(["bike", "train"])},
+    )
+
+    assert np.allclose(result.marginalize(mv.outputs.throughput), [_CAPACITY_VALUE * 1.0, _CAPACITY_VALUE * 10.0])
+
+
+def test_grid_mode_categorical_index_and_numeric_axis_2d():
+    """CategoricalIndex + numeric index as a 2-D PARAMETER grid (no ensemble).
+
+    Grid: mode ∈ {"bike", "train"} × presence ∈ {100, 200}
+      [0, 0] bike,  presence=100 → 100 * 1   = 100
+      [0, 1] bike,  presence=200 → 200 * 1   = 200
+      [1, 0] train, presence=100 → 100 * 10  = 1000
+      [1, 1] train, presence=200 → 200 * 10  = 2000
+    """
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    presence, mv = _make_presence_mv(mode)
+
+    result = Evaluation(mv).evaluate(
+        ensemble=None,
+        nodes_of_interest=[mv.outputs.throughput],
+        parameters={
+            mode: np.array(["bike", "train"]),
+            presence: np.array([100.0, 200.0]),
+        },
+    )
+
+    expected = np.array([[100.0, 200.0], [1000.0, 2000.0]])
+    assert np.allclose(result.marginalize(mv.outputs.throughput), expected)

@@ -479,6 +479,59 @@ the variant selection emerges from existing sampled parameters.
 | Sampled by | `DistributionEnsemble` (extended) | existing sampling pipeline |
 | Typical use | "30 % bike / 70 % train" | "if cost > threshold → train" |
 
+#### Deterministic variant sweep via `parameters=`
+
+A `CategoricalIndex` selector can also be used as a **PARAMETER axis** to compare variants
+side-by-side, without any probabilistic ensemble.  Pass it directly to `parameters=` with an
+array of outcome strings:
+
+```python
+mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+mv_param = ModelVariant(
+    "TransportParam",
+    variants={"bike": BikeModel(), "train": TrainModel()},
+    selector=mode_param,
+)
+
+result = Evaluation(mv_param).evaluate(
+    ensemble=None,
+    parameters={mode_param: np.array(["bike", "train"])},
+)
+# result.marginalize(mv_param.outputs.emissions) → shape (2,)
+# index 0 = bike emissions, index 1 = train emissions
+```
+
+`ensemble=None` signals a fully deterministic run: no ENSEMBLE axis is created and
+`mode_param` is resolved by the PARAMETER grid alone.  A `CategoricalIndex` PARAMETER axis
+can be combined with numeric PARAMETER axes for a 2-D grid.  Variant sub-models must
+accept the numeric index as an abstract input:
+
+```python
+presence = Index("presence", None)  # abstract — swept by the grid
+mv_grid = ModelVariant(
+    "TransportGrid",
+    variants={
+        "bike": BikeModelPres(presence),
+        "train": TrainModelPres(presence),
+    },
+    selector=mode_param,
+)
+
+result = Evaluation(mv_grid).evaluate(
+    ensemble=None,
+    parameters={
+        mode_param: np.array(["bike", "train"]),
+        presence:   np.array([100.0, 200.0, 300.0]),
+    },
+)
+# result.marginalize(mv_grid.outputs.emissions) → shape (2, 3)
+# row 0 = bike emissions for each presence level
+# row 1 = train emissions for each presence level
+```
+
+The variant ordering in the result follows the order of entries in the `parameters=` array,
+not the declaration order of `variants`.
+
 #### Runtime mode — what changes
 
 In runtime mode `ModelVariant` builds a **merged computation graph** at construction time.
