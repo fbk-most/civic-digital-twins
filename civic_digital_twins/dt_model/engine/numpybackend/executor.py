@@ -15,6 +15,7 @@ state and evaluates each node exactly once, storing results for later reuse.
 """
 # SPDX-License-Identifier: Apache-2.0
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import (
@@ -353,18 +354,58 @@ class Functor(Protocol):
         ...  # pragma: no cover
 
 
-class LambdaAdapter:
-    """Adapter that transforms a Callable into a Functor."""
+class _NumpyFunctor:
+    """A callable bound to the numpy array convention (internal implementation)."""
 
-    def __init__(self, callable: Callable[..., np.ndarray]) -> None:
-        self.callable = callable
+    def __init__(self, fn: Callable[..., np.ndarray]) -> None:
+        self._fn = fn
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
-        """Execute the wrapped callable with the given arguments."""
-        return self.callable(*args, **kwargs)
+        return self._fn(*args, **kwargs)
 
 
-_: Functor = LambdaAdapter(lambda *, a, b: np.add(a, b))
+class LambdaAdapter(_NumpyFunctor):
+    """Adapter that transforms a Callable into a Functor.
+
+    .. deprecated::
+        Use :meth:`NumpyBackend.adapt` instead.
+        ``LambdaAdapter`` will be removed in a future release.
+    """
+
+    def __init__(self, callable: Callable[..., np.ndarray]) -> None:
+        warnings.warn(
+            "LambdaAdapter is deprecated; use NumpyBackend.adapt() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(callable)
+
+
+class NumpyBackend:
+    """The numpy computation backend.
+
+    Binds user-defined callables to the numpy array convention for use
+    with :meth:`~civic_digital_twins.dt_model.simulation.evaluation.Evaluation.evaluate`.
+
+    Example::
+
+        from civic_digital_twins.dt_model import NumpyBackend
+
+        result = evaluation.evaluate(
+            ensemble=ens,
+            functions={"ts_solve": NumpyBackend.adapt(_ts_solve)},
+            backend=NumpyBackend,
+        )
+    """
+
+    @staticmethod
+    def adapt(fn: Callable[..., np.ndarray]) -> Functor:
+        """Bind *fn* to the numpy array convention.
+
+        The callable must accept and return :class:`numpy.ndarray` values.
+        Returns a :class:`Functor` wrapping *fn*.
+        """
+        return _NumpyFunctor(fn)
 
 
 @dataclass(frozen=True)

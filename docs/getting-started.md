@@ -169,14 +169,13 @@ print(f"Expected CO2: {co2_mean:.1f} kg")
 
 For time-indexed quantities use `TimeseriesIndex`.  If a computation
 cannot be expressed as a graph formula (e.g. an iterative solver), wrap
-it in a `function_call` node and register a `LambdaAdapter` at evaluation
-time.
+it in a `function_call` node and bind the implementation to the numpy
+backend using `NumpyBackend.adapt()` at evaluation time.
 
 ```python
 import numpy as np
 
-from civic_digital_twins.dt_model import TimeseriesIndex, graph
-from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model import NumpyBackend, TimeseriesIndex, graph
 
 # 24-hour demand time series (one value per hour)
 demand_ts = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
@@ -192,10 +191,11 @@ model = ...  # define a suitable model that includes demand_ts and smoothed
 # Register the implementation at evaluation time — no abstract indexes, so no ensemble needed
 result = Evaluation(model).evaluate(
     functions={
-        "smooth": executor.LambdaAdapter(
+        "smooth": NumpyBackend.adapt(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
         )
     },
+    backend=NumpyBackend,
 )
 ```
 

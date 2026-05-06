@@ -16,7 +16,7 @@ from civic_digital_twins.dt_model import (
     TimeseriesIndex,
     graph,
 )
-from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model import NumpyBackend
 
 # ---------------------------------------------------------------------------
 # getting-started.md §1 — Define the model (legacy flat-list API)
@@ -147,10 +147,11 @@ with warnings.catch_warnings():
 # No abstract indexes — omit ensemble (deterministic evaluation)
 result = Evaluation(model).evaluate(
     functions={
-        "smooth": executor.LambdaAdapter(
+        "smooth": NumpyBackend.adapt(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same"),
         ),
     },
+    backend=NumpyBackend,
 )
 
 smoothed_values = result[smoothed]

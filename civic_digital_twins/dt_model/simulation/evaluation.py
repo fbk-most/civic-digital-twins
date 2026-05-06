@@ -264,6 +264,7 @@ class Evaluation:
         axes: dict[GenericIndex, np.ndarray] | None = None,
         ensemble: AxisEnsemble | Ensemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> EvaluationResult:
         """Evaluate *nodes_of_interest* over the given ensemble.
 
@@ -291,7 +292,11 @@ class Evaluation:
             (deprecated, emits :class:`DeprecationWarning`).  Pass ``None``
             for deterministic evaluation (no ENSEMBLE axes).
         functions:
-            Optional user-defined functions passed to the executor.
+            Optional user-defined functions passed to the executor.  Wrap
+            callables with :meth:`~executor.NumpyBackend.adapt` before passing.
+        backend:
+            The computation backend to use.  Currently only
+            :class:`~executor.NumpyBackend` is supported (the default).
 
         Returns
         -------
@@ -414,6 +419,9 @@ class Evaluation:
         # Snapshot the substituted node keys before the executor mutates state.values
         # (executor.State takes c_subs by reference and adds all computed nodes into it).
         substituted_nodes: set[graph.Node] = set(c_subs)
+
+        if backend is not executor.NumpyBackend:
+            raise NotImplementedError(f"Backend {backend!r} is not supported; only NumpyBackend is available.")
 
         state = executor.State(c_subs, functions=functions or {})
         executor.evaluate_nodes(state, *linearized_nodes)

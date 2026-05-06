@@ -47,7 +47,7 @@ def _demo_end_to_end() -> None:
             b: np.asarray([200, 20, 2]),
         },
         functions={
-            "reduce": executor.LambdaAdapter(
+            "reduce": executor.NumpyBackend.adapt(
                 lambda n: np.divide(n, np.asarray(5)),
             ),
         },
@@ -293,13 +293,13 @@ def _demo_udf() -> None:
     state = executor.State(
         values={},
         functions={
-            "scale1": executor.LambdaAdapter(
+            "scale1": executor.NumpyBackend.adapt(
                 lambda k0, k1: np.add(k0, k1),
             ),
-            "scale2": executor.LambdaAdapter(
+            "scale2": executor.NumpyBackend.adapt(
                 lambda **kwargs: np.add(kwargs["k0"], kwargs["k1"]),
             ),
-            "scale3": executor.LambdaAdapter(
+            "scale3": executor.NumpyBackend.adapt(
                 lambda k0, k1, **kwargs: np.add(
                     k0, np.add(k1, np.add(kwargs["k2"], np.add(kwargs["k3"], kwargs["scaled2"])))
                 ),
