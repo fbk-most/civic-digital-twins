@@ -781,3 +781,84 @@ def test_variant_selector_repr_after_merge_nodes_populated():
     assert f"n{mcw.id}" in r
     # The companion back-reference creates a cross-reference, not a cycle in repr.
     assert f"n{vs.id}" in repr(mcw)
+
+
+# ---------------------------------------------------------------------------
+# HasNode protocol
+# ---------------------------------------------------------------------------
+
+
+class _FakeIndex:
+    """Minimal HasNode implementation for testing."""
+
+    def __init__(self, node: graph.Node) -> None:
+        self._node = node
+
+    @property
+    def node(self) -> graph.Node:
+        return self._node
+
+
+def test_hasnode_isinstance():
+    """HasNode is runtime-checkable: any object with a .node Node property qualifies."""
+    n = graph.constant(1.0)
+    idx = _FakeIndex(n)
+    assert isinstance(idx, graph.HasNode)
+    assert not isinstance(n, graph.HasNode)
+    assert not isinstance(1.0, graph.HasNode)
+
+
+def test_ensure_node_accepts_hasnode():
+    """ensure_node extracts the inner Node from a HasNode object."""
+    n = graph.constant(42.0)
+    idx = _FakeIndex(n)
+    result = graph.ensure_node(idx)
+    assert result is n
+
+
+def test_function_call_accepts_hasnode_args():
+    """function_call.__init__ accepts HasNode in *args and **kwargs."""
+    n = graph.constant(1.0)
+    idx = _FakeIndex(n)
+    fc = graph.function_call("f", idx)
+    assert len(fc.args) == 1
+    assert fc.args[0] is n
+
+
+def test_function_call_accepts_hasnode_kwargs():
+    n = graph.constant(2.0)
+    idx = _FakeIndex(n)
+    fc = graph.function_call("g", x=idx)
+    assert fc.kwargs["x"] is n
+
+
+def test_where_accepts_hasnode():
+    """where.__init__ accepts HasNode for condition, then, and otherwise."""
+    cond_n = graph.constant(True)
+    then_n = graph.constant(1.0)
+    else_n = graph.constant(0.0)
+    w = graph.where(condition=_FakeIndex(cond_n), then=_FakeIndex(then_n), otherwise=_FakeIndex(else_n))
+    assert w.condition is cond_n
+    assert w.then is then_n
+    assert w.otherwise is else_n
+
+
+def test_piecewise_accepts_hasnode():
+    """piecewise accepts HasNode in expression position; literal True still works as fallback."""
+    expr_n = graph.constant(10.0)
+    # HasNode in expression position, plain Python True as the unconditional fallback
+    result = graph.piecewise((_FakeIndex(expr_n), True))
+    # single True-condition clause: ensure_node(HasNode) → inner node returned as default
+    assert result is expr_n
+
+
+def test_piecewise_accepts_hasnode_condition():
+    """piecewise accepts HasNode in condition position for non-unconditional clauses."""
+    expr_n = graph.constant(10.0)
+    cond_n = graph.placeholder("c")
+    default_n = graph.constant(0.0)
+    result = graph.piecewise((_FakeIndex(expr_n), _FakeIndex(cond_n)), (default_n, True))
+    # result is a multi_clause_where; check the clause contains the unwrapped nodes
+    assert isinstance(result, graph.multi_clause_where)
+    assert result.clauses[0][0] is cond_n  # condition unwrapped
+    assert result.clauses[0][1] is expr_n  # expression unwrapped

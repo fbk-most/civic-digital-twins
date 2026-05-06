@@ -175,6 +175,7 @@ This behavior impacts code that needs to find nodes in collections like lists:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
@@ -272,21 +273,18 @@ _id_generator = atomic.Int()
 # while `C` is used as a type parameter for boolean conditions.
 
 
-def ensure_node[T](value: Node[T] | Scalar) -> Node[T]:
+def ensure_node[T](value: Node[T] | HasNode[T] | Scalar) -> Node[T]:
     """Convert a scalar value to a constant node if necessary.
 
-    If *value* is already a ``Node`` it is returned as-is.  If it exposes
-    a ``.node`` attribute that is itself a ``Node`` (e.g. any
-    ``GenericIndex`` subclass), that inner node is returned so that index
-    objects can appear on either side of a graph operator without being
-    incorrectly wrapped in a ``constant``.  Anything else is wrapped in a
+    If *value* is already a ``Node`` it is returned as-is.  If it implements
+    :class:`HasNode` (e.g. any ``GenericIndex`` subclass), its ``.node``
+    property is returned directly.  Anything else is wrapped in a
     ``constant`` node.
     """
     if isinstance(value, Node):
         return value
-    inner = getattr(value, "node", None)
-    if isinstance(inner, Node):
-        return inner
+    if isinstance(value, HasNode):
+        return value.node
     return constant(value)
 
 
@@ -428,6 +426,26 @@ class Node[T]:
     def __invert__(self) -> Node[T]:
         """Lazily check whether one node is logically not."""
         return logical_not(self)
+
+
+@runtime_checkable
+class HasNode[T](Protocol):
+    """Protocol for objects that expose a graph node via a ``.node`` property.
+
+    Implemented by all ``GenericIndex`` subclasses in ``dt_model``.  Accepting
+    ``HasNode[T]`` alongside ``Node[T]`` in graph-function signatures lets
+    callers pass index objects directly without extracting ``.node`` explicitly
+    (lexical-scope analogue: the binding is determined by the call site, not by
+    the object's internal structure).
+
+    ``ensure_node()`` already handles ``HasNode``-shaped objects at runtime;
+    this protocol closes the static-type gap so type checkers accept them too.
+    """
+
+    @property
+    def node(self) -> Node[T]:
+        """The underlying computation graph node."""
+        ...  # pragma: no cover
 
 
 class constant[T](Node[T]):
@@ -705,11 +723,13 @@ class where[C, T](Node[T]):
         otherwise: Values to use where condition is False
     """
 
-    def __init__(self, condition: Node[C], then: Node[T], otherwise: Node[T], name="") -> None:
+    def __init__(
+        self, condition: Node[C] | HasNode[C], then: Node[T] | HasNode[T], otherwise: Node[T] | HasNode[T], name=""
+    ) -> None:
         super().__init__(name)
-        self.condition = condition
-        self.then = then
-        self.otherwise = otherwise
+        self.condition = ensure_node(condition)
+        self.then = ensure_node(then)
+        self.otherwise = ensure_node(otherwise)
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
@@ -858,10 +878,10 @@ class exclusive_multi_clause_where[C, T](MultiClauseOp[C, T]):
         )
 
 
-type Expr[T] = Node[T] | Scalar
+type Expr[T] = Node[T] | HasNode[T] | Scalar
 """Type alias for piecewise expression operands."""
 
-type Cond[T] = Node[T] | Scalar
+type Cond[T] = Node[T] | HasNode[T] | Scalar
 """Type alias for piecewise condition operands."""
 
 
@@ -912,23 +932,19 @@ def _piecewise_to_node[T](
     if last_cond is True:
         default = last_expr
         clauses = clauses[:-1]
-    if isinstance(default, Scalar):
-        default = constant(default)
+    default_node = ensure_node(default)
 
     # If filtering consumed all clauses, just return the default.
     if not clauses:
-        return default  # type: ignore[return-value]
+        return default_node
 
     # Build the (condition, expression) pairs expected by multi_clause_where.
-    node_clauses: list[tuple[Node[T], Node[T]]] = []
-    for expr, cond in clauses:
-        if isinstance(expr, Scalar):
-            expr = constant(expr)
-        if isinstance(cond, Scalar):
-            cond = constant(cond)
-        node_clauses.append((cond, expr))  # type: ignore[arg-type]
+    node_clauses: list[tuple[Node[T], Node[T]]] = [
+        (ensure_node(cond), ensure_node(expr))  # type: ignore[arg-type]
+        for expr, cond in clauses
+    ]
 
-    return multi_clause_where(node_clauses, default)  # type: ignore[arg-type]
+    return multi_clause_where(node_clauses, default_node)  # type: ignore[arg-type]
 
 
 # Shape-changing operations
@@ -1212,10 +1228,10 @@ class function_call[T](Node[T]):
     providing the corresponding function binding.
     """
 
-    def __init__(self, name: str, *args: Node[T], **kwargs: Node[T]) -> None:
+    def __init__(self, name: str, *args: Node[T] | HasNode[T], **kwargs: Node[T] | HasNode[T]) -> None:
         super().__init__(name)
-        self.args = args
-        self.kwargs = kwargs
+        self.args = tuple(ensure_node(a) for a in args)
+        self.kwargs = {k: ensure_node(v) for k, v in kwargs.items()}
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""

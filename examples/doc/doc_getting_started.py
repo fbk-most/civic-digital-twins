@@ -136,7 +136,7 @@ demand_ts = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
 # A custom smoothing function applied as a graph node
 smoothed = TimeseriesIndex(
     "smoothed_demand",
-    graph.function_call("smooth", demand_ts.node),
+    graph.function_call("smooth", demand_ts),
 )
 
 # Build a small model that uses the timeseries indexes

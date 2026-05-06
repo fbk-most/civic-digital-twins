@@ -1313,8 +1313,7 @@ outcomes.  Extends `Index` with `value=None`, so it is automatically identified 
 | `sample(rng)` | `str` | Draw one key proportional to outcome probabilities. |
 
 Because `CategoricalIndex` inherits the full `GenericIndex` algebra protocol, comparison operators
-produce graph nodes: `mode == "bike"` yields `graph.equal(mode.node, constant("bike"))`, a valid
-boolean-per-scenario node usable in `graph.piecewise` or any formula.
+produce valid boolean-per-scenario values usable in `graph.piecewise` or any formula.
 
 ---
 

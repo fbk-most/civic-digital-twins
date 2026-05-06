@@ -672,7 +672,7 @@ def _demo_catidx_param_axis_2d() -> None:
 # ---------------------------------------------------------------------------
 
 _mv_base = Index("base_fc", 10.0)
-_smoothed_node = graph.function_call("smooth", _mv_base.node)
+_smoothed_node = graph.function_call("smooth", _mv_base)
 assert _smoothed_node is not None
 
 

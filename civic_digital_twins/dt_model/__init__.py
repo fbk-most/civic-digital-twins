@@ -1,6 +1,7 @@
 """Digital twin modeling and simulation library."""
 # SPDX-License-Identifier: Apache-2.0
 
+from .engine.frontend.graph import HasNode
 from .model import (
     DOMAIN,
     ENSEMBLE,
@@ -37,6 +38,7 @@ from .simulation import (
 
 __all__ = [
     "AbstractIndexNotInInputsWarning",
+    "HasNode",
     "Axis",
     "AxisEnsemble",
     "AxisRole",
