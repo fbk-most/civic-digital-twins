@@ -16,7 +16,7 @@ from civic_digital_twins.dt_model import (
     TimeseriesIndex,
     graph,
 )
-from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model import NumpyBackend
 
 # ---------------------------------------------------------------------------
 # getting-started.md §1 — Define the model (legacy flat-list API)
@@ -136,7 +136,7 @@ demand_ts = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
 # A custom smoothing function applied as a graph node
 smoothed = TimeseriesIndex(
     "smoothed_demand",
-    graph.function_call("smooth", demand_ts.node),
+    graph.function_call("smooth", demand_ts),
 )
 
 # Build a small model that uses the timeseries indexes
@@ -147,7 +147,7 @@ with warnings.catch_warnings():
 # No abstract indexes — omit ensemble (deterministic evaluation)
 result = Evaluation(model).evaluate(
     functions={
-        "smooth": executor.LambdaAdapter(
+        "smooth": NumpyBackend.adapt(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same"),
         ),
     },

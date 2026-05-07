@@ -108,7 +108,7 @@ state = executor.State(
         b: np.asarray([200, 20, 2]),
     },
     functions={
-        "reduce": executor.LambdaAdapter(
+        "reduce": executor.NumpyBackend.adapt(
             lambda n: np.divide(n, np.asarray(5)),
         ),
     },
@@ -789,8 +789,8 @@ state = executor.State(
 
 ## User-Defined Functions
 
-Use the `numpybackend.executor.LambdaAdapter` to wrap an
-ordinary Python `lambda` and register a user-defined function.
+Use `executor.NumpyBackend.adapt` to bind an ordinary Python callable
+to the numpy array convention and register a user-defined function.
 
 The following code shows some usage examples:
 
@@ -822,13 +822,13 @@ nodes = linearize.forest(scaled1, scaled2, scaled3)
 state = executor.State(
     values={},
     functions={
-        "scale1": executor.LambdaAdapter(
+        "scale1": executor.NumpyBackend.adapt(
             lambda k0, k1: np.add(k0, k1),
         ),
-        "scale2": executor.LambdaAdapter(
+        "scale2": executor.NumpyBackend.adapt(
             lambda **kwargs: np.add(kwargs["k0"], kwargs["k1"]),
         ),
-        "scale3": executor.LambdaAdapter(
+        "scale3": executor.NumpyBackend.adapt(
             lambda k0, k1, **kwargs: np.add(
                 k0, np.add(k1, np.add(kwargs["k2"], np.add(kwargs["k3"], kwargs["scaled2"])))
             ),

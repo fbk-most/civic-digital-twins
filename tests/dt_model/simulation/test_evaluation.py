@@ -422,3 +422,68 @@ def test_distribution_ensemble_with_rng_is_reproducible():
     for (w1, a1), (w2, a2) in zip(scenarios1, scenarios2):
         assert w1 == w2
         assert np.array_equal(a1[I_x], a2[I_x])
+
+
+# ---------------------------------------------------------------------------
+# functions= and NumpyBackend (Step 2 / #162)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_functions_numpy_backend_adapt():
+    """NumpyBackend.adapt() binds a callable to numpy and produces correct results."""
+    from civic_digital_twins.dt_model import NumpyBackend
+    from civic_digital_twins.dt_model.engine.frontend import graph
+    from civic_digital_twins.dt_model.model.index import Index
+
+    p = graph.placeholder("x", default_value=3.0)
+    fc = graph.function_call("double", p)
+    I_x = Index("x", p)
+    I_out = Index("out", fc)
+    model = _make_model(I_x, I_out)
+
+    result = Evaluation(model).evaluate(
+        functions={"double": NumpyBackend.adapt(lambda x: x * 2)},
+        backend=NumpyBackend,
+    )
+    assert float(result[I_out]) == pytest.approx(float(result[I_x]) * 2)
+
+
+def test_evaluate_functions_adapt_functor_passed_through_unchanged():
+    """A Functor from NumpyBackend.adapt() is accepted and used as-is."""
+    from civic_digital_twins.dt_model import NumpyBackend
+    from civic_digital_twins.dt_model.engine.frontend import graph
+    from civic_digital_twins.dt_model.model.index import Index
+
+    p = graph.placeholder("x", default_value=5.0)
+    fc = graph.function_call("negate", p)
+    I_x = Index("x", p)
+    I_out = Index("out", fc)
+    model = _make_model(I_x, I_out)
+
+    functor = NumpyBackend.adapt(lambda x: -x)
+    result = Evaluation(model).evaluate(
+        functions={"negate": functor},
+        backend=NumpyBackend,
+    )
+    assert float(result[I_out]) == pytest.approx(-float(result[I_x]))
+
+
+def test_lambda_adapter_deprecated():
+    """Constructing LambdaAdapter directly triggers a DeprecationWarning."""
+    from civic_digital_twins.dt_model.engine.numpybackend import executor
+
+    with pytest.warns(DeprecationWarning, match="NumpyBackend.adapt"):
+        executor.LambdaAdapter(lambda x: x)
+
+
+def test_unsupported_backend_raises():
+    """Passing an unsupported backend raises NotImplementedError."""
+    from civic_digital_twins.dt_model.model.index import Index
+
+    model = _make_model(Index("x", 1.0))
+
+    class _FakeBackend:
+        pass
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        Evaluation(model).evaluate(backend=_FakeBackend)  # type: ignore[arg-type]

@@ -28,10 +28,10 @@ from civic_digital_twins.dt_model import (
     EvaluationResult,
     Index,
     Model,
+    NumpyBackend,
     TimeseriesIndex,
     graph,
 )
-from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 _LN2: float = math.log(2)
 """Natural logarithm of 2 (≈ 0.6931). Normalisation constant in half-life decay formulas."""
@@ -771,7 +771,8 @@ def evaluate(model: BolognaModel, size: int = 1) -> EvaluationResult:
     ensemble = DistributionEnsemble(model, size)
     return Evaluation(model).evaluate(
         ensemble=ensemble,
-        functions={"ts_solve": executor.LambdaAdapter(_ts_solve)},
+        functions={"ts_solve": NumpyBackend.adapt(_ts_solve)},
+        backend=NumpyBackend,
     )
 
 
