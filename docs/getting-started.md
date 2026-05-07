@@ -195,7 +195,6 @@ result = Evaluation(model).evaluate(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
         )
     },
-    backend=NumpyBackend,
 )
 ```
 

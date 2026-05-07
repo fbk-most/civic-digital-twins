@@ -408,6 +408,12 @@ class NumpyBackend:
         return _NumpyFunctor(fn)
 
 
+# Belt-and-suspenders: assert at import time that _NumpyFunctor satisfies Functor.
+# Pyright catches this statically; the assignment also catches it at runtime if the
+# protocol drifts (e.g. signature change) without a corresponding type-checker run.
+_: Functor = _NumpyFunctor(lambda *, a, b: np.add(a, b))
+
+
 @dataclass(frozen=True)
 class State:
     """

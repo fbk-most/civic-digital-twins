@@ -826,6 +826,7 @@ def test_function_call_accepts_hasnode_args():
 
 
 def test_function_call_accepts_hasnode_kwargs():
+    """HasNode in kwargs position is unwrapped to its underlying node."""
     n = graph.constant(2.0)
     idx = _FakeIndex(n)
     fc = graph.function_call("g", x=idx)
@@ -844,7 +845,7 @@ def test_where_accepts_hasnode():
 
 
 def test_piecewise_accepts_hasnode():
-    """piecewise accepts HasNode in expression position; literal True still works as fallback."""
+    """Piecewise accepts HasNode in expression position; literal True still works as fallback."""
     expr_n = graph.constant(10.0)
     # HasNode in expression position, plain Python True as the unconditional fallback
     result = graph.piecewise((_FakeIndex(expr_n), True))
@@ -853,7 +854,7 @@ def test_piecewise_accepts_hasnode():
 
 
 def test_piecewise_accepts_hasnode_condition():
-    """piecewise accepts HasNode in condition position for non-unconditional clauses."""
+    """Piecewise accepts HasNode in condition position for non-unconditional clauses."""
     expr_n = graph.constant(10.0)
     cond_n = graph.placeholder("c")
     default_n = graph.constant(0.0)

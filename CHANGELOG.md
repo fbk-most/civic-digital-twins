@@ -16,6 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (no ensemble required), including in combination with numeric PARAMETER axes
   for multi-dimensional grids.  Tests and documentation added; no implementation
   change was needed (closing #134).
+- `HasNode[T]` protocol in `engine.frontend.graph` — structural protocol satisfied
+  by any object with a `.node: Node[T]` property (e.g. `GenericIndex`).  Re-exported
+  from `civic_digital_twins.dt_model`.  `function_call`, `piecewise`, and `where`
+  now accept `HasNode` in all node positions, eliminating the need for explicit
+  `.node` at call sites (closing #161).
+- `NumpyBackend` class in `engine.numpybackend.executor` — user-facing binding
+  point for the numpy backend.  `NumpyBackend.adapt(fn)` wraps a callable as a
+  `Functor` bound to the numpy convention; `Evaluation.evaluate()` accepts
+  `backend=NumpyBackend` (default, currently the only supported backend).
+  `Functor`, `NumpyBackend`, and `LambdaAdapter` are re-exported from
+  `civic_digital_twins.dt_model` (closing #162).
+
+### Deprecated
+
+- `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
+  emits a `DeprecationWarning` on construction and will be removed in a future
+  release (closing #162).
 
 ## [0.9.0] - 2026-05-02
 
