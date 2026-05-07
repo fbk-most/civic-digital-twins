@@ -474,3 +474,16 @@ def test_lambda_adapter_deprecated():
 
     with pytest.warns(DeprecationWarning, match="NumpyBackend.adapt"):
         executor.LambdaAdapter(lambda x: x)
+
+
+def test_unsupported_backend_raises():
+    """Passing an unsupported backend raises NotImplementedError."""
+    from civic_digital_twins.dt_model.model.index import Index
+
+    model = _make_model(Index("x", 1.0))
+
+    class _FakeBackend:
+        pass
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        Evaluation(model).evaluate(backend=_FakeBackend)  # type: ignore[arg-type]
