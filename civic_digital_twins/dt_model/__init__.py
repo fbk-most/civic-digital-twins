@@ -25,6 +25,7 @@ from .model import (
     TimeseriesIndex,
 )
 from .simulation import (
+    AsyncEvaluationHandle,
     AxisEnsemble,
     CrossProductEnsemble,
     DistributionEnsemble,
@@ -47,6 +48,7 @@ __all__ = [
     "HasNode",
     "LambdaAdapter",
     "Axis",
+    "AsyncEvaluationHandle",
     "AxisEnsemble",
     "AxisRole",
     "CategoricalIndex",

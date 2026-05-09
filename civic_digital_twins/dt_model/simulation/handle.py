@@ -1,17 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Incremental evaluation handle for the engine control layer.
+"""Incremental and asynchronous evaluation handles for the engine control layer.
 
 :class:`EvaluationHandle` wraps a pre-built :class:`~simulation.plan.EvaluationPlan`
 together with the first evaluation result and provides :meth:`~EvaluationHandle.extend`
 to grow the ensemble with additional Monte Carlo samples, merging new results into the
 accumulated result without discarding prior computation.
 
-Obtain an instance via
-:meth:`~simulation.evaluation.Evaluation.evaluate_incremental` rather than
-constructing :class:`EvaluationHandle` directly.
+:class:`AsyncEvaluationHandle` is a non-blocking variant: the evaluation runs on a
+background thread and the handle exposes :meth:`~AsyncEvaluationHandle.poll` and
+:meth:`~AsyncEvaluationHandle.get` for status checking and result retrieval.
+Once the future resolves, :meth:`~AsyncEvaluationHandle.extend` works identically
+to the synchronous base class.
+
+Obtain instances via
+:meth:`~simulation.evaluation.Evaluation.evaluate_incremental` (synchronous) or
+:meth:`~simulation.evaluation.Evaluation.submit_evaluate` (asynchronous) rather than
+constructing these classes directly.
 """
 
 from __future__ import annotations
+
+import concurrent.futures
 
 import numpy as np
 
@@ -28,7 +37,7 @@ from ..model.index import GenericIndex
 from .evaluation import Evaluation, EvaluationResult
 from .plan import EvaluationPlan
 
-__all__ = ["EvaluationHandle"]
+__all__ = ["AsyncEvaluationHandle", "EvaluationHandle"]
 
 
 def _merge_results(
@@ -307,3 +316,146 @@ class EvaluationHandle:
         )
         self._result = _merge_results(self._result, new_result, self._plan)
         return self._result
+
+
+class AsyncEvaluationHandle(EvaluationHandle):
+    """Non-blocking evaluation handle backed by a :class:`concurrent.futures.Future`.
+
+    The evaluation runs on a background thread.  Use :meth:`poll` to check
+    completion without blocking, or :meth:`get` to wait for the result.
+    Once the future resolves, :meth:`extend` works identically to
+    :class:`EvaluationHandle`.
+
+    See the :class:`EvaluationHandle` class note for the
+    :class:`~simulation.ensemble.DistributionEnsemble` constraint that applies
+    to both the initial evaluation and every :meth:`extend` call.
+
+    Obtain an instance via
+    :meth:`~simulation.evaluation.Evaluation.submit_evaluate` rather than
+    constructing this class directly.
+
+    Parameters
+    ----------
+    future:
+        A :class:`concurrent.futures.Future` that will resolve to an
+        :class:`~simulation.evaluation.EvaluationResult`.
+    evaluation:
+        The :class:`~simulation.evaluation.Evaluation` that owns the plan.
+    plan:
+        The pre-built evaluation plan.
+    rng:
+        Shared random number generator reused by :meth:`extend`.
+    parameters:
+        The PARAMETER axis dict passed to the initial execution.
+    functions:
+        Optional user-defined functions passed through to the executor.
+    backend:
+        The computation backend.
+    """
+
+    def __init__(
+        self,
+        *,
+        future: concurrent.futures.Future[EvaluationResult],
+        evaluation: Evaluation,
+        plan: EvaluationPlan,
+        rng: np.random.Generator,
+        parameters: dict[GenericIndex, np.ndarray],
+        functions: dict[str, executor.Functor] | None,
+        backend: type[executor.NumpyBackend],
+    ) -> None:
+        # Do not call super().__init__() — the result is not yet available.
+        # Set base-class private attributes directly so that extend() works
+        # normally once the future resolves.
+        self._evaluation = evaluation
+        self._plan = plan
+        self._result: EvaluationResult = None  # type: ignore[assignment]
+        self._rng = rng
+        self._parameters = parameters
+        self._functions = functions
+        self._backend = backend
+        self._future = future
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _resolve(self) -> EvaluationResult:
+        """Block until the future completes and return the cached result.
+
+        Idempotent: subsequent calls return the cached value without
+        re-blocking.
+        """
+        if self._result is None:
+            self._result = self._future.result()
+        return self._result
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def result(self) -> EvaluationResult:
+        """The evaluation result.
+
+        Raises
+        ------
+        RuntimeError
+            If the background evaluation has not yet completed.  Use
+            :meth:`poll` or :meth:`get` to wait for completion.
+        """
+        if not self._future.done():
+            raise RuntimeError(
+                "AsyncEvaluationHandle: evaluation is still running. "
+                "Call .get() to wait for completion or .poll() to check status."
+            )
+        return self._resolve()
+
+    def poll(self) -> tuple[bool, EvaluationResult | None]:
+        """Non-blocking status check.
+
+        Returns
+        -------
+        tuple[bool, EvaluationResult | None]
+            ``(True, result)`` if the evaluation is complete;
+            ``(False, None)`` if it is still running.
+        """
+        if not self._future.done():
+            return False, None
+        return True, self._resolve()
+
+    def get(self) -> EvaluationResult:
+        """Block until the evaluation completes and return the result.
+
+        Returns
+        -------
+        EvaluationResult
+            The completed evaluation result.  Subsequent calls return the
+            cached result immediately.
+        """
+        return self._resolve()
+
+    def extend(
+        self,
+        ensemble_size: int = 0,
+        *,
+        extra_parameters: dict[GenericIndex, np.ndarray] | None = None,
+    ) -> EvaluationResult:
+        """Extend the ensemble after the background evaluation completes.
+
+        Delegates to :meth:`EvaluationHandle.extend` after verifying that
+        the future has resolved.
+
+        Raises
+        ------
+        RuntimeError
+            If the background evaluation has not yet completed.
+        NotImplementedError
+            When *extra_parameters* is not ``None`` (deferred in v0.10.0).
+        """
+        if not self._future.done():
+            raise RuntimeError(
+                "AsyncEvaluationHandle: cannot extend before the evaluation completes. Call .get() or .poll() first."
+            )
+        self._resolve()  # populate self._result before super().extend() reads it
+        return super().extend(ensemble_size, extra_parameters=extra_parameters)

@@ -1,6 +1,7 @@
 """Generic model evaluation."""
 # SPDX-License-Identifier: Apache-2.0
 
+import concurrent.futures
 import warnings
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
@@ -8,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from .handle import EvaluationHandle
+    from .handle import AsyncEvaluationHandle, EvaluationHandle
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
@@ -20,6 +21,12 @@ from .ensemble import AxisEnsemble, DistributionEnsemble, Ensemble, WeightedScen
 from .plan import EvaluationPlan, Region, RegionGuard
 
 __all__ = ["EvaluationResult", "Evaluation"]
+
+# Module-level default executor for submit_evaluate().
+# Uses a ThreadPoolExecutor so that the GIL is released during NumPy computation
+# and the main thread remains responsive while evaluation runs in the background.
+# Process pools are deferred to v0.11 (out of scope for this milestone).
+_DEFAULT_EXECUTOR: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor()
 
 
 def _validate_scenarios(
@@ -842,6 +849,87 @@ class Evaluation:
             evaluation=self,
             plan=plan,
             result=result,
+            rng=rng,
+            parameters=parameters,
+            functions=functions,
+            backend=backend,
+        )
+
+    def submit_evaluate(
+        self,
+        initial_ensemble_size: int,
+        nodes_of_interest: list[GenericIndex] | None = None,
+        *,
+        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        strategy: str = "monolithic",
+        rng: np.random.Generator | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
+        exec: concurrent.futures.Executor | None = None,
+    ) -> "AsyncEvaluationHandle":
+        """Submit an evaluation to a background thread and return immediately.
+
+        Mirrors :meth:`evaluate_incremental` but runs the initial
+        :meth:`execute_plan` call on a thread from *exec* (or the module-level
+        :data:`_DEFAULT_EXECUTOR`) so that the caller is not blocked.  The
+        returned :class:`~simulation.handle.AsyncEvaluationHandle` can be
+        polled for status or awaited for its result.
+
+        Once the future resolves, :meth:`~simulation.handle.AsyncEvaluationHandle.extend`
+        works identically to :class:`~simulation.handle.EvaluationHandle`.
+
+        Parameters
+        ----------
+        initial_ensemble_size:
+            Number of scenarios in the first evaluation batch.
+        nodes_of_interest:
+            Indexes to evaluate.  Defaults to all indexes in the model.
+        parameters:
+            PARAMETER axes for multi-dimensional evaluation.
+        strategy:
+            Plan build strategy (``"monolithic"`` or ``"regional"``).
+        rng:
+            Random number generator for reproducibility.  When ``None``, a
+            fresh :func:`numpy.random.default_rng` is created automatically.
+        functions:
+            Optional user-defined functions passed to the executor.
+        backend:
+            The computation backend (currently only ``NumpyBackend``).
+        exec:
+            :class:`concurrent.futures.Executor` to submit the work to.
+            Defaults to the module-level :data:`_DEFAULT_EXECUTOR`
+            (a :class:`~concurrent.futures.ThreadPoolExecutor`).
+
+        Returns
+        -------
+        AsyncEvaluationHandle
+            Handle wrapping the in-flight future.  Call
+            :meth:`~simulation.handle.AsyncEvaluationHandle.get` to block for
+            the result or
+            :meth:`~simulation.handle.AsyncEvaluationHandle.poll` to check
+            without blocking.
+        """
+        from .handle import AsyncEvaluationHandle  # local import avoids circular dependency
+
+        parameters = parameters or {}
+        if rng is None:
+            rng = np.random.default_rng()
+
+        plan = self.build_plan(nodes_of_interest, strategy=strategy)
+        ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
+        _exec = exec or _DEFAULT_EXECUTOR
+        future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
+            self.execute_plan,
+            plan,
+            ensemble,
+            parameters=parameters,
+            functions=functions,
+            backend=backend,
+        )
+        return AsyncEvaluationHandle(
+            future=future,
+            evaluation=self,
+            plan=plan,
             rng=rng,
             parameters=parameters,
             functions=functions,

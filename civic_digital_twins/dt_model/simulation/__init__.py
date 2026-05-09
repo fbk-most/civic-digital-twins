@@ -12,10 +12,11 @@ from .ensemble import (
     sample_across,
 )
 from .evaluation import Evaluation, EvaluationResult
-from .handle import EvaluationHandle
+from .handle import AsyncEvaluationHandle, EvaluationHandle
 from .plan import EvaluationPlan, Region, RegionGuard
 
 __all__ = [
+    "AsyncEvaluationHandle",
     "AxisEnsemble",
     "CrossProductEnsemble",
     "DistributionEnsemble",
