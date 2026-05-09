@@ -11,7 +11,7 @@ from scipy import stats
 
 from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.simulation.evaluation import _DEFAULT_EXECUTOR, Evaluation
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, _get_default_executor
 from civic_digital_twins.dt_model.simulation.handle import AsyncEvaluationHandle, EvaluationHandle
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ def test_result_raises_before_done() -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow_exec:
         # Block the sole worker thread.
         blocker = slow_exec.submit(time.sleep, 5)
-        handle = Evaluation(model).submit_evaluate(20, exec=slow_exec)
+        handle = Evaluation(model).submit_evaluate(20, pool=slow_exec)
         try:
             with pytest.raises(RuntimeError, match="still running"):
                 _ = handle.result
@@ -132,7 +132,7 @@ def test_poll_returns_false_while_running() -> None:
     _, model = _make_simple()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow_exec:
         blocker = slow_exec.submit(time.sleep, 5)
-        handle = Evaluation(model).submit_evaluate(20, exec=slow_exec)
+        handle = Evaluation(model).submit_evaluate(20, pool=slow_exec)
         try:
             done, result = handle.poll()
             assert done is False
@@ -160,7 +160,7 @@ def test_extend_raises_before_done() -> None:
     _, model = _make_simple()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow_exec:
         blocker = slow_exec.submit(time.sleep, 5)
-        handle = Evaluation(model).submit_evaluate(20, exec=slow_exec)
+        handle = Evaluation(model).submit_evaluate(20, pool=slow_exec)
         try:
             with pytest.raises(RuntimeError, match="cannot extend"):
                 handle.extend(10)
@@ -194,14 +194,15 @@ def test_submit_evaluate_matches_evaluate_incremental() -> None:
 
 
 def test_default_executor_is_thread_pool() -> None:
-    """_DEFAULT_EXECUTOR is a ThreadPoolExecutor."""
-    assert isinstance(_DEFAULT_EXECUTOR, concurrent.futures.ThreadPoolExecutor)
+    """_get_default_executor() returns a ThreadPoolExecutor (created lazily)."""
+    ev = _get_default_executor()
+    assert isinstance(ev, concurrent.futures.ThreadPoolExecutor)
 
 
 def test_custom_executor_is_used() -> None:
-    """A caller-supplied executor is used instead of the default."""
+    """A caller-supplied pool is used instead of the default."""
     _, model = _make_simple()
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as custom_exec:
-        handle = Evaluation(model).submit_evaluate(30, exec=custom_exec)
+        handle = Evaluation(model).submit_evaluate(30, pool=custom_exec)
         result = handle.get()
     assert result[model.outputs.y].shape == (30,)

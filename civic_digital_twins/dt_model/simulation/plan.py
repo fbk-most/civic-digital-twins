@@ -2,7 +2,7 @@
 
 An :class:`EvaluationPlan` encodes the *structure* of a model evaluation as
 a DAG of :class:`Region` instances — groups of computation-graph nodes
-a unit.  Plans are built once via
+evaluated as a unit.  Plans are built once via
 :meth:`~simulation.evaluation.Evaluation.build_plan` and reused across
 multiple :meth:`~simulation.evaluation.Evaluation.execute_plan` calls with
 different ensembles and parameter grids.

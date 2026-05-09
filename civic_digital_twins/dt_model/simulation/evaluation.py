@@ -22,11 +22,21 @@ from .plan import EvaluationPlan, Region, RegionGuard
 
 __all__ = ["EvaluationResult", "Evaluation"]
 
-# Module-level default executor for submit_evaluate().
-# Uses a ThreadPoolExecutor so that the GIL is released during NumPy computation
-# and the main thread remains responsive while evaluation runs in the background.
+# Lazy-initialised default executor for submit_evaluate().
+# Allocated on first use so that importing this module does not spawn threads
+# for callers who never use async evaluation.
+# Uses a ThreadPoolExecutor: the GIL is released during NumPy computation, so
+# the main thread remains responsive while evaluation runs in the background.
 # Process pools are deferred to v0.11 (out of scope for this milestone).
-_DEFAULT_EXECUTOR: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor()
+_default_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_default_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Return (and lazily create) the module-level default ThreadPoolExecutor."""
+    global _default_executor
+    if _default_executor is None:
+        _default_executor = concurrent.futures.ThreadPoolExecutor()
+    return _default_executor
 
 
 def _validate_scenarios(
@@ -865,7 +875,7 @@ class Evaluation:
         rng: np.random.Generator | None = None,
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
-        exec: concurrent.futures.Executor | None = None,
+        pool: concurrent.futures.Executor | None = None,
     ) -> "AsyncEvaluationHandle":
         """Submit an evaluation to a background thread and return immediately.
 
@@ -895,10 +905,10 @@ class Evaluation:
             Optional user-defined functions passed to the executor.
         backend:
             The computation backend (currently only ``NumpyBackend``).
-        exec:
+        pool:
             :class:`concurrent.futures.Executor` to submit the work to.
-            Defaults to the module-level :data:`_DEFAULT_EXECUTOR`
-            (a :class:`~concurrent.futures.ThreadPoolExecutor`).
+            Defaults to a module-level :class:`~concurrent.futures.ThreadPoolExecutor`
+            shared across calls (created lazily on first use).
 
         Returns
         -------
@@ -917,7 +927,7 @@ class Evaluation:
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
         ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
-        _exec = exec or _DEFAULT_EXECUTOR
+        _exec = pool or _get_default_executor()
         future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
             self.execute_plan,
             plan,

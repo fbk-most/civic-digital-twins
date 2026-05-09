@@ -220,7 +220,8 @@ class EvaluationHandle:
     plan:
         The pre-built evaluation plan.
     result:
-        The initial :class:`~simulation.evaluation.EvaluationResult`.
+        The initial :class:`~simulation.evaluation.EvaluationResult`, or
+        ``None`` when the result is not yet available (async path).
     rng:
         Shared random number generator.  Reused by every :meth:`extend` call.
     parameters:
@@ -236,7 +237,7 @@ class EvaluationHandle:
         *,
         evaluation: Evaluation,
         plan: EvaluationPlan,
-        result: EvaluationResult,
+        result: EvaluationResult | None,
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
         functions: dict[str, executor.Functor] | None,
@@ -256,7 +257,15 @@ class EvaluationHandle:
 
     @property
     def result(self) -> EvaluationResult:
-        """The current accumulated :class:`~simulation.evaluation.EvaluationResult`."""
+        """The current accumulated :class:`~simulation.evaluation.EvaluationResult`.
+
+        Raises
+        ------
+        RuntimeError
+            If the result has not yet been set (async path before resolution).
+        """
+        if self._result is None:
+            raise RuntimeError("result is not yet available.")
         return self._result
 
     def extend(
@@ -302,7 +311,13 @@ class EvaluationHandle:
                 "strategy and is deferred to a future release."
             )
         if ensemble_size <= 0:
-            return self._result
+            return self._result  # type: ignore[return-value]  # None only on async path before resolve
+
+        assert self._result is not None, (
+            "EvaluationHandle.extend() called with _result=None — "
+            "this is a bug: either the handle was constructed incorrectly or "
+            "AsyncEvaluationHandle.extend() failed to call _resolve() first."
+        )
 
         from .ensemble import DistributionEnsemble
 
@@ -364,16 +379,15 @@ class AsyncEvaluationHandle(EvaluationHandle):
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> None:
-        # Do not call super().__init__() — the result is not yet available.
-        # Set base-class private attributes directly so that extend() works
-        # normally once the future resolves.
-        self._evaluation = evaluation
-        self._plan = plan
-        self._result: EvaluationResult = None  # type: ignore[assignment]
-        self._rng = rng
-        self._parameters = parameters
-        self._functions = functions
-        self._backend = backend
+        super().__init__(
+            evaluation=evaluation,
+            plan=plan,
+            result=None,  # not yet available; resolved lazily by _resolve()
+            rng=rng,
+            parameters=parameters,
+            functions=functions,
+            backend=backend,
+        )
         self._future = future
 
     # ------------------------------------------------------------------
