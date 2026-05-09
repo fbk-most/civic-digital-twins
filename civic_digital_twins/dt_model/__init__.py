@@ -34,6 +34,8 @@ from .simulation import (
     EvaluationPlan,
     EvaluationResult,
     PartitionedEnsemble,
+    Region,
+    RegionGuard,
     WeightedScenario,
     sample_across,
 )
@@ -70,6 +72,8 @@ __all__ = [
     "NumpyBackend",
     "PARAMETER",
     "PartitionedEnsemble",
+    "Region",
+    "RegionGuard",
     "TimeseriesIndex",
     "WeightedScenario",
     "sample_across",

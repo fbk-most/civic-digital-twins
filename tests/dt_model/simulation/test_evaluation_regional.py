@@ -1,0 +1,415 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for build_plan(strategy='regional') and execute_plan with multi-region plans."""
+
+import dataclasses
+
+import numpy as np
+import pytest
+
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
+from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model.model.model_variant import ModelVariant
+from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.plan import EvaluationPlan, Region, RegionGuard
+
+# ---------------------------------------------------------------------------
+# Shared model fixtures (same as test_model_variant_evaluation.py)
+# ---------------------------------------------------------------------------
+
+_CAPACITY_VALUE = 100.0
+
+
+class _BikeModel(Model):
+    @dataclasses.dataclass
+    class Inputs:
+        capacity: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        throughput: Index
+        emissions: Index
+
+    def __init__(self, capacity: Index) -> None:
+        throughput = Index("throughput", capacity.node * 1.0)
+        emissions = Index("emissions", 0.0)
+        super().__init__(
+            "BikeModel",
+            inputs=_BikeModel.Inputs(capacity=capacity),
+            outputs=_BikeModel.Outputs(throughput=throughput, emissions=emissions),
+        )
+
+
+class _TrainModel(Model):
+    @dataclasses.dataclass
+    class Inputs:
+        capacity: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        throughput: Index
+        emissions: Index
+
+    def __init__(self, capacity: Index) -> None:
+        throughput = Index("throughput", capacity.node * 10.0)
+        emissions = Index("emissions", 50.0)
+        super().__init__(
+            "TrainModel",
+            inputs=_TrainModel.Inputs(capacity=capacity),
+            outputs=_TrainModel.Outputs(throughput=throughput, emissions=emissions),
+        )
+
+
+def _make_mv(mode: CategoricalIndex) -> ModelVariant:
+    """Build a Transport ModelVariant with fixed capacity for both branches."""
+    cap_bike = Index("capacity", _CAPACITY_VALUE)
+    cap_train = Index("capacity", _CAPACITY_VALUE)
+    return ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        selector=mode,
+    )
+
+
+def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
+    """Build a Transport ModelVariant where both sub-models share a presence axis."""
+    presence = Index("presence", None)
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        selector=mode,
+    )
+    return presence, mv
+
+
+# ---------------------------------------------------------------------------
+# build_plan(strategy='regional') — structural tests
+# ---------------------------------------------------------------------------
+
+
+def test_regional_plan_has_correct_region_count():
+    """Regional plan for a 2-branch variant has exactly 4 regions: shared + 2 branches + merge."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+    plan = ev.build_plan(strategy="regional")
+    # 1 shared + 2 branch + 1 merge = 4
+    assert len(plan.regions) == 4
+
+
+def test_regional_plan_is_evaluation_plan():
+    """build_plan(strategy='regional') returns an EvaluationPlan instance."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    assert isinstance(plan, EvaluationPlan)
+
+
+def test_regional_plan_regions_are_region_instances():
+    """Every region in a regional plan is a Region instance."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    for region in plan.regions:
+        assert isinstance(region, Region)
+
+
+def test_regional_plan_shared_region_has_no_guard():
+    """The first region (shared) must have guard=None."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    assert plan.regions[0].guard is None
+
+
+def test_regional_plan_branch_regions_have_guards():
+    """Middle regions (branches) must carry a RegionGuard."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    # regions[1] and regions[2] are branches
+    for region in plan.regions[1:-1]:
+        assert isinstance(region.guard, RegionGuard)
+
+
+def test_regional_plan_branch_keys_match_variant():
+    """Branch region guard.branch_key values must match the ModelVariant's branch keys."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    branch_keys = {r.guard.branch_key for r in plan.regions[1:-1] if r.guard is not None}
+    assert branch_keys == {"bike", "train"}
+
+
+def test_regional_plan_merge_region_has_no_guard():
+    """The last region (merge) must have guard=None."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    assert plan.regions[-1].guard is None
+
+
+def test_regional_plan_correct_dependencies():
+    """Check DAG dependencies: shared→branches→merge."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    deps = plan.dependencies
+    # shared (0): no deps
+    assert deps[0] == frozenset()
+    # branches (1, 2): each depends on shared (0)
+    assert deps[1] == frozenset({0})
+    assert deps[2] == frozenset({0})
+    # merge (3): depends on shared + both branches
+    assert deps[3] == frozenset({0, 1, 2})
+
+
+# ---------------------------------------------------------------------------
+# execute_plan — correctness against monolithic baseline
+# ---------------------------------------------------------------------------
+
+
+def _bike_only_scenarios(mode: CategoricalIndex, n: int) -> list[WeightedScenario]:
+    return [(1.0 / n, {mode: np.array(["bike"])}) for _ in range(n)]
+
+
+def _train_only_scenarios(mode: CategoricalIndex, n: int) -> list[WeightedScenario]:
+    return [(1.0 / n, {mode: np.array(["train"])}) for _ in range(n)]
+
+
+def _mixed_scenarios(mode: CategoricalIndex) -> list[WeightedScenario]:
+    return [
+        (0.25, {mode: np.array(["bike"])}),
+        (0.25, {mode: np.array(["train"])}),
+        (0.25, {mode: np.array(["bike"])}),
+        (0.25, {mode: np.array(["train"])}),
+    ]
+
+
+def test_regional_bike_only_matches_monolithic():
+    """Regional plan: bike-only scenarios match monolithic throughput."""
+    mode = CategoricalIndex("mode", {"bike": 1.0})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+    scenarios = _bike_only_scenarios(mode, 4)
+
+    mono = ev.evaluate(scenarios, [mv.outputs.throughput])
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+        scenarios_list = _bike_only_scenarios(mode, 4)
+        adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    regional_result = ev.execute_plan(regional_plan, adapter)
+    assert float(regional_result.marginalize(mv.outputs.throughput)) == pytest.approx(
+        float(mono.marginalize(mv.outputs.throughput))
+    )
+
+
+def test_regional_train_only_matches_monolithic():
+    """Regional plan: train-only scenarios match monolithic throughput."""
+    mode = CategoricalIndex("mode", {"train": 1.0})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    scenarios_list = _train_only_scenarios(mode, 4)
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    mono_result = ev.evaluate(_train_only_scenarios(mode, 4), [mv.outputs.throughput])
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, adapter)
+
+    assert float(regional_result.marginalize(mv.outputs.throughput)) == pytest.approx(
+        float(mono_result.marginalize(mv.outputs.throughput))
+    )
+
+
+def test_regional_mixed_modes_matches_monolithic():
+    """Regional plan: mixed bike/train scenarios produce correctly weighted mean."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    scenarios_list = _mixed_scenarios(mode)
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput])
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, adapter)
+
+    assert float(regional_result.marginalize(mv.outputs.throughput)) == pytest.approx(
+        float(mono_result.marginalize(mv.outputs.throughput))
+    )
+
+
+def test_regional_emissions_bike_only():
+    """Regional plan: bike-only emissions = 0."""
+    mode = CategoricalIndex("mode", {"bike": 1.0})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    scenarios_list = _bike_only_scenarios(mode, 4)
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, adapter)
+    assert float(regional_result.marginalize(mv.outputs.emissions)) == pytest.approx(0.0)
+
+
+def test_regional_emissions_train_only():
+    """Regional plan: train-only emissions = 50."""
+    mode = CategoricalIndex("mode", {"train": 1.0})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    scenarios_list = _train_only_scenarios(mode, 4)
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, adapter)
+    assert float(regional_result.marginalize(mv.outputs.emissions)) == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# execute_plan with PARAMETER axes + regional plan
+# ---------------------------------------------------------------------------
+
+
+def test_regional_plan_with_parameter_axis_bike_only():
+    """Regional plan + PARAMETER axis: bike-only throughput = presence * 1."""
+    mode = CategoricalIndex("mode", {"bike": 1.0})
+    presence, mv = _make_presence_mv(mode)
+    ev = Evaluation(mv)
+    xs = np.array([100.0, 200.0, 300.0])
+
+    # Single scenario with mode="bike" (presence is the PARAMETER axis)
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    scenarios_list: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+
+    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 1.0)
+
+
+def test_regional_plan_with_parameter_axis_train_only():
+    """Regional plan + PARAMETER axis: train-only throughput = presence * 10."""
+    mode = CategoricalIndex("mode", {"train": 1.0})
+    presence, mv = _make_presence_mv(mode)
+    ev = Evaluation(mv)
+    xs = np.array([100.0, 200.0, 300.0])
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    scenarios_list: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+
+    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 10.0)
+
+
+def test_regional_plan_with_parameter_axis_mixed_matches_monolithic():
+    """Regional plan + PARAMETER axis: mixed modes weighted mean = presence * 5.5."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    presence, mv = _make_presence_mv(mode)
+    ev = Evaluation(mv)
+    xs = np.array([100.0, 200.0, 300.0])
+
+    scenarios_list: list[WeightedScenario] = [
+        (0.5, {mode: np.array(["bike"])}),
+        (0.5, {mode: np.array(["train"])}),
+    ]
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+    mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput], parameters={presence: xs})
+
+    assert np.allclose(
+        regional_result.marginalize(mv.outputs.throughput),
+        mono_result.marginalize(mv.outputs.throughput),
+    )
+
+
+# ---------------------------------------------------------------------------
+# execute_plan raises for a PARAMETER-varying selector
+# ---------------------------------------------------------------------------
+
+
+def test_regional_raises_for_parameter_varying_selector():
+    """Regional execution must raise when the selector varies along a PARAMETER axis.
+
+    A selector derived from a PARAMETER index produces a scenario partition
+    that differs per parameter combination.  Silently using only position-0
+    of the PARAMETER axis for the mask would give wrong results, so the
+    executor rejects the case with NotImplementedError.
+    """
+    presence = Index("presence", None)
+    selector = ModelVariant.guards_to_selector([("train", presence.node > 150.0), ("bike", True)])
+    cap = Index("capacity", 100.0)
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(cap), "train": _TrainModel(Index("capacity", 100.0))},
+        selector=selector,
+    )
+    ev = Evaluation(mv)
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+
+    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+
+    # One dummy scenario (no ENSEMBLE abstract indexes; presence is PARAMETER-only).
+    dummy_ens = _LegacyEnsembleAdapter([(1.0, {})], [])
+    xs = np.array([100.0, 200.0, 300.0])
+
+    with pytest.raises(NotImplementedError, match="PARAMETER axes"):
+        ev.execute_plan(regional_plan, dummy_ens, parameters={presence: xs})
+
+
+# ---------------------------------------------------------------------------
+# build_plan(strategy='regional') raises ValueError for plain Model
+# ---------------------------------------------------------------------------
+
+
+def test_regional_plan_raises_for_plain_model():
+    """build_plan(strategy='regional') must raise ValueError when no variant_selector exists."""
+    cap = Index("capacity", 100.0)
+    plain_model = _BikeModel(cap)
+    ev = Evaluation(plain_model)
+    with pytest.raises(ValueError, match="No variant_selector found"):
+        ev.build_plan(strategy="regional")
+
+
+# ---------------------------------------------------------------------------
+# Monolithic plan still works (regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_monolithic_plan_still_works_after_regional_changes():
+    """Existing monolithic path is unaffected by regional implementation."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+    scenarios = _mixed_scenarios(mode)
+    result = ev.evaluate(scenarios, [mv.outputs.throughput])
+    # 0.5 * 100*1 + 0.5 * 100*10 = 550
+    assert float(result.marginalize(mv.outputs.throughput)) == pytest.approx(550.0)
