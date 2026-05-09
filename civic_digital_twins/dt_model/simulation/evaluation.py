@@ -3,8 +3,12 @@
 
 import warnings
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .handle import EvaluationHandle
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
@@ -12,7 +16,7 @@ from ..model.axis import ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
-from .ensemble import AxisEnsemble, Ensemble, WeightedScenario
+from .ensemble import AxisEnsemble, DistributionEnsemble, Ensemble, WeightedScenario
 from .plan import EvaluationPlan, Region, RegionGuard
 
 __all__ = ["EvaluationResult", "Evaluation"]
@@ -777,6 +781,71 @@ class Evaluation:
             parameters,
             axis_sizes=axis_sizes,
             factorized_weights=factorized_weights,
+        )
+
+    def evaluate_incremental(
+        self,
+        initial_ensemble_size: int,
+        nodes_of_interest: list[GenericIndex] | None = None,
+        *,
+        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        strategy: str = "monolithic",
+        rng: np.random.Generator | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
+    ) -> "EvaluationHandle":
+        """Build a plan, run an initial ensemble, and return an incremental handle.
+
+        The returned :class:`~simulation.handle.EvaluationHandle` holds the first
+        result and can be extended with additional Monte Carlo samples via
+        :meth:`~simulation.handle.EvaluationHandle.extend` without discarding
+        prior results.
+
+        All sample draws (initial and extended) share the same
+        :class:`numpy.random.Generator`, making the full sequence reproducible
+        from a single seed.
+
+        Parameters
+        ----------
+        initial_ensemble_size:
+            Number of scenarios in the first evaluation batch.
+        nodes_of_interest:
+            Indexes to evaluate.  Defaults to all indexes in the model.
+        parameters:
+            PARAMETER axes for multi-dimensional evaluation.  Passed through
+            to every :meth:`execute_plan` call on the handle.
+        strategy:
+            Plan build strategy (``"monolithic"`` or ``"regional"``).
+        rng:
+            Random number generator for reproducibility.  When ``None``, a
+            fresh :func:`numpy.random.default_rng` is created automatically.
+        functions:
+            Optional user-defined functions passed to the executor.
+        backend:
+            The computation backend (currently only ``NumpyBackend``).
+
+        Returns
+        -------
+        EvaluationHandle
+            Incremental handle wrapping the first result.
+        """
+        from .handle import EvaluationHandle  # local import avoids circular dependency
+
+        parameters = parameters or {}
+        if rng is None:
+            rng = np.random.default_rng()
+
+        plan = self.build_plan(nodes_of_interest, strategy=strategy)
+        ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
+        result = self.execute_plan(plan, ensemble, parameters=parameters, functions=functions, backend=backend)
+        return EvaluationHandle(
+            evaluation=self,
+            plan=plan,
+            result=result,
+            rng=rng,
+            parameters=parameters,
+            functions=functions,
+            backend=backend,
         )
 
     def evaluate(
