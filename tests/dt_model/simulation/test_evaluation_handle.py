@@ -7,9 +7,12 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model.engine.numpybackend import executor as _executor
+from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, EvaluationResult
 from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle, _merge_results
 
 # ---------------------------------------------------------------------------
@@ -296,3 +299,89 @@ def test_evaluate_incremental_with_parameters() -> None:
     arr2 = handle.result[pm.outputs.y]
     # After extend: (3, 30)
     assert arr2.shape == (3, 30)
+
+
+# ---------------------------------------------------------------------------
+# _merge_results error paths
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_result(
+    plan,
+    ens_axes: tuple[Axis, ...],
+    ens_sizes: tuple[int, ...],
+) -> EvaluationResult:
+    """Build a minimal EvaluationResult with the given ENSEMBLE axes (no real evaluation)."""
+    axis_layout: dict[Axis, int] = {ax: i for i, ax in enumerate(ens_axes)}
+    axis_sizes: dict[Axis, int] = dict(zip(ens_axes, ens_sizes))
+    factorized_weights: dict[Axis, np.ndarray] = {ax: np.full(sz, 1.0 / sz) for ax, sz in zip(ens_axes, ens_sizes)}
+    # Populate values for every node of interest with a zero array of the right shape.
+    values: dict = {}
+    for idx in plan.nodes_of_interest:
+        values[idx.node] = np.zeros(ens_sizes)
+    state = _executor.State(values)
+    return EvaluationResult(state, axis_layout, {}, axis_sizes=axis_sizes, factorized_weights=factorized_weights)
+
+
+def test_merge_results_multi_axis_raises() -> None:
+    """_merge_results raises NotImplementedError when either result has multiple ENSEMBLE axes."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+    ax1 = Axis("ens1", ENSEMBLE)
+    ax2 = Axis("ens2", ENSEMBLE)
+    r_multi = _make_fake_result(plan, (ax1, ax2), (2, 3))
+    r_single = _make_fake_result(plan, (Axis("ens", ENSEMBLE),), (5,))
+    with pytest.raises(NotImplementedError, match="multiple ENSEMBLE axes"):
+        _merge_results(r_multi, r_single, plan)
+
+
+def test_merge_results_parameter_layout_mismatch_raises() -> None:
+    """_merge_results raises ValueError when PARAMETER axis layouts differ."""
+
+    class _PM(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            p: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index, p: Index) -> None:
+            y = Index("y", x.node + p.node)
+            super().__init__("PM", inputs=_PM.Inputs(x=x, p=p), outputs=_PM.Outputs(y=y))
+
+    x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
+    p2 = Index("p2", 1.0)
+    pm = _PM(x2, p2)
+    ev = Evaluation(pm)
+    plan = ev.build_plan()
+
+    ens = DistributionEnsemble(pm, size=10, rng=np.random.default_rng(0))
+    params_2: dict[GenericIndex, np.ndarray] = {p2: np.array([1.0, 2.0])}
+    params_3: dict[GenericIndex, np.ndarray] = {p2: np.array([1.0, 2.0, 3.0])}
+    r1 = ev.execute_plan(plan, ens, parameters=params_2)
+    r2 = ev.execute_plan(plan, ens, parameters=params_3)
+    with pytest.raises(ValueError, match="PARAMETER axis layouts"):
+        _merge_results(r1, r2, plan)
+
+
+def test_evaluation_handle_result_raises_when_none() -> None:
+    """EvaluationHandle.result raises RuntimeError when _result is None."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+    # Construct a handle with result=None directly — the async path does this.
+    handle = EvaluationHandle(
+        evaluation=ev,
+        plan=plan,
+        result=None,
+        rng=np.random.default_rng(),
+        parameters={},
+        functions=None,
+        backend=_executor.NumpyBackend,
+    )
+    with pytest.raises(RuntimeError, match="not yet available"):
+        _ = handle.result

@@ -487,3 +487,30 @@ def test_unsupported_backend_raises():
 
     with pytest.raises(NotImplementedError, match="not supported"):
         Evaluation(model).evaluate(backend=_FakeBackend)  # type: ignore[arg-type]
+
+
+def test_build_plan_unknown_strategy_raises():
+    """build_plan raises ValueError for an unrecognised strategy string."""
+    model = _make_model(Index("x", 1.0))
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        Evaluation(model).build_plan(strategy="turbo")
+
+
+def test_evaluation_accepts_scenario_like_object():
+    """Evaluation() accepts any object with a .model attribute (Scenario duck-typing)."""
+    I_x = Index("x", 3.0)
+    I_y = Index("y", I_x.node * 2.0)
+    model = _make_model(I_x, I_y)
+
+    class _FakeScenario:
+        def __init__(self, m):
+            self.model = m
+
+    ev = Evaluation(_FakeScenario(model))  # type: ignore[arg-type]
+    assert ev.model is model
+
+
+def test_evaluation_rejects_object_without_model_attribute():
+    """Evaluation() raises TypeError when the argument has no valid .model attribute."""
+    with pytest.raises(TypeError, match="Model, ModelVariant, or Scenario-like"):
+        Evaluation(object())  # type: ignore[arg-type]

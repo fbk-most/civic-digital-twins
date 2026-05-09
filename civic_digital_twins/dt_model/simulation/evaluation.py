@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from .handle import AsyncEvaluationHandle, EvaluationHandle
 
 from ..engine.frontend import graph, linearize
@@ -418,7 +418,7 @@ class Evaluation:
                     "runtime selector. No variant_selector found — use strategy='monolithic'."
                 )
             if len(vs_nodes) > 1:
-                raise NotImplementedError(
+                raise NotImplementedError(  # pragma: no cover
                     f"build_plan(strategy='regional') supports exactly one top-level "
                     f"variant_selector; found {len(vs_nodes)}. "
                     "Nested variants will be supported in a future release."

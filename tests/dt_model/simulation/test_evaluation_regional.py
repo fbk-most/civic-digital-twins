@@ -6,10 +6,10 @@ import dataclasses
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
+from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble, WeightedScenario
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.plan import EvaluationPlan, Region, RegionGuard
 
@@ -413,3 +413,73 @@ def test_monolithic_plan_still_works_after_regional_changes():
     result = ev.evaluate(scenarios, [mv.outputs.throughput])
     # 0.5 * 100*1 + 0.5 * 100*10 = 550
     assert float(result.marginalize(mv.outputs.throughput)) == pytest.approx(550.0)
+
+
+# ---------------------------------------------------------------------------
+# Regional execution error paths (coverage)
+# ---------------------------------------------------------------------------
+
+
+def test_regional_execute_plan_no_ensemble_raises():
+    """execute_plan with a regional plan and no ensemble raises NotImplementedError."""
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    ev = Evaluation(mv)
+    plan = ev.build_plan(strategy="regional")
+    with pytest.raises(NotImplementedError, match="multi-axis or absent ensemble"):
+        ev.execute_plan(plan, ensemble=None)
+
+
+# ---------------------------------------------------------------------------
+# Branch-local abstract index (covers ens_node override path in _execute_plan)
+# ---------------------------------------------------------------------------
+
+
+def _make_mv_branch_local() -> tuple[Index, Index, "ModelVariant"]:
+    """Build a ModelVariant where each branch has its OWN distinct abstract index.
+
+    bike branch  → ``cap_bike`` (abstract)
+    train branch → ``cap_train`` (abstract)
+
+    With a regional plan, each cap index node lives exclusively in its branch
+    region, so the branch-local ensemble-slice path in ``_execute_plan`` is
+    exercised.
+    """
+    from scipy import stats as _stats
+
+    cap_bike = DistributionIndex("cap_bike", _stats.norm, {"loc": 100.0, "scale": 5.0})
+    cap_train = DistributionIndex("cap_train", _stats.norm, {"loc": 200.0, "scale": 10.0})
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        selector=mode,
+    )
+    return cap_bike, cap_train, mv
+
+
+def test_regional_branch_local_abstract_index_correctness():
+    """Regional execution with branch-local abstract indexes matches monolithic.
+
+    Each branch samples its own distinct distribution, so the regional plan
+    must correctly slice the ensemble arrays per branch and scatter results
+    back to the full scenario array.  The test verifies the regional result
+    equals the monolithic baseline element-wise.
+    """
+    cap_bike, cap_train, mv = _make_mv_branch_local()
+    ev = Evaluation(mv)
+    rng = np.random.default_rng(42)
+
+    ens_mono = DistributionEnsemble(mv, size=200, rng=np.random.default_rng(42))
+    ens_reg = DistributionEnsemble(mv, size=200, rng=rng)
+
+    plan_mono = ev.build_plan(strategy="monolithic")
+    plan_reg = ev.build_plan(strategy="regional")
+
+    result_mono = ev.execute_plan(plan_mono, ens_mono)
+    result_reg = ev.execute_plan(plan_reg, ens_reg)
+
+    np.testing.assert_array_equal(
+        result_mono[mv.outputs.throughput],
+        result_reg[mv.outputs.throughput],
+    )
