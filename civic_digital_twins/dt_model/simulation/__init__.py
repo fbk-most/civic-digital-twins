@@ -12,6 +12,7 @@ from .ensemble import (
     sample_across,
 )
 from .evaluation import Evaluation, EvaluationResult
+from .plan import EvaluationPlan
 
 __all__ = [
     "AxisEnsemble",
@@ -20,6 +21,7 @@ __all__ = [
     "Ensemble",
     "EnsembleAxisSpec",
     "Evaluation",
+    "EvaluationPlan",
     "EvaluationResult",
     "PartitionedEnsemble",
     "WeightedScenario",

@@ -13,6 +13,7 @@ from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .ensemble import AxisEnsemble, Ensemble, WeightedScenario
+from .plan import EvaluationPlan, Region
 
 __all__ = ["EvaluationResult", "Evaluation"]
 
@@ -238,9 +239,11 @@ class EvaluationResult:
 class Evaluation:
     """Bridge between a :class:`~dt_model.model.model.Model` and the engine.
 
-    Given a model and an ensemble, :meth:`evaluate` builds the engine
-    substitution dict, runs :func:`executor.evaluate_nodes`, and returns an
-    :class:`EvaluationResult`.
+    Given a model (or Scenario), :meth:`build_plan` encodes the DAG navigation
+    strategy as an :class:`~simulation.plan.EvaluationPlan`, and
+    :meth:`execute_plan` runs it against a given ensemble and parameter grid,
+    returning an :class:`EvaluationResult`.  :meth:`evaluate` is a thin
+    convenience wrapper that calls both in sequence.
 
     This class knows nothing about grids, presence variables, sustainability,
     or constraints — all domain-specific logic lives in subclasses or
@@ -249,48 +252,129 @@ class Evaluation:
     Parameters
     ----------
     model:
-        The model to evaluate.
+        The model to evaluate.  Also accepts Scenario-like objects (any object
+        with a ``.model`` attribute of type :class:`~.model.model.Model` or
+        :class:`~.model.model_variant.ModelVariant`) at runtime; the type
+        annotation will be updated when ``Scenario`` (parameter-axes.md D1b)
+        is implemented.
     """
 
     def __init__(self, model: Model | ModelVariant) -> None:
-        self.model = model
+        # Accept Scenario-like objects at runtime via duck typing
+        # (parameter-axes.md D1b — Scenario not yet implemented).
+        # Using an untyped intermediate avoids a spurious Pyright
+        # "condition is always True" error on the isinstance check.
+        _arg: object = model
+        if not isinstance(_arg, (Model, ModelVariant)):
+            extracted = getattr(_arg, "model", None)
+            if not isinstance(extracted, (Model, ModelVariant)):
+                raise TypeError(
+                    f"Evaluation() expects a Model, ModelVariant, or Scenario-like "
+                    f"object with a '.model' attribute; got {type(_arg).__name__!r}."
+                )
+            self.model: Model | ModelVariant = extracted
+        else:
+            self.model = _arg
 
-    def evaluate(
+    # ------------------------------------------------------------------
+    # Plan construction
+    # ------------------------------------------------------------------
+
+    def build_plan(
         self,
-        scenarios: AxisEnsemble | Ensemble | None = None,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
-        axes: dict[GenericIndex, np.ndarray] | None = None,
-        ensemble: AxisEnsemble | Ensemble | None = None,
-        functions: dict[str, executor.Functor] | None = None,
-        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
-    ) -> EvaluationResult:
-        """Evaluate *nodes_of_interest* over the given ensemble.
+        strategy: str = "monolithic",
+    ) -> EvaluationPlan:
+        """Build an :class:`~simulation.plan.EvaluationPlan` for this model.
+
+        Encodes the DAG partitioning strategy — how the computation graph
+        is split into :class:`~simulation.plan.Region` instances and in what order
+        they execute — independently of the execution inputs (ensemble,
+        parameters).  The returned plan can be reused across multiple
+        :meth:`execute_plan` calls with different ensembles or parameter grids.
 
         Parameters
         ----------
-        scenarios:
-            Deprecated positional name for the ensemble argument.  Use
-            ``ensemble=`` instead.  Only one of *scenarios* / *ensemble* may
-            be supplied per call.
         nodes_of_interest:
             Indexes to evaluate.  Transitive dependencies are resolved
-            automatically via :func:`linearize.forest`.  Defaults to all
-            indexes in the model when ``None``.
+            automatically via :func:`~engine.frontend.linearize.forest`.
+            Defaults to all indexes in the model when ``None``.
+        strategy:
+            DAG partitioning strategy.
+
+            ``"monolithic"`` (default)
+                One region containing all linearised nodes.  Always available.
+            ``"regional"``
+                Split at :class:`~engine.frontend.graph.variant_selector`
+                boundaries into multiple regions.  *Not yet implemented
+                (engine-control.md Step 2)*.
+
+        Returns
+        -------
+        EvaluationPlan
+            An :class:`~simulation.plan.EvaluationPlan` ready for
+            :meth:`execute_plan`.
+
+        Raises
+        ------
+        ValueError
+            If *strategy* is not a recognised value.
+        NotImplementedError
+            If *strategy* is ``"regional"`` (Step 2, not yet implemented).
+        """
+        if nodes_of_interest is None:
+            nodes_of_interest = list(self.model.indexes)
+
+        actual_nodes = [idx.node for idx in nodes_of_interest]
+        linearized_nodes = linearize.forest(*actual_nodes)
+        has_timeseries = any(
+            isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)) for node in linearized_nodes
+        )
+
+        if strategy == "monolithic":
+            return EvaluationPlan(
+                model=self.model,
+                nodes_of_interest=tuple(nodes_of_interest),
+                regions=(Region(nodes=tuple(linearized_nodes), has_timeseries=has_timeseries),),
+                dependencies=(frozenset(),),
+            )
+        if strategy == "regional":
+            raise NotImplementedError(
+                "Regional DAG partitioning is not yet implemented. "
+                "Use strategy='monolithic' for now (engine-control.md Step 2)."
+            )
+        raise ValueError(f"Unknown strategy {strategy!r}. Expected 'monolithic' or 'regional'.")
+
+    # ------------------------------------------------------------------
+    # Plan execution
+    # ------------------------------------------------------------------
+
+    def execute_plan(
+        self,
+        plan: EvaluationPlan,
+        ensemble: AxisEnsemble | None = None,
+        *,
+        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
+    ) -> EvaluationResult:
+        """Execute a pre-built plan against a given ensemble and parameter grid.
+
+        Parameters
+        ----------
+        plan:
+            The plan to execute, built via :meth:`build_plan`.
+        ensemble:
+            The ensemble to evaluate.  Must be an :class:`AxisEnsemble`
+            (canonical, batched) or ``None`` for deterministic evaluation.
+            Legacy ``Iterable[WeightedScenario]`` inputs must be adapted
+            before this call (done automatically by :meth:`evaluate`).
         parameters:
             PARAMETER axes for multi-dimensional evaluation.  Maps each
             axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
-            array of values.  When provided, each axis index ``idx`` at
-            position ``i`` contributes a substitution array of shape
-            ``(1, …, N_i, …, 1, 1)`` where ``N_i = arr.size``.
-        axes:
-            Deprecated alias for *parameters*.  Use ``parameters=`` instead.
-        ensemble:
-            The ensemble to evaluate.  Must be an :class:`AxisEnsemble`
-            (canonical, batched) or a legacy ``Iterable[WeightedScenario]``
-            (deprecated, emits :class:`DeprecationWarning`).  Pass ``None``
-            for deterministic evaluation (no ENSEMBLE axes).
+            array of values.  When ``None``, defaults to an empty dict (no
+            PARAMETER axes).
         functions:
             Optional user-defined functions passed to the executor.  Wrap
             callables with :meth:`~executor.NumpyBackend.adapt` before passing.
@@ -305,65 +389,40 @@ class Evaluation:
 
         Raises
         ------
-        TypeError
-            If both *scenarios* and *ensemble* are supplied, or both
-            *axes* and *parameters* are supplied.
-        ValueError
-            If any non-parameter abstract index is not resolved in a scenario.
+        NotImplementedError
+            If *plan* contains more than one region (multi-region execution
+            is not yet implemented) or *backend* is not
+            :class:`~executor.NumpyBackend`.
         """
-        # --- resolve 'ensemble' from positional 'scenarios' arg ------------
-        if scenarios is not None and ensemble is not None:
-            raise TypeError("Cannot specify both 'scenarios' and 'ensemble'.")
-        if scenarios is not None:
-            warnings.warn(
-                "The positional 'scenarios' argument is deprecated; use 'ensemble=' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            ensemble = scenarios
-
-        # --- resolve 'parameters' from deprecated 'axes' arg ---------------
-        if axes is not None and parameters is not None:
-            raise TypeError("Cannot specify both 'axes' and 'parameters'.")
-        if axes is not None:
-            warnings.warn(
-                "'axes' is deprecated; use 'parameters=' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            parameters = axes
-
         parameters = parameters or {}
 
-        if nodes_of_interest is None:
-            nodes_of_interest = list(self.model.indexes)
-
-        abstract = self.model.abstract_indexes()
-        param_set = set(parameters.keys())
-        non_param_abstract = [idx for idx in abstract if idx not in param_set]
-
-        # --- adapt legacy Iterable[WeightedScenario] to AxisEnsemble ------
-        if ensemble is not None and not isinstance(ensemble, AxisEnsemble):
-            warnings.warn(
-                "Passing an iterable of WeightedScenario to 'evaluate()' is deprecated. "
-                "Use an AxisEnsemble (e.g. DistributionEnsemble) instead.",
-                DeprecationWarning,
-                stacklevel=2,
+        if len(plan.regions) != 1:
+            raise NotImplementedError(
+                f"Multi-region plans ({len(plan.regions)} regions) are not yet supported. "
+                "Use strategy='monolithic' for now (engine-control.md Step 2)."
             )
-            scenarios_list = list(ensemble)
-            if scenarios_list:
-                _validate_scenarios(non_param_abstract, scenarios_list)
-                ensemble = _LegacyEnsembleAdapter(scenarios_list, non_param_abstract)
-            else:
-                ensemble = None  # empty list → deterministic
-
-        # Pre-compute linearization and timeseries detection once.
-        # These are reused for executor.evaluate_nodes() and BFS normalisation below.
-        actual_nodes = [idx.node for idx in nodes_of_interest]
-        linearized_nodes = linearize.forest(*actual_nodes)
-        _has_timeseries = any(
-            isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)) for node in linearized_nodes
+        return self._execute_plan(
+            plan,
+            ensemble,
+            parameters=parameters,
+            functions=functions,
+            backend=backend,
         )
+
+    def _execute_plan(
+        self,
+        plan: EvaluationPlan,
+        ensemble: AxisEnsemble | None,
+        *,
+        parameters: dict[GenericIndex, np.ndarray],
+        functions: dict[str, executor.Functor] | None,
+        backend: type[executor.NumpyBackend],
+    ) -> EvaluationResult:
+        """Execute an :class:`~simulation.plan.EvaluationPlan`."""
+        region = plan.regions[0]
+        linearized_nodes = region.nodes
+        _has_timeseries = region.has_timeseries
+        actual_nodes = [idx.node for idx in plan.nodes_of_interest]
 
         n_params = len(parameters)
         axis_layout: dict[Axis, int] = {}
@@ -497,3 +556,109 @@ class Evaluation:
             axis_sizes=axis_sizes,
             factorized_weights=factorized_weights,
         )
+
+    def evaluate(
+        self,
+        scenarios: AxisEnsemble | Ensemble | None = None,
+        nodes_of_interest: list[GenericIndex] | None = None,
+        *,
+        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        axes: dict[GenericIndex, np.ndarray] | None = None,
+        ensemble: AxisEnsemble | Ensemble | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
+    ) -> EvaluationResult:
+        """Evaluate *nodes_of_interest* over the given ensemble.
+
+        Parameters
+        ----------
+        scenarios:
+            Deprecated positional name for the ensemble argument.  Use
+            ``ensemble=`` instead.  Only one of *scenarios* / *ensemble* may
+            be supplied per call.
+        nodes_of_interest:
+            Indexes to evaluate.  Transitive dependencies are resolved
+            automatically via :func:`linearize.forest`.  Defaults to all
+            indexes in the model when ``None``.
+        parameters:
+            PARAMETER axes for multi-dimensional evaluation.  Maps each
+            axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
+            array of values.  When provided, each axis index ``idx`` at
+            position ``i`` contributes a substitution array of shape
+            ``(1, …, N_i, …, 1, 1)`` where ``N_i = arr.size``.
+        axes:
+            Deprecated alias for *parameters*.  Use ``parameters=`` instead.
+        ensemble:
+            The ensemble to evaluate.  Must be an :class:`AxisEnsemble`
+            (canonical, batched) or a legacy ``Iterable[WeightedScenario]``
+            (deprecated, emits :class:`DeprecationWarning`).  Pass ``None``
+            for deterministic evaluation (no ENSEMBLE axes).
+        functions:
+            Optional user-defined functions passed to the executor.  Wrap
+            callables with :meth:`~executor.NumpyBackend.adapt` before passing.
+        backend:
+            The computation backend to use.  Currently only
+            :class:`~executor.NumpyBackend` is supported (the default).
+
+        Returns
+        -------
+        EvaluationResult
+            Typed result wrapper.
+
+        Raises
+        ------
+        TypeError
+            If both *scenarios* and *ensemble* are supplied, or both
+            *axes* and *parameters* are supplied.
+        ValueError
+            If any non-parameter abstract index is not resolved in a scenario.
+        """
+        # --- resolve 'ensemble' from positional 'scenarios' arg ------------
+        if scenarios is not None and ensemble is not None:
+            raise TypeError("Cannot specify both 'scenarios' and 'ensemble'.")
+        if scenarios is not None:
+            warnings.warn(
+                "The positional 'scenarios' argument is deprecated; use 'ensemble=' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            ensemble = scenarios
+
+        # --- resolve 'parameters' from deprecated 'axes' arg ---------------
+        if axes is not None and parameters is not None:
+            raise TypeError("Cannot specify both 'axes' and 'parameters'.")
+        if axes is not None:
+            warnings.warn(
+                "'axes' is deprecated; use 'parameters=' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            parameters = axes
+
+        parameters = parameters or {}
+
+        if nodes_of_interest is None:
+            nodes_of_interest = list(self.model.indexes)
+
+        abstract = self.model.abstract_indexes()
+        param_set = set(parameters.keys())
+        non_param_abstract = [idx for idx in abstract if idx not in param_set]
+
+        # --- adapt legacy Iterable[WeightedScenario] to AxisEnsemble ------
+        if ensemble is not None and not isinstance(ensemble, AxisEnsemble):
+            warnings.warn(
+                "Passing an iterable of WeightedScenario to 'evaluate()' is deprecated. "
+                "Use an AxisEnsemble (e.g. DistributionEnsemble) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            scenarios_list = list(ensemble)
+            if scenarios_list:
+                _validate_scenarios(non_param_abstract, scenarios_list)
+                ensemble = _LegacyEnsembleAdapter(scenarios_list, non_param_abstract)
+            else:
+                ensemble = None  # empty list → deterministic
+
+        # --- build plan and execute ---
+        plan = self.build_plan(nodes_of_interest)
+        return self.execute_plan(plan, ensemble, parameters=parameters, functions=functions, backend=backend)
