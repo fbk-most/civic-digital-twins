@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model import ConstIndex, GenericIndex, Index, TimeseriesIndex
+from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
@@ -220,6 +220,12 @@ def test_index_is_generic_index():
 def test_timeseries_index_is_generic_index():
     """TimeseriesIndex is a subclass of GenericIndex."""
     assert isinstance(TimeseriesIndex("ts", np.array([1.0])), GenericIndex)
+
+
+def test_timeseries_index_is_not_index():
+    """TimeseriesIndex is a sibling of Index, not a subclass."""
+    assert not issubclass(TimeseriesIndex, Index)
+    assert not isinstance(TimeseriesIndex("ts", np.array([1.0])), Index)
 
 
 def test_index_add_scalar():
@@ -487,3 +493,59 @@ def test_const_index_str():
     """ConstIndex.__str__ returns the expected representation."""
     idx = ConstIndex("c", 5.0)
     assert str(idx) == "const_idx(5.0)"
+
+
+# ---------------------------------------------------------------------------
+# ConstTimeseriesIndex — construction, values property, setter, str, hierarchy
+# ---------------------------------------------------------------------------
+
+
+def test_const_timeseries_index_construction():
+    """ConstTimeseriesIndex holds a concrete array backed by timeseries_constant."""
+    arr = np.array([1.0, 2.0, 3.0])
+    ts = ConstTimeseriesIndex("demand", arr)
+    assert ts.name == "demand"
+    assert np.array_equal(ts.values, arr)
+    assert isinstance(ts.node, graph.timeseries_constant)
+
+
+def test_const_timeseries_index_is_timeseries_index():
+    """ConstTimeseriesIndex is a subclass of TimeseriesIndex and GenericIndex."""
+    ts = ConstTimeseriesIndex("demand", np.array([1.0]))
+    assert isinstance(ts, TimeseriesIndex)
+    assert isinstance(ts, GenericIndex)
+    assert not isinstance(ts, Index)
+
+
+def test_const_timeseries_index_values_setter_refreshes_node():
+    """Assigning a new array updates values and replaces the graph node."""
+    ts = ConstTimeseriesIndex("demand", np.array([1.0, 2.0]))
+    old_node = ts.node
+    ts.values = np.array([3.0, 4.0])
+    assert np.array_equal(ts.values, [3.0, 4.0])
+    assert ts.node is not old_node
+    assert isinstance(ts.node, graph.timeseries_constant)
+
+
+def test_const_timeseries_index_values_setter_noop_on_equal_array():
+    """Setting the same array does not replace the graph node."""
+    arr = np.array([1.0, 2.0])
+    ts = ConstTimeseriesIndex("demand", arr)
+    old_node = ts.node
+    ts.values = np.array([1.0, 2.0])
+    assert ts.node is old_node
+
+
+def test_const_timeseries_index_evaluates_correctly():
+    """ConstTimeseriesIndex node evaluates to its stored array."""
+    arr = np.array([10.0, 20.0, 30.0])
+    ts = ConstTimeseriesIndex("demand", arr)
+    state = executor.State({})
+    executor.evaluate_nodes(state, *linearize.forest(ts.node))
+    assert np.array_equal(state.values[ts.node], arr)
+
+
+def test_const_timeseries_index_str():
+    """ConstTimeseriesIndex.__str__ uses the const_timeseries_idx prefix."""
+    ts = ConstTimeseriesIndex("demand", np.array([1.0, 2.0]))
+    assert str(ts) == "const_timeseries_idx([1.0, 2.0])"

@@ -400,8 +400,14 @@ class ConstIndex(Index):
         return f"const_idx({self.v})"
 
 
-class TimeseriesIndex(Index):
+class TimeseriesIndex(GenericIndex):
     """Class to represent a time-indexed quantity.
+
+    ``TimeseriesIndex`` is a *sibling* of :class:`Index` — both extend
+    :class:`GenericIndex` directly.  It is **not** a subclass of
+    :class:`Index`, because the two carry fundamentally different domain
+    semantics: ``Index`` is scalar-valued; ``TimeseriesIndex`` carries a
+    DOMAIN (time) axis.
 
     A TimeseriesIndex holds a deterministic sequence of values indexed by
     time step.  There are three modes, mirroring what ``Index`` does for
@@ -424,23 +430,30 @@ class TimeseriesIndex(Index):
         name: str,
         values: np.ndarray | graph.Node | None = None,
     ) -> None:
-        # We bypass Index.__init__ and set attributes directly because
-        # numpy arrays are not a recognised Index value type.
         self.name = name
         if isinstance(values, graph.Node):
             # Formula mode — same dispatch as Index for graph nodes.
             values.maybe_set_name(name)
-            self._values = None
-            self.value = values
-            self.node = values
+            self._values: np.ndarray | None = None
+            self.value: np.ndarray | graph.Node | None = values
+            self._node: graph.Node = values
         elif values is not None:
             self._values = np.asarray(values)
             self.value = self._values
-            self.node = graph.timeseries_constant(self._values, name)
+            self._node = graph.timeseries_constant(self._values, name)
         else:
             self._values = None
             self.value = None
-            self.node = graph.timeseries_placeholder(name)
+            self._node = graph.timeseries_placeholder(name)
+
+    @property
+    def node(self) -> graph.Node:
+        """The underlying computation graph node."""
+        return self._node
+
+    @node.setter
+    def node(self, value: graph.Node) -> None:
+        self._node = value
 
     @property
     def values(self) -> np.ndarray | None:
@@ -468,11 +481,65 @@ class TimeseriesIndex(Index):
 
     def __str__(self) -> str:
         """Return a string representation of the timeseries index."""
-        if isinstance(self.node, graph.timeseries_placeholder):
+        if isinstance(self._node, graph.timeseries_placeholder):
             return "timeseries_idx(placeholder)"
         if self._values is not None:
             return f"timeseries_idx({self._values.tolist()!r})"
         return f"timeseries_idx({self.value})"
+
+
+class ConstTimeseriesIndex(TimeseriesIndex):
+    """TimeseriesIndex that always holds a fixed array (timeseries_constant node).
+
+    ``ConstTimeseriesIndex`` is the timeseries analogue of
+    :class:`ConstIndex` for scalar quantities.  The backing graph node is
+    always a ``timeseries_constant``; the :attr:`values` setter updates the
+    stored array and refreshes the node in-place, preserving all formula
+    nodes that reference the *index object* via :attr:`~GenericIndex.node`.
+
+    Parameters
+    ----------
+    name:
+        Human-readable name for this index.
+    values:
+        Fixed array of time-step values.  Stored via
+        :func:`numpy.asarray`; used to create a ``timeseries_constant``
+        graph node.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> ts = ConstTimeseriesIndex("demand", np.array([10.0, 20.0, 30.0]))
+    >>> ts.values
+    array([10., 20., 30.])
+    >>> ts.values = np.array([15.0, 25.0, 35.0])  # refreshes the graph node
+    """
+
+    def __init__(self, name: str, values: np.ndarray) -> None:
+        super().__init__(name, np.asarray(values))
+
+    @property  # type: ignore[override]
+    def values(self) -> np.ndarray:
+        """The timeseries values (always a concrete array, never ``None``)."""
+        assert self._values is not None, "ConstTimeseriesIndex invariant violated: _values is None"
+        return self._values
+
+    @values.setter
+    def values(self, new_values: np.ndarray) -> None:  # type: ignore[override]
+        """Update the timeseries values and refresh the graph node.
+
+        Unlike :class:`TimeseriesIndex`, setting ``None`` is not permitted;
+        ``ConstTimeseriesIndex`` always remains a concrete timeseries constant.
+        """
+        new_values = np.asarray(new_values)
+        if self._values is None or not np.array_equal(self._values, new_values):
+            self._values = new_values
+            self.value = self._values
+            self.node = graph.timeseries_constant(self._values, self.name)
+
+    def __str__(self) -> str:
+        """Return a string representation of the constant timeseries index."""
+        return f"const_timeseries_idx({self._values.tolist()!r})"  # type: ignore[union-attr]
 
 
 class CategoricalIndex(Index):
