@@ -11,11 +11,11 @@ from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
 def test_timeseries_index_construction():
-    """Test basic construction of a TimeseriesIndex."""
+    """Test basic construction of a TimeseriesIndex — node is timeseries_placeholder (D1a)."""
     values = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("cap", values)
     assert idx.name == "cap"
-    assert isinstance(idx.node, graph.timeseries_constant)
+    assert isinstance(idx.node, graph.timeseries_placeholder)
     assert idx.values is not None
     assert np.array_equal(idx.values, values)
 
@@ -29,17 +29,17 @@ def test_timeseries_index_value_attribute():
 
 
 def test_timeseries_index_evaluation():
-    """Test that the TimeseriesIndex node evaluates to its values."""
+    """Test that the TimeseriesIndex node evaluates to its values when state is provided (D1a)."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
     plan = linearize.forest(idx.node)
-    state = executor.State({})
+    state = executor.State({idx.node: values})
     executor.evaluate_nodes(state, *plan)
     assert np.array_equal(state.values[idx.node], values)
 
 
 def test_timeseries_index_values_setter():
-    """Test that updating values refreshes the graph node."""
+    """Test that updating values refreshes stored array; node stays as timeseries_placeholder (D1a)."""
     idx = TimeseriesIndex("cap", np.array([1.0, 2.0]))
     old_node = idx.node
 
@@ -49,18 +49,13 @@ def test_timeseries_index_values_setter():
     assert np.array_equal(idx.values, new_values)
     assert isinstance(idx.value, np.ndarray)
     assert np.array_equal(idx.value, new_values)
-    # A new node is created
-    assert idx.node is not old_node
-
-    # The new node evaluates correctly
-    plan = linearize.forest(idx.node)
-    state = executor.State({})
-    executor.evaluate_nodes(state, *plan)
-    assert np.array_equal(state.values[idx.node], new_values)
+    # Node stays as the same timeseries_placeholder (D1a: Scenario handles injection)
+    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert idx.node is old_node
 
 
 def test_timeseries_index_values_setter_no_change():
-    """Test that setting the same values does not replace the node."""
+    """Test that setting identical values is a no-op; node is always the same placeholder (D1a)."""
     values = np.array([1.0, 2.0])
     idx = TimeseriesIndex("cap", values)
     old_node = idx.node
@@ -77,12 +72,12 @@ def test_timeseries_index_str():
 
 
 def test_timeseries_index_in_arithmetic():
-    """Test that a TimeseriesIndex node participates correctly in formulas."""
+    """Test that a TimeseriesIndex node participates correctly in formulas (D1a: state provided)."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
     halved = idx.node * graph.constant(0.5)
     plan = linearize.forest(halved)
-    state = executor.State({})
+    state = executor.State({idx.node: values})
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[halved], [5.0, 10.0, 15.0])
 
@@ -120,12 +115,12 @@ def test_timeseries_index_placeholder_evaluates_with_state():
 
 
 def test_timeseries_index_none_to_array():
-    """Test that assigning values to a placeholder TimeseriesIndex switches it to constant."""
+    """Test that assigning values to a placeholder TimeseriesIndex updates values; node stays placeholder (D1a)."""
     idx = TimeseriesIndex("inflow")
     old_node = idx.node
     idx.values = np.array([1.0, 2.0])
-    assert isinstance(idx.node, graph.timeseries_constant)
-    assert idx.node is not old_node
+    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert idx.node is old_node
     assert np.array_equal(idx.values, [1.0, 2.0])
 
 
@@ -195,6 +190,46 @@ def test_timeseries_index_formula_via_operators():
 
 # ---------------------------------------------------------------------------
 # GenericIndex arithmetic operators
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# D1a: placeholder-based node behavior tests
+# ---------------------------------------------------------------------------
+
+
+def test_index_scalar_creates_placeholder():
+    """Index(scalar) creates a graph.placeholder node (D1a: value lives in model layer)."""
+    idx = Index("cost", 8.0)
+    assert isinstance(idx.node, graph.placeholder)
+    assert idx.value == 8.0
+
+
+def test_const_index_scalar_creates_constant():
+    """ConstIndex always creates a graph.constant node regardless of D1a."""
+    idx = ConstIndex("cost", 8.0)
+    assert isinstance(idx.node, graph.constant)
+    assert idx.value == 8.0
+
+
+def test_timeseries_index_array_creates_timeseries_placeholder():
+    """TimeseriesIndex(arr) creates a timeseries_placeholder node (D1a)."""
+    arr = np.array([1.0, 2.0, 3.0])
+    idx = TimeseriesIndex("ts", arr)
+    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert idx.values is not None
+    assert np.array_equal(idx.values, arr)
+
+
+def test_const_timeseries_index_creates_timeseries_constant():
+    """ConstTimeseriesIndex always creates a timeseries_constant node."""
+    arr = np.array([1.0, 2.0, 3.0])
+    idx = ConstTimeseriesIndex("ts", arr)
+    assert isinstance(idx.node, graph.timeseries_constant)
+
+
+# ---------------------------------------------------------------------------
+# GenericIndex arithmetic operators (original section)
 # ---------------------------------------------------------------------------
 
 
@@ -327,11 +362,15 @@ def test_index_mul_index():
 
 
 def test_timeseries_index_arithmetic():
-    """TimeseriesIndex participates in formulas without .node access."""
-    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    """TimeseriesIndex participates in formulas without .node access (D1a: state provided)."""
+    arr = np.array([1.0, 2.0, 3.0])
+    ts = TimeseriesIndex("ts", arr)
     node = ts * 2.0
     assert isinstance(node, graph.multiply)
-    assert np.allclose(_eval(node), [2.0, 4.0, 6.0])
+    plan = linearize.forest(node)
+    state = executor.State({ts.node: arr})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[node], [2.0, 4.0, 6.0])
 
 
 def test_index_comparison_operators():
@@ -384,10 +423,14 @@ def test_index_neg_returns_negate_node():
 
 
 def test_index_neg_evaluates_correctly():
-    """__neg__ evaluates to the element-wise negation of the index values."""
-    ts = TimeseriesIndex("ts", np.array([1.0, -2.0, 3.0]))
-    result = _eval(-ts)
-    assert np.allclose(result, [-1.0, 2.0, -3.0])
+    """__neg__ evaluates to the element-wise negation of the index values (D1a: state provided)."""
+    arr = np.array([1.0, -2.0, 3.0])
+    ts = TimeseriesIndex("ts", arr)
+    neg_node = -ts
+    plan = linearize.forest(neg_node)
+    state = executor.State({ts.node: arr})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[neg_node], [-1.0, 2.0, -3.0])
 
 
 # ---------------------------------------------------------------------------

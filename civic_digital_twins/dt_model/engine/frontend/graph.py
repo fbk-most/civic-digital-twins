@@ -468,8 +468,9 @@ class placeholder[T](Node[T]):
     """Named placeholder for a value to be provided during evaluation.
 
     Args:
-        default_value: Optional default scalar value to use for the
-        placeholder if no type is provided at evaluation time.
+        name: The name of the placeholder.
+        default_value: Optional default scalar value to use when no value
+            is provided at evaluation time.
     """
 
     def __init__(self, name: str, default_value: Scalar | None = None) -> None:

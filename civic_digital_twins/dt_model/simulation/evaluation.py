@@ -19,6 +19,7 @@ from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .ensemble import AxisEnsemble, DistributionEnsemble, Ensemble, WeightedScenario
 from .plan import EvaluationPlan, Region, RegionGuard
+from .scenario import Scenario
 
 __all__ = ["EvaluationResult", "Evaluation"]
 
@@ -258,10 +259,10 @@ class EvaluationResult:
 
 
 class Evaluation:
-    """Bridge between a :class:`~dt_model.model.model.Model` and the engine.
+    """Bridge between a :class:`~simulation.scenario.Scenario` and the engine.
 
-    Given a model (or Scenario), :meth:`build_plan` encodes the DAG navigation
-    strategy as an :class:`~simulation.plan.EvaluationPlan`, and
+    Given a scenario (or a model, deprecated), :meth:`build_plan` encodes the
+    DAG navigation strategy as an :class:`~simulation.plan.EvaluationPlan`, and
     :meth:`execute_plan` runs it against a given ensemble and parameter grid,
     returning an :class:`EvaluationResult`.  :meth:`evaluate` is a thin
     convenience wrapper that calls both in sequence.
@@ -272,30 +273,34 @@ class Evaluation:
 
     Parameters
     ----------
-    model:
-        The model to evaluate.  Also accepts Scenario-like objects (any object
-        with a ``.model`` attribute of type :class:`~.model.model.Model` or
-        :class:`~.model.model_variant.ModelVariant`) at runtime; the type
-        annotation will be updated when ``Scenario`` (parameter-axes.md D1b)
-        is implemented.
+    scenario_or_model:
+        A :class:`~simulation.scenario.Scenario` (canonical) or, deprecated,
+        a :class:`~model.model.Model` / :class:`~model.model_variant.ModelVariant`
+        which is auto-wrapped in ``Scenario(model)`` with a
+        :class:`DeprecationWarning`.
     """
 
-    def __init__(self, model: Model | ModelVariant) -> None:
-        # Accept Scenario-like objects at runtime via duck typing
-        # (parameter-axes.md D1b — Scenario not yet implemented).
-        # Using an untyped intermediate avoids a spurious Pyright
-        # "condition is always True" error on the isinstance check.
-        _arg: object = model
-        if not isinstance(_arg, (Model, ModelVariant)):
-            extracted = getattr(_arg, "model", None)
-            if not isinstance(extracted, (Model, ModelVariant)):
-                raise TypeError(
-                    f"Evaluation() expects a Model, ModelVariant, or Scenario-like "
-                    f"object with a '.model' attribute; got {type(_arg).__name__!r}."
-                )
-            self.model: Model | ModelVariant = extracted
+    def __init__(self, scenario_or_model: Scenario | Model | ModelVariant) -> None:
+        scenario: Scenario
+        model: Model | ModelVariant
+        if isinstance(scenario_or_model, Scenario):
+            scenario = scenario_or_model
+            model = scenario_or_model.model
+        elif isinstance(scenario_or_model, (Model, ModelVariant)):
+            warnings.warn(
+                "Passing a Model or ModelVariant directly to Evaluation() is deprecated and will be removed "
+                "in a future version. Wrap it in Scenario(model) first: Evaluation(Scenario(model)).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            model = scenario_or_model
+            scenario = Scenario(model)
         else:
-            self.model = _arg
+            raise TypeError(
+                f"Evaluation() expects a Scenario, Model, or ModelVariant; got {type(scenario_or_model).__name__!r}."
+            )
+        self._scenario = scenario
+        self.model: Model | ModelVariant = model
 
     # ------------------------------------------------------------------
     # Plan construction
@@ -583,6 +588,17 @@ class Evaluation:
     ) -> EvaluationResult:
         """Execute an :class:`~simulation.plan.EvaluationPlan`."""
         actual_nodes = [idx.node for idx in plan.nodes_of_interest]
+        _raw_scenario_subs = self._scenario.base_substitutions()
+        # Filter out entries where base_substitutions() wrapped a graph.Node as a numpy
+        # object array — this happens for formula-based Index instances whose `.value`
+        # is an existing graph node rather than a concrete scalar or array.  Such nodes
+        # do not need value injection: the executor handles them via their own evaluation
+        # chain (or via graph.placeholder.default_value if set).
+        scenario_subs: dict[graph.Node, np.ndarray] = {
+            node: val
+            for node, val in _raw_scenario_subs.items()
+            if not (isinstance(val, np.ndarray) and val.ndim == 0 and val.dtype.kind == "O")
+        }
         _has_timeseries = any(r.has_timeseries for r in plan.regions)
 
         n_params = len(parameters)
@@ -648,16 +664,44 @@ class Evaluation:
         n_total = n_full + extra_ts
 
         # Validate ensemble cardinality when guarded regions are present.
+        # This check must come before the coverage validation so that a regional
+        # plan with no ensemble raises NotImplementedError (not ValueError).
         has_guarded = any(r.guard is not None for r in plan.regions)
         if has_guarded and n_ensemble != 1:
             raise NotImplementedError(
                 "Regional execution with a multi-axis or absent ensemble is not yet "
                 "supported. Use strategy='monolithic' or a single-axis ensemble."
             )
+
+        # Coverage validation (D_valid): every abstract index must have a value source.
+        # We check only abstract indexes (value=None or Distribution-backed) — NOT
+        # concrete-value placeholder nodes that may be "orphan" (not in model.indexes).
+        # Concrete-value orphan placeholders are handled via graph.placeholder.default_value
+        # or graph.timeseries_placeholder.default_values auto-populated at creation time.
+        abstract_nodes = {idx.node for idx in self._scenario.abstract_indexes()}
+        covered = set(scenario_subs.keys()) | set(c_subs.keys())
+        uncovered_abstract = abstract_nodes - covered
+        if uncovered_abstract:
+            node_to_idx = {idx.node: idx for idx in self._scenario.abstract_indexes()}
+            names = sorted(getattr(node_to_idx.get(n, n), "name", repr(n)) for n in uncovered_abstract)
+            raise ValueError(
+                f"The following abstract indexes are not covered by Scenario, parameters=, or ensemble: "
+                f"{', '.join(repr(n) for n in names)}"
+            )
+
+        # Overlap check: parameters= and Scenario.overrides must not overlap.
+        param_idx_ids = {id(idx) for idx in parameters.keys()}
+        override_idx_ids = {id(idx) for idx in self._scenario._overrides.keys()}
+        overlap_ids = param_idx_ids & override_idx_ids
+        if overlap_ids:
+            overlapping = [idx for idx in parameters.keys() if id(idx) in overlap_ids]
+            names_str = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in overlapping)
+            raise ValueError(f"The following indexes appear in both parameters= and Scenario.overrides: {names_str}")
+
         # Total scenario count (used for scatter-back in guarded regions).
         n_S: int = axis_sizes[list(ensemble.ensemble_axes)[0]] if (has_guarded and ensemble is not None) else 0
 
-        state = executor.State(c_subs, functions=functions or {})
+        state = executor.State({**scenario_subs, **c_subs}, functions=functions or {})
 
         # Execute regions in topological order.
         for region in plan.regions:

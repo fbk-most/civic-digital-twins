@@ -46,6 +46,17 @@ class Distribution(Protocol):
         ...  # pragma: no cover
 
 
+DomainValue = float | np.ndarray | Distribution
+"""A concrete value assignable to an Index at scenario-evaluation time.
+
+Covers all three kinds of domain-level assignment:
+
+- ``float`` — a scalar constant (e.g. a parking cost).
+- ``np.ndarray`` — a timeseries or multi-dimensional array.
+- :class:`Distribution` — a probability distribution (sampled by the ensemble).
+"""
+
+
 class GenericIndex(ABC):
     """Abstract base class for all index types.
 
@@ -282,12 +293,12 @@ class Index(GenericIndex):
             self.value = value
             self.node = graph.placeholder(name)
 
-        # We model a constant-value index as a constant value and a
-        # corresponding constant node. An alternative modeling could
-        # be to use a placeholder and fill it when scheduling.
+        # We model a concrete-value index as a placeholder node whose value is
+        # injected by Scenario at evaluation time. The concrete value is stored in
+        # self.value (model layer only).
         elif isinstance(value, graph.Scalar):
             self.value = value
-            self.node = graph.constant(value, name)
+            self.node = graph.placeholder(name)
 
         # Otherwise, it's just a reference to an existing node (which
         # typically is the result of defining a formula).
@@ -381,6 +392,7 @@ class ConstIndex(Index):
     ) -> None:
         super().__init__(name, v)
         self._v = v
+        self.node = graph.constant(v, name)
 
     @property
     def v(self):
@@ -414,8 +426,9 @@ class TimeseriesIndex(GenericIndex):
     scalar quantities:
 
     * **Fixed array** — ``TimeseriesIndex(name, np.array([...]))``
-      The node is a ``timeseries_constant`` that evaluates to the stored
-      array.
+      The node is a ``timeseries_placeholder`` whose value is injected by Scenario
+      at evaluation time.  The concrete array is stored in :attr:`values` (model
+      layer only).
     * **Placeholder** — ``TimeseriesIndex(name)``
       The node is a ``timeseries_placeholder`` whose value must be
       supplied via the executor state before evaluation.
@@ -440,7 +453,7 @@ class TimeseriesIndex(GenericIndex):
         elif values is not None:
             self._values = np.asarray(values)
             self.value = self._values
-            self._node = graph.timeseries_constant(self._values, name)
+            self._node = graph.timeseries_placeholder(name)
         else:
             self._values = None
             self.value = None
@@ -468,23 +481,22 @@ class TimeseriesIndex(GenericIndex):
         Setting to an array converts it to a timeseries constant.
         """
         if new_values is None:
-            if self._values is not None:
-                self._values = None
-                self.value = None
-                self.node = graph.timeseries_placeholder(self.name)
+            self._values = None
+            self.value = None
+            # The graph node remains graph.timeseries_placeholder — Scenario handles injection.
         else:
             new_values = np.asarray(new_values)
             if self._values is None or not np.array_equal(self._values, new_values):
                 self._values = new_values
                 self.value = self._values
-                self.node = graph.timeseries_constant(self._values, self.name)
+                # The graph node remains graph.timeseries_placeholder — Scenario handles injection.
 
     def __str__(self) -> str:
         """Return a string representation of the timeseries index."""
-        if isinstance(self._node, graph.timeseries_placeholder):
-            return "timeseries_idx(placeholder)"
         if self._values is not None:
             return f"timeseries_idx({self._values.tolist()!r})"
+        if isinstance(self._node, graph.timeseries_placeholder):
+            return "timeseries_idx(placeholder)"
         return f"timeseries_idx({self.value})"
 
 
@@ -517,6 +529,8 @@ class ConstTimeseriesIndex(TimeseriesIndex):
 
     def __init__(self, name: str, values: np.ndarray) -> None:
         super().__init__(name, np.asarray(values))
+        assert self._values is not None, "ConstTimeseriesIndex invariant violated: _values is None"
+        self._node = graph.timeseries_constant(self._values, name)
 
     @property  # type: ignore[override]
     def values(self) -> np.ndarray:

@@ -14,6 +14,7 @@ from .ensemble import (
 from .evaluation import Evaluation, EvaluationResult
 from .handle import AsyncEvaluationHandle, EvaluationHandle
 from .plan import EvaluationPlan, Region, RegionGuard
+from .scenario import Scenario
 
 __all__ = [
     "AsyncEvaluationHandle",
@@ -29,6 +30,7 @@ __all__ = [
     "PartitionedEnsemble",
     "Region",
     "RegionGuard",
+    "Scenario",
     "WeightedScenario",
     "sample_across",
 ]

@@ -18,7 +18,7 @@ import pytest
 
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
+from civic_digital_twins.dt_model.model.index import ConstTimeseriesIndex, Index, TimeseriesIndex
 
 # All index reduction methods and their corresponding graph operators
 INDEX_REDUCTION_METHODS = [
@@ -75,11 +75,19 @@ class TestIndexReductionMethodCreation:
 
 
 class TestTimeseriesIndexReductionExecution:
-    """Test execution of index reduction methods on TimeseriesIndex."""
+    """Test execution of index reduction methods on TimeseriesIndex.
+
+    Uses :class:`~model.index.ConstTimeseriesIndex` so the graph node is a
+    ``timeseries_constant`` and can be evaluated without state injection.
+    ``TimeseriesIndex(arr)`` now produces a ``timeseries_placeholder`` (D1a);
+    direct evaluation of its reduction nodes requires the placeholder value to
+    be present in the executor state — see :class:`TestBatchedReductionExecution`
+    for that pattern.
+    """
 
     def test_sum_evaluation(self):
         """Test sum() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
         node = ts.sum()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -90,7 +98,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_mean_evaluation(self):
         """Test mean() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([2.0, 4.0, 6.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([2.0, 4.0, 6.0]))
         node = ts.mean()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -100,7 +108,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_min_evaluation(self):
         """Test min() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([3.0, 1.0, 5.0, 2.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([3.0, 1.0, 5.0, 2.0]))
         node = ts.min()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -110,7 +118,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_max_evaluation(self):
         """Test max() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([3.0, 1.0, 5.0, 2.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([3.0, 1.0, 5.0, 2.0]))
         node = ts.max()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -120,7 +128,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_std_evaluation(self):
         """Test std() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
         node = ts.std()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -131,7 +139,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_median_evaluation(self):
         """Test median() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([1.0, 5.0, 3.0, 2.0, 4.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([1.0, 5.0, 3.0, 2.0, 4.0]))
         node = ts.median()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -141,7 +149,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_prod_evaluation(self):
         """Test prod() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0]))
         node = ts.prod()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -151,7 +159,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_any_evaluation(self):
         """Test any() over a 1-D timeseries of booleans."""
-        ts = TimeseriesIndex("ts", np.array([False, False, True, False]))
+        ts = ConstTimeseriesIndex("ts", np.array([False, False, True, False]))
         node = ts.any()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -161,7 +169,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_all_evaluation(self):
         """Test all() over a 1-D timeseries of booleans."""
-        ts = TimeseriesIndex("ts", np.array([True, True, False, True]))
+        ts = ConstTimeseriesIndex("ts", np.array([True, True, False, True]))
         node = ts.all()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -171,7 +179,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_count_nonzero_evaluation(self):
         """Test count_nonzero() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([1.0, 0.0, 3.0, 0.0, 5.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([1.0, 0.0, 3.0, 0.0, 5.0]))
         node = ts.count_nonzero()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -181,7 +189,7 @@ class TestTimeseriesIndexReductionExecution:
 
     def test_quantile_evaluation(self):
         """Test quantile() over a 1-D timeseries."""
-        ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
         node = ts.quantile(q=0.5)
         plan = linearize.forest(node)
         state = executor.State({})
@@ -433,7 +441,7 @@ class TestIndexReductionEdgeCases:
 
     def test_quantile_all_same_values(self):
         """Test quantile with all identical values."""
-        ts = TimeseriesIndex("ts", np.array([5.0, 5.0, 5.0, 5.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([5.0, 5.0, 5.0, 5.0]))
         node = ts.quantile(q=0.5)
         plan = linearize.forest(node)
         state = executor.State({})
@@ -443,7 +451,7 @@ class TestIndexReductionEdgeCases:
 
     def test_count_nonzero_all_zeros(self):
         """Test count_nonzero with all zeros."""
-        ts = TimeseriesIndex("ts", np.array([0.0, 0.0, 0.0, 0.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([0.0, 0.0, 0.0, 0.0]))
         node = ts.count_nonzero()
         plan = linearize.forest(node)
         state = executor.State({})
@@ -453,7 +461,7 @@ class TestIndexReductionEdgeCases:
 
     def test_prod_with_negative_numbers(self):
         """Test prod with negative numbers."""
-        ts = TimeseriesIndex("ts", np.array([-1.0, -2.0, -3.0]))
+        ts = ConstTimeseriesIndex("ts", np.array([-1.0, -2.0, -3.0]))
         node = ts.prod()
         plan = linearize.forest(node)
         state = executor.State({})

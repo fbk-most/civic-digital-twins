@@ -496,8 +496,8 @@ def test_build_plan_unknown_strategy_raises():
         Evaluation(model).build_plan(strategy="turbo")
 
 
-def test_evaluation_accepts_scenario_like_object():
-    """Evaluation() accepts any object with a .model attribute (Scenario duck-typing)."""
+def test_evaluation_rejects_scenario_like_object_after_duck_typing_removal():
+    """Evaluation() no longer accepts duck-typed Scenario-like objects; a TypeError is raised."""
     I_x = Index("x", 3.0)
     I_y = Index("y", I_x.node * 2.0)
     model = _make_model(I_x, I_y)
@@ -506,11 +506,11 @@ def test_evaluation_accepts_scenario_like_object():
         def __init__(self, m):
             self.model = m
 
-    ev = Evaluation(_FakeScenario(model))  # type: ignore[arg-type]
-    assert ev.model is model
+    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+        Evaluation(_FakeScenario(model))  # type: ignore[arg-type]
 
 
 def test_evaluation_rejects_object_without_model_attribute():
-    """Evaluation() raises TypeError when the argument has no valid .model attribute."""
-    with pytest.raises(TypeError, match="Model, ModelVariant, or Scenario-like"):
+    """Evaluation() raises TypeError when the argument is not a Scenario, Model, or ModelVariant."""
+    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
         Evaluation(object())  # type: ignore[arg-type]

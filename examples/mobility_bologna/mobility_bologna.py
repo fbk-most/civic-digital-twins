@@ -22,6 +22,8 @@ from matplotlib.colors import LinearSegmentedColormap
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
+    ConstIndex,
+    ConstTimeseriesIndex,
     DistributionEnsemble,
     DistributionIndex,
     Evaluation,
@@ -502,7 +504,7 @@ class EmissionsModel(Model):
             modified_euro_class_split=modified_euro_class_split,
         )
 
-        average_emissions = Index(
+        average_emissions = ConstIndex(
             "average emissions (per vehicle, per km)",
             euro_class_emission["euro_0"] * euro_class_split["euro_0"]
             + euro_class_emission["euro_1"] * euro_class_split["euro_1"]
@@ -675,7 +677,7 @@ class BolognaModel(Model):
             i_b_starting_modified_factor=i_b_starting_modified_factor,
         )
 
-        ts = TimeseriesIndex(
+        ts = ConstTimeseriesIndex(
             "time range",
             np.array(
                 [
@@ -684,8 +686,8 @@ class BolognaModel(Model):
                 ]
             ),
         )
-        ts_inflow = TimeseriesIndex("inflow", vehicle_inflow)
-        ts_starting = TimeseriesIndex("staring", vehicle_starting)
+        ts_inflow = ConstTimeseriesIndex("inflow", vehicle_inflow)
+        ts_starting = ConstTimeseriesIndex("staring", vehicle_starting)
 
         _inflow = InflowModel(
             ts_inflow=ts_inflow,
