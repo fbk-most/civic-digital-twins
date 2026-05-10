@@ -2,11 +2,15 @@
 """Tests for build_plan(strategy='regional') and execute_plan with multi-region plans."""
 
 import dataclasses
+from collections.abc import Mapping
 
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, Index
+from civic_digital_twins.dt_model import graph as _graph
+from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
+from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble, WeightedScenario
@@ -483,3 +487,159 @@ def test_regional_branch_local_abstract_index_correctness():
         result_mono[mv.outputs.throughput],
         result_reg[mv.outputs.throughput],
     )
+
+
+# ---------------------------------------------------------------------------
+# Selective execution: PositiveOnly vs AllValues
+# ---------------------------------------------------------------------------
+#
+# Scenario:
+#   Two runtime variants share a single abstract index ``x``.
+#   - "positive" branch  → PositiveOnlyModel: computes strict_sqrt(x),
+#     a user-defined function that raises ValueError for any negative input.
+#   - "negative" branch  → AllValuesModel: computes x**2, safe everywhere.
+#
+# The ensemble is deliberately correlated:
+#   - scenarios  0–49: sign="positive", x ∈ (0.1, 2.0)  (all positive)
+#   - scenarios 50–99: sign="negative", x ∈ (−2.0, −0.1)  (all negative)
+#
+# Monolithic evaluates ALL branches for ALL scenarios:
+#   strict_sqrt receives x[0..99] which includes the 50 negative values → raises.
+#
+# Regional evaluates each branch only for its matching scenarios:
+#   strict_sqrt receives x[0..49] (all positive) → succeeds.
+#   x**2       receives x[50..99] (all negative) → succeeds (squares are positive).
+
+
+def _make_sign_variant() -> tuple[CategoricalIndex, Index, ModelVariant]:
+    """Build the PositiveOnly/AllValues ModelVariant used by the selective-execution tests."""
+    sign = CategoricalIndex("sign", {"positive": 0.5, "negative": 0.5})
+    x = Index("x", None)  # abstract — values injected by the correlated ensemble
+
+    class _PositiveOnlyModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, x: Index) -> None:
+            result = Index("result", _graph.function_call("strict_sqrt", x.node))
+            super().__init__(
+                "PositiveOnly",
+                inputs=_PositiveOnlyModel.Inputs(x=x),
+                outputs=_PositiveOnlyModel.Outputs(result=result),
+            )
+
+    class _AllValuesModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            result: Index
+
+        def __init__(self, x: Index) -> None:
+            result = Index("result", x.node**2)
+            super().__init__(
+                "AllValues",
+                inputs=_AllValuesModel.Inputs(x=x),
+                outputs=_AllValuesModel.Outputs(result=result),
+            )
+
+    mv = ModelVariant(
+        "SqrtModel",
+        {"positive": _PositiveOnlyModel(x), "negative": _AllValuesModel(x)},
+        selector=sign,
+    )
+    return sign, x, mv
+
+
+class _CorrelatedEnsemble:
+    """Single-axis ensemble with hand-crafted correlated sign / x values.
+
+    Scenarios 0–49: sign="positive", x ∈ (0.1, 2.0).
+    Scenarios 50–99: sign="negative", x ∈ (−2.0, −0.1).
+    """
+
+    N_PER_BRANCH = 50
+
+    def __init__(self, sign_idx: GenericIndex, x_idx: GenericIndex, rng: np.random.Generator) -> None:
+        n = self.N_PER_BRANCH
+        self._sign_arr = np.array(["positive"] * n + ["negative"] * n, dtype=object)
+        self._x_arr = np.concatenate(
+            [
+                rng.uniform(0.1, 2.0, n),  # positive x for "positive" branch
+                rng.uniform(-2.0, -0.1, n),  # negative x for "negative" branch
+            ]
+        )
+        self._sign_idx = sign_idx
+        self._x_idx = x_idx
+        self._axis = Axis("_ensemble", ENSEMBLE)
+
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        return (self._axis,)
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        n_total = 2 * self.N_PER_BRANCH
+        return (np.full(n_total, 1.0 / n_total),)
+
+    def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
+        return {self._sign_idx: self._sign_arr, self._x_idx: self._x_arr}
+
+
+def _strict_sqrt(arr: np.ndarray) -> np.ndarray:
+    """Square root that raises ValueError for any negative input."""
+    n_neg = int(np.sum(arr < 0))
+    if n_neg > 0:
+        raise ValueError(f"strict_sqrt: received {n_neg} negative value(s) (min={arr.min():.3f})")
+    return np.sqrt(arr)
+
+
+def test_monolithic_evaluates_all_branches_strict_sqrt_raises() -> None:
+    """Monolithic execution evaluates every branch for every scenario.
+
+    The "positive" branch calls strict_sqrt(x).  In monolithic mode x
+    contains the full 100-element array (50 positive + 50 negative), so
+    strict_sqrt raises as soon as it encounters a negative value.
+    """
+    sign, x, mv = _make_sign_variant()
+    ens = _CorrelatedEnsemble(sign, x, np.random.default_rng(0))
+    functions = {"strict_sqrt": NumpyBackend.adapt(_strict_sqrt)}
+    ev = Evaluation(mv)
+    plan = ev.build_plan(strategy="monolithic")
+
+    with pytest.raises(ValueError, match="strict_sqrt.*negative"):
+        ev.execute_plan(plan, ens, functions=functions)
+
+
+def test_regional_evaluates_branch_only_for_matching_scenarios() -> None:
+    """Regional execution evaluates each branch only for its scenario subset.
+
+    The "positive" branch receives only x[0..49] (all > 0) → strict_sqrt
+    succeeds.  The "negative" branch receives only x[50..99] (all < 0) →
+    x**2 succeeds.  Every result is finite and numerically correct.
+    """
+    sign, x, mv = _make_sign_variant()
+    rng = np.random.default_rng(1)
+    ens = _CorrelatedEnsemble(sign, x, rng)
+    functions = {"strict_sqrt": NumpyBackend.adapt(_strict_sqrt)}
+    ev = Evaluation(mv)
+    plan = ev.build_plan(strategy="regional")
+
+    result = ev.execute_plan(plan, ens, functions=functions)
+    arr = result[mv.outputs.result].ravel()  # shape (100,)
+
+    assert np.all(np.isfinite(arr)), f"Expected all finite; got NaN/inf at {np.where(~np.isfinite(arr))[0]}"
+
+    n = _CorrelatedEnsemble.N_PER_BRANCH
+    x_arr = ens._x_arr
+    # positive scenarios → sqrt(x)
+    np.testing.assert_allclose(arr[:n], np.sqrt(x_arr[:n]), rtol=1e-12)
+    # negative scenarios → x**2 (positive because squaring)
+    np.testing.assert_allclose(arr[n:], x_arr[n:] ** 2, rtol=1e-12)
