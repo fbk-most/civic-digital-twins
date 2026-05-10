@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `EvaluationPlan`, `Region`, `RegionGuard` in `simulation/plan.py` — frozen
+  dataclasses encoding the evaluation structure as a topologically-ordered DAG
+  of computation regions.  `build_plan(strategy="monolithic" | "regional")`
+  on `Evaluation` builds a plan once; `execute_plan(plan, ensemble, *,
+  parameters, ...)` reuses it across multiple calls.  The `"regional"` strategy
+  partitions the graph at `variant_selector` boundaries: a shared pre-selector
+  region, per-branch guarded regions (evaluated only for matching scenarios via
+  `np.take` slice + `np.put_along_axis` scatter-back), and a merge region
+  (closing #136).
+- `Evaluation.evaluate_incremental(initial_ensemble_size, ...)` →
+  `EvaluationHandle` — builds a plan, runs the first batch, and returns a
+  handle for checkpoint-style ensemble extension without discarding prior
+  results (closing #168).
+- `EvaluationHandle` in `simulation/handle.py` — incremental handle;
+  `extend(n)` draws *n* additional scenarios from `DistributionEnsemble`
+  using a shared `rng`, executes the plan, and merges via `_merge_results`.
+  Two calls with the same seed are guaranteed to produce the same sequence as
+  one call of the combined size.
+- `AsyncEvaluationHandle(EvaluationHandle)` in `simulation/handle.py` —
+  non-blocking variant backed by `concurrent.futures.Future`; exposes
+  `poll() → (bool, EvaluationResult | None)` and `get() → EvaluationResult`;
+  `extend()` delegates to the base class once the future resolves
+  (closing #169). `Evaluation.submit_evaluate(initial_ensemble_size, ..., pool=)`
+  — submits the initial `execute_plan` call to a `concurrent.futures.Executor`
+  (defaults to a lazily-created module-level `ThreadPoolExecutor`) and returns
+  an `AsyncEvaluationHandle` immediately.
 - `CategoricalIndex` selector can be passed as a `parameters=` axis to
   `Evaluation.evaluate()` to sweep over variant outcomes deterministically
   (no ensemble required), including in combination with numeric PARAMETER axes
