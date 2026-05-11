@@ -42,10 +42,10 @@ class Scenario:
     model:
         The model (or variant) to evaluate.
     overrides:
-        Optional mapping from index to a concrete :data:`~model.index.DomainValue`.
+        Optional mapping from index to a :data:`~model.index.DomainValue`.
         Overrides shadow the index's own ``value`` when :meth:`base_substitutions`
-        is called.  A ``Distribution`` override replaces the index's distribution
-        for ensemble sampling purposes (see :meth:`effective_distribution`).
+        is called.  See the override compatibility table for which value types are
+        accepted for each index kind.
 
     Override compatibility
     ----------------------
@@ -259,9 +259,9 @@ class Scenario:
         """
         val = self._overrides.get(idx)
         if isinstance(val, str):
-            return {val: 1.0}  # type: ignore[dict-item]  # str ∉ DomainValue but accepted for categorical indexes
+            return {val: 1.0}
         if isinstance(val, dict):
-            return val  # type: ignore[return-value]
+            return val
         if isinstance(idx, CategoricalIndex):
             return idx.outcomes
         return None  # ConditionalCategoricalIndex with no override: no simple outcomes dict

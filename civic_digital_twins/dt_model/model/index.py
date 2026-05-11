@@ -46,14 +46,17 @@ class Distribution(Protocol):
         ...  # pragma: no cover
 
 
-DomainValue = float | np.ndarray | Distribution
+DomainValue = float | np.ndarray | Distribution | str | dict[str, float]
 """A concrete value assignable to an Index at scenario-evaluation time.
 
-Covers all three kinds of domain-level assignment:
+Covers all kinds of domain-level assignment:
 
 - ``float`` — a scalar constant (e.g. a parking cost).
 - ``np.ndarray`` — a timeseries or multi-dimensional array.
 - :class:`Distribution` — a probability distribution (sampled by the ensemble).
+- ``str`` — a categorical outcome pin (for :class:`CategoricalIndex` and
+  :class:`ConditionalCategoricalIndex`).
+- ``dict[str, float]`` — a probability weight map (for :class:`CategoricalIndex`).
 """
 
 
