@@ -277,57 +277,85 @@ class GenericIndex(ABC):
 
 
 class Index(GenericIndex):
-    """Class to represent an index variable."""
+    """Scalar-valued index variable.
+
+    Immutable after construction: ``name``, ``value``, and ``node`` are
+    read-only.  To vary an index value across runs, use
+    :class:`~simulation.scenario.Scenario`.
+
+    Three modes:
+
+    * **Concrete** — ``Index("cost", 8.0)``: scalar default; node is a
+      ``graph.placeholder`` filled by Scenario at evaluation time.
+    * **Placeholder** — ``Index("cost", None)``: no default; value must be
+      supplied via Scenario or ``parameters=`` before evaluation.
+    * **Formula** — ``Index("cost", formula_node)``: computed by the engine;
+      no external injection needed.
+
+    For distribution-backed indexes use :class:`DistributionIndex`.
+    """
 
     def __init__(
         self,
         name: str,
-        value: graph.Scalar | Distribution | graph.Node | None,
+        value: graph.Scalar | graph.Node | None,
     ) -> None:
-        self.name = name
+        self._name = name
 
-        # We model a distribution index as a distribution to invoke when
-        # scheduling the model and a placeholder to fill with the result
-        # of sampling from the index's distribution.
         if isinstance(value, Distribution):
-            self.value = value
-            self.node = graph.placeholder(name)
+            raise TypeError(
+                f"Index {name!r} cannot be initialised with a Distribution. "
+                f"Use DistributionIndex for distribution-backed indexes."
+            )
 
-        # We model a concrete-value index as a placeholder node whose value is
-        # injected by Scenario at evaluation time. The concrete value is stored in
-        # self.value (model layer only).
-        elif isinstance(value, graph.Scalar):
-            self.value = value
-            self.node = graph.placeholder(name)
-
-        # Otherwise, it's just a reference to an existing node (which
-        # typically is the result of defining a formula).
-        #
-        # For debuggability, let's assign the name to the node if it
-        # has not been already set by previous code.
-        elif value is not None:
+        # Formula node: reuse it directly as this index's node.
+        if isinstance(value, graph.Node):
             value.maybe_set_name(name)
-            self.value = value
-            self.node = value
+            self._value: graph.Scalar | graph.Node | None = value
+            self._node: graph.Node = value
 
-        # The last remaining case is when the value is None, in which
-        # case we just create a value-less placeholder.
+        # Concrete scalar: placeholder injected by Scenario at evaluation time.
+        elif value is not None:
+            self._value = value
+            self._node = graph.placeholder(name)
+
+        # Bare placeholder.
         else:
-            self.value = None
-            self.node = graph.placeholder(name)
+            self._value = None
+            self._node = graph.placeholder(name)
+
+    @property
+    def name(self) -> str:
+        """The human-readable name of the index."""
+        return self._name
+
+    @property
+    def value(self) -> graph.Scalar | graph.Node | None:
+        """The default scalar / formula node, or ``None`` for a bare placeholder."""
+        return self._value
 
     @property
     def node(self) -> graph.Node:
         """The underlying computation graph node."""
         return self._node
 
-    @node.setter
-    def node(self, value: graph.Node) -> None:
-        self._node = value
+    def __repr__(self) -> str:
+        """Return a string representation of the index."""
+        if self._value is None:
+            return f"idx({self._name!r})"
+        if isinstance(self._value, graph.Node):
+            return f"idx({self._name!r}, <formula>)"
+        return f"idx({self._name!r}, {self._value!r})"
 
 
 class DistributionIndex(Index):
     """Index backed by any scipy-compatible distribution.
+
+    Immutable after construction.  The underlying node is a
+    ``graph.placeholder`` (same as an abstract :class:`Index`); the ensemble
+    samples the frozen distribution and injects the result at evaluation time.
+    To replace the distribution across runs use :class:`~simulation.scenario.Scenario`
+    with a :class:`Distribution` override.
 
     Parameters
     ----------
@@ -344,7 +372,6 @@ class DistributionIndex(Index):
     --------
     >>> from scipy import stats
     >>> idx = DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0})
-    >>> idx.params |= {"loc": 400.0}   # partial update — scipy re-validates
     """
 
     def __init__(
@@ -355,7 +382,8 @@ class DistributionIndex(Index):
     ) -> None:
         self._distribution = distribution
         self._params = dict(params)
-        super().__init__(name, cast(Distribution, distribution(**params)))
+        self._frozen: Distribution = cast(Distribution, distribution(**params))
+        super().__init__(name, None)  # placeholder; frozen dist stored separately
 
     @property
     def distribution(self) -> Callable[..., Any]:
@@ -367,193 +395,156 @@ class DistributionIndex(Index):
         """Copy of the parameters used to create the frozen distribution."""
         return dict(self._params)
 
-    @params.setter
-    def params(self, new_params: dict[str, Any]) -> None:
-        """Re-freeze the distribution with new params.
+    @property
+    def value(self) -> Distribution:  # type: ignore[override]
+        """The frozen distribution instance."""
+        return self._frozen
 
-        scipy validates the parameter values; invalid params raise at
-        assignment time.  Supports full replacement or partial update via
-        the dict-merge operator::
+    def sample(self, rng: np.random.Generator | None = None) -> float:
+        """Draw one sample from the frozen distribution.
 
-            idx.params = {"loc": 200.0, "scale": 100.0}  # full replacement
-            idx.params |= {"loc": 200.0}                 # partial update (Python 3.9+)
+        Parameters
+        ----------
+        rng:
+            Optional :class:`numpy.random.Generator` for reproducibility.
+            When ``None``, the global NumPy random state is used.
+
+        Returns
+        -------
+        float
+            One sample from the distribution.
         """
-        self._params = dict(new_params)
-        self.value = cast(Distribution, self._distribution(**self._params))
+        return float(self._frozen.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the distribution index."""
+        dist_name = getattr(self._distribution, "__name__", repr(self._distribution))
+        return f"dist_idx({self._name!r}, {dist_name}, {self._params!r})"
 
 
 class ConstIndex(Index):
-    """Class to represent an index as a constant."""
+    """Index baked into the computation graph as a ``graph.constant``.
 
-    def __init__(
-        self,
-        name: str,
-        v: float,
-    ) -> None:
-        super().__init__(name, v)
-        self._v = v
-        self.node = graph.constant(v, name)
-
-    @property
-    def v(self):
-        """Value of the constant index."""
-        return self._v
-
-    @v.setter
-    def v(self, new_v):
-        """Set the value of the constant index."""
-        if self._v != new_v:
-            self._v = new_v
-            self.value = new_v
-            self.node = graph.constant(new_v, self.name)
-
-    def __str__(self):
-        """Return a string representation of the constant index."""
-        return f"const_idx({self.v})"
-
-
-class TimeseriesIndex(GenericIndex):
-    """Class to represent a time-indexed quantity.
-
-    ``TimeseriesIndex`` is a *sibling* of :class:`Index` — both extend
-    :class:`GenericIndex` directly.  It is **not** a subclass of
-    :class:`Index`, because the two carry fundamentally different domain
-    semantics: ``Index`` is scalar-valued; ``TimeseriesIndex`` carries a
-    DOMAIN (time) axis.
-
-    A TimeseriesIndex holds a deterministic sequence of values indexed by
-    time step.  There are three modes, mirroring what ``Index`` does for
-    scalar quantities:
-
-    * **Fixed array** — ``TimeseriesIndex(name, np.array([...]))``
-      The node is a ``timeseries_placeholder`` whose value is injected by Scenario
-      at evaluation time.  The concrete array is stored in :attr:`values` (model
-      layer only).
-    * **Placeholder** — ``TimeseriesIndex(name)``
-      The node is a ``timeseries_placeholder`` whose value must be
-      supplied via the executor state before evaluation.
-    * **Formula** — ``TimeseriesIndex(name, formula_node)``
-      The node is an arbitrary computation graph node whose result is
-      time-indexed (analogous to passing a ``graph.Node`` to ``Index``).
-      The ``values`` attribute is ``None`` in this mode.
+    Immutable after construction; the node is permanently fixed.  Use this
+    when the value is a structural constant (e.g. a unit conversion factor),
+    not a scenario parameter.
     """
 
     def __init__(
         self,
         name: str,
-        values: np.ndarray | graph.Node | None = None,
+        value: float,
     ) -> None:
-        self.name = name
-        if isinstance(values, graph.Node):
-            # Formula mode — same dispatch as Index for graph nodes.
-            values.maybe_set_name(name)
-            self._values: np.ndarray | None = None
-            self.value: np.ndarray | graph.Node | None = values
-            self._node: graph.Node = values
-        elif values is not None:
-            self._values = np.asarray(values)
-            self.value = self._values
+        # Bypass Index.__init__: it would create a placeholder node first.
+        self._name = name
+        self._value: graph.Scalar | graph.Node | None = value
+        self._node: graph.Node = graph.constant(value, name)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the constant index."""
+        return f"const_idx({self._value!r})"
+
+
+class TimeseriesIndex(GenericIndex):
+    """Time-indexed quantity.
+
+    Sibling of :class:`Index` (both extend :class:`GenericIndex` directly);
+    not a subclass — ``Index`` is scalar-valued, ``TimeseriesIndex`` carries
+    a DOMAIN (time) axis.  Immutable after construction.
+
+    Three modes mirror :class:`Index`:
+
+    * **Fixed array** — ``TimeseriesIndex(name, np.array([...]))``
+      Node is a ``timeseries_placeholder``; the array is the default,
+      injected by :class:`~simulation.scenario.Scenario` at evaluation time.
+    * **Placeholder** — ``TimeseriesIndex(name)``
+      Node is a ``timeseries_placeholder``; value must be supplied via
+      Scenario or ``parameters=`` before evaluation.
+    * **Formula** — ``TimeseriesIndex(name, formula_node)``
+      Node is the formula node directly; value is computed by the engine.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        value: np.ndarray | graph.Node | None = None,
+    ) -> None:
+        self._name = name
+
+        # Formula node: reuse it directly as this index's node.
+        if isinstance(value, graph.Node):
+            value.maybe_set_name(name)
+            self._value: np.ndarray | graph.Node | None = value
+            self._node: graph.Node = value
+
+        # Concrete array: placeholder injected by Scenario at evaluation time.
+        elif value is not None:
+            arr = np.asarray(value)
+            self._value = arr
             self._node = graph.timeseries_placeholder(name)
+
+        # Bare placeholder.
         else:
-            self._values = None
-            self.value = None
+            self._value = None
             self._node = graph.timeseries_placeholder(name)
+
+    @property
+    def name(self) -> str:
+        """The human-readable name of the index."""
+        return self._name
+
+    @property
+    def value(self) -> np.ndarray | graph.Node | None:
+        """The default array / formula node, or ``None`` for a bare placeholder."""
+        return self._value
 
     @property
     def node(self) -> graph.Node:
         """The underlying computation graph node."""
         return self._node
 
-    @node.setter
-    def node(self, value: graph.Node) -> None:
-        self._node = value
-
-    @property
-    def values(self) -> np.ndarray | None:
-        """The timeseries values, or None when this index is a placeholder."""
-        return self._values
-
-    @values.setter
-    def values(self, new_values: np.ndarray | None) -> None:
-        """Set the timeseries values and refresh the graph node.
-
-        Setting to None converts the index to a timeseries placeholder.
-        Setting to an array converts it to a timeseries constant.
-        """
-        if new_values is None:
-            self._values = None
-            self.value = None
-            # The graph node remains graph.timeseries_placeholder — Scenario handles injection.
-        else:
-            new_values = np.asarray(new_values)
-            if self._values is None or not np.array_equal(self._values, new_values):
-                self._values = new_values
-                self.value = self._values
-                # The graph node remains graph.timeseries_placeholder — Scenario handles injection.
-
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         """Return a string representation of the timeseries index."""
-        if self._values is not None:
-            return f"timeseries_idx({self._values.tolist()!r})"
-        if isinstance(self._node, graph.timeseries_placeholder):
+        if self._value is None:
             return "timeseries_idx(placeholder)"
-        return f"timeseries_idx({self.value})"
+        if isinstance(self._value, np.ndarray):
+            return f"timeseries_idx({self._value.tolist()!r})"
+        return "timeseries_idx(<formula>)"
 
 
 class ConstTimeseriesIndex(TimeseriesIndex):
-    """TimeseriesIndex that always holds a fixed array (timeseries_constant node).
+    """TimeseriesIndex baked into the graph as a ``timeseries_constant``.
 
-    ``ConstTimeseriesIndex`` is the timeseries analogue of
-    :class:`ConstIndex` for scalar quantities.  The backing graph node is
-    always a ``timeseries_constant``; the :attr:`values` setter updates the
-    stored array and refreshes the node in-place, preserving all formula
-    nodes that reference the *index object* via :attr:`~GenericIndex.node`.
+    Timeseries analogue of :class:`ConstIndex`.  Immutable after
+    construction; the node is permanently fixed.
 
     Parameters
     ----------
     name:
         Human-readable name for this index.
-    values:
-        Fixed array of time-step values.  Stored via
-        :func:`numpy.asarray`; used to create a ``timeseries_constant``
-        graph node.
+    value:
+        Fixed array of time-step values.  Stored via :func:`numpy.asarray`
+        and used to create a ``timeseries_constant`` graph node.
 
     Examples
     --------
     >>> import numpy as np
     >>> ts = ConstTimeseriesIndex("demand", np.array([10.0, 20.0, 30.0]))
-    >>> ts.values
+    >>> ts.value
     array([10., 20., 30.])
-    >>> ts.values = np.array([15.0, 25.0, 35.0])  # refreshes the graph node
     """
 
-    def __init__(self, name: str, values: np.ndarray) -> None:
-        super().__init__(name, np.asarray(values))
-        assert self._values is not None, "ConstTimeseriesIndex invariant violated: _values is None"
-        self._node = graph.timeseries_constant(self._values, name)
+    def __init__(self, name: str, value: np.ndarray) -> None:
+        # Bypass TimeseriesIndex.__init__: it would create a timeseries_placeholder first.
+        self._name = name
+        arr = np.asarray(value)
+        self._value: np.ndarray | graph.Node | None = arr
+        self._node: graph.Node = graph.timeseries_constant(arr, name)
 
-    @property  # type: ignore[override]
-    def values(self) -> np.ndarray:
-        """The timeseries values (always a concrete array, never ``None``)."""
-        assert self._values is not None, "ConstTimeseriesIndex invariant violated: _values is None"
-        return self._values
-
-    @values.setter
-    def values(self, new_values: np.ndarray) -> None:  # type: ignore[override]
-        """Update the timeseries values and refresh the graph node.
-
-        Unlike :class:`TimeseriesIndex`, setting ``None`` is not permitted;
-        ``ConstTimeseriesIndex`` always remains a concrete timeseries constant.
-        """
-        new_values = np.asarray(new_values)
-        if self._values is None or not np.array_equal(self._values, new_values):
-            self._values = new_values
-            self.value = self._values
-            self.node = graph.timeseries_constant(self._values, self.name)
-
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         """Return a string representation of the constant timeseries index."""
-        return f"const_timeseries_idx({self._values.tolist()!r})"  # type: ignore[union-attr]
+        assert isinstance(self._value, np.ndarray)
+        return f"const_timeseries_idx({self._value.tolist()!r})"
 
 
 class CategoricalIndex(Index):
@@ -655,7 +646,7 @@ class ConditionalCategoricalIndex(Index):
             parents=[cv_season],
             support=["good", "unsettled", "bad"],
             factory=lambda season: {
-                "good":     0.6 if season == "summer" else 0.2,
+                "good":      0.6 if season == "summer" else 0.2,
                 "unsettled": 0.3 if season == "summer" else 0.3,
                 "bad":       0.1 if season == "summer" else 0.5,
             },
@@ -754,6 +745,29 @@ class ConditionalCategoricalIndex(Index):
             )
         return outcomes
 
+    def sample_for(self, rng: np.random.Generator | None = None, **parent_values: str) -> str:
+        """Draw one outcome key for a given parent configuration.
+
+        Parameters
+        ----------
+        rng:
+            Optional :class:`numpy.random.Generator` for reproducibility.
+            When ``None``, the global NumPy random state is used.
+        **parent_values:
+            Keyword arguments keyed by parent :attr:`~Index.name`.
+
+        Returns
+        -------
+        str
+            One of the keys from :attr:`support`.
+        """
+        outcomes = self.outcomes_for(**parent_values)
+        keys = list(outcomes.keys())
+        probs = [outcomes[k] for k in keys]
+        if rng is not None:
+            return rng.choice(keys, p=probs)  # type: ignore[return-value]
+        return np.random.choice(keys, p=probs)  # type: ignore[return-value]
+
     def __repr__(self) -> str:
         """Return a string representation of the conditional categorical index."""
         return (
@@ -844,6 +858,25 @@ class ConditionalDistributionIndex(Index):
             A frozen scipy-compatible distribution.
         """
         return cast(Distribution, self._factory(**parent_values))
+
+    def sample_for(self, rng: np.random.Generator | None = None, **parent_values: object) -> float:
+        """Draw one sample for a given parent configuration.
+
+        Parameters
+        ----------
+        rng:
+            Optional :class:`numpy.random.Generator` for reproducibility.
+            When ``None``, the global NumPy random state is used.
+        **parent_values:
+            Keyword arguments keyed by parent :attr:`~Index.name`.
+
+        Returns
+        -------
+        float
+            One sample from the conditional distribution.
+        """
+        dist = self.distribution_for(**parent_values)
+        return float(dist.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
 
     def __repr__(self) -> str:
         """Return a string representation of the conditional distribution index."""

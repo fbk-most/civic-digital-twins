@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
+from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import InputsContractWarning, IOProxy, Model, ModelContractWarning
 
 c1: Distribution = stats.norm(loc=2.0, scale=1.0)  # type: ignore[assignment]
@@ -47,9 +47,9 @@ def test_model_abstract_indexes_includes_none_value():
 
 
 def test_model_abstract_indexes_includes_distribution_value():
-    """abstract_indexes() includes distribution-backed indexes."""
+    """abstract_indexes() includes DistributionIndex instances."""
     a = Index("a", 1.0)
-    d = Index("d", c1)
+    d = DistributionIndex("d", stats.norm, {"loc": 2.0, "scale": 1.0})
     m = Model("test", [a, d])
     assert m.abstract_indexes() == [d]
     assert not m.is_instantiated()

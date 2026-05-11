@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import GenericIndex, Index
+from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -56,13 +56,13 @@ def test_concrete_overridden_with_concrete():
 
 
 # ---------------------------------------------------------------------------
-# Case 3 — abstract index, no override, sampled by DistributionEnsemble
+# Case 3 — distribution-backed index, no override, sampled by DistributionEnsemble
 # ---------------------------------------------------------------------------
 
 
 def test_abstract_no_override():
-    """Index('x', norm(0,1)) with DistributionEnsemble(size=100) yields 100 float samples."""
-    x = Index("x", stats.norm(0, 1))
+    """DistributionIndex('x', norm(0,1)) with DistributionEnsemble(size=100) yields 100 float samples."""
+    x = DistributionIndex("x", stats.norm, {"loc": 0, "scale": 1})
     result = Index("result", x.node * 1.0)
     model = _make_model(x, result)
     scenario = Scenario(model)
@@ -72,19 +72,18 @@ def test_abstract_no_override():
 
     arr = ev[result]
     assert arr.shape == (100,), f"Expected shape (100,), got {arr.shape}"
-    # All samples should be finite floats, not the distribution object
     assert arr.dtype.kind == "f"
     assert np.all(np.isfinite(arr))
 
 
 # ---------------------------------------------------------------------------
-# Case 4 — abstract index overridden with a concrete value
+# Case 4 — abstract placeholder index overridden with a concrete value
 # ---------------------------------------------------------------------------
 
 
 def test_abstract_overridden_with_concrete():
-    """Concrete override 7.0 silences the distribution; no ensemble sampling needed."""
-    x = Index("x", stats.norm(0, 1))
+    """Concrete override 7.0 on a placeholder Index; no ensemble sampling needed."""
+    x = Index("x", None)  # bare placeholder — abstract until a value is supplied
     result = Index("result", x.node * 1.0)
     model = _make_model(x, result)
     scenario = Scenario(model, overrides={x: 7.0})
@@ -92,10 +91,8 @@ def test_abstract_overridden_with_concrete():
     # scenario.abstract_indexes() must be empty — x is now concrete.
     assert scenario.abstract_indexes() == [], f"Expected no abstract indexes, got {scenario.abstract_indexes()}"
 
-    # DistributionEnsemble should not raise (it just has nothing to sample).
+    # DistributionEnsemble has nothing to sample.
     ens = DistributionEnsemble(scenario, size=10, rng=np.random.default_rng(0))
-
-    # assignments() returns an empty dict because there's nothing to sample.
     assert dict(ens.assignments()) == {}
 
     # Evaluate without an ensemble — x is concrete via the scenario override.
@@ -104,13 +101,13 @@ def test_abstract_overridden_with_concrete():
 
 
 # ---------------------------------------------------------------------------
-# Case 5 — abstract index overridden with a different distribution
+# Case 5 — distribution-backed index overridden with a different distribution
 # ---------------------------------------------------------------------------
 
 
 def test_abstract_overridden_with_different_distribution():
-    """Override distribution (norm(100, 0.001)) is used for sampling, not model's norm(0,1)."""
-    x = Index("x", stats.norm(0, 1))
+    """Override distribution (norm(100, 0.001)) is used for sampling, not the model's norm(0,1)."""
+    x = DistributionIndex("x", stats.norm, {"loc": 0, "scale": 1})
     result = Index("result", x.node * 1.0)
     model = _make_model(x, result)
 
@@ -133,30 +130,21 @@ def test_abstract_overridden_with_different_distribution():
 
 
 # ---------------------------------------------------------------------------
-# Case 6 — concrete index promoted to abstract by a Distribution override
+# Case 6 — type-mismatch overrides rejected with TypeError
 # ---------------------------------------------------------------------------
 
 
-def test_concrete_promoted_to_abstract():
-    """Concrete Index('x', 5.0) promoted to abstract by a Distribution override in scenario."""
+def test_scalar_index_rejects_distribution_override():
+    """Overriding a scalar Index with a Distribution raises TypeError."""
     x = Index("x", 5.0)
-    result = Index("result", x.node * 1.0)
-    model = _make_model(x, result)
+    model = _make_model(x)
+    with pytest.raises(TypeError, match="distribution"):
+        Scenario(model, overrides={x: stats.norm(50, 1)})
 
-    promo_dist = stats.norm(50, 0.001)
-    scenario = Scenario(model, overrides={x: promo_dist})
 
-    # x must appear as abstract in the scenario even though the model treats it as concrete.
-    assert x in scenario.abstract_indexes(), (
-        "x should be scenario-abstract after being promoted by a Distribution override"
-    )
-
-    ens = DistributionEnsemble(scenario, size=200, rng=np.random.default_rng(0))
-    ev = Evaluation(scenario).evaluate(ensemble=ens)
-
-    arr = ev[result]
-    assert arr.shape == (200,)
-    # Mean should be close to 50 (the promoted distribution centre), not 5.
-    assert np.mean(arr) == pytest.approx(50.0, abs=0.1), (
-        f"Mean {np.mean(arr)} is not close to 50 — concrete value 5.0 was used instead of the promoted distribution"
-    )
+def test_distribution_index_rejects_scalar_override():
+    """Overriding a DistributionIndex with a scalar raises TypeError."""
+    x = DistributionIndex("x", stats.norm, {"loc": 0, "scale": 1})
+    model = _make_model(x)
+    with pytest.raises(TypeError, match="distribution-backed"):
+        Scenario(model, overrides={x: 7.0})

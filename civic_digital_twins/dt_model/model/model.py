@@ -8,7 +8,7 @@ import warnings
 from collections.abc import Iterator
 from typing import Any
 
-from .index import Distribution, GenericIndex, Index, TimeseriesIndex
+from .index import DistributionIndex, GenericIndex, Index, TimeseriesIndex
 
 
 class ModelContractWarning(UserWarning):
@@ -659,7 +659,7 @@ class Model:
         result = []
         for index in self.indexes:
             if isinstance(index, Index):
-                if index.value is None or isinstance(index.value, Distribution):
+                if index.value is None or isinstance(index, DistributionIndex):
                     result.append(index)
             elif isinstance(index, TimeseriesIndex):
                 if index.value is None:

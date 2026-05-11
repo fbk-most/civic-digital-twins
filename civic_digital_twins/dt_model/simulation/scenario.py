@@ -7,9 +7,13 @@ import numpy as np
 
 from ..engine.frontend import graph
 from ..model.index import (
+    CategoricalIndex,
+    ConditionalCategoricalIndex,
+    ConditionalDistributionIndex,
     ConstIndex,
     ConstTimeseriesIndex,
     Distribution,
+    DistributionIndex,
     DomainValue,
     GenericIndex,
     Index,
@@ -39,10 +43,9 @@ class Scenario:
         The model (or variant) to evaluate.
     overrides:
         Optional mapping from index to a concrete :data:`~model.index.DomainValue`.
-        Overrides shadow the model's own ``index.value`` / ``index.values``
-        when :meth:`base_substitutions` is called.  A ``Distribution`` override
-        replaces the index's distribution for ensemble sampling purposes (see
-        :meth:`effective_distribution`).
+        Overrides shadow the index's own ``value`` when :meth:`base_substitutions`
+        is called.  A ``Distribution`` override replaces the index's distribution
+        for ensemble sampling purposes (see :meth:`effective_distribution`).
 
     Examples
     --------
@@ -63,29 +66,48 @@ class Scenario:
         self._model = model
         self._overrides: dict[GenericIndex, DomainValue] = dict(overrides or {})
         for idx, val in self._overrides.items():
+            # Structural constants cannot be overridden.
             if isinstance(idx, (ConstIndex, ConstTimeseriesIndex)):
                 raise TypeError(
                     f"Index {idx.name!r} is a structural constant and cannot be overridden in a Scenario. "
                     f"Use Index / TimeseriesIndex for values that vary between scenarios."
                 )
-            if isinstance(val, Distribution):
-                if isinstance(idx, TimeseriesIndex):
-                    raise TypeError(
-                        f"TimeseriesIndex {idx.name!r} cannot be overridden with a Distribution; "
-                        f"only scalar Index types support Distribution overrides."
-                    )
-                continue
-            if isinstance(idx, Index):
-                if isinstance(val, np.ndarray) and val.ndim > 0:
-                    raise TypeError(
-                        f"Override for scalar Index {idx.name!r} must be a scalar; got ndarray with shape {val.shape}."
-                    )
-            elif isinstance(idx, TimeseriesIndex):
+
+            # TimeseriesIndex: only 1-D ndarray override allowed.
+            if isinstance(idx, TimeseriesIndex):
                 if not isinstance(val, np.ndarray) or val.ndim != 1:
                     shape_info = f" with shape {val.shape}" if isinstance(val, np.ndarray) else ""
                     raise TypeError(
                         f"Override for TimeseriesIndex {idx.name!r} must be a 1-D ndarray; "
                         f"got {type(val).__name__!r}{shape_info}."
+                    )
+                continue
+
+            # Distribution-backed indexes: only Distribution override allowed.
+            if isinstance(idx, (DistributionIndex, ConditionalDistributionIndex)):
+                if not isinstance(val, Distribution):
+                    raise TypeError(
+                        f"Index {idx.name!r} is distribution-backed; override must be a Distribution, "
+                        f"not {type(val).__name__!r}."
+                    )
+                continue
+
+            # Categorical indexes: value overrides are not supported.
+            if isinstance(idx, (CategoricalIndex, ConditionalCategoricalIndex)):
+                raise TypeError(
+                    f"CategoricalIndex {idx.name!r} does not support value overrides in Scenario."
+                )
+
+            # Plain scalar Index: only scalar override allowed (no Distribution, no array).
+            if isinstance(idx, Index):
+                if isinstance(val, Distribution):
+                    raise TypeError(
+                        f"Scalar Index {idx.name!r} cannot be overridden with a Distribution; "
+                        f"use DistributionIndex for distribution-backed indexes."
+                    )
+                if isinstance(val, np.ndarray) and val.ndim > 0:
+                    raise TypeError(
+                        f"Override for scalar Index {idx.name!r} must be a scalar; got ndarray with shape {val.shape}."
                     )
 
     @property
@@ -114,7 +136,7 @@ class Scenario:
         val = self._overrides.get(idx)
         if val is not None:
             return val if isinstance(val, Distribution) else None
-        if isinstance(idx, Index) and isinstance(idx.value, Distribution):
+        if isinstance(idx, DistributionIndex):
             return idx.value
         return None
 
@@ -123,13 +145,10 @@ class Scenario:
 
         An index is scenario-abstract if the ensemble must sample it:
 
-        * A model-abstract index (Distribution-backed) that is **not** concretely
-          overridden by this scenario — ``effective_distribution`` returns the
-          distribution to sample from.
-        * A model-abstract index overridden with a **different** Distribution —
-          ``effective_distribution`` returns the override distribution.
-        * A model-**concrete** index promoted to abstract by a Distribution override
-          in this scenario — newly requires ensemble sampling.
+        * A model-abstract index (``None``-valued or distribution-backed) that
+          is **not** concretely overridden by this scenario.
+        * A :class:`~model.index.DistributionIndex` overridden with a **different**
+          Distribution — ``effective_distribution`` returns the override distribution.
 
         Indexes whose effective value is a concrete scalar/array (either because the
         model defines them that way, or because the scenario overrides them with a
@@ -141,21 +160,13 @@ class Scenario:
             Indexes that need to be sampled by an ensemble.
         """
         result: list[GenericIndex] = []
-        seen: set[GenericIndex] = set()
 
-        # Model-abstract indexes that remain abstract (not concretely overridden).
         for idx in self._model.abstract_indexes():
             override = self._overrides.get(idx)
             if override is not None and not isinstance(override, Distribution):
                 # Concretely overridden — handled by base_substitutions; skip.
                 continue
             result.append(idx)
-            seen.add(idx)
-
-        # Model-concrete indexes promoted to abstract by a Distribution override.
-        for idx, val in self._overrides.items():
-            if idx not in seen and isinstance(val, Distribution):
-                result.append(idx)
 
         return result
 
