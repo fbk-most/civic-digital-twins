@@ -244,7 +244,7 @@ def test_abstract_indexes_delegates_to_active_variant():
     mv = ModelVariant("Transport", variants, selector="bike")
     abstract = mv.abstract_indexes()
     # cap_placeholder has value=None, so it is abstract.
-    assert cap_placeholder in abstract
+    assert any(idx is cap_placeholder for idx in abstract)
 
 
 def test_is_instantiated_delegates_to_active_variant():

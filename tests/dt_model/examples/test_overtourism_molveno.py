@@ -508,7 +508,7 @@ def test_root_indexes_has_no_duplicates():
 
 def test_beach_rotation_factor_is_abstract():
     """i_xo_tourists_beach is distribution-backed and therefore abstract."""
-    assert model.beach.inputs.i_xo_tourists_beach in model.abstract_indexes()
+    assert any(idx is model.beach.inputs.i_xo_tourists_beach for idx in model.abstract_indexes())
 
 
 # ---------------------------------------------------------------------------
