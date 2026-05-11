@@ -53,12 +53,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backend=NumpyBackend` (default, currently the only supported backend).
   `Functor`, `NumpyBackend`, and `LambdaAdapter` are re-exported from
   `civic_digital_twins.dt_model` (closing #162).
+- `ConstTimeseriesIndex(name, array)` — companion to `ConstIndex`: a structural
+  constant backed by a `timeseries_constant` graph node whose values are fixed at
+  model-construction time and cannot be overridden in a `Scenario`.  Exported from
+  `civic_digital_twins.dt_model`.
+- `Scenario(model, overrides={idx: value})` in `simulation/scenario.py` — the
+  canonical what-if wrapper around a `Model` or `ModelVariant`.  Accepted override
+  types per index kind: `float` for `Index`; `np.ndarray` for `TimeseriesIndex`;
+  `Distribution` for `DistributionIndex`; `str` (concrete pin) or `dict[str, float]`
+  (new probability weights, subset of support) for `CategoricalIndex`; `str` only
+  for `ConditionalCategoricalIndex`.  `ConstIndex`, `ConstTimeseriesIndex`, and
+  `ConditionalDistributionIndex` do not accept overrides.
+  `Scenario.abstract_indexes()` returns indexes that still require ensemble sampling.
+  `Scenario.base_substitutions()` returns concrete values ready for engine injection.
+  `Scenario.effective_distribution(idx)` returns the active distribution (override if
+  present, else `idx.value`).
+  `Scenario.effective_outcomes(idx)` returns the active outcome-probability map for
+  categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
+  for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
+
+### Changed
+
+- **Breaking: `TimeseriesIndex` is no longer a subclass of `Index`.**  Both are now
+  direct subclasses of `GenericIndex`.  Code that relied on
+  `isinstance(idx, Index)` matching timeseries indexes must be updated to also
+  check `isinstance(idx, TimeseriesIndex)`.
+- **Breaking: `Index(scalar)` and `TimeseriesIndex(array)` now produce placeholder
+  graph nodes** instead of constant nodes.  The default value is stored on the index
+  object (`Index.value`, `TimeseriesIndex.values`) and injected at evaluation time
+  by the base `Scenario`.  Use `ConstIndex(v)` / `ConstTimeseriesIndex(array)` to
+  retain constant-node semantics for values that must never be overridden.
+- **Breaking: Assigning a `Distribution` directly to `Index` now raises `TypeError`.** 
+  Use `DistributionIndex` instead.
 
 ### Deprecated
 
 - `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
   emits a `DeprecationWarning` on construction and will be removed in a future
   release (closing #162).
+- `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
+  `Scenario(model)` instead.  These constructors now auto-wrap the model in a
+  base `Scenario` and emit `DeprecationWarning`.  The canonical chain is
+  `Model → Scenario → {DistributionEnsemble | CrossProductEnsemble | PartitionedEnsemble} + Evaluation`.
+- Mutable index setters `ConstIndex.v`, `ConstTimeseriesIndex.values`,
+  `TimeseriesIndex.values`, and `DistributionIndex.params` — vary index values
+  via `Scenario(model, overrides={idx: new_value})` instead.  All setters emit
+  `DeprecationWarning` and will be removed in a future release.
 
 ## [0.9.0] - 2026-05-02
 
