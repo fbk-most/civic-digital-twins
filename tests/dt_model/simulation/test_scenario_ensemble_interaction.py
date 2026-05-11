@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, ConditionalCategoricalIndex, ConditionalDistributionIndex, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -115,7 +115,7 @@ def test_abstract_overridden_with_different_distribution():
     scenario = Scenario(model, overrides={x: override_dist})
 
     # x must still be abstract (but with the override distribution).
-    assert x in scenario.abstract_indexes()
+    assert any(idx is x for idx in scenario.abstract_indexes())
     assert scenario.effective_distribution(x) is override_dist
 
     ens = DistributionEnsemble(scenario, size=200, rng=np.random.default_rng(0))
@@ -147,4 +147,143 @@ def test_distribution_index_rejects_scalar_override():
     x = DistributionIndex("x", stats.norm, {"loc": 0, "scale": 1})
     model = _make_model(x)
     with pytest.raises(TypeError, match="distribution-backed"):
-        Scenario(model, overrides={x: 7.0})
+        Scenario(model, overrides={x: 7.0})  # type: ignore[dict-item]
+
+
+# ---------------------------------------------------------------------------
+# Categorical index overrides — support must be preserved
+# ---------------------------------------------------------------------------
+
+
+def test_categorical_concrete_pin():
+    """CategoricalIndex overridden with a valid str becomes concrete."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    scenario = Scenario(model, overrides={mode: "electric"})  # type: ignore[dict-item]
+
+    # Use identity comparison: GenericIndex.__eq__ returns a graph node, not bool.
+    assert not any(idx is mode for idx in scenario.abstract_indexes())
+
+
+def test_categorical_dict_override_full_support():
+    """CategoricalIndex overridden with a full-support dict stays abstract with new weights."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    scenario = Scenario(model, overrides={mode: {"electric": 0.9, "diesel": 0.1}})  # type: ignore[dict-item]
+
+    assert any(idx is mode for idx in scenario.abstract_indexes())
+    assert scenario.effective_outcomes(mode) == {"electric": 0.9, "diesel": 0.1}
+
+
+def test_categorical_dict_override_subset():
+    """CategoricalIndex overridden with a strict subset of the support restricts the domain."""
+    mode = CategoricalIndex("mode", {"electric": 0.5, "diesel": 0.3, "hybrid": 0.2})
+    model = _make_model(mode)
+    scenario = Scenario(model, overrides={mode: {"electric": 0.7, "hybrid": 0.3}})  # type: ignore[dict-item]
+
+    assert any(idx is mode for idx in scenario.abstract_indexes())
+    assert scenario.effective_outcomes(mode) == {"electric": 0.7, "hybrid": 0.3}
+
+
+def test_categorical_effective_outcomes_fallback():
+    """effective_outcomes() falls back to idx.outcomes when no override is set."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    scenario = Scenario(model)
+
+    assert scenario.effective_outcomes(mode) == {"electric": 0.6, "diesel": 0.4}
+
+
+def test_categorical_effective_outcomes_str_pin_singleton():
+    """effective_outcomes() returns a degenerate singleton when the index is str-pinned."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    scenario = Scenario(model, overrides={mode: "electric"})  # type: ignore[dict-item]
+
+    assert scenario.effective_outcomes(mode) == {"electric": 1.0}
+
+
+def test_categorical_rejects_extra_keys_dict():
+    """Dict override with keys outside the support raises ValueError."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    with pytest.raises(ValueError, match="outside its support"):
+        Scenario(model, overrides={mode: {"electric": 0.5, "hybrid": 0.5}})  # type: ignore[dict-item]
+
+
+def test_categorical_rejects_out_of_support_str():
+    """Str override outside support raises ValueError."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    with pytest.raises(ValueError, match="not in the support"):
+        Scenario(model, overrides={mode: "hybrid"})  # type: ignore[dict-item]
+
+
+def test_categorical_rejects_wrong_type():
+    """Non-str, non-dict override for CategoricalIndex raises TypeError."""
+    mode = CategoricalIndex("mode", {"electric": 0.6, "diesel": 0.4})
+    model = _make_model(mode)
+    with pytest.raises(TypeError, match="str.*dict"):
+        Scenario(model, overrides={mode: 42.0})  # type: ignore[dict-item]
+
+
+def test_conditional_categorical_concrete_pin():
+    """ConditionalCategoricalIndex overridden with a valid str becomes concrete."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    weather = ConditionalCategoricalIndex(
+        "weather",
+        parents=[season],
+        support=["good", "bad"],
+        factory=lambda season: {"good": 0.8, "bad": 0.2} if season == "summer" else {"good": 0.3, "bad": 0.7},
+    )
+    model = _make_model(season, weather)
+    scenario = Scenario(model, overrides={weather: "good"})  # type: ignore[dict-item]
+
+    # Use identity comparison: GenericIndex.__eq__ returns a graph node, not bool.
+    assert not any(idx is weather for idx in scenario.abstract_indexes())
+    # effective_outcomes returns the singleton — consistent with CategoricalIndex, str.
+    assert scenario.effective_outcomes(weather) == {"good": 1.0}
+
+
+def test_conditional_categorical_effective_outcomes_no_override():
+    """effective_outcomes() returns None for ConditionalCategoricalIndex with no override."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    weather = ConditionalCategoricalIndex(
+        "weather",
+        parents=[season],
+        support=["good", "bad"],
+        factory=lambda season: {"good": 0.8, "bad": 0.2} if season == "summer" else {"good": 0.3, "bad": 0.7},
+    )
+    model = _make_model(season, weather)
+    scenario = Scenario(model)
+
+    assert scenario.effective_outcomes(weather) is None
+
+
+def test_conditional_categorical_rejects_dict_override():
+    """ConditionalCategoricalIndex does not accept dict overrides (only str)."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    weather = ConditionalCategoricalIndex(
+        "weather",
+        parents=[season],
+        support=["good", "bad"],
+        factory=lambda season: {"good": 0.8, "bad": 0.2} if season == "summer" else {"good": 0.3, "bad": 0.7},
+    )
+    model = _make_model(season, weather)
+    with pytest.raises(TypeError, match="str"):
+        Scenario(model, overrides={weather: {"good": 0.5, "bad": 0.5}})  # type: ignore[dict-item]
+
+
+def test_conditional_distribution_index_rejects_all_overrides():
+    """ConditionalDistributionIndex does not support any overrides."""
+    from scipy import stats as scipy_stats
+
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    temp = ConditionalDistributionIndex(
+        "temperature",
+        parents=[season],
+        factory=lambda season: scipy_stats.norm(loc=25, scale=3) if season == "summer" else scipy_stats.norm(loc=5, scale=5),
+    )
+    model = _make_model(season, temp)
+    with pytest.raises(TypeError, match="not support"):
+        Scenario(model, overrides={temp: scipy_stats.norm(loc=20, scale=2)})  # type: ignore[dict-item]

@@ -47,6 +47,47 @@ class Scenario:
         is called.  A ``Distribution`` override replaces the index's distribution
         for ensemble sampling purposes (see :meth:`effective_distribution`).
 
+    Override compatibility
+    ----------------------
+    The table below shows which override types are accepted for each index
+    kind and how each Scenario method handles them.
+
+    .. code-block:: text
+
+        Index type                   │ float  str  ndarray  Distribution  dict[str,float]
+        ─────────────────────────────┼───────────────────────────────────────────────────
+        Index                        │  ✓     ✗      ✗         ✗              ✗
+        TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗
+        ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗
+        DistributionIndex            │  ✗     ✗      ✗         ✓              ✗
+        ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗
+        CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**
+        ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗
+
+        * str must be in idx.support
+        ** dict keys must be a non-empty subset of idx.support, positive probs summing to 1.0
+
+        Method behaviour for accepted overrides:
+
+        Index type + override           │ abstract_indexes  base_subs      effective_distribution  effective_outcomes
+        ────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────
+        Index(scalar), no override      │ absent            own scalar     —                       —
+        Index(scalar), float override   │ absent            override float —                       —
+        Index(None), no override        │ present           —              —                       —
+        Index(None), float override     │ absent            override float —                       —
+        TimeseriesIndex(arr), no ovr    │ absent            own array      —                       —
+        TimeseriesIndex(arr), ndarray   │ absent            override array —                       —
+        TimeseriesIndex(None), no ovr   │ present           —              —                       —
+        TimeseriesIndex(None), ndarray  │ absent            override array —                       —
+        DistributionIndex, no override  │ present           —              _frozen                 —
+        DistributionIndex, Distribution │ present           —              override dist           —
+        CondDistribution, no override   │ present           —              —                       —
+        CategoricalIndex, no override   │ present           —              —                       idx.outcomes
+        CategoricalIndex, str           │ absent            asarray(str)   —                       {str: 1.0}
+        CategoricalIndex, dict          │ present           —              —                       override dict
+        CondCategorical, no override    │ present           —              —                       None
+        CondCategorical, str            │ absent            asarray(str)   —                       {str: 1.0}
+
     Examples
     --------
     >>> from civic_digital_twins.dt_model import Index, Model, Scenario
@@ -83,8 +124,8 @@ class Scenario:
                     )
                 continue
 
-            # Distribution-backed indexes: only Distribution override allowed.
-            if isinstance(idx, (DistributionIndex, ConditionalDistributionIndex)):
+            # DistributionIndex: only Distribution override allowed.
+            if isinstance(idx, DistributionIndex):
                 if not isinstance(val, Distribution):
                     raise TypeError(
                         f"Index {idx.name!r} is distribution-backed; override must be a Distribution, "
@@ -92,11 +133,62 @@ class Scenario:
                     )
                 continue
 
-            # Categorical indexes: value overrides are not supported.
-            if isinstance(idx, (CategoricalIndex, ConditionalCategoricalIndex)):
+            # ConditionalDistributionIndex: overrides not supported — the conditional
+            # mapping lives in the factory and cannot be replaced by a simple value.
+            if isinstance(idx, ConditionalDistributionIndex):
                 raise TypeError(
-                    f"CategoricalIndex {idx.name!r} does not support value overrides in Scenario."
+                    f"ConditionalDistributionIndex {idx.name!r} does not support overrides in Scenario. "
+                    f"To change the conditional mapping, supply a model variant with a different factory."
                 )
+
+            # CategoricalIndex: str (concrete pin) or dict[str, float] (new weights),
+            # both must preserve the declared support.
+            if isinstance(idx, CategoricalIndex):
+                if isinstance(val, str):
+                    if val not in idx.support:
+                        raise ValueError(
+                            f"Override {val!r} is not in the support of CategoricalIndex {idx.name!r}: {idx.support!r}."
+                        )
+                elif isinstance(val, dict):
+                    keys, support = set(val.keys()), set(idx.support)
+                    if not keys:
+                        raise ValueError(f"Override dict for CategoricalIndex {idx.name!r} must not be empty.")
+                    extra = keys - support
+                    if extra:
+                        raise ValueError(
+                            f"Override dict for CategoricalIndex {idx.name!r} contains keys outside its support "
+                            f"{sorted(support)!r}: {sorted(extra)!r}."
+                        )
+                    non_positive = [k for k, p in val.items() if p <= 0]
+                    if non_positive:
+                        raise ValueError(
+                            f"Override dict for CategoricalIndex {idx.name!r}: all probabilities must be strictly "
+                            f"positive; non-positive keys: {non_positive}."
+                        )
+                    if not np.isclose(sum(val.values()), 1.0):
+                        raise ValueError(
+                            f"Override dict for CategoricalIndex {idx.name!r}: probabilities must sum to 1.0; "
+                            f"got {sum(val.values())}."
+                        )
+                else:
+                    raise TypeError(
+                        f"Override for CategoricalIndex {idx.name!r} must be a str (concrete outcome) or "
+                        f"dict[str, float] (new probabilities); got {type(val).__name__!r}."
+                    )
+                continue
+
+            # ConditionalCategoricalIndex: only str (concrete pin) is allowed.
+            if isinstance(idx, ConditionalCategoricalIndex):
+                if not isinstance(val, str):
+                    raise TypeError(
+                        f"Override for ConditionalCategoricalIndex {idx.name!r} must be a str (concrete outcome); "
+                        f"got {type(val).__name__!r}."
+                    )
+                if val not in idx.support:
+                    raise ValueError(
+                        f"Override {val!r} is not in the support of ConditionalCategoricalIndex {idx.name!r}: {idx.support!r}."
+                    )
+                continue
 
             # Plain scalar Index: only scalar override allowed (no Distribution, no array).
             if isinstance(idx, Index):
@@ -140,6 +232,40 @@ class Scenario:
             return idx.value
         return None
 
+    def effective_outcomes(
+        self, idx: CategoricalIndex | ConditionalCategoricalIndex
+    ) -> dict[str, float] | None:
+        """Return the effective outcome probabilities for *idx*.
+
+        Checks ``overrides`` first.  Return value depends on index type and override:
+
+        * :class:`~model.index.CategoricalIndex`, no override → ``idx.outcomes``.
+        * :class:`~model.index.CategoricalIndex`, ``dict`` override → the override dict.
+        * Either type, ``str`` override (concrete pin) → singleton ``{val: 1.0}``.
+        * :class:`~model.index.ConditionalCategoricalIndex`, no override → ``None``
+          (no unconditional outcomes dict; the ensemble uses ``idx.outcomes_for(...)``).
+
+        Parameters
+        ----------
+        idx:
+            A :class:`~model.index.CategoricalIndex` or
+            :class:`~model.index.ConditionalCategoricalIndex` to look up.
+
+        Returns
+        -------
+        dict[str, float] or None
+            The outcome probability mapping, or ``None`` when *idx* is a
+            :class:`~model.index.ConditionalCategoricalIndex` with no concrete pin.
+        """
+        val = self._overrides.get(idx)
+        if isinstance(val, str):
+            return {val: 1.0}  # type: ignore[dict-item]  # str ∉ DomainValue but accepted for categorical indexes
+        if isinstance(val, dict):
+            return val  # type: ignore[return-value]
+        if isinstance(idx, CategoricalIndex):
+            return idx.outcomes
+        return None  # ConditionalCategoricalIndex with no override: no simple outcomes dict
+
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that are abstract from this scenario's perspective.
 
@@ -148,11 +274,15 @@ class Scenario:
         * A model-abstract index (``None``-valued or distribution-backed) that
           is **not** concretely overridden by this scenario.
         * A :class:`~model.index.DistributionIndex` overridden with a **different**
-          Distribution — ``effective_distribution`` returns the override distribution.
+          :class:`~model.index.Distribution` — ``effective_distribution`` returns
+          the override distribution.
+        * A :class:`~model.index.CategoricalIndex` overridden with a
+          ``dict[str, float]`` (new probability weights) — ``effective_outcomes``
+          returns the override probabilities.
 
-        Indexes whose effective value is a concrete scalar/array (either because the
-        model defines them that way, or because the scenario overrides them with a
-        concrete value) are excluded: they are handled by :meth:`base_substitutions`.
+        Indexes whose effective value is a concrete scalar or string (either because
+        the model defines them that way, or because the scenario overrides them) are
+        excluded: they are handled by :meth:`base_substitutions`.
 
         Returns
         -------
@@ -163,8 +293,8 @@ class Scenario:
 
         for idx in self._model.abstract_indexes():
             override = self._overrides.get(idx)
-            if override is not None and not isinstance(override, Distribution):
-                # Concretely overridden — handled by base_substitutions; skip.
+            if override is not None and not isinstance(override, (Distribution, dict)):
+                # Concretely overridden (scalar or str) — handled by base_substitutions; skip.
                 continue
             result.append(idx)
 
@@ -204,7 +334,7 @@ class Scenario:
             if val is None and isinstance(idx, (Index, TimeseriesIndex)):
                 val = idx.value  # type: ignore[assignment]  # Scalar ⊄ DomainValue
 
-            if val is None or isinstance(val, (Distribution, graph.Node)):
+            if val is None or isinstance(val, (Distribution, dict, graph.Node)):
                 continue  # no concrete value or formula node; ensemble's responsibility
 
             subs[idx.node] = np.asarray(val)
