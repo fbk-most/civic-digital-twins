@@ -348,80 +348,6 @@ class Index(GenericIndex):
         return f"idx({self._name!r}, {self._value!r})"
 
 
-class DistributionIndex(Index):
-    """Index backed by any scipy-compatible distribution.
-
-    Immutable after construction.  The underlying node is a
-    ``graph.placeholder`` (same as an abstract :class:`Index`); the ensemble
-    samples the frozen distribution and injects the result at evaluation time.
-    To replace the distribution across runs use :class:`~simulation.scenario.Scenario`
-    with a :class:`Distribution` override.
-
-    Parameters
-    ----------
-    name:
-        Human-readable name for this index.
-    distribution:
-        A callable (e.g. ``scipy.stats.uniform``) that, when called with
-        ``**params``, returns a frozen ``Distribution``-conformant object.
-    params:
-        Keyword arguments forwarded verbatim to *distribution*.  scipy
-        validates the parameter values at construction time.
-
-    Examples
-    --------
-    >>> from scipy import stats
-    >>> idx = DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0})
-    """
-
-    def __init__(
-        self,
-        name: str,
-        distribution: Callable[..., Any],
-        params: dict[str, Any],
-    ) -> None:
-        self._distribution = distribution
-        self._params = dict(params)
-        self._frozen: Distribution = cast(Distribution, distribution(**params))
-        super().__init__(name, None)  # placeholder; frozen dist stored separately
-
-    @property
-    def distribution(self) -> Callable[..., Any]:
-        """The callable used to create the frozen distribution."""
-        return self._distribution
-
-    @property
-    def params(self) -> dict[str, Any]:
-        """Copy of the parameters used to create the frozen distribution."""
-        return dict(self._params)
-
-    @property
-    def value(self) -> Distribution:  # type: ignore[override]
-        """The frozen distribution instance."""
-        return self._frozen
-
-    def sample(self, rng: np.random.Generator | None = None) -> float:
-        """Draw one sample from the frozen distribution.
-
-        Parameters
-        ----------
-        rng:
-            Optional :class:`numpy.random.Generator` for reproducibility.
-            When ``None``, the global NumPy random state is used.
-
-        Returns
-        -------
-        float
-            One sample from the distribution.
-        """
-        return float(self._frozen.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
-
-    def __repr__(self) -> str:
-        """Return a string representation of the distribution index."""
-        dist_name = getattr(self._distribution, "__name__", repr(self._distribution))
-        return f"dist_idx({self._name!r}, {dist_name}, {self._params!r})"
-
-
 class ConstIndex(Index):
     """Index baked into the computation graph as a ``graph.constant``.
 
@@ -545,6 +471,186 @@ class ConstTimeseriesIndex(TimeseriesIndex):
         """Return a string representation of the constant timeseries index."""
         assert isinstance(self._value, np.ndarray)
         return f"const_timeseries_idx({self._value.tolist()!r})"
+
+
+class DistributionIndex(Index):
+    """Index backed by any scipy-compatible distribution.
+
+    Immutable after construction.  The underlying node is a
+    ``graph.placeholder`` (same as an abstract :class:`Index`); the ensemble
+    samples the frozen distribution and injects the result at evaluation time.
+    To replace the distribution across runs use :class:`~simulation.scenario.Scenario`
+    with a :class:`Distribution` override.
+
+    Parameters
+    ----------
+    name:
+        Human-readable name for this index.
+    distribution:
+        A callable (e.g. ``scipy.stats.uniform``) that, when called with
+        ``**params``, returns a frozen ``Distribution``-conformant object.
+    params:
+        Keyword arguments forwarded verbatim to *distribution*.  scipy
+        validates the parameter values at construction time.
+
+    Examples
+    --------
+    >>> from scipy import stats
+    >>> idx = DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0})
+    """
+
+    def __init__(
+        self,
+        name: str,
+        distribution: Callable[..., Any],
+        params: dict[str, Any],
+    ) -> None:
+        self._distribution = distribution
+        self._params = dict(params)
+        self._frozen: Distribution = cast(Distribution, distribution(**params))
+        super().__init__(name, None)  # placeholder; frozen dist stored separately
+
+    @property
+    def distribution(self) -> Callable[..., Any]:
+        """The callable used to create the frozen distribution."""
+        return self._distribution
+
+    @property
+    def params(self) -> dict[str, Any]:
+        """Copy of the parameters used to create the frozen distribution."""
+        return dict(self._params)
+
+    @property
+    def value(self) -> Distribution:  # type: ignore[override]
+        """The frozen distribution instance."""
+        return self._frozen
+
+    def sample(self, rng: np.random.Generator | None = None) -> float:
+        """Draw one sample from the frozen distribution.
+
+        Parameters
+        ----------
+        rng:
+            Optional :class:`numpy.random.Generator` for reproducibility.
+            When ``None``, the global NumPy random state is used.
+
+        Returns
+        -------
+        float
+            One sample from the distribution.
+        """
+        return float(self._frozen.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the distribution index."""
+        dist_name = getattr(self._distribution, "__name__", repr(self._distribution))
+        return f"dist_idx({self._name!r}, {dist_name}, {self._params!r})"
+
+
+class ConditionalDistributionIndex(Index):
+    """Distribution-backed index whose distribution depends on resolved parent values.
+
+    Always abstract (placeholder mode): the underlying node is a
+    ``graph.placeholder``, like an unconditional abstract :class:`Index`.
+    The ensemble resolves parent values first, then calls *factory* to obtain
+    the frozen :class:`Distribution` for each joint parent configuration.
+
+    The *factory* is called with keyword arguments keyed by parent names::
+
+        temp_given_weather = ConditionalDistributionIndex(
+            "temperature",
+            parents=[cv_weather],
+            factory=lambda weather: (
+                stats.norm(loc=25.0, scale=3.0) if weather == "good"
+                else stats.norm(loc=15.0, scale=5.0)
+            ),
+        )
+
+    Parameters
+    ----------
+    name:
+        Human-readable name.
+    parents:
+        Ordered list of parent indexes whose resolved values are forwarded to
+        *factory* as keyword arguments.  Valid parent types are
+        :class:`CategoricalIndex`, :class:`ConditionalCategoricalIndex`,
+        :class:`DistributionIndex`, and :class:`ConditionalDistributionIndex`.
+    factory:
+        Callable ``(**parent_values) -> Distribution``.  Should return a frozen
+        scipy-compatible distribution (satisfies :class:`Distribution` protocol).
+
+    Raises
+    ------
+    TypeError
+        If any parent is not of a supported type.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        parents: "Sequence[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]",  # noqa: E501
+        factory: "Callable[..., Any]",
+    ) -> None:
+        for p in parents:
+            if not isinstance(
+                p,
+                CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex,
+            ):
+                raise TypeError(
+                    f"ConditionalDistributionIndex {name!r}: parent {p!r} must be a "
+                    "CategoricalIndex, ConditionalCategoricalIndex, DistributionIndex, "
+                    "or ConditionalDistributionIndex."
+                )
+        self._parents: list[
+            CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex
+        ] = list(parents)
+        self._factory = factory
+        super().__init__(name, None)  # placeholder mode — no unconditional distribution
+
+    @property
+    def parents(
+        self,
+    ) -> "list[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]":  # noqa: E501
+        """Parent indexes whose values are passed to the factory."""
+        return list(self._parents)
+
+    def distribution_for(self, **parent_values: object) -> Distribution:
+        """Return the frozen distribution for a given parent configuration.
+
+        Parameters
+        ----------
+        **parent_values:
+            Keyword arguments keyed by parent :attr:`~Index.name`.
+
+        Returns
+        -------
+        Distribution
+            A frozen scipy-compatible distribution.
+        """
+        return cast(Distribution, self._factory(**parent_values))
+
+    def sample_for(self, rng: np.random.Generator | None = None, **parent_values: object) -> float:
+        """Draw one sample for a given parent configuration.
+
+        Parameters
+        ----------
+        rng:
+            Optional :class:`numpy.random.Generator` for reproducibility.
+            When ``None``, the global NumPy random state is used.
+        **parent_values:
+            Keyword arguments keyed by parent :attr:`~Index.name`.
+
+        Returns
+        -------
+        float
+            One sample from the conditional distribution.
+        """
+        dist = self.distribution_for(**parent_values)
+        return float(dist.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
+
+    def __repr__(self) -> str:
+        """Return a string representation of the conditional distribution index."""
+        return f"ConditionalDistributionIndex({self.name!r}, parents={[p.name for p in self._parents]!r})"
 
 
 class CategoricalIndex(Index):
@@ -775,109 +881,3 @@ class ConditionalCategoricalIndex(Index):
             f"parents={[p.name for p in self._parents]!r}, "
             f"support={self._support!r})"
         )
-
-
-class ConditionalDistributionIndex(Index):
-    """Distribution-backed index whose distribution depends on resolved parent values.
-
-    Always abstract (placeholder mode): the underlying node is a
-    ``graph.placeholder``, like an unconditional abstract :class:`Index`.
-    The ensemble resolves parent values first, then calls *factory* to obtain
-    the frozen :class:`Distribution` for each joint parent configuration.
-
-    The *factory* is called with keyword arguments keyed by parent names::
-
-        temp_given_weather = ConditionalDistributionIndex(
-            "temperature",
-            parents=[cv_weather],
-            factory=lambda weather: (
-                stats.norm(loc=25.0, scale=3.0) if weather == "good"
-                else stats.norm(loc=15.0, scale=5.0)
-            ),
-        )
-
-    Parameters
-    ----------
-    name:
-        Human-readable name.
-    parents:
-        Ordered list of parent indexes whose resolved values are forwarded to
-        *factory* as keyword arguments.  Valid parent types are
-        :class:`CategoricalIndex`, :class:`ConditionalCategoricalIndex`,
-        :class:`DistributionIndex`, and :class:`ConditionalDistributionIndex`.
-    factory:
-        Callable ``(**parent_values) -> Distribution``.  Should return a frozen
-        scipy-compatible distribution (satisfies :class:`Distribution` protocol).
-
-    Raises
-    ------
-    TypeError
-        If any parent is not of a supported type.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        parents: "Sequence[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]",  # noqa: E501
-        factory: "Callable[..., Any]",
-    ) -> None:
-        for p in parents:
-            if not isinstance(
-                p,
-                CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex,
-            ):
-                raise TypeError(
-                    f"ConditionalDistributionIndex {name!r}: parent {p!r} must be a "
-                    "CategoricalIndex, ConditionalCategoricalIndex, DistributionIndex, "
-                    "or ConditionalDistributionIndex."
-                )
-        self._parents: list[
-            CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex
-        ] = list(parents)
-        self._factory = factory
-        super().__init__(name, None)  # placeholder mode — no unconditional distribution
-
-    @property
-    def parents(
-        self,
-    ) -> "list[CategoricalIndex | ConditionalCategoricalIndex | DistributionIndex | ConditionalDistributionIndex]":  # noqa: E501
-        """Parent indexes whose values are passed to the factory."""
-        return list(self._parents)
-
-    def distribution_for(self, **parent_values: object) -> Distribution:
-        """Return the frozen distribution for a given parent configuration.
-
-        Parameters
-        ----------
-        **parent_values:
-            Keyword arguments keyed by parent :attr:`~Index.name`.
-
-        Returns
-        -------
-        Distribution
-            A frozen scipy-compatible distribution.
-        """
-        return cast(Distribution, self._factory(**parent_values))
-
-    def sample_for(self, rng: np.random.Generator | None = None, **parent_values: object) -> float:
-        """Draw one sample for a given parent configuration.
-
-        Parameters
-        ----------
-        rng:
-            Optional :class:`numpy.random.Generator` for reproducibility.
-            When ``None``, the global NumPy random state is used.
-        **parent_values:
-            Keyword arguments keyed by parent :attr:`~Index.name`.
-
-        Returns
-        -------
-        float
-            One sample from the conditional distribution.
-        """
-        dist = self.distribution_for(**parent_values)
-        return float(dist.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
-
-    def __repr__(self) -> str:
-        """Return a string representation of the conditional distribution index."""
-        return f"ConditionalDistributionIndex({self.name!r}, parents={[p.name for p in self._parents]!r})"
