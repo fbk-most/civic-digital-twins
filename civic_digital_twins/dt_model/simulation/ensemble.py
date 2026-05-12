@@ -209,6 +209,18 @@ class PartitionedEnsemble:
                     )
                 assigned[idx] = spec
 
+        non_samplable = [
+            idx
+            for idx in abstract
+            if not (isinstance(idx, CategoricalIndex) or scenario.effective_distribution(idx) is not None)
+        ]
+        if non_samplable:
+            names = ", ".join(getattr(idx, "name", repr(idx)) for idx in non_samplable)
+            raise ValueError(
+                f"{type(self).__name__} requires all abstract indexes to be Distribution-backed "
+                f"or CategoricalIndex; unsupported indexes: {names}"
+            )
+
         # Handle unassigned indexes
         unassigned = [idx for idx in abstract if idx not in assigned]
         if unassigned:
@@ -264,8 +276,7 @@ class PartitionedEnsemble:
             for idx in spec.indexes:
                 # Sample Sj values for this index.
                 if isinstance(idx, CategoricalIndex):
-                    raw = [idx.sample(self._rng) for _ in range(Sj)]
-                    samples = np.array(raw, dtype=object)  # shape (Sj,)
+                    samples = idx.sample(self._rng, size=Sj)  # shape (Sj,)
                 else:
                     dist = self._scenario.effective_distribution(idx)
                     if dist is None:
@@ -414,8 +425,8 @@ class DistributionEnsemble:
         result: dict[GenericIndex, np.ndarray] = {}
         for idx in abstract:
             if isinstance(idx, CategoricalIndex):
-                raw_keys = [idx.sample(self._rng) for _ in range(self._size)]
-                result[idx] = np.array(raw_keys, dtype=object)  # shape (S,)
+                raw_keys = idx.sample(self._rng, size=self._size)  # shape (S,)
+                result[idx] = raw_keys  # shape (S,)
             else:
                 dist = self._scenario.effective_distribution(idx)
                 assert dist is not None
@@ -441,9 +452,8 @@ class DistributionEnsemble:
         samples: dict[GenericIndex, np.ndarray] = {}
         for idx in abstract:
             if isinstance(idx, CategoricalIndex):
-                # Sample size string keys; wrap each as a 1-element object array.
-                raw_keys = [idx.sample(self._rng) for _ in range(self._size)]
-                samples[idx] = np.array(raw_keys, dtype=object).reshape(self._size, 1)
+                raw_keys = idx.sample(self._rng, size=self._size)
+                samples[idx] = raw_keys.reshape(self._size, 1)
             else:
                 dist = self._scenario.effective_distribution(idx)
                 assert dist is not None

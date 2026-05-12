@@ -89,14 +89,14 @@ def test_sample_returns_valid_key():
     ci = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     rng = np.random.default_rng(42)
     for _ in range(50):
-        key = ci.sample(rng)
+        key = ci.sample(rng, size=1)[0]
         assert key in ci.support
 
 
 def test_sample_without_rng_returns_valid_key():
     """sample() without rng still returns a valid key."""
     ci = CategoricalIndex("mode", {"a": 0.5, "b": 0.5})
-    assert ci.sample() in {"a", "b"}
+    assert ci.sample(size=1)[0] in {"a", "b"}
 
 
 def test_sample_with_rng_is_reproducible():
@@ -104,8 +104,8 @@ def test_sample_with_rng_is_reproducible():
     ci = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
     rng1 = np.random.default_rng(0)
     rng2 = np.random.default_rng(0)
-    samples1 = [ci.sample(rng1) for _ in range(20)]
-    samples2 = [ci.sample(rng2) for _ in range(20)]
+    samples1 = list(ci.sample(rng1, size=20))
+    samples2 = list(ci.sample(rng2, size=20))
     assert samples1 == samples2
 
 
@@ -115,8 +115,8 @@ def test_sample_distribution_is_approximately_correct():
     rng = np.random.default_rng(1234)
     N = 10_000
     counts = {"bike": 0, "train": 0}
-    for _ in range(N):
-        counts[ci.sample(rng)] += 1
+    for key in ci.sample(rng, size=N):
+        counts[key] += 1
     assert abs(counts["bike"] / N - 0.3) < 0.02
     assert abs(counts["train"] / N - 0.7) < 0.02
 

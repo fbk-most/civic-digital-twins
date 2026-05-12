@@ -528,21 +528,23 @@ class DistributionIndex(Index):
         """The frozen distribution instance."""
         return self._frozen
 
-    def sample(self, rng: np.random.Generator | None = None) -> float:
-        """Draw one sample from the frozen distribution.
+    def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
+        """Draw ``size`` samples from the frozen distribution.
 
         Parameters
         ----------
         rng:
             Optional :class:`numpy.random.Generator` for reproducibility.
             When ``None``, the global NumPy random state is used.
+        size:
+            Number of samples to draw. Defaults to 1.
 
         Returns
         -------
-        float
-            One sample from the distribution.
+        np.ndarray
+            Array of shape ``(size,)`` containing the samples.
         """
-        return float(self._frozen.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
+        return np.asarray(self._frozen.rvs(size=size, random_state=rng))
 
     def __repr__(self) -> str:
         """Return a string representation of the distribution index."""
@@ -632,24 +634,31 @@ class ConditionalDistributionIndex(Index):
         """
         return cast(Distribution, self._factory(**parent_values))
 
-    def sample_for(self, rng: np.random.Generator | None = None, **parent_values: object) -> float:
-        """Draw one sample for a given parent configuration.
+    def sample_for(
+        self,
+        rng: np.random.Generator | None = None,
+        size: int = 1,
+        **parent_values: str,
+    ) -> np.ndarray:
+        """Draw ``size`` samples for a given parent configuration.
 
         Parameters
         ----------
         rng:
             Optional :class:`numpy.random.Generator` for reproducibility.
             When ``None``, the global NumPy random state is used.
+        size:
+            Number of samples to draw. Defaults to 1.
         **parent_values:
             Keyword arguments keyed by parent :attr:`~Index.name`.
 
         Returns
         -------
-        float
-            One sample from the conditional distribution.
+        np.ndarray
+            Array of shape ``(size,)`` containing the samples.
         """
         dist = self.distribution_for(**parent_values)
-        return float(dist.rvs(size=None, random_state=rng))  # type: ignore[call-arg]
+        return np.asarray(dist.rvs(size=size, random_state=rng))
 
     def __repr__(self) -> str:
         """Return a string representation of the conditional distribution index."""
@@ -714,25 +723,27 @@ class CategoricalIndex(Index):
         """Ordered list of outcome keys."""
         return list(self._outcomes)
 
-    def sample(self, rng: np.random.Generator | None = None) -> str:
-        """Draw one key proportional to outcome probabilities.
+    def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
+        """Draw ``size`` keys proportionally to outcome probabilities.
 
         Parameters
         ----------
         rng:
             Optional :class:`numpy.random.Generator` for reproducibility.
             When ``None``, the global NumPy random state is used.
+        size:
+            Number of samples to draw. Defaults to 1.
 
         Returns
         -------
-        str
-            One of the keys from :attr:`support`.
+        np.ndarray
+            Object-dtype array of shape ``(size,)`` containing the sampled keys.
         """
         keys = self.support
         probs = [self._outcomes[k] for k in keys]
         if rng is not None:
-            return rng.choice(keys, p=probs)  # type: ignore[return-value]
-        return np.random.choice(keys, p=probs)  # type: ignore[return-value]
+            return np.asarray(rng.choice(keys, size=size, p=probs), dtype=object)  # type: ignore[return-value]
+        return np.asarray(np.random.choice(keys, size=size, p=probs), dtype=object)  # type: ignore[return-value]
 
     def __repr__(self) -> str:
         """Return a string representation of the categorical index."""
@@ -854,28 +865,35 @@ class ConditionalCategoricalIndex(Index):
             )
         return outcomes
 
-    def sample_for(self, rng: np.random.Generator | None = None, **parent_values: str) -> str:
-        """Draw one outcome key for a given parent configuration.
+    def sample_for(
+        self,
+        rng: np.random.Generator | None = None,
+        size: int = 1,
+        **parent_values: str,
+    ) -> np.ndarray:
+        """Draw ``size`` outcome keys for a given parent configuration.
 
         Parameters
         ----------
         rng:
             Optional :class:`numpy.random.Generator` for reproducibility.
             When ``None``, the global NumPy random state is used.
+        size:
+            Number of samples to draw. Defaults to 1.
         **parent_values:
             Keyword arguments keyed by parent :attr:`~Index.name`.
 
         Returns
         -------
-        str
-            One of the keys from :attr:`support`.
+        np.ndarray
+            Object-dtype array of shape ``(size,)`` containing the sampled keys.
         """
         outcomes = self.outcomes_for(**parent_values)
         keys = list(outcomes.keys())
         probs = [outcomes[k] for k in keys]
         if rng is not None:
-            return rng.choice(keys, p=probs)  # type: ignore[return-value]
-        return np.random.choice(keys, p=probs)  # type: ignore[return-value]
+            return np.asarray(rng.choice(keys, size=size, p=probs), dtype=object)  # type: ignore[return-value]
+        return np.asarray(np.random.choice(keys, size=size, p=probs), dtype=object)  # type: ignore[return-value]
 
     def __repr__(self) -> str:
         """Return a string representation of the conditional categorical index."""

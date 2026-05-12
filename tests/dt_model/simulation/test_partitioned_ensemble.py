@@ -318,13 +318,12 @@ def test_result_weights_with_two_ensemble_axes():
 
 
 def test_raises_on_non_samplable_index_in_spec():
-    """ValueError when assignments() is called with a plain abstract index (no distribution)."""
+    """ValueError at construction for a plain abstract index (no distribution)."""
     I_plain = Index("plain", None)  # abstract but no distribution
     model = _make_model(I_plain)
 
-    ens = PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
-    with pytest.raises(ValueError, match="not Distribution-backed"):
-        ens.assignments()
+    with pytest.raises(ValueError, match="requires all abstract indexes"):
+        PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
 
 
 def test_factorized_weights_are_uniform():
