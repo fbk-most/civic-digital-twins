@@ -7,7 +7,14 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import CategoricalIndex, ConditionalCategoricalIndex, ConditionalDistributionIndex, DistributionIndex, GenericIndex, Index
+from civic_digital_twins.dt_model.model.index import (
+    CategoricalIndex,
+    ConditionalCategoricalIndex,
+    ConditionalDistributionIndex,
+    DistributionIndex,
+    GenericIndex,
+    Index,
+)
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -112,7 +119,7 @@ def test_abstract_overridden_with_different_distribution():
     model = _make_model(x, result)
 
     override_dist = stats.norm(100, 0.001)
-    scenario = Scenario(model, overrides={x: override_dist})
+    scenario = Scenario(model, overrides={x: override_dist})  # type: ignore[arg-type]
 
     # x must still be abstract (but with the override distribution).
     assert any(idx is x for idx in scenario.abstract_indexes())
@@ -139,7 +146,7 @@ def test_scalar_index_rejects_distribution_override():
     x = Index("x", 5.0)
     model = _make_model(x)
     with pytest.raises(TypeError, match="distribution"):
-        Scenario(model, overrides={x: stats.norm(50, 1)})
+        Scenario(model, overrides={x: stats.norm(50, 1)})  # type: ignore[arg-type]
 
 
 def test_distribution_index_rejects_scalar_override():
@@ -282,7 +289,9 @@ def test_conditional_distribution_index_rejects_all_overrides():
     temp = ConditionalDistributionIndex(
         "temperature",
         parents=[season],
-        factory=lambda season: scipy_stats.norm(loc=25, scale=3) if season == "summer" else scipy_stats.norm(loc=5, scale=5),
+        factory=lambda season: (
+            scipy_stats.norm(loc=25, scale=3) if season == "summer" else scipy_stats.norm(loc=5, scale=5)
+        ),
     )
     model = _make_model(season, temp)
     with pytest.raises(TypeError, match="not support"):

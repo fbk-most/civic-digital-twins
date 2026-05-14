@@ -186,7 +186,8 @@ class Scenario:
                     )
                 if val not in idx.support:
                     raise ValueError(
-                        f"Override {val!r} is not in the support of ConditionalCategoricalIndex {idx.name!r}: {idx.support!r}."
+                        f"Override {val!r} is not in the support of "
+                        f"ConditionalCategoricalIndex {idx.name!r}: {idx.support!r}."
                     )
                 continue
 
