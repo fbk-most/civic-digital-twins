@@ -13,7 +13,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
-from ..model.axis import ENSEMBLE, PARAMETER, Axis
+from ..model.axis import DOMAIN, ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
@@ -175,10 +175,7 @@ class EvaluationResult:
 
     @property
     def full_shape(self) -> tuple[int, ...]:
-        """Shape of a fully-broadcast result array.
-
-        Returns ``(*PARAMETER, *ENSEMBLE)`` sizes in axis-layout order.
-        """
+        """Shape of a fully-broadcast result array in axis-layout order."""
         n_dims = len(self._axis_layout)
         if n_dims == 0:
             return ()
@@ -191,71 +188,71 @@ class EvaluationResult:
         """Return the result array for *index*."""
         return np.asarray(self._state.values[index.node])
 
-    def marginalize(self, index: GenericIndex) -> np.ndarray:
-        """Contract ENSEMBLE axes using their weights and return the result.
+    def _contract_ensemble(self, index: GenericIndex) -> np.ndarray:
+        """Contract all ENSEMBLE axes and return the ``(*P, *D)`` array.
 
-        Uses the explicit axis layout — no shape heuristics.  After
-        contracting all ENSEMBLE axes the result shape is
-        ``(*PARAMETER_sizes, *DOMAIN_dims)``; trailing size-1 dims that lie
-        beyond the PARAMETER positions are squeezed away (they are internal
-        DOMAIN placeholders, not meaningful dimensions).
+        For each ENSEMBLE axis (in descending position order so earlier
+        squeezes do not shift later positions): if the axis size is 1 the
+        singleton is squeezed away directly; otherwise a weighted average is
+        taken.  The result shape is ``(*PARAMETER, *DOMAIN)`` — all DOMAIN
+        dimensions are preserved regardless of size.
         """
         arr = np.asarray(self._state.values[index.node])
-
-        ensemble_entries = sorted(
-            [(ax, pos) for ax, pos in self._axis_layout.items() if ax.role == ENSEMBLE],
+        for ax, pos in sorted(
+            ((a, p) for a, p in self._axis_layout.items() if a.role == ENSEMBLE),
             key=lambda t: t[1],
             reverse=True,
-        )
-
-        n_params = len(self._parameter_arrays)
-
-        if not ensemble_entries:
-            return self._squeeze_domain(arr, n_params)
-
-        for ax, pos in ensemble_entries:
-            # evaluate() guarantees shape[pos] is either S (ENSEMBLE-touched
-            # nodes) or 1 (injected singleton for non-touched nodes).
-            # For the singleton case: weighted average of S identical copies
-            # (weights summing to 1) equals the value itself — squeeze directly.
-            if arr.shape[pos] == 1:
-                arr = arr.squeeze(axis=pos)
-            else:
-                arr = np.average(arr, weights=self._factorized_weights[ax], axis=pos)
-
-        return self._squeeze_domain(arr, n_params)
-
-    @staticmethod
-    def _squeeze_domain(arr: np.ndarray, n_params: int) -> np.ndarray:
-        """Squeeze size-1 dims beyond the first *n_params* dimensions.
-
-        PARAMETER dims (positions 0..n_params-1) are preserved even if
-        size 1.  Trailing size-1 DOMAIN placeholder dims are removed so
-        that pure-scalar results are returned as 0-d arrays rather than
-        shape ``(1,)`` arrays.
-
-        Known limitation — T=1 timeseries
-        ----------------------------------
-        When a model contains timeseries nodes, ``evaluate()`` appends a
-        trailing size-1 placeholder dimension to every scalar substitution
-        so that scalars broadcast correctly against ``(T,)`` arrays.  After
-        ENSEMBLE contraction in :meth:`marginalize`, this placeholder is
-        indistinguishable from a genuine length-1 timeseries trailing dim,
-        and both are squeezed away here.  As a result,
-        ``marginalize(ts)`` for a ``TimeseriesIndex`` of length 1 returns a
-        0-d scalar rather than a shape-``(1,)`` array — the time axis is
-        silently dropped.
-
-        The root cause is the absence of explicit DOMAIN axis tracking: the
-        engine has no way to tag "this dimension is the time axis" vs "this
-        dimension is an internal broadcast placeholder".  A proper fix
-        requires first-class DOMAIN axis support (see issue #157 and the
-        D12/D13 design sprint).
-        """
-        domain_dims = tuple(i for i in range(n_params, arr.ndim) if arr.shape[i] == 1)
-        if domain_dims:
-            arr = np.squeeze(arr, axis=domain_dims)
+        ):
+            arr = (
+                arr.squeeze(axis=pos)
+                if arr.shape[pos] == 1
+                else np.average(arr, weights=self._factorized_weights[ax], axis=pos)
+            )
         return arr
+
+    def expected_value(self, index: GenericIndex) -> np.ndarray:
+        """Return the typed result for *index* after contracting ENSEMBLE axes.
+
+        Contracts all ENSEMBLE axes (weighted average or singleton squeeze),
+        then drops size-1 DOMAIN dimensions that *index* does not carry in its
+        :attr:`~model.index.GenericIndex.output_axes`:
+
+        - A :class:`~dt_model.model.index.TimeseriesIndex` carries
+          ``Axis("time", DOMAIN)``; result shape is ``(*PARAMETER, T)``.
+        - A plain :class:`~dt_model.model.index.Index` formula carries no
+          DOMAIN axes; size-1 DOMAIN dims are squeezed away; result shape is
+          ``(*PARAMETER,)``.
+
+        This is the primary result-extraction method for user code and
+        vertical applications.  Use :meth:`_contract_ensemble` directly if
+        you need the full ``(*PARAMETER, *DOMAIN)`` shape.
+        """
+        arr = self._contract_ensemble(index)
+        n_params = sum(1 for ax in self._axis_layout if ax.role == PARAMETER)
+        domain_axes = sorted(
+            [(ax, pos) for ax, pos in self._axis_layout.items() if ax.role == DOMAIN],
+            key=lambda t: t[1],
+        )
+        stray = tuple(
+            n_params + i
+            for i, (ax, _) in enumerate(domain_axes)
+            if ax not in index.output_axes and arr.shape[n_params + i] == 1
+        )
+        if stray:
+            arr = np.squeeze(arr, axis=stray)
+        return arr
+
+    def marginalize(self, index: GenericIndex) -> np.ndarray:
+        """Use :meth:`expected_value` instead — ``marginalize()`` is deprecated.
+
+        Currently equivalent to ``expected_value(index)``.
+        """
+        warnings.warn(
+            "EvaluationResult.marginalize() is deprecated. Use expected_value() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.expected_value(index)
 
 
 class Evaluation:
@@ -819,6 +816,31 @@ class Evaluation:
                 n_inject = n_total - arr.ndim
                 state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
 
+        # DOMAIN axis tracking: register Axis("time", DOMAIN) in axis_layout
+        # so that every result dimension is named.  T is read post-execution
+        # because abstract TimeseriesIndex nodes are filled at evaluate time.
+        # Assumption: T is uniform across all PARAMETER configurations (T is a
+        # structural property of the model, not a function of parameter values).
+        if _has_timeseries:
+            ts_nodes = [
+                n
+                for r in plan.regions
+                for n in r.nodes
+                if isinstance(n, (graph.timeseries_constant, graph.timeseries_placeholder))
+            ]
+            T = int(np.asarray(state.values[ts_nodes[0]]).shape[-1])
+            if __debug__:
+                for ts_n in ts_nodes:
+                    T_n = int(np.asarray(state.values[ts_n]).shape[-1])
+                    assert T_n == T, (
+                        f"Non-uniform timeseries length: node "
+                        f"{getattr(ts_n, 'name', repr(ts_n))!r} has T={T_n}, "
+                        f"expected T={T}. T must be constant across all PARAMETER "
+                        f"configurations (it is a structural model property)."
+                    )
+            time_axis = Axis("time", DOMAIN)
+            axis_layout[time_axis] = n_full
+            axis_sizes[time_axis] = T
         if __debug__:
             for node in actual_nodes:
                 assert node in state.values, (

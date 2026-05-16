@@ -224,7 +224,7 @@ def test_marginalize_contracts_both_ensemble_axes():
         rng=np.random.default_rng(42),
     )
     result = Evaluation(model).evaluate(ensemble=ens)
-    marginalised = result.marginalize(i_result)
+    marginalised = result.expected_value(i_result)
     # Both a and b ~ Uniform(0,1); E[a+b] = 1.0
     assert marginalised.shape == ()
     assert float(marginalised) == pytest.approx(1.0, abs=0.1)
@@ -258,8 +258,8 @@ def test_marginalize_order_independence():
         ],
         rng=rng1,
     )
-    m_fwd = float(Evaluation(model).evaluate(ensemble=ens_fwd).marginalize(i_result))
-    m_rev = float(Evaluation(model).evaluate(ensemble=ens_rev).marginalize(i_result))
+    m_fwd = float(Evaluation(model).evaluate(ensemble=ens_fwd).expected_value(i_result))
+    m_rev = float(Evaluation(model).evaluate(ensemble=ens_rev).expected_value(i_result))
     assert m_fwd == pytest.approx(m_rev, rel=0.05)
 
 

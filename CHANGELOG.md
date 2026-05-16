@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `EvaluationResult.expected_value(idx)` — canonical weighted expectation over
+  the ensemble and parameter dimensions, replacing `marginalize()`.  Uses
+  `GenericIndex.output_axes` to determine which dimensions are DOMAIN (kept) vs
+  ENSEMBLE/PARAMETER (contracted); correctly handles T=1 timeseries that were
+  previously indistinguishable from scalars.
+- `GenericIndex.output_axes` — ordered tuple of `Axis` objects describing the
+  dimensions of the index's result array (`*PARAMETER, *ENSEMBLE, *DOMAIN`
+  convention).
+- `dt_model/axes.py` — shared module owning `Axis`, `AxisRole`, and the built-in
+  role constants `DOMAIN`, `PARAMETER`, `ENSEMBLE`.  Breaking the former
+  engine→model import dependency: the engine layer now imports axis types from
+  this module rather than from `model.axis`. 
 - `EvaluationPlan`, `Region`, `RegionGuard` in `simulation/plan.py` — frozen
   dataclasses encoding the evaluation structure as a topologically-ordered DAG
   of computation regions.  `build_plan(strategy="monolithic" | "regional")`
@@ -74,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `project_using_*` nodes now accept `axis: Axis`** instead of a
+  raw integer.  Pass `Axis("time", DOMAIN)` for the time axis.  The numpybackend
+  raises `UnsupportedOperation` at evaluation time if any other axis is supplied.
 - **Breaking: `TimeseriesIndex` is no longer a subclass of `Index`.**  Both are now
   direct subclasses of `GenericIndex`.  Code that relied on
   `isinstance(idx, Index)` matching timeseries indexes must be updated to also
@@ -88,6 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- `EvaluationResult.marginalize()` — use `EvaluationResult.expected_value()`
+  instead.  `marginalize()` now emits `DeprecationWarning` and will be removed
+  in a future release.
 - `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
   emits a `DeprecationWarning` on construction and will be removed in a future
   release (closing #162).
@@ -99,6 +117,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TimeseriesIndex.values`, and `DistributionIndex.params` — vary index values
   via `Scenario(model, overrides={idx: new_value})` instead.  All setters emit
   `DeprecationWarning` and will be removed in a future release.
+
+### Removed
+
+- `graph.expand_dims` and `graph.squeeze` — axis management nodes removed; no
+  replacement (these were never used in production code).
+- `graph.AxisOp` — abstract base class for the removed axis management nodes.
+- `graph.NpAxis` — numpy axis type alias; was an implementation detail of the
+  former integer-axis interface.
 
 ## [0.9.0] - 2026-05-02
 

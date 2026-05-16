@@ -110,7 +110,7 @@ result = Evaluation(co2_model).evaluate(ensemble=ensemble)
 
 co2 = co2_model.outputs.co2  # access via contractual output
 co2_samples = result[co2]  # np.ndarray, shape (1000,)
-co2_mean = result.marginalize(co2)  # scalar
+co2_mean = result.expected_value(co2)  # scalar
 
 assert co2_samples.shape == (1000,)
 # E[CO2] = E[distance / fuel_efficiency * 2.31]

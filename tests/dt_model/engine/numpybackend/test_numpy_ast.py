@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import numpy_ast
 
@@ -78,17 +79,13 @@ def test_round_trip():
     node = graph.multi_clause_where([(k, p)], p)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.select([n{k.id}], [n{p.id}], n{p.id})"
 
-    node = graph.expand_dims(k, axis=(1, 2))
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.expand_dims(n{k.id}, axis=(1, 2))"
+    time_axis = Axis("time", DOMAIN)
 
-    node = graph.squeeze(k, axis=(2,))
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.squeeze(n{k.id}, axis=(2,))"
+    node = graph.project_using_sum(k, axis=time_axis)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sum(n{k.id}, axis=(-1,), keepdims=True)"
 
-    node = graph.project_using_sum(k, axis=(2,))
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sum(n{k.id}, axis=(2,), keepdims=True)"
-
-    node = graph.project_using_mean(k, axis=(2,))
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.mean(n{k.id}, axis=(2,), keepdims=True)"
+    node = graph.project_using_mean(k, axis=time_axis)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.mean(n{k.id}, axis=(-1,), keepdims=True)"
 
     node = graph.function_call("foo", k, p, k=k, p=p)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = foo(n{k.id}, n{p.id}, k=n{k.id}, p=n{p.id})"
@@ -120,6 +117,7 @@ def test_no_arguments_handling_for_node():
 def test_project_using_quantile_numpy_ast():
     """project_using_quantile generates quantile call with q first, axis, and keepdims."""
     k = graph.constant(10)
-    node = graph.project_using_quantile(k, axis=(0,), q=0.95)
+    time_axis = Axis("time", DOMAIN)
+    node = graph.project_using_quantile(k, axis=time_axis, q=0.95)
     code = numpy_ast.graph_node_to_numpy_code(node)
-    assert code == f"n{node.id} = np.quantile(0.95, n{k.id}, axis=(0,), keepdims=True)"
+    assert code == f"n{node.id} = np.quantile(0.95, n{k.id}, axis=(-1,), keepdims=True)"

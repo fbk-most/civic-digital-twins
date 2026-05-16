@@ -16,9 +16,12 @@ Issues: #116, #117
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import ConstTimeseriesIndex, Index, TimeseriesIndex
+
+_TIME_AXIS = Axis("time", DOMAIN)
 
 # All index reduction methods and their corresponding graph operators
 INDEX_REDUCTION_METHODS = [
@@ -68,10 +71,12 @@ class TestIndexReductionMethodCreation:
 
     @pytest.mark.parametrize("method,operator_class,name", INDEX_REDUCTION_METHODS)
     def test_method_has_correct_axis(self, method, operator_class, name):
-        """Test that reduction method creates operator with correct default axis."""
+        """Test that reduction method creates operator with the default time axis."""
+        from civic_digital_twins.dt_model.model.axis import DOMAIN, Axis
+
         idx = Index("test_index", 5.0)
         result = method(idx)
-        assert result.axis == -1  # Default axis for index methods
+        assert result.axis == Axis("time", DOMAIN)
 
 
 class TestTimeseriesIndexReductionExecution:
@@ -365,56 +370,56 @@ class TestIndexReductionComposition:
     """Test composition of index reduction methods."""
 
     def test_min_of_min(self):
-        """Test composing min methods."""
+        """Test composing min methods (both reduce the time/last axis)."""
         x_placeholder = graph.placeholder("x")
         idx = Index("x", x_placeholder)
         min1 = idx.min()
-        min2 = graph.project_using_min(min1, axis=0)
+        min2 = graph.project_using_min(min1, axis=_TIME_AXIS)
         plan = linearize.forest(min2)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
         state = executor.State({x_placeholder: x_val})
         executor.evaluate_nodes(state, *plan)
 
-        expected = np.min(np.min(x_val, axis=-1, keepdims=True), axis=0, keepdims=True)
+        expected = np.min(np.min(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
         assert np.array_equal(state.values[min2], expected)
 
     def test_sum_of_max(self):
-        """Test composing sum of max."""
+        """Test composing sum of max (both reduce the time/last axis)."""
         x_placeholder = graph.placeholder("x")
         idx = Index("x", x_placeholder)
         max_node = idx.max()
-        sum_node = graph.project_using_sum(max_node, axis=0)
+        sum_node = graph.project_using_sum(max_node, axis=_TIME_AXIS)
         plan = linearize.forest(sum_node)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
         state = executor.State({x_placeholder: x_val})
         executor.evaluate_nodes(state, *plan)
 
-        expected = np.sum(np.max(x_val, axis=-1, keepdims=True), axis=0, keepdims=True)
+        expected = np.sum(np.max(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
         assert np.allclose(state.values[sum_node], expected)
 
     def test_mean_of_std(self):
-        """Test composing mean of std."""
+        """Test composing mean of std (both reduce the time/last axis)."""
         x_placeholder = graph.placeholder("x")
         idx = Index("x", x_placeholder)
         std_node = idx.std()
-        mean_node = graph.project_using_mean(std_node, axis=0)
+        mean_node = graph.project_using_mean(std_node, axis=_TIME_AXIS)
         plan = linearize.forest(mean_node)
 
         x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         state = executor.State({x_placeholder: x_val})
         executor.evaluate_nodes(state, *plan)
 
-        expected = np.mean(np.std(x_val, axis=-1, keepdims=True), axis=0, keepdims=True)
+        expected = np.mean(np.std(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
         assert np.allclose(state.values[mean_node], expected)
 
     def test_quantile_of_quantile(self):
-        """Test composing quantile of quantile."""
+        """Test composing quantile of quantile (both reduce the time/last axis)."""
         x_placeholder = graph.placeholder("x")
         idx = Index("x", x_placeholder)
         q1_node = idx.quantile(q=0.5)
-        q2_node = graph.project_using_quantile(q1_node, axis=0, q=0.75)
+        q2_node = graph.project_using_quantile(q1_node, axis=_TIME_AXIS, q=0.75)
         plan = linearize.forest(q2_node)
 
         x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
@@ -422,7 +427,7 @@ class TestIndexReductionComposition:
         executor.evaluate_nodes(state, *plan)
 
         intermediate = np.quantile(x_val, 0.5, axis=-1, keepdims=True)
-        expected = np.quantile(intermediate, 0.75, axis=0, keepdims=True)
+        expected = np.quantile(intermediate, 0.75, axis=-1, keepdims=True)
         assert np.allclose(state.values[q2_node], expected)
 
 

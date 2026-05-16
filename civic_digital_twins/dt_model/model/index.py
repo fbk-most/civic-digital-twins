@@ -14,6 +14,10 @@ from typing import Any, Protocol, cast, runtime_checkable
 import numpy as np
 
 from ..engine.frontend import graph
+from .axis import DOMAIN, Axis
+
+_TIME_AXIS: Axis = Axis("time", DOMAIN)
+"""Default axis for time-indexed reduction operations."""
 
 
 @runtime_checkable
@@ -77,6 +81,16 @@ class GenericIndex(ABC):
     @abstractmethod
     def node(self) -> graph.Node:
         """The underlying computation graph node."""
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Semantic domain axes carried by this index's output.
+
+        Delegates to the underlying graph node's :attr:`~graph.Node.output_axes`
+        inference so that the axis provenance of any formula is automatically
+        tracked without user annotation.
+        """
+        return self.node.output_axes
 
     def _node_of(self, other: object) -> graph.Node | graph.Scalar:
         """Unwrap *other* to a graph node when it is a ``GenericIndex``."""
@@ -172,109 +186,107 @@ class GenericIndex(ABC):
     # Reduction operators
     # ------------------------------------------------------------------
 
-    def sum(self, axis: int = -1) -> graph.Node:
+    def sum(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that sums this index over the given axis.
 
-        The default axis ``-1`` sums across the last (time) dimension.
-        The reduced axis is always preserved as size 1, ensuring the result
-        broadcasts correctly against both plain timeseries ``(T,)`` and
-        ensemble-batched timeseries ``(size, T)``:
+        The default axis is ``Axis("time", DOMAIN)``, which sums across the
+        time dimension.  The reduced axis is always preserved as size 1,
+        ensuring the result broadcasts correctly against both plain timeseries
+        ``(T,)`` and ensemble-batched timeseries ``(size, T)``:
 
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
         return graph.project_using_sum(self.node, axis)
 
-    def mean(self, axis: int = -1) -> graph.Node:
+    def mean(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_mean(self.node, axis)
 
-    def min(self, axis: int = -1) -> graph.Node:
+    def min(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the minimum of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_min(self.node, axis)
 
-    def max(self, axis: int = -1) -> graph.Node:
+    def max(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the maximum of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_max(self.node, axis)
 
-    def std(self, axis: int = -1) -> graph.Node:
+    def std(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the standard deviation of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_std(self.node, axis)
 
-    def var(self, axis: int = -1) -> graph.Node:
+    def var(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the variance of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_var(self.node, axis)
 
-    def median(self, axis: int = -1) -> graph.Node:
+    def median(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the median of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_median(self.node, axis)
 
-    def prod(self, axis: int = -1) -> graph.Node:
+    def prod(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the product of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_prod(self.node, axis)
 
-    def any(self, axis: int = -1) -> graph.Node:
+    def any(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that tests if any elements of this index are True over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_any(self.node, axis)
 
-    def all(self, axis: int = -1) -> graph.Node:
+    def all(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that tests if all elements of this index are True over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_all(self.node, axis)
 
-    def count_nonzero(self, axis: int = -1) -> graph.Node:
+    def count_nonzero(self, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that counts non-zero elements of this index over the given axis.
 
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
+        always preserved as size 1.
         """
         return graph.project_using_count_nonzero(self.node, axis)
 
-    def quantile(self, q: float, axis: int = -1) -> graph.Node:
+    def quantile(self, q: float, axis: Axis = _TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the quantile of this index over the given axis.
 
         Args:
             q: Quantile level in the range [0, 1]. For example, 0.5 for the median,
                0.95 for the 95th percentile.
-            axis: Axis along which to compute the quantile (default: -1).
-
-        Same axis convention as :meth:`sum`; the reduced axis is always
-        preserved as size 1.
+            axis: Semantic axis along which to compute the quantile (default:
+                ``Axis("time", DOMAIN)``).
         """
         return graph.project_using_quantile(self.node, axis, q)
 

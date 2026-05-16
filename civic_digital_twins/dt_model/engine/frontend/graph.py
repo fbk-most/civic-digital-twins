@@ -15,46 +15,47 @@ This module provides:
 7. Conditional operations (where, MultiClauseOp, multi_clause_where,
    exclusive_multi_clause_where, piecewise)
 8. Variant selection (variant_selector)
-9. Shape manipulation operations (expand_dims, squeeze)
-10. Reduction operations (sum, mean)
-11. Support for user-defined functions.
-12. Built-in debug operations (tracepoint, breakpoint)
-13. Support for infix and unary operators (e.g., `a + b`, `~a`).
+9. Reduction operations (project_using_sum, project_using_mean, project_using_min,
+   project_using_max, project_using_std, project_using_var, project_using_median,
+   project_using_prod, project_using_any, project_using_all,
+   project_using_count_nonzero, project_using_quantile)
+10. Support for user-defined functions.
+11. Built-in debug operations (tracepoint, breakpoint)
+12. Support for infix and unary operators (e.g., `a + b`, `~a`).
 
 The nodes form a directed acyclic graph (DAG) that represents computations
 to be performed. Each node implements a specific operation and stores its
 inputs as attributes. The graph can then be evaluated by traversing the nodes
 and performing their operations using NumPy, TensorFlow, etc.
 
-We anticipate using NumPy/TensorFlow to perform computation based on matrices
-of diverse shapes ("tensors"), therefore, we have included operations for shape
-manipulation including expanding the dimensions and projecting over the axes. For
-example, expand_dims allows to add new axes of size 1 to a tensor's shape, while
-project_using_sum allows to compute the sum of tensor elements along specified
-axes, thus projecting the tensor onto a lower-dimensional space.
+Reduction operations project a tensor onto a lower-dimensional space by
+reducing it along a named semantic axis.  For example, project_using_sum
+computes the sum of tensor elements along the specified axis, collapsing it
+to size 1 (keepdims=True) so that results broadcast correctly against the
+original shape.
 
 To allow for uniform manipulation, we define the following operation groups:
 
 1. BinaryOp: Operations that take two graph nodes as input
 2. UnaryOp: Operations that take one graph node as input
-3. AxisOp: Operations that take a graph node and an axis specification as input
-and either expand to a higher-dimensional space or reduce to a lower-dimensional
-space by projecting over one or more axes using a specific reduction operation.
+3. ProjectionOp: Operations that take a graph node and a semantic
+   :class:`~civic_digital_twins.dt_model.axes.Axis` specification, reducing
+   the tensor along that axis using a specific aggregation function.
 
 Here's an example of what you can do with this module:
 
     >>> from civic_digital_twins.dt_model.engine.frontend import graph
+    >>> from civic_digital_twins.dt_model.axes import Axis, DOMAIN
     >>>
     >>> a = graph.placeholder("a", 1.0)
     >>> b = graph.constant(2.0)
     >>> c = a + b
     >>> d = c * c + 1
     >>>
-    >>> # Expand to a higher-dimensional space
-    >>> e = graph.expand_dims(d, axis=(1,2))
-    >>>
-    >>> # Project to a lower-dimensional space by summing over axis 0
-    >>> f = graph.project_using_sum(e, axis=0)
+    >>> # Project to a lower-dimensional space by summing over the time axis
+    >>> time_axis = Axis("time", DOMAIN)
+    >>> ts = graph.timeseries_constant([1.0, 2.0, 3.0])
+    >>> f = graph.project_using_sum(ts, axis=time_axis)
 
 Like TensorFlow, we support placeholders. That is, variables with a given
 name that can be filled in at execution time with concrete values. We also
@@ -179,10 +180,11 @@ from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
+from ...axes import DOMAIN, Axis
 from .. import atomic, compileflags
 
-Axis = int | tuple[int, ...]
-"""Type alias for axis specifications in shape operations."""
+_TIME_AXIS = Axis("time", DOMAIN)
+"""Singleton for the time domain axis used by timeseries nodes."""
 
 Scalar = bool | float | int | str
 """Type alias for supported scalar value types."""
@@ -273,6 +275,18 @@ _id_generator = atomic.Int()
 # while `C` is used as a type parameter for boolean conditions.
 
 
+def _union_axes(*seqs: tuple[Axis, ...]) -> tuple[Axis, ...]:
+    """Merge axis tuples, preserving first-seen order and deduplicating."""
+    seen: set[Axis] = set()
+    result: list[Axis] = []
+    for seq in seqs:
+        for ax in seq:
+            if ax not in seen:
+                seen.add(ax)
+                result.append(ax)
+    return tuple(result)
+
+
 def ensure_node[T](value: Node[T] | HasNode[T] | Scalar) -> Node[T]:
     """Convert a scalar value to a constant node if necessary.
 
@@ -310,6 +324,15 @@ class Node[T]:
         self.name = name
         self.flags = 0
         self.id = _id_generator.add(1)
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Semantic domain axes carried by this node's output.
+
+        Scalar (non-timeseries, non-spatial) nodes return ``()``.
+        Subclasses override this to propagate or remove axes.
+        """
+        return ()
 
     def maybe_set_name(self, name: str) -> None:
         """Set the node name unless it has already been set."""
@@ -498,6 +521,11 @@ class timeseries_constant[T](Node[T]):
         super().__init__(name)
         self.values: ArrayLike = values
 
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return ``(Axis("time", DOMAIN),)`` — this node carries a time axis."""
+        return (_TIME_AXIS,)
+
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.timeseries_constant(values={self.values!r}, name={self.name!r})"
@@ -512,6 +540,11 @@ class timeseries_placeholder[T](Node[T]):
 
     def __init__(self, name: str) -> None:
         super().__init__(name)
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return ``(Axis("time", DOMAIN),)`` — this node carries a time axis."""
+        return (_TIME_AXIS,)
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
@@ -531,6 +564,11 @@ class BinaryOp[T](Node[T]):
         self.left = left
         self.right = right
 
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return the union of the left and right operand axes."""
+        return _union_axes(self.left.output_axes, self.right.output_axes)
+
 
 class UnaryOp[T](Node[T]):
     """Base class for unary operations.
@@ -542,6 +580,11 @@ class UnaryOp[T](Node[T]):
     def __init__(self, node: Node[T], name="") -> None:
         super().__init__(name)
         self.node = node
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Propagate the operand's axes unchanged."""
+        return self.node.output_axes
 
 
 # Arithmetic operations
@@ -732,6 +775,11 @@ class where[C, T](Node[T]):
         self.then = ensure_node(then)
         self.otherwise = ensure_node(otherwise)
 
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return the union of condition, then, and otherwise axes."""
+        return _union_axes(self.condition.output_axes, self.then.output_axes, self.otherwise.output_axes)
+
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.where(condition=n{self.condition.id}, then=n{self.then.id}, otherwise=n{self.otherwise.id}, name='{self.name}')"  # noqa: E501
@@ -754,6 +802,12 @@ class MultiClauseOp[C, T](Node[T]):
         super().__init__(name)
         self.clauses = clauses
         self.default_value = default_value
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return the union of all clause condition, clause value, and default axes."""
+        clause_seqs = [ax for cond, val in self.clauses for ax in (cond.output_axes, val.output_axes)]
+        return _union_axes(*clause_seqs, self.default_value.output_axes)
 
 
 class multi_clause_where[C, T](MultiClauseOp[C, T]):
@@ -948,260 +1002,223 @@ def _piecewise_to_node[T](
     return multi_clause_where(node_clauses, default_node)  # type: ignore[arg-type]
 
 
-# Shape-changing operations
+class ProjectionOp[T](Node[T]):
+    """Base class for semantic-axis reduction operations.
 
-
-class AxisOp[T](Node[T]):
-    """Base class for axis manipulation operations.
-
-    We use these operations to expand a tensor to a higher-dimensional
-    space or to reduce its dimensionality by projecting over one or more
-    axes using a specific reduction operation.
+    Used for all ``project_using_*`` nodes — operations that reduce a
+    tensor along a named domain axis (e.g. ``Axis("time", DOMAIN)``).
 
     Args:
-        node: Input tensor
-        axis: Axis specification
+        node: Input tensor.
+        axis: The semantic :class:`~civic_digital_twins.dt_model.model.axis.Axis`
+            along which to reduce (e.g. ``Axis("time", DOMAIN)``).
+        name: Optional node name for debugging.
     """
 
-    def __init__(self, node: Node[T], axis: Axis, name="") -> None:
+    def __init__(self, node: Node[T], axis: Axis, name: str = "") -> None:
         super().__init__(name)
         self.node = node
         self.axis = axis
 
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return input axes minus the axis being reduced."""
+        return tuple(ax for ax in self.node.output_axes if ax != self.axis)
 
-class expand_dims[T](AxisOp[T]):
-    """Adds new axes of size 1 to a tensor's shape.
 
-    This expands the tensor to a higher-dimensional space.
+class project_using_sum[T](ProjectionOp[T]):
+    """Computes sum of tensor elements along a domain axis, preserving dimensions.
+
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.sum(..., keepdims=True)``), so that the result broadcasts correctly
+    against both plain timeseries ``(T,)`` and ensemble-batched timeseries
+    ``(size, T)``.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic :class:`~civic_digital_twins.dt_model.model.axis.Axis`
+            along which to sum (e.g. ``Axis("time", DOMAIN)``).
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.expand_dims(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class squeeze[T](AxisOp[T]):
-    """Removes axes of size 1 from a tensor's shape."""
+class project_using_mean[T](ProjectionOp[T]):
+    """Computes mean of tensor elements along a domain axis, preserving dimensions.
 
-    def __repr__(self) -> str:
-        """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.squeeze(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
-
-
-class project_using_sum[T](AxisOp[T]):
-    """Computes sum of tensor elements along specified axes, preserving dimensions.
-
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.sum(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.mean(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to sum.
+        axis: Semantic axis along which to average.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_sum(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_mean[T](AxisOp[T]):
-    """Computes mean of tensor elements along specified axes, preserving dimensions.
+class project_using_min[T](ProjectionOp[T]):
+    """Computes minimum of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.mean(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.min(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to average.
+        axis: Semantic axis along which to find the minimum.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_mean(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_min(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_min[T](AxisOp[T]):
-    """Computes minimum of tensor elements along specified axes, preserving dimensions.
+class project_using_max[T](ProjectionOp[T]):
+    """Computes maximum of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.min(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.max(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to find the minimum.
+        axis: Semantic axis along which to find the maximum.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_min(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_max(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_max[T](AxisOp[T]):
-    """Computes maximum of tensor elements along specified axes, preserving dimensions.
+class project_using_std[T](ProjectionOp[T]):
+    """Computes standard deviation of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.max(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.std(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to find the maximum.
+        axis: Semantic axis along which to compute the standard deviation.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_max(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_std(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_std[T](AxisOp[T]):
-    """Computes standard deviation of tensor elements along specified axes, preserving dimensions.
+class project_using_var[T](ProjectionOp[T]):
+    """Computes variance of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.std(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.var(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to compute the standard deviation.
+        axis: Semantic axis along which to compute the variance.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_std(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_var(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_var[T](AxisOp[T]):
-    """Computes variance of tensor elements along specified axes, preserving dimensions.
+class project_using_median[T](ProjectionOp[T]):
+    """Computes median of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.var(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.median(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to compute the variance.
+        axis: Semantic axis along which to compute the median.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_var(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_median(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_median[T](AxisOp[T]):
-    """Computes median of tensor elements along specified axes, preserving dimensions.
+class project_using_prod[T](ProjectionOp[T]):
+    """Computes product of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.median(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.prod(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to compute the median.
+        axis: Semantic axis along which to compute the product.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_median(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_prod(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_prod[T](AxisOp[T]):
-    """Computes product of tensor elements along specified axes, preserving dimensions.
+class project_using_any[T](ProjectionOp[T]):
+    """Computes logical OR of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.prod(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.any(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to compute the product.
+        axis: Semantic axis along which to compute the logical OR.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_prod(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_any(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_any[T](AxisOp[T]):
-    """Computes logical OR of tensor elements along specified axes, preserving dimensions.
+class project_using_all[T](ProjectionOp[T]):
+    """Computes logical AND of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.any(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.all(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to compute the logical OR.
+        axis: Semantic axis along which to compute the logical AND.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_any(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+        return f"n{self.id} = graph.project_using_all(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
 
 
-class project_using_all[T](AxisOp[T]):
-    """Computes logical AND of tensor elements along specified axes, preserving dimensions.
+class project_using_count_nonzero[T](ProjectionOp[T]):
+    """Counts non-zero elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.all(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.count_nonzero(..., keepdims=True)``).
 
     Args:
         node: Input tensor.
-        axis: Axis along which to compute the logical AND.
-    """
-
-    def __repr__(self) -> str:
-        """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.project_using_all(node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
-
-
-class project_using_count_nonzero[T](AxisOp[T]):
-    """Counts non-zero elements along specified axes, preserving dimensions.
-
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.count_nonzero(..., keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
-
-    Args:
-        node: Input tensor.
-        axis: Axis along which to count non-zero elements.
+        axis: Semantic axis along which to count non-zero elements.
     """
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return (
             f"n{self.id} = graph.project_using_count_nonzero("
-            f"node=n{self.node.id}, axis={self.axis}, name='{self.name}')"
+            f"node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
         )
 
 
-class project_using_quantile[T](AxisOp[T]):
-    """Computes quantile/percentile of tensor elements along specified axes, preserving dimensions.
+class project_using_quantile[T](ProjectionOp[T]):
+    """Computes quantile/percentile of tensor elements along a domain axis, preserving dimensions.
 
-    This projects the tensor to a lower-dimensional space.  The reduced axis
-    is always kept as size 1 (equivalent to ``np.quantile(..., q, keepdims=True)``),
-    so that the result broadcasts correctly against both plain timeseries
-    ``(T,)`` and ensemble-batched timeseries ``(size, T)``.
+    The reduced axis is always kept as size 1 (equivalent to
+    ``np.quantile(..., q, keepdims=True)``).
 
     Args:
         node: Input tensor.
+        axis: Semantic axis along which to compute the quantile.
         q: Quantile level in the range [0, 1]. For example, 0.5 for the median,
            0.95 for the 95th percentile.
-        axis: Axis along which to compute the quantile.
     """
 
     def __init__(self, node: Node[T], axis: Axis, q: float, name: str = "") -> None:
@@ -1212,7 +1229,7 @@ class project_using_quantile[T](AxisOp[T]):
         """Return a round-trippable SSA representation of the node."""
         return (
             f"n{self.id} = graph.project_using_quantile("
-            f"node=n{self.node.id}, q={self.q}, axis={self.axis}, name='{self.name}')"
+            f"node=n{self.node.id}, q={self.q}, axis={self.axis!r}, name='{self.name}')"
         )
 
 

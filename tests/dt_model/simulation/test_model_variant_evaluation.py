@@ -119,7 +119,7 @@ def test_evaluation_bike_scenario_gives_bike_outputs():
     ev = Evaluation(mv)
     result = ev.evaluate(ens, [mv.outputs.throughput, mv.outputs.emissions])
     # All scenarios use bike: throughput = capacity * 1 = 100
-    throughput = result.marginalize(mv.outputs.throughput)
+    throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(_CAPACITY_VALUE * 1.0)
 
 
@@ -130,7 +130,7 @@ def test_evaluation_train_scenario_gives_train_outputs():
     ens = DistributionEnsemble(mv, size=4, rng=np.random.default_rng(0))
     ev = Evaluation(mv)
     result = ev.evaluate(ens, [mv.outputs.throughput, mv.outputs.emissions])
-    throughput = result.marginalize(mv.outputs.throughput)
+    throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(_CAPACITY_VALUE * 10.0)
 
 
@@ -154,7 +154,7 @@ def test_evaluation_mixed_modes_weighted_average():
     ev = Evaluation(mv)
     result = ev.evaluate(manual_scenarios, [mv.outputs.throughput])
     # Expected: 0.5 * (100 * 1) + 0.5 * (100 * 10) = 50 + 500 = 550
-    throughput = result.marginalize(mv.outputs.throughput)
+    throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(550.0)
 
 
@@ -165,7 +165,7 @@ def test_evaluation_emissions_bike_only():
     ens = DistributionEnsemble(mv, size=5, rng=np.random.default_rng(0))
     ev = Evaluation(mv)
     result = ev.evaluate(ens, [mv.outputs.emissions])
-    assert float(result.marginalize(mv.outputs.emissions)) == pytest.approx(0.0)
+    assert float(result.expected_value(mv.outputs.emissions)) == pytest.approx(0.0)
 
 
 def test_evaluation_emissions_train_only():
@@ -175,7 +175,7 @@ def test_evaluation_emissions_train_only():
     ens = DistributionEnsemble(mv, size=5, rng=np.random.default_rng(0))
     ev = Evaluation(mv)
     result = ev.evaluate(ens, [mv.outputs.emissions])
-    assert float(result.marginalize(mv.outputs.emissions)) == pytest.approx(50.0)
+    assert float(result.expected_value(mv.outputs.emissions)) == pytest.approx(50.0)
 
 
 # ===========================================================================
@@ -223,7 +223,7 @@ def test_grid_mode_categorical_selector_all_bike():
     manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
     result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
 
-    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 1.0)
+    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
 
 
 def test_grid_mode_categorical_selector_all_train():
@@ -235,7 +235,7 @@ def test_grid_mode_categorical_selector_all_train():
     manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
     result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
 
-    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 10.0)
+    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
 
 
 def test_grid_mode_categorical_selector_mixed_scenarios():
@@ -253,7 +253,7 @@ def test_grid_mode_categorical_selector_mixed_scenarios():
     ]
     result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
 
-    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 5.5)
+    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 5.5)
 
 
 def test_grid_mode_node_selector_from_axis():
@@ -282,7 +282,7 @@ def test_grid_mode_node_selector_from_axis():
     # presence=100 → bike → 100*1=100
     # presence=200 → train → 200*10=2000
     # presence=300 → train → 300*10=3000
-    assert np.allclose(result.marginalize(mv.outputs.throughput), [100.0, 2000.0, 3000.0])
+    assert np.allclose(result.expected_value(mv.outputs.throughput), [100.0, 2000.0, 3000.0])
 
 
 # ===========================================================================
@@ -306,7 +306,7 @@ def test_grid_mode_categorical_index_as_sole_parameter_axis():
         parameters={mode: np.array(["bike", "train"])},
     )
 
-    assert np.allclose(result.marginalize(mv.outputs.throughput), [_CAPACITY_VALUE * 1.0, _CAPACITY_VALUE * 10.0])
+    assert np.allclose(result.expected_value(mv.outputs.throughput), [_CAPACITY_VALUE * 1.0, _CAPACITY_VALUE * 10.0])
 
 
 def test_grid_mode_categorical_index_and_numeric_axis_2d():
@@ -331,4 +331,4 @@ def test_grid_mode_categorical_index_and_numeric_axis_2d():
     )
 
     expected = np.array([[100.0, 200.0], [1000.0, 2000.0]])
-    assert np.allclose(result.marginalize(mv.outputs.throughput), expected)
+    assert np.allclose(result.expected_value(mv.outputs.throughput), expected)

@@ -6,6 +6,7 @@ import subprocess
 import textwrap
 from collections.abc import Iterable
 
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
@@ -111,16 +112,18 @@ def test_reduction_graph():
     x = graph.placeholder("x")
     y = graph.placeholder("y")
 
-    # Build mean(sum(x * y, axis=0), axis=1)
+    time_axis = Axis("time", DOMAIN)
+    batch_axis = Axis("batch", DOMAIN)
+
     prod = graph.multiply(x, y)
-    sum_0 = graph.project_using_sum(prod, axis=0)
-    result = graph.project_using_mean(sum_0, axis=1)
+    sum_t = graph.project_using_sum(prod, axis=time_axis)
+    result = graph.project_using_mean(sum_t, axis=batch_axis)
 
     # Verify structure
-    assert result.node is sum_0
-    assert result.axis == 1
-    assert sum_0.node is prod
-    assert sum_0.axis == 0
+    assert result.node is sum_t
+    assert result.axis == batch_axis
+    assert sum_t.node is prod
+    assert sum_t.axis == time_axis
     assert prod.left is x
     assert prod.right is y
 
@@ -552,20 +555,16 @@ def test_repr():
         == f"n{uu.id} = graph.multi_clause_where(clauses=[(n{condition.id}, n{a.id}), (n{other_cond.id}, n{b.id})], default_value=n{defval.id}, name='')"  # noqa: E501
     )
 
-    v = graph.expand_dims(a, (1, 2))
-    assert str(v) == f"n{v.id} = graph.expand_dims(node=n{a.id}, axis=(1, 2), name='')"
+    time_axis = Axis("time", DOMAIN)
 
-    w = graph.squeeze(a, (1, 2))
-    assert str(w) == f"n{w.id} = graph.squeeze(node=n{a.id}, axis=(1, 2), name='')"
+    x = graph.project_using_sum(a, time_axis)
+    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=Axis('time', role='DOMAIN'), name='')"
 
-    x = graph.project_using_sum(a, (1, 2))
-    assert str(x) == f"n{x.id} = graph.project_using_sum(node=n{a.id}, axis=(1, 2), name='')"
+    y = graph.project_using_mean(a, time_axis)
+    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=Axis('time', role='DOMAIN'), name='')"
 
-    y = graph.project_using_mean(a, (1, 2))
-    assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=(1, 2), name='')"
-
-    z = graph.function_call("jarjar", x, y, u, v=v, w=w)
-    assert str(z) == f"n{z.id} = graph.function_call(name='jarjar', n{x.id}, n{y.id}, n{u.id}, v=n{v.id}, w=n{w.id})"
+    z = graph.function_call("jarjar", x, y, u)
+    assert str(z) == f"n{z.id} = graph.function_call(name='jarjar', n{x.id}, n{y.id}, n{u.id})"
 
 
 def test_maybe_set_name():

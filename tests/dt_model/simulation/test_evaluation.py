@@ -145,7 +145,7 @@ def test_axes_single_axis_formula_values():
 
     result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
     # shape (3, 1); marginalize: tensordot(..., [1.0], axes=([-1],[0])) → (3,)
-    marginalised = result.marginalize(I_result)
+    marginalised = result.expected_value(I_result)
     assert np.allclose(marginalised, [3.0, 6.0, 12.0])
 
 
@@ -159,7 +159,7 @@ def test_axes_two_axes_additive_formula():
     ys = np.array([10.0, 20.0, 30.0])
 
     result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
-    marginalised = result.marginalize(I_result)
+    marginalised = result.expected_value(I_result)
     # result[i, j] = xs[i] + ys[j]
     expected = xs[:, None] + ys[None, :]
     assert np.allclose(marginalised, expected)
@@ -178,7 +178,7 @@ def test_axes_non_axis_factor_marginalised_correctly():
     scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
 
     result = Evaluation(model).evaluate(scenarios, parameters={I_x: xs})
-    marginalised = result.marginalize(I_result)
+    marginalised = result.expected_value(I_result)
     # result[i] = xs[i] * mean_factor = xs[i] * 2
     assert np.allclose(marginalised, [2.0, 4.0, 6.0])
 
@@ -250,16 +250,16 @@ def test_evaluation_result_parameter_values_empty_in_1d_mode():
     assert result.parameter_values == {}
 
 
-def test_marginalize_constant_index():
+def test_value_constant_index():
     """Marginalize on an index with no abstract dependency returns the constant."""
     I_c = Index("c", 42.0)
     model = _make_model(I_c)
     result = Evaluation(model).evaluate([(1.0, {})])
-    marginalised = result.marginalize(I_c)
+    marginalised = result.expected_value(I_c)
     assert float(marginalised) == pytest.approx(42.0)
 
 
-def test_marginalize_1d_squeeze_scalar():
+def test_value_1d_squeeze_scalar():
     """Marginalize of a pure-ENSEMBLE scalar result is a 0-d scalar array."""
     from scipy import stats
 
@@ -272,7 +272,7 @@ def test_marginalize_1d_squeeze_scalar():
 
     ensemble = DistributionEnsemble(model, size=50)
     result = Evaluation(model).evaluate(ensemble)
-    marginalised = result.marginalize(I_result)
+    marginalised = result.expected_value(I_result)
     # ENSEMBLE axis contracted, DOMAIN placeholder squeezed → 0-d scalar.
     assert np.ndim(marginalised) == 0
 
