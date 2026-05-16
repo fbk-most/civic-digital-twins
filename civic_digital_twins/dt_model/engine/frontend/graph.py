@@ -1251,6 +1251,11 @@ class function_call[T](Node[T]):
         self.args = tuple(ensure_node(a) for a in args)
         self.kwargs = {k: ensure_node(v) for k, v in kwargs.items()}
 
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return the union of all input axes (conservative)."""
+        return _union_axes(*(a.output_axes for a in self.args), *(v.output_axes for v in self.kwargs.values()))
+
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         arg_reprs = [f"n{arg.id}" for arg in self.args]
