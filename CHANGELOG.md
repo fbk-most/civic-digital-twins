@@ -83,6 +83,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Scenario.effective_outcomes(idx)` returns the active outcome-probability map for
   categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
   for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
+- `parameter_axes=` kwarg on `Evaluation.evaluate()`, `execute_plan()`,
+  `evaluate_incremental()`, and `submit_evaluate()` — declares named PARAMETER
+  axes for correlated parameter sweeps (closing #154).  Maps axis name to a 1-D
+  numpy array.  Callable values in `parameters=` are now supported: each
+  callable receives axis arrays by name from its signature and computes the
+  substitution value for the corresponding model index (e.g.
+  `lambda base, gradient, e=e: base - gradient * e`).  Parameters with defaults
+  whose names are not axis names are ignored (the `e=e` closure idiom).
+  Array-valued `parameters=` entries retain their existing behaviour.
+- `EvaluationResult.named_axis_values` — dict mapping each named axis name to
+  its raw 1-D input array (from `parameter_axes=`).  Results for callable-backed
+  indexes are accessed via `result[idx]` or `result.expected_value(idx)`.
 
 ### Changed
 

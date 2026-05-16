@@ -225,7 +225,11 @@ class EvaluationHandle:
     rng:
         Shared random number generator.  Reused by every :meth:`extend` call.
     parameters:
-        The PARAMETER axis dict passed to the initial execution.
+        The PARAMETER axis dict passed to the initial execution (array-valued
+        entries and callable-valued entries combined).
+    parameter_axes:
+        Named PARAMETER axes dict passed to the initial execution (from
+        ``parameter_axes=``).  ``None`` when correlated axes were not used.
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -240,14 +244,16 @@ class EvaluationHandle:
         result: EvaluationResult | None,
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
-        functions: dict[str, executor.Functor] | None,
-        backend: type[executor.NumpyBackend],
+        parameter_axes: dict[str, np.ndarray] | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> None:
         self._evaluation = evaluation
         self._plan = plan
         self._result = result
         self._rng = rng
         self._parameters = parameters
+        self._parameter_axes = parameter_axes
         self._functions = functions
         self._backend = backend
 
@@ -326,6 +332,7 @@ class EvaluationHandle:
             self._plan,
             new_ensemble,
             parameters=self._parameters,
+            parameter_axes=self._parameter_axes,
             functions=self._functions,
             backend=self._backend,
         )
@@ -362,6 +369,8 @@ class AsyncEvaluationHandle(EvaluationHandle):
         Shared random number generator reused by :meth:`extend`.
     parameters:
         The PARAMETER axis dict passed to the initial execution.
+    parameter_axes:
+        Named PARAMETER axes dict passed to the initial execution.
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -376,6 +385,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
         plan: EvaluationPlan,
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
+        parameter_axes: dict[str, np.ndarray] | None,
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> None:
@@ -385,6 +395,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
             result=None,  # not yet available; resolved lazily by _resolve()
             rng=rng,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )

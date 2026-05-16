@@ -13,10 +13,11 @@ from typing import Any
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.model.index import GenericIndex, Index
+from civic_digital_twins.dt_model.model.index import ConstIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -514,3 +515,217 @@ def test_evaluation_rejects_object_without_model_attribute():
     """Evaluation() raises TypeError when the argument is not a Scenario, Model, or ModelVariant."""
     with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
         Evaluation(object())  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Parameter_axes= + callable parameters (correlated PARAMETER axes)
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_axes_single_named_axis_one_callable():
+    """Single named axis + one callable → shape (N,), correct values."""
+    cost = Index("cost", None)
+    result = Index("result", cost.node * 2.0)
+    model = _make_model(cost, result)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.array([1.0, 2.0, 3.0])
+    res = ev.evaluate(
+        parameter_axes={"base": base_arr},
+        parameters={cost: lambda base: base * 3.0},
+    )
+    # cost = base*3 → [3,6,9]; result = cost*2 → [6,12,18]
+    assert res.expected_value(result).shape == (3,)
+    np.testing.assert_allclose(res.expected_value(result), [6.0, 12.0, 18.0])
+
+
+def test_parameter_axes_two_named_axes_multiple_callables():
+    """Two named axes + multiple callables → shape (N, M), correct values."""
+    E = 4
+    cost_e = [Index(f"cost_{e}", None) for e in range(E)]
+    numbers = [1.0, 2.0, 3.0, 4.0]
+    number_e = [ConstIndex(f"number_{e}", numbers[e]) for e in range(E)]
+    total = Index("total", sum(cost_e[e].node * number_e[e].node for e in range(E)))
+    model = _make_model(*cost_e, *number_e, total)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.linspace(4.0, 10.0, 5)  # N=5
+    grad_arr = np.linspace(0.1, 0.5, 4)  # M=4
+    res = ev.evaluate(
+        parameter_axes={"base": base_arr, "gradient": grad_arr},
+        parameters={cost_e[e]: (lambda base, gradient, e=e: base - gradient * e) for e in range(E)},
+    )
+    assert res.expected_value(total).shape == (5, 4)
+
+    # Brute-force: cost_e[e] = base[:,None] - gradient[None,:] * e → (5,4)
+    # total = sum_e cost_e[e] * numbers[e] → (5,4)
+    expected = sum((base_arr[:, None] - grad_arr[None, :] * e) * numbers[e] for e in range(E))
+    np.testing.assert_allclose(res.expected_value(total), expected)
+
+
+def test_parameter_axes_model1_model2_equivalence():
+    """Model 1 (formula-based cost_e) and Model 2 (callable cost_e) are numerically identical.
+
+    Both compute total = SUM_e cost_e[e] * number_e[e] where
+    cost_e[e] = base - gradient * e.  The traditional model expresses cost_e
+    as graph formulas; the callable model supplies them via parameter_axes= +
+    callables.  Results must be equal in shape, values, and axis layout.
+    """
+    E = 7
+    numbers = [float(e + 1) for e in range(E)]
+    base_arr = np.linspace(4.0, 10.0, 6)  # N=6
+    grad_arr = np.linspace(0.2, 0.6, 5)  # M=5
+
+    # --- Model 1: traditional formula-based cost_e ---
+    base1 = Index("base", None)
+    gradient1 = Index("gradient", None)
+    cost1_e = [Index(f"cost1_{e}", base1.node - gradient1.node * e) for e in range(E)]
+    number1_e = [ConstIndex(f"number1_{e}", numbers[e]) for e in range(E)]
+    total1 = Index("total1", sum(cost1_e[e].node * number1_e[e].node for e in range(E)))
+    model1 = _make_model(base1, gradient1, *cost1_e, *number1_e, total1)
+    res1 = Evaluation(Scenario(model1)).evaluate(
+        parameters={base1: base_arr, gradient1: grad_arr},
+    )
+
+    # --- Model 2: parameter_axes= + callables ---
+    cost2_e = [Index(f"cost2_{e}", None) for e in range(E)]
+    number2_e = [ConstIndex(f"number2_{e}", numbers[e]) for e in range(E)]
+    total2 = Index("total2", sum(cost2_e[e].node * number2_e[e].node for e in range(E)))
+    model2 = _make_model(*cost2_e, *number2_e, total2)
+    res2 = Evaluation(Scenario(model2)).evaluate(
+        parameter_axes={"base": base_arr, "gradient": grad_arr},
+        parameters={cost2_e[e]: (lambda base, gradient, e=e: base - gradient * e) for e in range(E)},
+    )
+
+    ev1 = res1.expected_value(total1)
+    ev2 = res2.expected_value(total2)
+    assert ev1.shape == ev2.shape
+    np.testing.assert_allclose(ev1, ev2)
+
+
+def test_parameter_axes_mix_named_and_anonymous():
+    """Named axes + anonymous array parameter → shape (N, M, K)."""
+    cost = Index("cost", None)
+    scale = Index("scale", None)
+    result = Index("result", cost.node * scale.node)
+    model = _make_model(cost, scale, result)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.array([1.0, 2.0, 3.0])  # N=3
+    grad_arr = np.array([0.1, 0.2])  # M=2
+    scale_arr = np.array([10.0, 20.0, 30.0, 40.0])  # K=4
+
+    res = ev.evaluate(
+        parameter_axes={"base": base_arr, "grad": grad_arr},
+        parameters={
+            cost: lambda base, grad: base - grad,
+            scale: scale_arr,
+        },
+    )
+    # Named axes first (positions 0,1), anonymous axis last (position 2).
+    assert res.expected_value(result).shape == (3, 2, 4)
+    expected_cost = base_arr[:, None] - grad_arr[None, :]  # (3, 2)
+    expected = expected_cost[:, :, None] * scale_arr[None, None, :]  # (3, 2, 4)
+    np.testing.assert_allclose(res.expected_value(result), expected)
+
+
+def test_parameter_axes_named_axis_values_accessor():
+    """named_axis_values returns the raw 1-D input arrays keyed by name."""
+    cost = Index("cost", None)
+    model = _make_model(cost)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.linspace(1.0, 5.0, 5)
+    grad_arr = np.linspace(0.1, 0.3, 3)
+    res = ev.evaluate(
+        parameter_axes={"base": base_arr, "gradient": grad_arr},
+        parameters={cost: lambda base, gradient: base - gradient},
+    )
+    np.testing.assert_array_equal(res.named_axis_values["base"], base_arr)
+    np.testing.assert_array_equal(res.named_axis_values["gradient"], grad_arr)
+
+
+def test_parameter_axes_callable_not_in_parameter_values():
+    """Callable-backed indexes are not PARAMETER-axis indexes; parameter_values_for raises."""
+    cost = Index("cost", None)
+    model = _make_model(cost)
+    ev = Evaluation(Scenario(model))
+
+    res = ev.evaluate(
+        parameter_axes={"base": np.array([1.0, 2.0])},
+        parameters={cost: lambda base: base},
+    )
+    with pytest.raises(KeyError):
+        res.parameter_values_for(cost)
+    assert cost not in res.parameter_values
+
+
+def test_parameter_axes_callable_without_parameter_axes_raises():
+    """Callable in parameters= without parameter_axes= raises ValueError."""
+    cost = Index("cost", None)
+    model = _make_model(cost)
+    ev = Evaluation(Scenario(model))
+
+    with pytest.raises(ValueError, match="parameter_axes"):
+        ev.evaluate(parameters={cost: lambda base: base})
+
+
+def test_parameter_axes_callable_unknown_required_param_raises():
+    """Callable with a required parameter not in parameter_axes= raises ValueError."""
+    cost = Index("cost", None)
+    model = _make_model(cost)
+    ev = Evaluation(Scenario(model))
+
+    with pytest.raises(ValueError, match="required parameter"):
+        ev.evaluate(
+            parameter_axes={"base": np.array([1.0, 2.0])},
+            parameters={cost: lambda base, unknown_axis: base + unknown_axis},
+        )
+
+
+def test_parameter_axes_closure_e_equals_e_idiom():
+    """The e=e default-arg idiom correctly freezes the loop variable in each callable."""
+    E = 3
+    cost_e = [Index(f"cost_{e}", None) for e in range(E)]
+    total = Index("total", sum(cost_e[e].node for e in range(E)))
+    model = _make_model(*cost_e, total)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.array([10.0])
+    # cost_e[e] = base * e → [0, 10, 20]; total = 30
+    # Without e=e all lambdas would use e=2 → total = 10+20+20 = 50 (wrong)
+    res = ev.evaluate(
+        parameter_axes={"base": base_arr},
+        parameters={cost_e[e]: (lambda base, e=e: base * e) for e in range(E)},
+    )
+    np.testing.assert_allclose(res.expected_value(total), [30.0])
+
+
+def test_parameter_axes_callable_with_var_keyword_receives_all_axes():
+    """A callable with **kwargs receives all named axis arrays."""
+    cost = Index("cost", None)
+    model = _make_model(cost)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.array([1.0, 2.0])
+    grad_arr = np.array([0.1, 0.2, 0.3])
+    res = ev.evaluate(
+        parameter_axes={"base": base_arr, "gradient": grad_arr},
+        parameters={cost: lambda **axes: axes["base"] - axes["gradient"]},
+    )
+    assert res.expected_value(cost).shape == (2, 3)
+    expected = base_arr[:, None] - grad_arr[None, :]
+    np.testing.assert_allclose(res.expected_value(cost), expected)
+
+
+def test_parameter_axes_callable_with_var_positional_raises():
+    """A callable with *args raises TypeError."""
+    cost = Index("cost", None)
+    model = _make_model(cost)
+    ev = Evaluation(Scenario(model))
+
+    with pytest.raises(TypeError, match=r"\*args"):
+        ev.evaluate(
+            parameter_axes={"base": np.array([1.0, 2.0])},
+            parameters={cost: lambda *args: args[0]},
+        )

@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import concurrent.futures
+import inspect
 import warnings
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -102,12 +103,17 @@ class EvaluationResult:
         Maps each :class:`~dt_model.model.axis.Axis` to its numpy dimension
         position in result arrays.
     parameter_arrays:
-        The value arrays passed in ``parameters=``, keyed by index.  Used by
-        :meth:`parameter_values_for`.  Empty dict when no PARAMETER axes.
+        Anonymous PARAMETER-axis arrays from ``parameters=`` (array-valued
+        entries only; callable-backed indexes are not included).  Used by
+        :meth:`parameter_values_for`.  Empty dict when no anonymous PARAMETER
+        axes.
     axis_sizes:
         Maps each :class:`~dt_model.model.axis.Axis` to its size.
     factorized_weights:
         Per-ENSEMBLE-axis weight vectors.
+    named_axis_values:
+        Raw 1-D arrays for named axes declared via ``parameter_axes=``, keyed
+        by axis name.  Empty dict when ``parameter_axes=`` was not used.
     """
 
     def __init__(
@@ -117,12 +123,14 @@ class EvaluationResult:
         parameter_arrays: dict[GenericIndex, np.ndarray],
         axis_sizes: dict[Axis, int] | None = None,
         factorized_weights: dict[Axis, np.ndarray] | None = None,
+        named_axis_values: dict[str, np.ndarray] | None = None,
     ) -> None:
         self._state = state
         self._axis_layout = axis_layout
         self._parameter_arrays = parameter_arrays
         self._axis_sizes: dict[Axis, int] = axis_sizes or {}
         self._factorized_weights: dict[Axis, np.ndarray] = factorized_weights or {}
+        self._named_axis_values: dict[str, np.ndarray] = named_axis_values or {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -156,6 +164,11 @@ class EvaluationResult:
     def parameter_values(self) -> dict[GenericIndex, np.ndarray]:
         """Parameter value arrays, keyed by the index passed in ``parameters=``."""
         return self._parameter_arrays
+
+    @property
+    def named_axis_values(self) -> dict[str, np.ndarray]:
+        """Raw 1-D arrays for axes declared via ``parameter_axes=``, keyed by name."""
+        return self._named_axis_values
 
     def parameter_values_for(self, index: GenericIndex) -> np.ndarray:
         """Return the value array for a specific PARAMETER index.
@@ -524,7 +537,8 @@ class Evaluation:
         plan: EvaluationPlan,
         ensemble: AxisEnsemble | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> EvaluationResult:
@@ -540,10 +554,20 @@ class Evaluation:
             Legacy ``Iterable[WeightedScenario]`` inputs must be adapted
             before this call (done automatically by :meth:`evaluate`).
         parameters:
-            PARAMETER axes for multi-dimensional evaluation.  Maps each
-            axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
-            array of values.  When ``None``, defaults to an empty dict (no
-            PARAMETER axes).
+            Per-index value sources.  Each entry maps a
+            :class:`~dt_model.model.index.GenericIndex` to either a 1-D numpy
+            array (anonymous PARAMETER axis — current behaviour) or a callable
+            (correlated value computed from named axes declared in
+            *parameter_axes*).  Callables receive broadcast-ready shaped arrays
+            for each named axis whose name appears in the callable's signature;
+            parameters with defaults whose names are not axis names are ignored.
+            Callables are only valid when *parameter_axes* is also provided.
+        parameter_axes:
+            Named PARAMETER axes for correlated sweeps.  Maps axis name to a
+            1-D numpy array of axis values.  Named axes occupy the leading
+            dimensions of result arrays (before anonymous PARAMETER axes).
+            Access the raw arrays via :attr:`~EvaluationResult.named_axis_values`
+            on the returned result.
         functions:
             Optional user-defined functions passed to the executor.  Wrap
             callables with :meth:`~executor.NumpyBackend.adapt` before passing.
@@ -570,6 +594,7 @@ class Evaluation:
             plan,
             ensemble,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -579,7 +604,8 @@ class Evaluation:
         plan: EvaluationPlan,
         ensemble: AxisEnsemble | None,
         *,
-        parameters: dict[GenericIndex, np.ndarray],
+        parameters: dict[GenericIndex, Any],
+        parameter_axes: dict[str, np.ndarray] | None,
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> EvaluationResult:
@@ -598,20 +624,79 @@ class Evaluation:
         }
         _has_timeseries = any(r.has_timeseries for r in plan.regions)
 
-        n_params = len(parameters)
+        # Separate callable entries (correlated axes) from plain array entries.
+        parameter_axes = parameter_axes or {}
+        callable_params: dict[GenericIndex, Callable[..., Any]] = {}
+        array_params: dict[GenericIndex, np.ndarray] = {}
+        for idx, val in parameters.items():
+            if callable(val):
+                callable_params[idx] = val
+            else:
+                array_params[idx] = np.asarray(val)
+        if callable_params and not parameter_axes:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in callable_params)
+            raise ValueError(
+                f"Callable values in parameters= require parameter_axes= to be provided "
+                f"(indexes with callable values: {names})."
+            )
+
+        k = len(parameter_axes)  # named PARAMETER axes
+        m = len(array_params)  # anonymous PARAMETER axes
+        n_params = k + m
         axis_layout: dict[Axis, int] = {}
         axis_sizes: dict[Axis, int] = {}
         factorized_weights: dict[Axis, np.ndarray] = {}
         c_subs: dict[graph.Node, np.ndarray] = {}
-        param_nodes: list[graph.Node] = []
+        param_nodes: list[graph.Node] = []  # anonymous array param nodes
+        callable_nodes: list[graph.Node] = []  # callable-backed nodes (no new axis)
 
-        # PARAMETER axes — positions 0..n_params-1.
-        for i, (idx, arr) in enumerate(parameters.items()):
-            ax = Axis(getattr(idx, "name", f"param_{i}"), PARAMETER)
+        # Named PARAMETER axes — positions 0..k-1.
+        # Build broadcast-ready shaped arrays (singleton at every position except own).
+        named_shaped: dict[str, np.ndarray] = {}
+        for i, (name, arr) in enumerate(parameter_axes.items()):
+            ax = Axis(name, PARAMETER)
             axis_layout[ax] = i
             axis_sizes[ax] = arr.size
-            shape = [1] * n_params
+            shape = [1] * k
             shape[i] = arr.size
+            named_shaped[name] = arr.reshape(shape)
+
+        # Callable entries — substitute standard model indexes using named axis arrays.
+        # Each callable receives the same broadcast-ready shaped arrays that _execute_plan
+        # would supply to a formula node in the equivalent traditional model.
+        for idx, fn in callable_params.items():
+            sig = inspect.signature(fn)
+            kwargs: dict[str, np.ndarray] = {}
+            has_var_keyword = False
+            for param_name, param in sig.parameters.items():
+                if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                    raise TypeError(
+                        f"Callable for index {getattr(idx, 'name', repr(idx))!r} uses *args; "
+                        "use named keyword parameters instead."
+                    )
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    has_var_keyword = True
+                    break
+                if param_name in named_shaped:
+                    kwargs[param_name] = named_shaped[param_name]
+                elif param.default is inspect.Parameter.empty:
+                    raise ValueError(
+                        f"Callable for index {getattr(idx, 'name', repr(idx))!r}: "
+                        f"required parameter {param_name!r} is not a declared named axis."
+                    )
+                # else: has a default and not an axis name → uses its default
+            if has_var_keyword:
+                kwargs = dict(named_shaped)
+            c_subs[idx.node] = np.asarray(fn(**kwargs))
+            callable_nodes.append(idx.node)
+
+        # Anonymous array PARAMETER axes — positions k..k+m-1.
+        for j, (idx, arr) in enumerate(array_params.items()):
+            ax = Axis(getattr(idx, "name", f"param_{k + j}"), PARAMETER)
+            axis_layout[ax] = k + j
+            axis_sizes[ax] = arr.size
+            shape = [1] * n_params
+            shape[k + j] = arr.size
             c_subs[idx.node] = arr.reshape(shape)
             param_nodes.append(idx.node)
 
@@ -637,15 +722,18 @@ class Evaluation:
                     target = target + (1,)
                 ens_subs[idx.node] = np.reshape(batched, target)
 
-        # Extend PARAMETER subs with trailing singleton dims:
-        # - one per ENSEMBLE axis (so PARAMETER arrays broadcast against ENSEMBLE arrays),
-        # - plus one extra timeseries placeholder when the graph has timeseries nodes
-        #   (so (N, …, 1) broadcasts against a bare (T,) timeseries).
+        # Extend substitutions with trailing singleton dims for broadcasting:
+        # - anonymous param nodes: shape (*P,) needs n_ensemble + extra_ts singletons.
+        # - callable-backed nodes: shape (*named_P,) needs m + n_ensemble + extra_ts singletons.
         extra_ts = 1 if _has_timeseries else 0
-        trailing_singletons = (1,) * (n_ensemble + extra_ts)
-        if trailing_singletons:
+        anon_trailing = (1,) * (n_ensemble + extra_ts)
+        if anon_trailing:
             for node in param_nodes:
-                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + trailing_singletons)
+                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + anon_trailing)
+        callable_trailing = (1,) * (m + n_ensemble + extra_ts)
+        if callable_trailing:
+            for node in callable_nodes:
+                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + callable_trailing)
 
         c_subs.update(ens_subs)
         # Snapshot the substituted node keys before the executor mutates state.values.
@@ -861,9 +949,10 @@ class Evaluation:
         return EvaluationResult(
             state,
             axis_layout,
-            parameters,
+            array_params,
             axis_sizes=axis_sizes,
             factorized_weights=factorized_weights,
+            named_axis_values=parameter_axes if parameter_axes else None,
         )
 
     def evaluate_incremental(
@@ -871,7 +960,8 @@ class Evaluation:
         initial_ensemble_size: int,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
         rng: np.random.Generator | None = None,
         functions: dict[str, executor.Functor] | None = None,
@@ -920,13 +1010,16 @@ class Evaluation:
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
         ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
-        result = self.execute_plan(plan, ensemble, parameters=parameters, functions=functions, backend=backend)
+        result = self.execute_plan(
+            plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
+        )
         return EvaluationHandle(
             evaluation=self,
             plan=plan,
             result=result,
             rng=rng,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -936,7 +1029,8 @@ class Evaluation:
         initial_ensemble_size: int,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
         rng: np.random.Generator | None = None,
         functions: dict[str, executor.Functor] | None = None,
@@ -999,6 +1093,7 @@ class Evaluation:
             plan,
             ensemble,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -1008,6 +1103,7 @@ class Evaluation:
             plan=plan,
             rng=rng,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -1017,7 +1113,8 @@ class Evaluation:
         scenarios: AxisEnsemble | Ensemble | None = None,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         axes: dict[GenericIndex, np.ndarray] | None = None,
         ensemble: AxisEnsemble | Ensemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
@@ -1036,11 +1133,20 @@ class Evaluation:
             automatically via :func:`linearize.forest`.  Defaults to all
             indexes in the model when ``None``.
         parameters:
-            PARAMETER axes for multi-dimensional evaluation.  Maps each
-            axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
-            array of values.  When provided, each axis index ``idx`` at
-            position ``i`` contributes a substitution array of shape
-            ``(1, …, N_i, …, 1, 1)`` where ``N_i = arr.size``.
+            Per-index value sources.  Each entry maps a
+            :class:`~dt_model.model.index.GenericIndex` to either a 1-D numpy
+            array (anonymous PARAMETER axis — current behaviour) or a callable
+            (correlated value computed from named axes declared in
+            *parameter_axes*).  Callables receive broadcast-ready shaped arrays
+            for each named axis whose name appears in the callable's signature;
+            parameters with defaults whose names are not axis names are ignored.
+            Callables are only valid when *parameter_axes* is also provided.
+        parameter_axes:
+            Named PARAMETER axes for correlated sweeps.  Maps axis name to a
+            1-D numpy array of axis values.  Named axes occupy the leading
+            dimensions of result arrays (before anonymous PARAMETER axes).
+            Access the raw arrays via :attr:`~EvaluationResult.named_axis_values`
+            on the returned result.
         axes:
             Deprecated alias for *parameters*.  Use ``parameters=`` instead.
         ensemble:
@@ -1116,4 +1222,6 @@ class Evaluation:
 
         # --- build plan and execute ---
         plan = self.build_plan(nodes_of_interest)
-        return self.execute_plan(plan, ensemble, parameters=parameters, functions=functions, backend=backend)
+        return self.execute_plan(
+            plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
+        )
