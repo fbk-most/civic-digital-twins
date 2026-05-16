@@ -11,6 +11,7 @@ from civic_digital_twins.dt_model.model.index import CategoricalIndex, Distribut
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import EnsembleAxisSpec, PartitionedEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -342,3 +343,27 @@ def test_factorized_weights_are_uniform():
     w0, w1 = ens.ensemble_weights
     assert np.allclose(w0, np.full(4, 0.25))
     assert np.allclose(w1, np.full(6, 1.0 / 6))
+
+
+# ---------------------------------------------------------------------------
+# PartitionedEnsemble — Scenario path and wrong-type guard
+# ---------------------------------------------------------------------------
+
+
+def test_partitioned_ensemble_accepts_scenario():
+    """PartitionedEnsemble can be constructed directly from a Scenario."""
+    i_a = _dist_index("a")
+    model = _make_model(i_a)
+    scenario = Scenario(model)
+    ens = PartitionedEnsemble(
+        scenario,
+        axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=4)],
+        rng=np.random.default_rng(0),
+    )
+    assert ens.ensemble_weights[0].shape == (4,)
+
+
+def test_partitioned_ensemble_rejects_wrong_type():
+    """PartitionedEnsemble raises TypeError when passed something other than Scenario/Model."""
+    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+        PartitionedEnsemble("not a model", axes=[])  # type: ignore[arg-type]

@@ -862,3 +862,20 @@ def test_piecewise_accepts_hasnode_condition():
     assert isinstance(result, graph.multi_clause_where)
     assert result.clauses[0][0] is cond_n  # condition unwrapped
     assert result.clauses[0][1] is expr_n  # expression unwrapped
+
+
+def test_axis_eq_returns_not_implemented_for_non_axis():
+    """Axis.__eq__ returns NotImplemented when compared to a non-Axis object."""
+    ax = Axis("time", DOMAIN)
+    result = ax.__eq__("time")
+    assert result is NotImplemented
+
+
+def test_where_output_axes_propagates_time_axis():
+    """where.output_axes returns the union of condition, then, and otherwise axes."""
+    time_axis = Axis("time", DOMAIN)
+    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    cond = graph.greater(ts, graph.constant(0.0))
+    default = graph.constant(0.0)
+    w = graph.where(cond, ts, default)
+    assert time_axis in w.output_axes

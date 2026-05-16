@@ -20,6 +20,7 @@ from civic_digital_twins.dt_model import (
     Model,
     sample_across,
 )
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Minimal model helpers
@@ -441,3 +442,12 @@ def test_importable_from_dt_model():
 
     assert CPE is CrossProductEnsemble
     assert sa is sample_across
+
+
+def test_cross_product_ensemble_accepts_scenario():
+    """CrossProductEnsemble can be constructed directly from a Scenario."""
+    cat = CategoricalIndex("mode", {"walk": 0.5, "bike": 0.5})
+    model = _simple_model(cat)
+    scenario = Scenario(model)
+    ens = CrossProductEnsemble(scenario)
+    assert len(ens.ensemble_axes) == 1

@@ -121,3 +121,14 @@ def test_project_using_quantile_numpy_ast():
     node = graph.project_using_quantile(k, axis=time_axis, q=0.95)
     code = numpy_ast.graph_node_to_numpy_code(node)
     assert code == f"n{node.id} = np.quantile(0.95, n{k.id}, axis=(-1,), keepdims=True)"
+
+
+def test_axis_as_tuple_unsupported_axis_raises():
+    """graph_node_to_ast_stmt raises UnsupportedNodeArguments for non-time axes."""
+    from civic_digital_twins.dt_model.axes import PARAMETER
+
+    k = graph.constant(1.0)
+    bad_axis = Axis("space", PARAMETER)
+    proj = graph.project_using_sum(k, axis=bad_axis)
+    with pytest.raises(numpy_ast.UnsupportedNodeArguments, match="numpybackend only supports projection"):
+        numpy_ast.graph_node_to_ast_stmt(proj)

@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model.axes import PARAMETER, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -611,3 +612,15 @@ def test_neg_operator_evaluation():
     state = executor.State({n: np.array([4.0, 0.0, -5.0])})
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[result], [-4.0, 0.0, 5.0])
+
+
+def test_projection_op_unsupported_axis_raises():
+    """Executor raises UnsupportedOperation when a ProjectionOp uses a non-time axis."""
+    node = graph.constant(1.0)
+    bad_axis = Axis("space", PARAMETER)
+    proj = graph.project_using_sum(node, axis=bad_axis)
+    plan = linearize.forest(proj)
+    state = executor.State({})
+    executor.evaluate_nodes(state, *plan[:-1])  # evaluate prerequisites
+    with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
+        executor.evaluate_nodes(state, proj)

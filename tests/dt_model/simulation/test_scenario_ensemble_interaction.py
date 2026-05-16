@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, TimeseriesIndex
 from civic_digital_twins.dt_model.model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -16,7 +17,7 @@ from civic_digital_twins.dt_model.model.index import (
     Index,
 )
 from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+from civic_digital_twins.dt_model.simulation.ensemble import CrossProductEnsemble, DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
@@ -296,3 +297,154 @@ def test_conditional_distribution_index_rejects_all_overrides():
     model = _make_model(season, temp)
     with pytest.raises(TypeError, match="not support"):
         Scenario(model, overrides={temp: scipy_stats.norm(loc=20, scale=2)})  # type: ignore[dict-item]
+
+
+# ---------------------------------------------------------------------------
+# Scenario validation — structural constants cannot be overridden
+# ---------------------------------------------------------------------------
+
+
+def test_const_index_cannot_be_overridden():
+    """Scenario rejects overrides of ConstIndex with TypeError."""
+    c = ConstIndex("c", 5.0)
+    model = _make_model(c)
+    with pytest.raises(TypeError, match="structural constant"):
+        Scenario(model, overrides={c: 10.0})  # type: ignore[dict-item]
+
+
+def test_const_timeseries_index_cannot_be_overridden():
+    """Scenario rejects overrides of ConstTimeseriesIndex with TypeError."""
+    c = ConstTimeseriesIndex("c", np.array([1.0, 2.0]))
+    model = _make_model(c)
+    with pytest.raises(TypeError, match="structural constant"):
+        Scenario(model, overrides={c: np.array([3.0, 4.0])})  # type: ignore[dict-item]
+
+
+def test_timeseries_index_override_must_be_1d_ndarray():
+    """Scenario rejects non-1-D ndarray override for TimeseriesIndex."""
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0]))
+    model = _make_model(ts)
+    with pytest.raises(TypeError, match="1-D ndarray"):
+        Scenario(model, overrides={ts: np.array([[1.0, 2.0]])})  # type: ignore[dict-item]
+
+
+def test_timeseries_index_override_must_be_ndarray_not_scalar():
+    """Scenario rejects a plain float override for TimeseriesIndex."""
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0]))
+    model = _make_model(ts)
+    with pytest.raises(TypeError, match="1-D ndarray"):
+        Scenario(model, overrides={ts: 3.0})  # type: ignore[dict-item]
+
+
+def test_timeseries_index_valid_override_accepted():
+    """Scenario accepts a valid 1-D ndarray override for TimeseriesIndex."""
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0]))
+    model = _make_model(ts)
+    override = np.array([3.0, 4.0])
+    scenario = Scenario(model, overrides={ts: override})
+    subs = scenario.base_substitutions()
+    assert ts.node in subs
+    assert np.array_equal(subs[ts.node], override)
+
+
+def test_categorical_index_override_dict_must_not_be_empty():
+    """Scenario rejects an empty dict override for CategoricalIndex."""
+    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="must not be empty"):
+        Scenario(model, overrides={cat: {}})  # type: ignore[dict-item]
+
+
+def test_categorical_index_override_dict_non_positive_prob():
+    """Scenario rejects a dict override with a non-positive probability."""
+    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="strictly positive"):
+        Scenario(model, overrides={cat: {"a": 0.0, "b": 1.0}})  # type: ignore[dict-item]
+
+
+def test_categorical_index_override_dict_probs_not_sum_to_one():
+    """Scenario rejects a dict override whose probabilities don't sum to 1."""
+    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="sum to 1"):
+        Scenario(model, overrides={cat: {"a": 0.4, "b": 0.4}})  # type: ignore[dict-item]
+
+
+def test_conditional_categorical_override_key_not_in_support():
+    """Scenario rejects a str override not in the ConditionalCategoricalIndex support."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    weather = ConditionalCategoricalIndex(
+        "weather",
+        parents=[season],
+        support=["good", "bad"],
+        factory=lambda _season: {"good": 0.8, "bad": 0.2},
+    )
+    model = _make_model(season, weather)
+    with pytest.raises(ValueError, match="not in the support"):
+        Scenario(model, overrides={weather: "rainy"})
+
+
+def test_scalar_index_override_must_be_scalar():
+    """Scenario rejects an ndarray override for a scalar Index."""
+    x = Index("x", 1.0)
+    model = _make_model(x)
+    with pytest.raises(TypeError, match="scalar"):
+        Scenario(model, overrides={x: np.array([1.0, 2.0])})  # type: ignore[dict-item]
+
+
+# ---------------------------------------------------------------------------
+# Evaluation validation — uncovered abstract indexes and overlap
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_raises_on_uncovered_abstract_index():
+    """Evaluation.evaluate raises ValueError when an abstract index has no value."""
+    x = Index("x", None)
+    result = Index("result", x.node * 2.0)
+    model = _make_model(x, result)
+    scenario = Scenario(model)
+    with pytest.raises(ValueError, match="abstract indexes are not covered"):
+        Evaluation(scenario).evaluate(ensemble=None)
+
+
+def test_evaluate_raises_on_parameters_and_overrides_overlap():
+    """Evaluation.evaluate raises ValueError when parameters= and Scenario.overrides share an index."""
+    x = Index("x", 1.0)
+    result = Index("result", x.node * 2.0)
+    model = _make_model(x, result)
+    scenario = Scenario(model, overrides={x: 5.0})
+    with pytest.raises(ValueError, match="both parameters= and Scenario.overrides"):
+        Evaluation(scenario).evaluate(ensemble=None, parameters={x: np.array([1.0, 2.0])})
+
+
+# ---------------------------------------------------------------------------
+# DistributionEnsemble — Scenario path and wrong-type guard
+# ---------------------------------------------------------------------------
+
+
+def test_distribution_ensemble_accepts_scenario():
+    """DistributionEnsemble can be constructed directly from a Scenario."""
+    x = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    model = _make_model(x)
+    scenario = Scenario(model)
+    ens = DistributionEnsemble(scenario, 5, rng=np.random.default_rng(0))
+    assert len(ens.ensemble_weights) == 1
+    assert ens.ensemble_weights[0].shape == (5,)
+
+
+def test_distribution_ensemble_rejects_wrong_type():
+    """DistributionEnsemble raises TypeError when passed something other than Scenario/Model."""
+    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+        DistributionEnsemble("not a model", 5)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# CrossProductEnsemble — wrong-type guard
+# ---------------------------------------------------------------------------
+
+
+def test_cross_product_ensemble_rejects_wrong_type():
+    """CrossProductEnsemble raises TypeError when passed something other than Scenario/Model."""
+    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+        CrossProductEnsemble("not a model")  # type: ignore[arg-type]

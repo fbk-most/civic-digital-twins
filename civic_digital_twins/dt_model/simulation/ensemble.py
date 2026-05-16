@@ -279,7 +279,7 @@ class PartitionedEnsemble:
                     samples = idx.sample(self._rng, size=Sj)  # shape (Sj,)
                 else:
                     dist = self._scenario.effective_distribution(idx)
-                    if dist is None:
+                    if dist is None:  # pragma: no cover — guarded by __init__ validation
                         raise ValueError(
                             f"Index {getattr(idx, 'name', repr(idx))!r} is not Distribution-backed "
                             f"or CategoricalIndex in this scenario; cannot sample."

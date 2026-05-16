@@ -4,10 +4,12 @@
 
 import numpy as np
 import pytest
+from scipy import stats
 
 from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, ConditionalCategoricalIndex, DistributionIndex
 
 
 def test_timeseries_index_construction():
@@ -473,3 +475,39 @@ def test_const_timeseries_index_str():
     """ConstTimeseriesIndex.__str__ uses the const_timeseries_idx prefix."""
     ts = ConstTimeseriesIndex("demand", np.array([1.0, 2.0]))
     assert str(ts) == "const_timeseries_idx([1.0, 2.0])"
+
+
+def test_index_rejects_distribution():
+    """Index cannot be initialised directly with a Distribution; raises TypeError."""
+    dist = stats.norm(loc=0, scale=1)
+    with pytest.raises(TypeError, match="DistributionIndex"):
+        Index("x", dist)  # type: ignore[arg-type]
+
+
+def test_index_repr_formula_mode():
+    """Index repr shows '<formula>' when the value is a graph node."""
+    n = graph.constant(42.0)
+    idx = Index("r", n)
+    assert repr(idx) == "idx('r', <formula>)"
+
+
+def test_distribution_index_sample():
+    """DistributionIndex.sample() returns an array of the requested size."""
+    idx = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    rng = np.random.default_rng(0)
+    samples = idx.sample(rng=rng, size=10)
+    assert samples.shape == (10,)
+
+
+def test_conditional_categorical_sample_for_no_rng():
+    """ConditionalCategoricalIndex.sample_for without rng uses global numpy random state."""
+    parent = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    idx = ConditionalCategoricalIndex(
+        "temp_band",
+        parents=[parent],
+        support=["hot", "cold"],
+        factory=lambda season: {"hot": 0.99, "cold": 0.01} if season == "summer" else {"hot": 0.01, "cold": 0.99},
+    )
+    np.random.seed(0)
+    samples = idx.sample_for(size=100, season="summer")
+    assert "hot" in samples
