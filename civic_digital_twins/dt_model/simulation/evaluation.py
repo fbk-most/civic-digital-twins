@@ -640,6 +640,24 @@ class Evaluation:
                 f"(indexes with callable values: {names})."
             )
 
+        # Validate that parameters= does not contain constant-node indexes.
+        # ConstIndex and ConstTimeseriesIndex bake their value into a graph.constant
+        # node; the executor evaluates constant nodes directly and never consults
+        # state.values, so substituting them has no effect.  Placeholder-backed
+        # indexes (Index, DistributionIndex, TimeseriesIndex — with or without a
+        # default value) are fine because the executor does read their state entry.
+        from ..model.index import ConstIndex, ConstTimeseriesIndex
+
+        const_params = [idx for idx in parameters if isinstance(idx, (ConstIndex, ConstTimeseriesIndex))]
+        if const_params:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in const_params)
+            raise ValueError(
+                f"The following indexes passed in parameters= are constant-node indexes "
+                f"whose values are baked into the computation graph and cannot be "
+                f"overridden at evaluate time: {names}. "
+                "Use Index(name, value) or Index(name, None) for sweep parameters."
+            )
+
         k = len(parameter_axes)  # named PARAMETER axes
         m = len(array_params)  # anonymous PARAMETER axes
         n_params = k + m
@@ -1009,7 +1027,9 @@ class Evaluation:
             rng = np.random.default_rng()
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
-        ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
+        ensemble = DistributionEnsemble(
+            self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
+        )
         result = self.execute_plan(
             plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
         )
@@ -1086,7 +1106,9 @@ class Evaluation:
             rng = np.random.default_rng()
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
-        ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
+        ensemble = DistributionEnsemble(
+            self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
+        )
         _exec = pool or _get_default_executor()
         future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
             self.execute_plan,

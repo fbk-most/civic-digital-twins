@@ -729,3 +729,40 @@ def test_parameter_axes_callable_with_var_positional_raises():
             parameter_axes={"base": np.array([1.0, 2.0])},
             parameters={cost: lambda *args: args[0]},
         )
+
+
+def test_evaluate_incremental_named_axis_values_preserved_after_extend():
+    """named_axis_values must survive EvaluationHandle.extend()."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model.model.index import DistributionIndex
+
+    x = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    cost = Index("cost", None)  # abstract; covered by callable in parameters=
+    result_idx = Index("result", cost.node + x.node)
+    model = _make_model(x, cost, result_idx)
+    ev = Evaluation(Scenario(model))
+
+    base_arr = np.array([1.0, 2.0, 3.0])
+    handle = ev.evaluate_incremental(
+        initial_ensemble_size=10,
+        parameter_axes={"base": base_arr},
+        parameters={cost: lambda base: base * 2.0},
+        rng=np.random.default_rng(42),
+    )
+    # Before extend: named_axis_values must be present.
+    np.testing.assert_array_equal(handle.result.named_axis_values["base"], base_arr)
+
+    handle.extend(5)
+    # After extend: named_axis_values must still be present.
+    np.testing.assert_array_equal(handle.result.named_axis_values["base"], base_arr)
+
+
+def test_parameter_axes_const_index_raises():
+    """ConstIndex in parameters= raises ValueError: its value is baked into the graph."""
+    c = ConstIndex("c", 5.0)
+    model = _make_model(c)
+    ev = Evaluation(Scenario(model))
+
+    with pytest.raises(ValueError, match="constant-node"):
+        ev.evaluate(parameters={c: np.array([1.0, 2.0])})

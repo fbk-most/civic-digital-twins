@@ -180,6 +180,7 @@ def _merge_results(
         r1._parameter_arrays,
         axis_sizes=merged_axis_sizes,
         factorized_weights=merged_factorized_weights,
+        named_axis_values=r1._named_axis_values or None,
     )
 
 
@@ -327,7 +328,9 @@ class EvaluationHandle:
 
         from .ensemble import DistributionEnsemble
 
-        new_ensemble = DistributionEnsemble(self._plan.model, ensemble_size, rng=self._rng)
+        new_ensemble = DistributionEnsemble(
+            self._evaluation._scenario, ensemble_size, rng=self._rng, exclude=frozenset(self._parameters)
+        )
         new_result = self._evaluation.execute_plan(
             self._plan,
             new_ensemble,

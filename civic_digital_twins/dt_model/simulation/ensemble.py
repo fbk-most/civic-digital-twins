@@ -331,11 +331,19 @@ class DistributionEnsemble:
     rng:
         Optional :class:`numpy.random.Generator` for reproducibility.  When
         ``None``, the global NumPy random state is used.
+    exclude:
+        Abstract indexes that will be supplied externally (e.g. via
+        ``parameters=`` at :meth:`~evaluation.Evaluation.evaluate` time) and
+        must not be sampled by this ensemble.  These indexes are silently
+        skipped in both the constructor validation and :meth:`assignments`.
+        Callers of :meth:`~evaluation.Evaluation.evaluate_incremental` and
+        :meth:`~evaluation.Evaluation.submit_evaluate` should not set this
+        directly; it is managed automatically from the ``parameters=`` dict.
 
     Raises
     ------
     ValueError
-        If any abstract index of *model* is neither
+        If any abstract index of *model* (not in *exclude*) is neither
         :class:`~model.index.Distribution`-backed nor a
         :class:`~model.index.CategoricalIndex`.
 
@@ -357,6 +365,8 @@ class DistributionEnsemble:
         scenario_or_model: Scenario | Model | ModelVariant,
         size: int,
         rng: np.random.Generator | None = None,
+        *,
+        exclude: frozenset["GenericIndex"] | None = None,
     ) -> None:
         import warnings
 
@@ -383,14 +393,18 @@ class DistributionEnsemble:
         self._size = size
         self._rng = rng
         self._axis = Axis("_ensemble", ENSEMBLE)
+        self._exclude: frozenset[GenericIndex] = exclude or frozenset()
         # Validate that all abstract indexes can be sampled by this ensemble.
-        # Abstract indexes that are neither Distribution-backed nor CategoricalIndex
-        # cannot be assigned here and will cause PlaceholderValueNotProvided at runtime.
+        # Indexes in `exclude` are covered by parameters= at evaluate time and
+        # are skipped here. Abstract indexes that are neither Distribution-backed
+        # nor CategoricalIndex cannot be assigned here and will cause
+        # PlaceholderValueNotProvided at runtime.
         abstract = scenario.abstract_indexes()
         non_samplable = [
             idx
             for idx in abstract
-            if not (isinstance(idx, CategoricalIndex) or scenario.effective_distribution(idx) is not None)
+            if idx not in self._exclude
+            and not (isinstance(idx, CategoricalIndex) or scenario.effective_distribution(idx) is not None)
         ]
         if non_samplable:
             names = ", ".join(getattr(idx, "name", repr(idx)) for idx in non_samplable)
@@ -421,7 +435,7 @@ class DistributionEnsemble:
         float arrays; :class:`~model.index.CategoricalIndex` indexes yield
         object arrays of string keys.
         """
-        abstract = self._scenario.abstract_indexes()
+        abstract = [idx for idx in self._scenario.abstract_indexes() if idx not in self._exclude]
         result: dict[GenericIndex, np.ndarray] = {}
         for idx in abstract:
             if isinstance(idx, CategoricalIndex):
