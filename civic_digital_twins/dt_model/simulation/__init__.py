@@ -14,6 +14,7 @@ from .ensemble import (
 from .evaluation import Evaluation, EvaluationResult
 from .handle import AsyncEvaluationHandle, EvaluationHandle
 from .plan import EvaluationPlan, Region, RegionGuard
+from .runner import EvaluationConfig, IncompatibleResultError, ModelOutput, ModelRunHandle, ResumeState
 from .scenario import Scenario
 
 __all__ = [
@@ -24,12 +25,17 @@ __all__ = [
     "Ensemble",
     "EnsembleAxisSpec",
     "Evaluation",
+    "EvaluationConfig",
     "EvaluationHandle",
     "EvaluationPlan",
     "EvaluationResult",
+    "IncompatibleResultError",
+    "ModelOutput",
+    "ModelRunHandle",
     "PartitionedEnsemble",
     "Region",
     "RegionGuard",
+    "ResumeState",
     "Scenario",
     "WeightedScenario",
     "sample_across",

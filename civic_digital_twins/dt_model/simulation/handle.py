@@ -423,6 +423,21 @@ class AsyncEvaluationHandle(EvaluationHandle):
     # ------------------------------------------------------------------
 
     @property
+    def future(self) -> concurrent.futures.Future["EvaluationResult"]:
+        """The underlying :class:`concurrent.futures.Future`.
+
+        Provides direct access to the raw future so that protocol-layer
+        wrappers (e.g. :class:`~simulation.runner.ModelRunHandle`) can hold
+        the future without accessing private state.
+
+        Returns
+        -------
+        concurrent.futures.Future[EvaluationResult]
+            The future that will resolve to the evaluation result.
+        """
+        return self._future
+
+    @property
     def result(self) -> EvaluationResult:
         """The evaluation result.
 
