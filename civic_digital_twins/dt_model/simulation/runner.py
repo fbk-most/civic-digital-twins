@@ -33,11 +33,16 @@ import numpy as np
 
 from ..engine.numpybackend.executor import Functor, NumpyBackend
 from ..model.index import GenericIndex
-from .evaluation import EvaluationResult
+from ..model.model import Model
+from ..model.model_variant import ModelVariant
+from .evaluation import Evaluation, EvaluationResult
+from .handle import EvaluationHandle
+from .scenario import Scenario
 
 __all__ = [
     "EvaluationConfig",
     "IncompatibleResultError",
+    "ModelEvaluator",
     "ModelOutput",
     "ModelRunHandle",
     "ResumeState",
@@ -371,3 +376,305 @@ class ModelRunHandle(Generic[OutputT]):
             ``True`` if the future was successfully cancelled.
         """
         return self._future.cancel()
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _format_value(val: Any) -> str:
+    """Format a :data:`~model.index.DomainValue` or ``None`` for human display.
+
+    Used by :meth:`ModelEvaluator.get_index_diffs` to produce readable
+    ``"was X \u2192 now Y"`` diff strings.  Delegates to ``str()`` for most
+    types; adds special handling for ``None`` and numpy arrays.
+
+    Parameters
+    ----------
+    val : Any
+        The value to format.  Typically a :data:`~model.index.DomainValue`
+        or ``None``.
+
+    Returns
+    -------
+    str
+        A human-readable string representation.
+    """
+    if val is None:
+        return "(none)"
+    if isinstance(val, np.ndarray):
+        return f"array{val.shape}"
+    return str(val)
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator
+# ---------------------------------------------------------------------------
+
+
+class ModelEvaluator(ABC, Generic[OutputT]):
+    """Abstract base class for domain-specific scenario evaluators.
+
+    Each domain package subclasses :class:`ModelEvaluator` and binds the
+    type parameter ``OutputT`` to its concrete :class:`ModelOutput` subclass.
+    The application layer then drives the uniform lifecycle::
+
+        evaluator = DomainEvaluator(model)
+        output    = evaluator.evaluate(scenario, config)
+        data      = output.to_dict()                        # save
+        output2   = DomainOutput.from_dict(data)            # load
+        handle    = evaluator.resume(scenario, output2, config)  # extend
+
+    **Implementation tiers for** :meth:`run_async`:
+
+    1. *Sync only* — implement :meth:`evaluate` only; leave :meth:`run_async`
+       at its default (raises :exc:`NotImplementedError`).
+    2. *Protocol-level async* — implement :meth:`run_async` to submit the
+       blocking :meth:`evaluate` to :func:`~simulation.evaluation._get_default_executor`.
+       Suitable for models that use
+       :class:`~simulation.ensemble.CrossProductEnsemble` (e.g. Molveno).
+    3. *Engine-level async* — implement :meth:`run_async` to call
+       :meth:`~simulation.evaluation.Evaluation.submit_evaluate` and wrap the
+       returned :attr:`~simulation.handle.AsyncEvaluationHandle.future` in a
+       :class:`ModelRunHandle`.  Suitable for models that use
+       :class:`~simulation.ensemble.DistributionEnsemble` (e.g. Bologna).
+
+    Parameters
+    ----------
+    model : Model or ModelVariant
+        The model this evaluator operates on.  Stored as ``self._model`` and
+        used by the default implementations of :meth:`get_index_diffs`,
+        :meth:`get_model_values`, and :meth:`structure`.
+    """
+
+    def __init__(self, model: Model | ModelVariant) -> None:
+        self._model = model
+
+    # ------------------------------------------------------------------
+    # Abstract interface
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> OutputT:
+        """Run a blocking evaluation and return the domain output.
+
+        The subclass builds the appropriate ensemble, calls
+        :class:`~simulation.evaluation.Evaluation`, runs domain-specific
+        post-processing, and returns a fully populated :class:`ModelOutput`.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate, carrying optional value overrides.
+        config : EvaluationConfig
+            Evaluation parameters; ``config.ensemble_size`` controls how many
+            Monte Carlo samples are drawn.
+
+        Returns
+        -------
+        OutputT
+            The domain-specific evaluation output.
+        """
+
+    @abstractmethod
+    def structure(self) -> dict[str, dict[str, Any]]:
+        """Return a schema dict describing the model's tunable indexes.
+
+        Maps each index name to a metadata dict::
+
+            {
+                "parking_cost": {"type": "scalar", "default": 8.0, "unit": "\u20ac"},
+                "weather":      {"type": "categorical", "support": ["good", "bad"]},
+            }
+
+        Used by scenario-creation UIs to know what parameters exist and
+        what values are valid.  A typed schema protocol will replace this
+        plain dict in a future milestone.
+
+        Returns
+        -------
+        dict[str, dict[str, Any]]
+            Index name \u2192 metadata dict.
+        """
+
+    @abstractmethod
+    def _extract_resume_state(self, output: OutputT) -> ResumeState:
+        """Extract the resume payload from a previously saved output.
+
+        Called by :meth:`resume` (template method).  The subclass
+        deserialises ``result``, ``parameters``, and ``parameter_axes`` from
+        ``output``'s resume payload, and re-injects ``functions`` and
+        ``backend`` from its own domain knowledge (same values used in
+        :meth:`evaluate`).
+
+        Parameters
+        ----------
+        output : OutputT
+            A :class:`ModelOutput` for which ``is_resumable`` is ``True``.
+
+        Returns
+        -------
+        ResumeState
+            All state needed to reconstruct an
+            :class:`~simulation.handle.EvaluationHandle`.
+        """
+
+    # ------------------------------------------------------------------
+    # Optional async interface
+    # ------------------------------------------------------------------
+
+    def run_async(self, scenario: Scenario, config: EvaluationConfig) -> ModelRunHandle[OutputT]:
+        """Submit an async evaluation and return a handle immediately.
+
+        Not implemented by default.  Override in tier-2 or tier-3
+        subclasses to enable non-blocking evaluation; see class docstring
+        for the three implementation tiers.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate.
+        config : EvaluationConfig
+            Evaluation parameters.
+
+        Returns
+        -------
+        ModelRunHandle[OutputT]
+            Handle whose :meth:`~ModelRunHandle.get` returns the output.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, in the default implementation.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement run_async(). Override it or use evaluate() directly."
+        )
+
+    # ------------------------------------------------------------------
+    # Default introspection methods
+    # ------------------------------------------------------------------
+
+    def get_index_diffs(self, scenario: Scenario) -> dict[str, str]:
+        """Return human-readable diff strings for each overridden index.
+
+        Compares ``scenario.overrides`` against the model's own values
+        (the no-overrides baseline).  Returns one entry per overridden
+        index formatted as ``"was X \u2192 now Y"``.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario whose overrides are described.
+
+        Returns
+        -------
+        dict[str, str]
+            ``{index_name: "was X \u2192 now Y"}`` for each overridden index;
+            empty dict when no overrides are active.
+        """
+        return {
+            idx.name: f"was {_format_value(getattr(idx, 'value', None))} \u2192 now {_format_value(override_val)}"
+            for idx, override_val in scenario.overrides.items()
+        }
+
+    def get_model_values(self, scenario: Scenario) -> dict[str, Any]:
+        """Return the effective value of every model index under *scenario*.
+
+        For indexes that have an active override the override value is
+        returned; for all others the model's own ``idx.value`` is used
+        (which may be ``None`` for abstract indexes with no override).
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario providing active overrides.
+
+        Returns
+        -------
+        dict[str, Any]
+            ``{index_name: effective_value}`` for every index in the model.
+        """
+        active = scenario.overrides
+        return {
+            idx.name: (active[idx] if idx in active else getattr(idx, "value", None)) for idx in self._model.indexes
+        }
+
+    # ------------------------------------------------------------------
+    # Resume template method
+    # ------------------------------------------------------------------
+
+    def resume(
+        self,
+        scenario: Scenario,
+        output: OutputT,
+        config: EvaluationConfig,
+    ) -> EvaluationHandle:
+        """Reconstruct an :class:`~simulation.handle.EvaluationHandle` from a saved output.
+
+        Template method.  Checks that *output* is resumable, delegates
+        deserialisation to :meth:`_extract_resume_state`, builds a fresh
+        :class:`~simulation.evaluation.Evaluation` plan, and returns an
+        :class:`~simulation.handle.EvaluationHandle` ready for
+        :meth:`~simulation.handle.EvaluationHandle.extend`.
+
+        .. note::
+            :class:`~simulation.handle.EvaluationHandle` is constructed
+            directly here rather than via
+            :meth:`~simulation.evaluation.Evaluation.evaluate_incremental`.
+            This is an intentional exception to the convention documented on
+            that class, necessary to seed the handle with a pre-existing
+            result.
+
+        .. note::
+            The :class:`~simulation.handle.EvaluationHandle` is seeded with
+            a fresh :func:`numpy.random.default_rng` with no fixed seed, so
+            samples drawn by subsequent :meth:`~simulation.handle.EvaluationHandle.extend`
+            calls are not reproducible across sessions.  If reproducibility
+            matters, add an optional ``rng=`` parameter to this method in a
+            future milestone.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario used to rebuild the evaluation plan.
+        output : OutputT
+            A previously produced :class:`ModelOutput`.  Must have
+            ``is_resumable == True``.
+        config : EvaluationConfig
+            Evaluation parameters (currently unused; reserved for future
+            convergence-loop support).
+
+        Returns
+        -------
+        EvaluationHandle
+            Handle seeded with the saved result; call
+            :meth:`~simulation.handle.EvaluationHandle.extend` to draw
+            additional Monte Carlo samples.
+
+        Raises
+        ------
+        IncompatibleResultError
+            If ``output.is_resumable`` is ``False``.
+        """
+        if not output.is_resumable:
+            raise IncompatibleResultError(
+                f"{type(output).__name__} is not resumable. "
+                "The resume payload may be absent or was produced by an "
+                "incompatible version of civic-digital-twins. "
+                "Re-plotting from the summary layer is still possible."
+            )
+        state = self._extract_resume_state(output)
+        evaluation = Evaluation(scenario)
+        plan = evaluation.build_plan()
+        return EvaluationHandle(
+            evaluation=evaluation,
+            plan=plan,
+            result=state.result,
+            rng=np.random.default_rng(),
+            parameters=state.parameters,
+            parameter_axes=state.parameter_axes,
+            functions=state.functions,
+            backend=state.backend,
+        )

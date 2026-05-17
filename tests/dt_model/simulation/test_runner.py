@@ -26,8 +26,10 @@ from civic_digital_twins.dt_model import (
     DistributionEnsemble,
     Evaluation,
     EvaluationConfig,
+    EvaluationHandle,
     EvaluationResult,
     IncompatibleResultError,
+    ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
     ResumeState,
@@ -36,6 +38,7 @@ from civic_digital_twins.dt_model import (
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
 from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 from civic_digital_twins.dt_model.simulation.runner import _get_dt_model_version
 
 # ---------------------------------------------------------------------------
@@ -69,11 +72,41 @@ def _make_simple_model() -> tuple[Index, _SimpleModel]:
     return x, _SimpleModel(x)
 
 
-def _make_result_from(model: _SimpleModel, size: int = 10) -> EvaluationResult:
+def _make_result_from(model: Model | ModelVariant, size: int = 10) -> EvaluationResult:
     """Return a minimal EvaluationResult from a real evaluation via Scenario."""
     scenario = Scenario(model)
     ensemble = DistributionEnsemble(scenario, size)
     return Evaluation(scenario).evaluate(ensemble=ensemble)
+
+
+# A second minimal model whose sole input is a plain scalar Index so that
+# float overrides are valid (DistributionIndex requires a Distribution override).
+
+
+class _ScalarModel(Model):
+    """Model with one concrete scalar input — overridable with a plain float."""
+
+    @dataclasses.dataclass
+    class Inputs:
+        cost: Index
+
+    @dataclasses.dataclass
+    class Outputs:
+        out: Index
+
+    def __init__(self, cost: Index) -> None:
+        out = Index("out", cost.node * 2.0)
+        super().__init__(
+            "ScalarModel",
+            inputs=_ScalarModel.Inputs(cost=cost),
+            outputs=_ScalarModel.Outputs(out=out),
+        )
+
+
+def _make_scalar_model() -> tuple[Index, _ScalarModel]:
+    """Return (cost_index, model) where cost is a plain scalar Index."""
+    cost = Index("cost", 8.0)
+    return cost, _ScalarModel(cost)
 
 
 # ---------------------------------------------------------------------------
@@ -376,3 +409,259 @@ class TestAsyncEvaluationHandleFutureProperty:
         handle = Evaluation(Scenario(model)).submit_evaluate(10)
         handle.get()
         assert handle.future.done() is True
+
+
+# ---------------------------------------------------------------------------
+# Scenario.overrides property (Step 2 precondition)
+# ---------------------------------------------------------------------------
+
+
+class TestScenarioOverrides:
+    """Verify the public overrides property added as a Step 2 precondition."""
+
+    def test_overrides_empty_for_base_scenario(self) -> None:
+        """Overrides is empty when no overrides were given."""
+        _, model = _make_simple_model()
+        scenario = Scenario(model)
+        assert scenario.overrides == {}
+
+    def test_overrides_contains_provided_values(self) -> None:
+        """Overrides contains every entry passed at construction."""
+        cost, model = _make_scalar_model()
+        scenario = Scenario(model, overrides={cost: 99.0})
+        assert scenario.overrides == {cost: 99.0}
+
+    def test_overrides_returns_copy(self) -> None:
+        """Mutating the returned dict does not affect the Scenario."""
+        cost, model = _make_scalar_model()
+        scenario = Scenario(model, overrides={cost: 1.0})
+        copy = scenario.overrides
+        copy.clear()
+        assert scenario.overrides == {cost: 1.0}
+
+
+# ---------------------------------------------------------------------------
+# Concrete stubs for ModelEvaluator tests
+# ---------------------------------------------------------------------------
+
+
+class _ResumableOutput(ModelOutput):
+    """ModelOutput stub that always carries a real EvaluationResult resume payload."""
+
+    def __init__(self, result: EvaluationResult) -> None:
+        super().__init__()
+        self._result = result
+        self._is_resumable = True
+
+    @property
+    def raw_result(self) -> EvaluationResult:
+        """The stored EvaluationResult."""
+        return self._result
+
+    def to_dict(self) -> dict:
+        """Minimal stub serialisation."""
+        return {}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "_ResumableOutput":
+        """Not needed for these tests."""
+        raise NotImplementedError
+
+
+class _MinimalEvaluator(ModelEvaluator[_StubOutput]):
+    """Minimal concrete evaluator for structural/introspection tests."""
+
+    def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> _StubOutput:
+        """Return a stub output whose value equals ensemble_size."""
+        return _StubOutput(config.ensemble_size)
+
+    def structure(self) -> dict:
+        """Return a minimal schema."""
+        return {"y": {"type": "scalar"}}
+
+    def _extract_resume_state(self, output: _StubOutput) -> ResumeState:
+        """Unused in these tests."""
+        raise NotImplementedError
+
+
+class _ResumableEvaluator(ModelEvaluator[_ResumableOutput]):
+    """Evaluator that produces resumable outputs backed by real EvaluationResults."""
+
+    def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> _ResumableOutput:
+        """Run a real evaluation and wrap the result in a resumable output."""
+        result = _make_result_from(scenario.model, config.ensemble_size)
+        return _ResumableOutput(result)
+
+    def structure(self) -> dict:
+        """Return a minimal schema."""
+        return {}
+
+    def _extract_resume_state(self, output: _ResumableOutput) -> ResumeState:
+        """Extract the stored EvaluationResult."""
+        return ResumeState(result=output.raw_result, parameters={})
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator — structural tests
+# ---------------------------------------------------------------------------
+
+
+class TestModelEvaluatorStructure:
+    """Verify abstract method enforcement and default run_async behaviour."""
+
+    def test_cannot_instantiate_without_abstract_methods(self) -> None:
+        """Subclass missing evaluate() or structure() cannot be instantiated."""
+
+        class _Incomplete(ModelEvaluator[_StubOutput]):  # type: ignore[abstract]
+            pass
+
+        with pytest.raises(TypeError):
+            _Incomplete(_make_simple_model()[1])  # type: ignore[abstract]
+
+    def test_run_async_raises_not_implemented_by_default(self) -> None:
+        """run_async() raises NotImplementedError when not overridden."""
+        _, model = _make_simple_model()
+        evaluator = _MinimalEvaluator(model)
+        with pytest.raises(NotImplementedError, match="run_async"):
+            evaluator.run_async(Scenario(model), EvaluationConfig(ensemble_size=10))
+
+    def test_evaluate_is_abstract(self) -> None:
+        """Evaluate is listed as an abstract method."""
+        assert "evaluate" in ModelEvaluator.__abstractmethods__
+
+    def test_structure_is_abstract(self) -> None:
+        """Structure is listed as an abstract method."""
+        assert "structure" in ModelEvaluator.__abstractmethods__
+
+    def test_extract_resume_state_is_abstract(self) -> None:
+        """_extract_resume_state is listed as an abstract method."""
+        assert "_extract_resume_state" in ModelEvaluator.__abstractmethods__
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator — evaluate()
+# ---------------------------------------------------------------------------
+
+
+class TestModelEvaluatorEvaluate:
+    """Verify evaluate() delegates correctly to the concrete implementation."""
+
+    def test_evaluate_returns_model_output(self) -> None:
+        """evaluate() returns an instance of ModelOutput."""
+        _, model = _make_simple_model()
+        evaluator = _MinimalEvaluator(model)
+        output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=5))
+        assert isinstance(output, ModelOutput)
+
+    def test_evaluate_uses_ensemble_size_from_config(self) -> None:
+        """_MinimalEvaluator.evaluate() propagates ensemble_size."""
+        _, model = _make_simple_model()
+        evaluator = _MinimalEvaluator(model)
+        output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=42))
+        assert output.value == 42
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator — get_index_diffs()
+# ---------------------------------------------------------------------------
+
+
+class TestGetIndexDiffs:
+    """Verify get_index_diffs() default implementation."""
+
+    def test_empty_for_base_scenario(self) -> None:
+        """No diffs when no overrides are active."""
+        _, model = _make_simple_model()
+        evaluator = _MinimalEvaluator(model)
+        diffs = evaluator.get_index_diffs(Scenario(model))
+        assert diffs == {}
+
+    def test_diff_string_for_scalar_override(self) -> None:
+        """Override of a scalar Index produces a 'was X \u2192 now Y' string."""
+        cost, model = _make_scalar_model()
+        scenario = Scenario(model, overrides={cost: 99.0})
+        evaluator = _MinimalEvaluator(model)
+        diffs = evaluator.get_index_diffs(scenario)
+        assert cost.name in diffs
+        assert "was" in diffs[cost.name]
+        assert "now" in diffs[cost.name]
+        assert "99.0" in diffs[cost.name]
+
+    def test_diff_keys_match_overridden_indexes(self) -> None:
+        """Diff dict has exactly one key per overridden index."""
+        cost, model = _make_scalar_model()
+        scenario = Scenario(model, overrides={cost: 1.0})
+        evaluator = _MinimalEvaluator(model)
+        diffs = evaluator.get_index_diffs(scenario)
+        assert set(diffs.keys()) == {cost.name}
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator — get_model_values()
+# ---------------------------------------------------------------------------
+
+
+class TestGetModelValues:
+    """Verify get_model_values() default implementation."""
+
+    def test_returns_model_defaults_for_base_scenario(self) -> None:
+        """All values match model defaults when there are no overrides."""
+        x, model = _make_simple_model()
+        evaluator = _MinimalEvaluator(model)
+        values = evaluator.get_model_values(Scenario(model))
+        # x is abstract (DistributionIndex) → value is the frozen distribution
+        # y is concrete (Index computed from x) → value is a graph node, idx.value is None
+        assert x.name in values
+        assert "y" in values
+
+    def test_returns_override_for_overridden_index(self) -> None:
+        """Override value is returned instead of the model default."""
+        cost, model = _make_scalar_model()
+        scenario = Scenario(model, overrides={cost: 7.0})
+        evaluator = _MinimalEvaluator(model)
+        values = evaluator.get_model_values(scenario)
+        assert values[cost.name] == 7.0
+
+    def test_keys_cover_all_model_indexes(self) -> None:
+        """Every index in model.indexes has a corresponding key."""
+        _, model = _make_simple_model()
+        evaluator = _MinimalEvaluator(model)
+        values = evaluator.get_model_values(Scenario(model))
+        expected_names = {idx.name for idx in model.indexes}
+        assert set(values.keys()) == expected_names
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator — resume()
+# ---------------------------------------------------------------------------
+
+
+class TestResume:
+    """Verify the resume() template method."""
+
+    def test_resume_raises_when_not_resumable(self) -> None:
+        """Resume raises IncompatibleResultError when is_resumable is False."""
+        _, model = _make_simple_model()
+        evaluator = _ResumableEvaluator(model)
+        non_resumable = _StubOutput(0, include_resume=False)
+        with pytest.raises(IncompatibleResultError):
+            evaluator.resume(Scenario(model), non_resumable, EvaluationConfig(ensemble_size=10))  # type: ignore[arg-type]
+
+    def test_resume_returns_evaluation_handle(self) -> None:
+        """resume() returns an EvaluationHandle when the output is resumable."""
+        _, model = _make_simple_model()
+        scenario = Scenario(model)
+        evaluator = _ResumableEvaluator(model)
+        output = evaluator.evaluate(scenario, EvaluationConfig(ensemble_size=10))
+        handle = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
+        assert isinstance(handle, EvaluationHandle)
+
+    def test_resume_handle_can_be_extended(self) -> None:
+        """The returned EvaluationHandle can be extended with more samples."""
+        _, model = _make_simple_model()
+        scenario = Scenario(model)
+        evaluator = _ResumableEvaluator(model)
+        output = evaluator.evaluate(scenario, EvaluationConfig(ensemble_size=10))
+        handle = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
+        extended = handle.extend(ensemble_size=5)
+        assert extended is handle.result
