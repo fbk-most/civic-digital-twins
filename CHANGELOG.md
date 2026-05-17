@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `EvaluationResult.expected_value(idx)` — canonical weighted expectation over
+  the ensemble and parameter dimensions, replacing `marginalize()`.  Uses
+  `GenericIndex.output_axes` to determine which dimensions are DOMAIN (kept) vs
+  ENSEMBLE/PARAMETER (contracted); correctly handles T=1 timeseries that were
+  previously indistinguishable from scalars.
+- `GenericIndex.output_axes` — ordered tuple of `Axis` objects describing the
+  dimensions of the index's result array (`*PARAMETER, *ENSEMBLE, *DOMAIN`
+  convention).
+- `dt_model/axes.py` — shared module owning `Axis`, `AxisRole`, and the built-in
+  role constants `DOMAIN`, `PARAMETER`, `ENSEMBLE`.  Breaking the former
+  engine→model import dependency: the engine layer now imports axis types from
+  this module rather than from `model.axis`. 
 - `EvaluationPlan`, `Region`, `RegionGuard` in `simulation/plan.py` — frozen
   dataclasses encoding the evaluation structure as a topologically-ordered DAG
   of computation regions.  `build_plan(strategy="monolithic" | "regional")`
@@ -53,12 +65,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backend=NumpyBackend` (default, currently the only supported backend).
   `Functor`, `NumpyBackend`, and `LambdaAdapter` are re-exported from
   `civic_digital_twins.dt_model` (closing #162).
+- `ConstTimeseriesIndex(name, array)` — companion to `ConstIndex`: a structural
+  constant backed by a `timeseries_constant` graph node whose values are fixed at
+  model-construction time and cannot be overridden in a `Scenario`.  Exported from
+  `civic_digital_twins.dt_model`.
+- `Scenario(model, overrides={idx: value})` in `simulation/scenario.py` — the
+  canonical what-if wrapper around a `Model` or `ModelVariant`.  Accepted override
+  types per index kind: `float` for `Index`; `np.ndarray` for `TimeseriesIndex`;
+  `Distribution` for `DistributionIndex`; `str` (concrete pin) or `dict[str, float]`
+  (new probability weights, subset of support) for `CategoricalIndex`; `str` only
+  for `ConditionalCategoricalIndex`.  `ConstIndex`, `ConstTimeseriesIndex`, and
+  `ConditionalDistributionIndex` do not accept overrides.
+  `Scenario.abstract_indexes()` returns indexes that still require ensemble sampling.
+  `Scenario.base_substitutions()` returns concrete values ready for engine injection.
+  `Scenario.effective_distribution(idx)` returns the active distribution (override if
+  present, else `idx.value`).
+  `Scenario.effective_outcomes(idx)` returns the active outcome-probability map for
+  categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
+  for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
+- `parameter_axes=` kwarg on `Evaluation.evaluate()`, `execute_plan()`,
+  `evaluate_incremental()`, and `submit_evaluate()` — declares named PARAMETER
+  axes for correlated parameter sweeps (closing #154).  Maps axis name to a 1-D
+  numpy array.  Callable values in `parameters=` are now supported: each
+  callable receives axis arrays by name from its signature and computes the
+  substitution value for the corresponding model index (e.g.
+  `lambda base, gradient, e=e: base - gradient * e`).  Parameters with defaults
+  whose names are not axis names are ignored (the `e=e` closure idiom).
+  Array-valued `parameters=` entries retain their existing behaviour.
+- `EvaluationResult.named_axis_values` — dict mapping each named axis name to
+  its raw 1-D input array (from `parameter_axes=`).  Results for callable-backed
+  indexes are accessed via `result[idx]` or `result.expected_value(idx)`.
+
+### Changed
+
+- **Breaking: `project_using_*` nodes now accept `axis: Axis`** instead of a
+  raw integer.  Pass `Axis("time", DOMAIN)` for the time axis.  The numpybackend
+  raises `UnsupportedOperation` at evaluation time if any other axis is supplied.
+- **Breaking: `TimeseriesIndex` is no longer a subclass of `Index`.**  Both are now
+  direct subclasses of `GenericIndex`.  Code that relied on
+  `isinstance(idx, Index)` matching timeseries indexes must be updated to also
+  check `isinstance(idx, TimeseriesIndex)`.
+- **Breaking: `Index(scalar)` and `TimeseriesIndex(array)` now produce placeholder
+  graph nodes** instead of constant nodes.  The default value is stored on the index
+  object (`Index.value`, `TimeseriesIndex.values`) and injected at evaluation time
+  by the base `Scenario`.  Use `ConstIndex(v)` / `ConstTimeseriesIndex(array)` to
+  retain constant-node semantics for values that must never be overridden.
+- **Breaking: Assigning a `Distribution` directly to `Index` now raises `TypeError`.** 
+  Use `DistributionIndex` instead.
 
 ### Deprecated
 
+- `EvaluationResult.marginalize()` — use `EvaluationResult.expected_value()`
+  instead.  `marginalize()` now emits `DeprecationWarning` and will be removed
+  in a future release.
 - `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
   emits a `DeprecationWarning` on construction and will be removed in a future
   release (closing #162).
+- `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
+  `Scenario(model)` instead.  These constructors now auto-wrap the model in a
+  base `Scenario` and emit `DeprecationWarning`.  The canonical chain is
+  `Model → Scenario → {DistributionEnsemble | CrossProductEnsemble | PartitionedEnsemble} + Evaluation`.
+- Mutable index setters `ConstIndex.v`, `ConstTimeseriesIndex.values`,
+  `TimeseriesIndex.values`, and `DistributionIndex.params` — vary index values
+  via `Scenario(model, overrides={idx: new_value})` instead.  All setters emit
+  `DeprecationWarning` and will be removed in a future release.
+
+### Removed
+
+- `graph.expand_dims` and `graph.squeeze` — axis management nodes removed; no
+  replacement (these were never used in production code).
+- `graph.AxisOp` — abstract base class for the removed axis management nodes.
+- `graph.NpAxis` — numpy axis type alias; was an implementation detail of the
+  former integer-axis interface.
 
 ## [0.9.0] - 2026-05-02
 

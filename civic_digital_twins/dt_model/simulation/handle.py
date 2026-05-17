@@ -180,6 +180,7 @@ def _merge_results(
         r1._parameter_arrays,
         axis_sizes=merged_axis_sizes,
         factorized_weights=merged_factorized_weights,
+        named_axis_values=r1._named_axis_values or None,
     )
 
 
@@ -225,7 +226,11 @@ class EvaluationHandle:
     rng:
         Shared random number generator.  Reused by every :meth:`extend` call.
     parameters:
-        The PARAMETER axis dict passed to the initial execution.
+        The PARAMETER axis dict passed to the initial execution (array-valued
+        entries and callable-valued entries combined).
+    parameter_axes:
+        Named PARAMETER axes dict passed to the initial execution (from
+        ``parameter_axes=``).  ``None`` when correlated axes were not used.
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -240,14 +245,16 @@ class EvaluationHandle:
         result: EvaluationResult | None,
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
-        functions: dict[str, executor.Functor] | None,
-        backend: type[executor.NumpyBackend],
+        parameter_axes: dict[str, np.ndarray] | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> None:
         self._evaluation = evaluation
         self._plan = plan
         self._result = result
         self._rng = rng
         self._parameters = parameters
+        self._parameter_axes = parameter_axes
         self._functions = functions
         self._backend = backend
 
@@ -321,11 +328,14 @@ class EvaluationHandle:
 
         from .ensemble import DistributionEnsemble
 
-        new_ensemble = DistributionEnsemble(self._plan.model, ensemble_size, rng=self._rng)
+        new_ensemble = DistributionEnsemble(
+            self._evaluation._scenario, ensemble_size, rng=self._rng, exclude=frozenset(self._parameters)
+        )
         new_result = self._evaluation.execute_plan(
             self._plan,
             new_ensemble,
             parameters=self._parameters,
+            parameter_axes=self._parameter_axes,
             functions=self._functions,
             backend=self._backend,
         )
@@ -362,6 +372,8 @@ class AsyncEvaluationHandle(EvaluationHandle):
         Shared random number generator reused by :meth:`extend`.
     parameters:
         The PARAMETER axis dict passed to the initial execution.
+    parameter_axes:
+        Named PARAMETER axes dict passed to the initial execution.
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -376,6 +388,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
         plan: EvaluationPlan,
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
+        parameter_axes: dict[str, np.ndarray] | None,
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> None:
@@ -385,6 +398,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
             result=None,  # not yet available; resolved lazily by _resolve()
             rng=rng,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )

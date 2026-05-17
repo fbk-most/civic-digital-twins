@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
+from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import InputsContractWarning, IOProxy, Model, ModelContractWarning
 
 c1: Distribution = stats.norm(loc=2.0, scale=1.0)  # type: ignore[assignment]
@@ -42,16 +42,18 @@ def test_model_abstract_indexes_includes_none_value():
     a = Index("a", 1.0)
     p = Index("p", None)
     m = Model("test", [a, p])
-    assert m.abstract_indexes() == [p]
+    result = m.abstract_indexes()
+    assert len(result) == 1 and result[0] is p
     assert not m.is_instantiated()
 
 
 def test_model_abstract_indexes_includes_distribution_value():
-    """abstract_indexes() includes distribution-backed indexes."""
+    """abstract_indexes() includes DistributionIndex instances."""
     a = Index("a", 1.0)
-    d = Index("d", c1)
+    d = DistributionIndex("d", stats.norm, {"loc": 2.0, "scale": 1.0})
     m = Model("test", [a, d])
-    assert m.abstract_indexes() == [d]
+    result = m.abstract_indexes()
+    assert len(result) == 1 and result[0] is d
     assert not m.is_instantiated()
 
 
@@ -60,7 +62,8 @@ def test_model_abstract_indexes_includes_timeseries_placeholder():
     ts = TimeseriesIndex("ts")
     tf = TimeseriesIndex("tf", np.array([1.0, 2.0]))
     m = Model("test", [ts, tf])
-    assert m.abstract_indexes() == [ts]
+    result = m.abstract_indexes()
+    assert len(result) == 1 and result[0] is ts
     assert not m.is_instantiated()
 
 
@@ -514,7 +517,8 @@ def test_dataclass_abstract_indexes():
     p = Index("p", None)
     r = Index("r", 1.0)
     m = Model("test", inputs=Inputs(placeholder=p), outputs=Outputs(result=r))
-    assert m.abstract_indexes() == [p]
+    result = m.abstract_indexes()
+    assert len(result) == 1 and result[0] is p
     assert not m.is_instantiated()
 
 

@@ -210,8 +210,8 @@ def test_regional_bike_only_matches_monolithic():
         adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
 
     regional_result = ev.execute_plan(regional_plan, adapter)
-    assert float(regional_result.marginalize(mv.outputs.throughput)) == pytest.approx(
-        float(mono.marginalize(mv.outputs.throughput))
+    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
+        float(mono.expected_value(mv.outputs.throughput))
     )
 
 
@@ -230,8 +230,8 @@ def test_regional_train_only_matches_monolithic():
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     regional_result = ev.execute_plan(regional_plan, adapter)
 
-    assert float(regional_result.marginalize(mv.outputs.throughput)) == pytest.approx(
-        float(mono_result.marginalize(mv.outputs.throughput))
+    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
+        float(mono_result.expected_value(mv.outputs.throughput))
     )
 
 
@@ -250,8 +250,8 @@ def test_regional_mixed_modes_matches_monolithic():
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     regional_result = ev.execute_plan(regional_plan, adapter)
 
-    assert float(regional_result.marginalize(mv.outputs.throughput)) == pytest.approx(
-        float(mono_result.marginalize(mv.outputs.throughput))
+    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
+        float(mono_result.expected_value(mv.outputs.throughput))
     )
 
 
@@ -268,7 +268,7 @@ def test_regional_emissions_bike_only():
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
     regional_result = ev.execute_plan(regional_plan, adapter)
-    assert float(regional_result.marginalize(mv.outputs.emissions)) == pytest.approx(0.0)
+    assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(0.0)
 
 
 def test_regional_emissions_train_only():
@@ -284,7 +284,7 @@ def test_regional_emissions_train_only():
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
     regional_result = ev.execute_plan(regional_plan, adapter)
-    assert float(regional_result.marginalize(mv.outputs.emissions)) == pytest.approx(50.0)
+    assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(50.0)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +308,7 @@ def test_regional_plan_with_parameter_axis_bike_only():
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
 
-    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 1.0)
+    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
 
 
 def test_regional_plan_with_parameter_axis_train_only():
@@ -326,7 +326,7 @@ def test_regional_plan_with_parameter_axis_train_only():
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
 
-    assert np.allclose(result.marginalize(mv.outputs.throughput), xs * 10.0)
+    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
 
 
 def test_regional_plan_with_parameter_axis_mixed_matches_monolithic():
@@ -350,8 +350,8 @@ def test_regional_plan_with_parameter_axis_mixed_matches_monolithic():
     mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput], parameters={presence: xs})
 
     assert np.allclose(
-        regional_result.marginalize(mv.outputs.throughput),
-        mono_result.marginalize(mv.outputs.throughput),
+        regional_result.expected_value(mv.outputs.throughput),
+        mono_result.expected_value(mv.outputs.throughput),
     )
 
 
@@ -416,7 +416,7 @@ def test_monolithic_plan_still_works_after_regional_changes():
     scenarios = _mixed_scenarios(mode)
     result = ev.evaluate(scenarios, [mv.outputs.throughput])
     # 0.5 * 100*1 + 0.5 * 100*10 = 550
-    assert float(result.marginalize(mv.outputs.throughput)) == pytest.approx(550.0)
+    assert float(result.expected_value(mv.outputs.throughput)) == pytest.approx(550.0)
 
 
 # ---------------------------------------------------------------------------

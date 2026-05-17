@@ -106,7 +106,7 @@ def test_runtime_abstract_indexes_includes_categorical():
     mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
     mv = ModelVariant("Transport", _make_variants(), selector=mode)
     abstract = mv.abstract_indexes()
-    assert mode in abstract
+    assert any(idx is mode for idx in abstract)
 
 
 def test_runtime_abstract_indexes_includes_variant_abstract_indexes():
@@ -122,7 +122,7 @@ def test_runtime_abstract_indexes_includes_variant_abstract_indexes():
         selector=mode,
     )
     abstract = mv.abstract_indexes()
-    assert cap_placeholder in abstract
+    assert any(idx is cap_placeholder for idx in abstract)
 
 
 def test_runtime_is_instantiated_returns_false():

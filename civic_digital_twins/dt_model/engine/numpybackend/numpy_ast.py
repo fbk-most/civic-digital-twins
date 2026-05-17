@@ -15,7 +15,11 @@ import ast
 
 import numpy as np
 
+from ...axes import DOMAIN, Axis
 from ..frontend import graph
+
+_TIME_AXIS = Axis("time", DOMAIN)
+"""The only axis the numpybackend currently supports for ProjectionOp."""
 
 
 class UnsupportedNodeArguments(Exception):
@@ -62,9 +66,7 @@ _operation_names: dict[type[graph.Node], str] = {
     # where
     graph.multi_clause_where: "select",
     graph.where: "where",
-    # axis operations
-    graph.squeeze: "squeeze",
-    graph.expand_dims: "expand_dims",
+    # projection operations
     graph.project_using_sum: "sum",
     graph.project_using_mean: "mean",
     graph.project_using_min: "min",
@@ -91,7 +93,11 @@ def _np_attr_name(name: str) -> ast.expr:
 
 
 def _axis_as_tuple(axis: graph.Axis) -> tuple[int, ...]:
-    return (axis,) if isinstance(axis, int) else axis
+    if axis != _TIME_AXIS:
+        raise UnsupportedNodeArguments(
+            f"numpy_ast: numpybackend only supports projection along {_TIME_AXIS!r}; got {axis!r}"
+        )
+    return (-1,)  # CDT convention: time axis always occupies the last numpy dimension
 
 
 def _np_ndarray_to_ast_expr(value: graph.Scalar | list) -> ast.expr:
@@ -203,19 +209,13 @@ def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = 
         default: ast.expr = ast.Name(id=_node_name(node.default_value), ctx=ast.Load())
         posargs.extend([ast.List(condlist), ast.List(choicelist), default])
 
-    # 10. evaluate axis operations
-    elif isinstance(node, graph.AxisOp):
+    # 10. evaluate projection operations
+    elif isinstance(node, graph.ProjectionOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         if isinstance(node, graph.project_using_quantile):
             # For quantile, the q parameter comes first
             posargs.insert(0, ast.Constant(value=node.q))
-            kwargs.append(
-                ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)]))
-            )
-        else:
-            kwargs.append(
-                ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)]))
-            )
+        kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)])))
         if isinstance(
             node,
             (

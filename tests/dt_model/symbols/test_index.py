@@ -4,20 +4,22 @@
 
 import numpy as np
 import pytest
+from scipy import stats
 
-from civic_digital_twins.dt_model import ConstIndex, GenericIndex, Index, TimeseriesIndex
+from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, ConditionalCategoricalIndex, DistributionIndex
 
 
 def test_timeseries_index_construction():
-    """Test basic construction of a TimeseriesIndex."""
+    """Test basic construction of a TimeseriesIndex — node is timeseries_placeholder (D1a)."""
     values = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("cap", values)
     assert idx.name == "cap"
-    assert isinstance(idx.node, graph.timeseries_constant)
-    assert idx.values is not None
-    assert np.array_equal(idx.values, values)
+    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert isinstance(idx.value, np.ndarray)
+    assert np.array_equal(idx.value, values)
 
 
 def test_timeseries_index_value_attribute():
@@ -29,45 +31,13 @@ def test_timeseries_index_value_attribute():
 
 
 def test_timeseries_index_evaluation():
-    """Test that the TimeseriesIndex node evaluates to its values."""
+    """Test that the TimeseriesIndex node evaluates to its values when state is provided (D1a)."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
     plan = linearize.forest(idx.node)
-    state = executor.State({})
+    state = executor.State({idx.node: values})
     executor.evaluate_nodes(state, *plan)
     assert np.array_equal(state.values[idx.node], values)
-
-
-def test_timeseries_index_values_setter():
-    """Test that updating values refreshes the graph node."""
-    idx = TimeseriesIndex("cap", np.array([1.0, 2.0]))
-    old_node = idx.node
-
-    new_values = np.array([3.0, 4.0])
-    idx.values = new_values
-
-    assert np.array_equal(idx.values, new_values)
-    assert isinstance(idx.value, np.ndarray)
-    assert np.array_equal(idx.value, new_values)
-    # A new node is created
-    assert idx.node is not old_node
-
-    # The new node evaluates correctly
-    plan = linearize.forest(idx.node)
-    state = executor.State({})
-    executor.evaluate_nodes(state, *plan)
-    assert np.array_equal(state.values[idx.node], new_values)
-
-
-def test_timeseries_index_values_setter_no_change():
-    """Test that setting the same values does not replace the node."""
-    values = np.array([1.0, 2.0])
-    idx = TimeseriesIndex("cap", values)
-    old_node = idx.node
-
-    # Setting identical values should not replace the node
-    idx.values = np.array([1.0, 2.0])
-    assert idx.node is old_node
 
 
 def test_timeseries_index_str():
@@ -77,12 +47,12 @@ def test_timeseries_index_str():
 
 
 def test_timeseries_index_in_arithmetic():
-    """Test that a TimeseriesIndex node participates correctly in formulas."""
+    """Test that a TimeseriesIndex node participates correctly in formulas (D1a: state provided)."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
     halved = idx.node * graph.constant(0.5)
     plan = linearize.forest(halved)
-    state = executor.State({})
+    state = executor.State({idx.node: values})
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[halved], [5.0, 10.0, 15.0])
 
@@ -96,7 +66,6 @@ def test_timeseries_index_no_values():
     """Test construction of a TimeseriesIndex with no values (placeholder mode)."""
     idx = TimeseriesIndex("inflow")
     assert isinstance(idx.node, graph.timeseries_placeholder)
-    assert idx.values is None
     assert idx.value is None
 
 
@@ -119,25 +88,6 @@ def test_timeseries_index_placeholder_evaluates_with_state():
     assert np.array_equal(state.values[idx.node], values)
 
 
-def test_timeseries_index_none_to_array():
-    """Test that assigning values to a placeholder TimeseriesIndex switches it to constant."""
-    idx = TimeseriesIndex("inflow")
-    old_node = idx.node
-    idx.values = np.array([1.0, 2.0])
-    assert isinstance(idx.node, graph.timeseries_constant)
-    assert idx.node is not old_node
-    assert np.array_equal(idx.values, [1.0, 2.0])
-
-
-def test_timeseries_index_array_to_none():
-    """Test that setting values to None switches a constant TimeseriesIndex to placeholder."""
-    idx = TimeseriesIndex("inflow", np.array([1.0, 2.0]))
-    idx.values = None
-    assert idx.values is None
-    assert idx.value is None
-    assert isinstance(idx.node, graph.timeseries_placeholder)
-
-
 def test_timeseries_index_str_placeholder():
     """Test the string representation of a placeholder TimeseriesIndex."""
     idx = TimeseriesIndex("inflow")
@@ -154,7 +104,7 @@ def test_timeseries_index_formula_construction():
     ts = TimeseriesIndex("inflow")
     result = TimeseriesIndex("outflow", ts.node * ts.node)
     assert isinstance(result.node, graph.multiply)
-    assert result.values is None
+    assert isinstance(result.value, graph.Node)
 
 
 def test_timeseries_index_formula_str():
@@ -198,6 +148,46 @@ def test_timeseries_index_formula_via_operators():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# D1a: placeholder-based node behavior tests
+# ---------------------------------------------------------------------------
+
+
+def test_index_scalar_creates_placeholder():
+    """Index(scalar) creates a graph.placeholder node (D1a: value lives in model layer)."""
+    idx = Index("cost", 8.0)
+    assert isinstance(idx.node, graph.placeholder)
+    assert idx.value == 8.0
+
+
+def test_const_index_scalar_creates_constant():
+    """ConstIndex always creates a graph.constant node regardless of D1a."""
+    idx = ConstIndex("cost", 8.0)
+    assert isinstance(idx.node, graph.constant)
+    assert idx.value == 8.0
+
+
+def test_timeseries_index_array_creates_timeseries_placeholder():
+    """TimeseriesIndex(arr) creates a timeseries_placeholder node (D1a)."""
+    arr = np.array([1.0, 2.0, 3.0])
+    idx = TimeseriesIndex("ts", arr)
+    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert isinstance(idx.value, np.ndarray)
+    assert np.array_equal(idx.value, arr)
+
+
+def test_const_timeseries_index_creates_timeseries_constant():
+    """ConstTimeseriesIndex always creates a timeseries_constant node."""
+    arr = np.array([1.0, 2.0, 3.0])
+    idx = ConstTimeseriesIndex("ts", arr)
+    assert isinstance(idx.node, graph.timeseries_constant)
+
+
+# ---------------------------------------------------------------------------
+# GenericIndex arithmetic operators (original section)
+# ---------------------------------------------------------------------------
+
+
 def _eval(node: graph.Node) -> np.ndarray:
     """Evaluate a graph node with no external placeholder values."""
     state = executor.State({})
@@ -220,6 +210,12 @@ def test_index_is_generic_index():
 def test_timeseries_index_is_generic_index():
     """TimeseriesIndex is a subclass of GenericIndex."""
     assert isinstance(TimeseriesIndex("ts", np.array([1.0])), GenericIndex)
+
+
+def test_timeseries_index_is_not_index():
+    """TimeseriesIndex is a sibling of Index, not a subclass."""
+    assert not issubclass(TimeseriesIndex, Index)
+    assert not isinstance(TimeseriesIndex("ts", np.array([1.0])), Index)
 
 
 def test_index_add_scalar():
@@ -321,11 +317,15 @@ def test_index_mul_index():
 
 
 def test_timeseries_index_arithmetic():
-    """TimeseriesIndex participates in formulas without .node access."""
-    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    """TimeseriesIndex participates in formulas without .node access (D1a: state provided)."""
+    arr = np.array([1.0, 2.0, 3.0])
+    ts = TimeseriesIndex("ts", arr)
     node = ts * 2.0
     assert isinstance(node, graph.multiply)
-    assert np.allclose(_eval(node), [2.0, 4.0, 6.0])
+    plan = linearize.forest(node)
+    state = executor.State({ts.node: arr})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[node], [2.0, 4.0, 6.0])
 
 
 def test_index_comparison_operators():
@@ -378,10 +378,14 @@ def test_index_neg_returns_negate_node():
 
 
 def test_index_neg_evaluates_correctly():
-    """__neg__ evaluates to the element-wise negation of the index values."""
-    ts = TimeseriesIndex("ts", np.array([1.0, -2.0, 3.0]))
-    result = _eval(-ts)
-    assert np.allclose(result, [-1.0, 2.0, -3.0])
+    """__neg__ evaluates to the element-wise negation of the index values (D1a: state provided)."""
+    arr = np.array([1.0, -2.0, 3.0])
+    ts = TimeseriesIndex("ts", arr)
+    neg_node = -ts
+    plan = linearize.forest(neg_node)
+    state = executor.State({ts.node: arr})
+    executor.evaluate_nodes(state, *plan)
+    assert np.allclose(state.values[neg_node], [-1.0, 2.0, -3.0])
 
 
 # ---------------------------------------------------------------------------
@@ -418,72 +422,92 @@ def test_distribution_index_params_property_returns_copy():
     assert idx.params["loc"] == 1.0
 
 
-def test_distribution_index_params_setter_full_replacement():
-    """Assigning a new dict to .params re-freezes the distribution."""
-    from scipy import stats
-
-    from civic_digital_twins.dt_model import DistributionIndex
-
-    idx = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
-    old_value = idx.value
-    idx.params = {"loc": 5.0, "scale": 2.0}
-    assert idx.params == {"loc": 5.0, "scale": 2.0}
-    # The frozen distribution object should have been replaced.
-    assert idx.value is not old_value
-
-
-def test_distribution_index_params_setter_partial_update():
-    """Partial update via |= re-freezes the distribution with merged params."""
-    from scipy import stats
-
-    from civic_digital_twins.dt_model import DistributionIndex
-
-    idx = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
-    idx.params |= {"loc": 3.0}
-    assert idx.params["loc"] == 3.0
-    assert idx.params["scale"] == 1.0
-
-
 # ---------------------------------------------------------------------------
-# ConstIndex — v property, v setter, __str__
+# ConstIndex
 # ---------------------------------------------------------------------------
 
 
-def test_const_index_v_property():
-    """ConstIndex.v returns the constant value."""
+def test_const_index_value():
+    """ConstIndex.value returns the constant value."""
     idx = ConstIndex("c", 42.0)
-    assert idx.v == 42.0
-
-
-def test_const_index_v_setter_changes_value():
-    """Setting ConstIndex.v to a new value updates the node."""
-    idx = ConstIndex("c", 1.0)
-    old_node = idx.node
-    idx.v = 2.0
-    assert idx.v == 2.0
-    assert idx.value == 2.0
-    # The graph node must have been replaced.
-    assert idx.node is not old_node
-
-
-def test_const_index_v_setter_same_value_noop():
-    """Setting ConstIndex.v to the same value does not replace the node."""
-    idx = ConstIndex("c", 7.0)
-    old_node = idx.node
-    idx.v = 7.0
-    assert idx.node is old_node
-
-
-def test_const_index_v_setter_evaluates_correctly():
-    """After updating v, the index evaluates to the new constant."""
-    idx = ConstIndex("c", 3.0)
-    idx.v = 10.0
-    state = executor.State({})
-    executor.evaluate_nodes(state, *linearize.forest(idx.node))
-    assert np.isclose(state.values[idx.node], 10.0)
+    assert idx.value == 42.0
 
 
 def test_const_index_str():
-    """ConstIndex.__str__ returns the expected representation."""
+    """ConstIndex.__repr__ returns the expected representation."""
     idx = ConstIndex("c", 5.0)
     assert str(idx) == "const_idx(5.0)"
+
+
+# ---------------------------------------------------------------------------
+# ConstTimeseriesIndex — construction, values property, setter, str, hierarchy
+# ---------------------------------------------------------------------------
+
+
+def test_const_timeseries_index_construction():
+    """ConstTimeseriesIndex holds a concrete array backed by timeseries_constant."""
+    arr = np.array([1.0, 2.0, 3.0])
+    ts = ConstTimeseriesIndex("demand", arr)
+    assert ts.name == "demand"
+    assert isinstance(ts.value, np.ndarray)
+    assert np.array_equal(ts.value, arr)
+    assert isinstance(ts.node, graph.timeseries_constant)
+
+
+def test_const_timeseries_index_is_timeseries_index():
+    """ConstTimeseriesIndex is a subclass of TimeseriesIndex and GenericIndex."""
+    ts = ConstTimeseriesIndex("demand", np.array([1.0]))
+    assert isinstance(ts, TimeseriesIndex)
+    assert isinstance(ts, GenericIndex)
+    assert not isinstance(ts, Index)
+
+
+def test_const_timeseries_index_evaluates_correctly():
+    """ConstTimeseriesIndex node evaluates to its stored array."""
+    arr = np.array([10.0, 20.0, 30.0])
+    ts = ConstTimeseriesIndex("demand", arr)
+    state = executor.State({})
+    executor.evaluate_nodes(state, *linearize.forest(ts.node))
+    assert np.array_equal(state.values[ts.node], arr)
+
+
+def test_const_timeseries_index_str():
+    """ConstTimeseriesIndex.__str__ uses the const_timeseries_idx prefix."""
+    ts = ConstTimeseriesIndex("demand", np.array([1.0, 2.0]))
+    assert str(ts) == "const_timeseries_idx([1.0, 2.0])"
+
+
+def test_index_rejects_distribution():
+    """Index cannot be initialised directly with a Distribution; raises TypeError."""
+    dist = stats.norm(loc=0, scale=1)
+    with pytest.raises(TypeError, match="DistributionIndex"):
+        Index("x", dist)  # type: ignore[arg-type]
+
+
+def test_index_repr_formula_mode():
+    """Index repr shows '<formula>' when the value is a graph node."""
+    n = graph.constant(42.0)
+    idx = Index("r", n)
+    assert repr(idx) == "idx('r', <formula>)"
+
+
+def test_distribution_index_sample():
+    """DistributionIndex.sample() returns an array of the requested size."""
+    idx = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    rng = np.random.default_rng(0)
+    samples = idx.sample(rng=rng, size=10)
+    assert samples.shape == (10,)
+
+
+def test_conditional_categorical_sample_for_no_rng():
+    """ConditionalCategoricalIndex.sample_for without rng uses global numpy random state."""
+    parent = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    idx = ConditionalCategoricalIndex(
+        "temp_band",
+        parents=[parent],
+        support=["hot", "cold"],
+        factory=lambda season: {"hot": 0.99, "cold": 0.01} if season == "summer" else {"hot": 0.01, "cold": 0.99},
+    )
+    np.random.seed(0)
+    samples = idx.sample_for(size=100, season="summer")
+    assert "hot" in samples

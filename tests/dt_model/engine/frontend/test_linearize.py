@@ -4,6 +4,7 @@
 
 import pytest
 
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 
 
@@ -185,18 +186,20 @@ def test_complex_graph():
 
 
 def test_axes_operations():
-    """Test linearization with shape-changing operations."""
+    """Test linearization with projection operations."""
     x = graph.placeholder("x")
+    time_axis = Axis("time", DOMAIN)
 
-    # expand_dims followed by project_using_sum
-    expanded = graph.expand_dims(x, axis=0)
-    reduced = graph.project_using_sum(expanded, axis=1)
+    ts = graph.timeseries_constant([1.0, 2.0, 3.0])
+    reduced = graph.project_using_sum(ts, axis=time_axis)
+    result = graph.add(x, reduced)
 
-    plan = linearize.forest(reduced)
+    plan = linearize.forest(result)
 
-    # Check node ordering
-    assert find_node_idx(plan, x) < find_node_idx(plan, expanded)
-    assert find_node_idx(plan, expanded) < find_node_idx(plan, reduced)
+    # Check node ordering: ts and x before reduced, reduced before result
+    assert find_node_idx(plan, ts) < find_node_idx(plan, reduced)
+    assert find_node_idx(plan, x) < find_node_idx(plan, result)
+    assert find_node_idx(plan, reduced) < find_node_idx(plan, result)
 
 
 def test_multiple_independent_graphs():

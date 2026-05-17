@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import concurrent.futures
+import inspect
 import warnings
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -13,12 +14,13 @@ if TYPE_CHECKING:  # pragma: no cover
 
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
-from ..model.axis import ENSEMBLE, PARAMETER, Axis
+from ..model.axis import DOMAIN, ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .ensemble import AxisEnsemble, DistributionEnsemble, Ensemble, WeightedScenario
 from .plan import EvaluationPlan, Region, RegionGuard
+from .scenario import Scenario
 
 __all__ = ["EvaluationResult", "Evaluation"]
 
@@ -101,12 +103,17 @@ class EvaluationResult:
         Maps each :class:`~dt_model.model.axis.Axis` to its numpy dimension
         position in result arrays.
     parameter_arrays:
-        The value arrays passed in ``parameters=``, keyed by index.  Used by
-        :meth:`parameter_values_for`.  Empty dict when no PARAMETER axes.
+        Anonymous PARAMETER-axis arrays from ``parameters=`` (array-valued
+        entries only; callable-backed indexes are not included).  Used by
+        :meth:`parameter_values_for`.  Empty dict when no anonymous PARAMETER
+        axes.
     axis_sizes:
         Maps each :class:`~dt_model.model.axis.Axis` to its size.
     factorized_weights:
         Per-ENSEMBLE-axis weight vectors.
+    named_axis_values:
+        Raw 1-D arrays for named axes declared via ``parameter_axes=``, keyed
+        by axis name.  Empty dict when ``parameter_axes=`` was not used.
     """
 
     def __init__(
@@ -116,12 +123,14 @@ class EvaluationResult:
         parameter_arrays: dict[GenericIndex, np.ndarray],
         axis_sizes: dict[Axis, int] | None = None,
         factorized_weights: dict[Axis, np.ndarray] | None = None,
+        named_axis_values: dict[str, np.ndarray] | None = None,
     ) -> None:
         self._state = state
         self._axis_layout = axis_layout
         self._parameter_arrays = parameter_arrays
         self._axis_sizes: dict[Axis, int] = axis_sizes or {}
         self._factorized_weights: dict[Axis, np.ndarray] = factorized_weights or {}
+        self._named_axis_values: dict[str, np.ndarray] = named_axis_values or {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -156,6 +165,11 @@ class EvaluationResult:
         """Parameter value arrays, keyed by the index passed in ``parameters=``."""
         return self._parameter_arrays
 
+    @property
+    def named_axis_values(self) -> dict[str, np.ndarray]:
+        """Raw 1-D arrays for axes declared via ``parameter_axes=``, keyed by name."""
+        return self._named_axis_values
+
     def parameter_values_for(self, index: GenericIndex) -> np.ndarray:
         """Return the value array for a specific PARAMETER index.
 
@@ -174,10 +188,7 @@ class EvaluationResult:
 
     @property
     def full_shape(self) -> tuple[int, ...]:
-        """Shape of a fully-broadcast result array.
-
-        Returns ``(*PARAMETER, *ENSEMBLE)`` sizes in axis-layout order.
-        """
+        """Shape of a fully-broadcast result array in axis-layout order."""
         n_dims = len(self._axis_layout)
         if n_dims == 0:
             return ()
@@ -190,78 +201,78 @@ class EvaluationResult:
         """Return the result array for *index*."""
         return np.asarray(self._state.values[index.node])
 
-    def marginalize(self, index: GenericIndex) -> np.ndarray:
-        """Contract ENSEMBLE axes using their weights and return the result.
+    def _contract_ensemble(self, index: GenericIndex) -> np.ndarray:
+        """Contract all ENSEMBLE axes and return the ``(*P, *D)`` array.
 
-        Uses the explicit axis layout — no shape heuristics.  After
-        contracting all ENSEMBLE axes the result shape is
-        ``(*PARAMETER_sizes, *DOMAIN_dims)``; trailing size-1 dims that lie
-        beyond the PARAMETER positions are squeezed away (they are internal
-        DOMAIN placeholders, not meaningful dimensions).
+        For each ENSEMBLE axis (in descending position order so earlier
+        squeezes do not shift later positions): if the axis size is 1 the
+        singleton is squeezed away directly; otherwise a weighted average is
+        taken.  The result shape is ``(*PARAMETER, *DOMAIN)`` — all DOMAIN
+        dimensions are preserved regardless of size.
         """
         arr = np.asarray(self._state.values[index.node])
-
-        ensemble_entries = sorted(
-            [(ax, pos) for ax, pos in self._axis_layout.items() if ax.role == ENSEMBLE],
+        for ax, pos in sorted(
+            ((a, p) for a, p in self._axis_layout.items() if a.role == ENSEMBLE),
             key=lambda t: t[1],
             reverse=True,
-        )
-
-        n_params = len(self._parameter_arrays)
-
-        if not ensemble_entries:
-            return self._squeeze_domain(arr, n_params)
-
-        for ax, pos in ensemble_entries:
-            # evaluate() guarantees shape[pos] is either S (ENSEMBLE-touched
-            # nodes) or 1 (injected singleton for non-touched nodes).
-            # For the singleton case: weighted average of S identical copies
-            # (weights summing to 1) equals the value itself — squeeze directly.
-            if arr.shape[pos] == 1:
-                arr = arr.squeeze(axis=pos)
-            else:
-                arr = np.average(arr, weights=self._factorized_weights[ax], axis=pos)
-
-        return self._squeeze_domain(arr, n_params)
-
-    @staticmethod
-    def _squeeze_domain(arr: np.ndarray, n_params: int) -> np.ndarray:
-        """Squeeze size-1 dims beyond the first *n_params* dimensions.
-
-        PARAMETER dims (positions 0..n_params-1) are preserved even if
-        size 1.  Trailing size-1 DOMAIN placeholder dims are removed so
-        that pure-scalar results are returned as 0-d arrays rather than
-        shape ``(1,)`` arrays.
-
-        Known limitation — T=1 timeseries
-        ----------------------------------
-        When a model contains timeseries nodes, ``evaluate()`` appends a
-        trailing size-1 placeholder dimension to every scalar substitution
-        so that scalars broadcast correctly against ``(T,)`` arrays.  After
-        ENSEMBLE contraction in :meth:`marginalize`, this placeholder is
-        indistinguishable from a genuine length-1 timeseries trailing dim,
-        and both are squeezed away here.  As a result,
-        ``marginalize(ts)`` for a ``TimeseriesIndex`` of length 1 returns a
-        0-d scalar rather than a shape-``(1,)`` array — the time axis is
-        silently dropped.
-
-        The root cause is the absence of explicit DOMAIN axis tracking: the
-        engine has no way to tag "this dimension is the time axis" vs "this
-        dimension is an internal broadcast placeholder".  A proper fix
-        requires first-class DOMAIN axis support (see issue #157 and the
-        D12/D13 design sprint).
-        """
-        domain_dims = tuple(i for i in range(n_params, arr.ndim) if arr.shape[i] == 1)
-        if domain_dims:
-            arr = np.squeeze(arr, axis=domain_dims)
+        ):
+            arr = (
+                arr.squeeze(axis=pos)
+                if arr.shape[pos] == 1
+                else np.average(arr, weights=self._factorized_weights[ax], axis=pos)
+            )
         return arr
+
+    def expected_value(self, index: GenericIndex) -> np.ndarray:
+        """Return the typed result for *index* after contracting ENSEMBLE axes.
+
+        Contracts all ENSEMBLE axes (weighted average or singleton squeeze),
+        then drops size-1 DOMAIN dimensions that *index* does not carry in its
+        :attr:`~model.index.GenericIndex.output_axes`:
+
+        - A :class:`~dt_model.model.index.TimeseriesIndex` carries
+          ``Axis("time", DOMAIN)``; result shape is ``(*PARAMETER, T)``.
+        - A plain :class:`~dt_model.model.index.Index` formula carries no
+          DOMAIN axes; size-1 DOMAIN dims are squeezed away; result shape is
+          ``(*PARAMETER,)``.
+
+        This is the primary result-extraction method for user code and
+        vertical applications.  Use :meth:`_contract_ensemble` directly if
+        you need the full ``(*PARAMETER, *DOMAIN)`` shape.
+        """
+        arr = self._contract_ensemble(index)
+        n_params = sum(1 for ax in self._axis_layout if ax.role == PARAMETER)
+        domain_axes = sorted(
+            [(ax, pos) for ax, pos in self._axis_layout.items() if ax.role == DOMAIN],
+            key=lambda t: t[1],
+        )
+        stray = tuple(
+            n_params + i
+            for i, (ax, _) in enumerate(domain_axes)
+            if ax not in index.output_axes and arr.shape[n_params + i] == 1
+        )
+        if stray:
+            arr = np.squeeze(arr, axis=stray)
+        return arr
+
+    def marginalize(self, index: GenericIndex) -> np.ndarray:
+        """Use :meth:`expected_value` instead — ``marginalize()`` is deprecated.
+
+        Currently equivalent to ``expected_value(index)``.
+        """
+        warnings.warn(
+            "EvaluationResult.marginalize() is deprecated. Use expected_value() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.expected_value(index)
 
 
 class Evaluation:
-    """Bridge between a :class:`~dt_model.model.model.Model` and the engine.
+    """Bridge between a :class:`~simulation.scenario.Scenario` and the engine.
 
-    Given a model (or Scenario), :meth:`build_plan` encodes the DAG navigation
-    strategy as an :class:`~simulation.plan.EvaluationPlan`, and
+    Given a scenario (or a model, deprecated), :meth:`build_plan` encodes the
+    DAG navigation strategy as an :class:`~simulation.plan.EvaluationPlan`, and
     :meth:`execute_plan` runs it against a given ensemble and parameter grid,
     returning an :class:`EvaluationResult`.  :meth:`evaluate` is a thin
     convenience wrapper that calls both in sequence.
@@ -272,30 +283,34 @@ class Evaluation:
 
     Parameters
     ----------
-    model:
-        The model to evaluate.  Also accepts Scenario-like objects (any object
-        with a ``.model`` attribute of type :class:`~.model.model.Model` or
-        :class:`~.model.model_variant.ModelVariant`) at runtime; the type
-        annotation will be updated when ``Scenario`` (parameter-axes.md D1b)
-        is implemented.
+    scenario_or_model:
+        A :class:`~simulation.scenario.Scenario` (canonical) or, deprecated,
+        a :class:`~model.model.Model` / :class:`~model.model_variant.ModelVariant`
+        which is auto-wrapped in ``Scenario(model)`` with a
+        :class:`DeprecationWarning`.
     """
 
-    def __init__(self, model: Model | ModelVariant) -> None:
-        # Accept Scenario-like objects at runtime via duck typing
-        # (parameter-axes.md D1b — Scenario not yet implemented).
-        # Using an untyped intermediate avoids a spurious Pyright
-        # "condition is always True" error on the isinstance check.
-        _arg: object = model
-        if not isinstance(_arg, (Model, ModelVariant)):
-            extracted = getattr(_arg, "model", None)
-            if not isinstance(extracted, (Model, ModelVariant)):
-                raise TypeError(
-                    f"Evaluation() expects a Model, ModelVariant, or Scenario-like "
-                    f"object with a '.model' attribute; got {type(_arg).__name__!r}."
-                )
-            self.model: Model | ModelVariant = extracted
+    def __init__(self, scenario_or_model: Scenario | Model | ModelVariant) -> None:
+        scenario: Scenario
+        model: Model | ModelVariant
+        if isinstance(scenario_or_model, Scenario):
+            scenario = scenario_or_model
+            model = scenario_or_model.model
+        elif isinstance(scenario_or_model, (Model, ModelVariant)):
+            warnings.warn(
+                "Passing a Model or ModelVariant directly to Evaluation() is deprecated and will be removed "
+                "in a future version. Wrap it in Scenario(model) first: Evaluation(Scenario(model)).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            model = scenario_or_model
+            scenario = Scenario(model)
         else:
-            self.model = _arg
+            raise TypeError(
+                f"Evaluation() expects a Scenario, Model, or ModelVariant; got {type(scenario_or_model).__name__!r}."
+            )
+        self._scenario = scenario
+        self.model: Model | ModelVariant = model
 
     # ------------------------------------------------------------------
     # Plan construction
@@ -522,7 +537,8 @@ class Evaluation:
         plan: EvaluationPlan,
         ensemble: AxisEnsemble | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> EvaluationResult:
@@ -538,10 +554,20 @@ class Evaluation:
             Legacy ``Iterable[WeightedScenario]`` inputs must be adapted
             before this call (done automatically by :meth:`evaluate`).
         parameters:
-            PARAMETER axes for multi-dimensional evaluation.  Maps each
-            axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
-            array of values.  When ``None``, defaults to an empty dict (no
-            PARAMETER axes).
+            Per-index value sources.  Each entry maps a
+            :class:`~dt_model.model.index.GenericIndex` to either a 1-D numpy
+            array (anonymous PARAMETER axis — current behaviour) or a callable
+            (correlated value computed from named axes declared in
+            *parameter_axes*).  Callables receive broadcast-ready shaped arrays
+            for each named axis whose name appears in the callable's signature;
+            parameters with defaults whose names are not axis names are ignored.
+            Callables are only valid when *parameter_axes* is also provided.
+        parameter_axes:
+            Named PARAMETER axes for correlated sweeps.  Maps axis name to a
+            1-D numpy array of axis values.  Named axes occupy the leading
+            dimensions of result arrays (before anonymous PARAMETER axes).
+            Access the raw arrays via :attr:`~EvaluationResult.named_axis_values`
+            on the returned result.
         functions:
             Optional user-defined functions passed to the executor.  Wrap
             callables with :meth:`~executor.NumpyBackend.adapt` before passing.
@@ -568,6 +594,7 @@ class Evaluation:
             plan,
             ensemble,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -577,28 +604,117 @@ class Evaluation:
         plan: EvaluationPlan,
         ensemble: AxisEnsemble | None,
         *,
-        parameters: dict[GenericIndex, np.ndarray],
+        parameters: dict[GenericIndex, Any],
+        parameter_axes: dict[str, np.ndarray] | None,
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> EvaluationResult:
         """Execute an :class:`~simulation.plan.EvaluationPlan`."""
         actual_nodes = [idx.node for idx in plan.nodes_of_interest]
+        _raw_scenario_subs = self._scenario.base_substitutions()
+        # Filter out entries where base_substitutions() wrapped a graph.Node as a numpy
+        # object array — this happens for formula-based Index instances whose `.value`
+        # is an existing graph node rather than a concrete scalar or array.  Such nodes
+        # do not need value injection: the executor handles them via their own evaluation
+        # chain (or via graph.placeholder.default_value if set).
+        scenario_subs: dict[graph.Node, np.ndarray] = {
+            node: val
+            for node, val in _raw_scenario_subs.items()
+            if not (isinstance(val, np.ndarray) and val.ndim == 0 and val.dtype.kind == "O")
+        }
         _has_timeseries = any(r.has_timeseries for r in plan.regions)
 
-        n_params = len(parameters)
+        # Separate callable entries (correlated axes) from plain array entries.
+        parameter_axes = parameter_axes or {}
+        callable_params: dict[GenericIndex, Callable[..., Any]] = {}
+        array_params: dict[GenericIndex, np.ndarray] = {}
+        for idx, val in parameters.items():
+            if callable(val):
+                callable_params[idx] = val
+            else:
+                array_params[idx] = np.asarray(val)
+        if callable_params and not parameter_axes:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in callable_params)
+            raise ValueError(
+                f"Callable values in parameters= require parameter_axes= to be provided "
+                f"(indexes with callable values: {names})."
+            )
+
+        # Validate that parameters= does not contain constant-node indexes.
+        # ConstIndex and ConstTimeseriesIndex bake their value into a graph.constant
+        # node; the executor evaluates constant nodes directly and never consults
+        # state.values, so substituting them has no effect.  Placeholder-backed
+        # indexes (Index, DistributionIndex, TimeseriesIndex — with or without a
+        # default value) are fine because the executor does read their state entry.
+        from ..model.index import ConstIndex, ConstTimeseriesIndex
+
+        const_params = [idx for idx in parameters if isinstance(idx, (ConstIndex, ConstTimeseriesIndex))]
+        if const_params:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in const_params)
+            raise ValueError(
+                f"The following indexes passed in parameters= are constant-node indexes "
+                f"whose values are baked into the computation graph and cannot be "
+                f"overridden at evaluate time: {names}. "
+                "Use Index(name, value) or Index(name, None) for sweep parameters."
+            )
+
+        k = len(parameter_axes)  # named PARAMETER axes
+        m = len(array_params)  # anonymous PARAMETER axes
+        n_params = k + m
         axis_layout: dict[Axis, int] = {}
         axis_sizes: dict[Axis, int] = {}
         factorized_weights: dict[Axis, np.ndarray] = {}
         c_subs: dict[graph.Node, np.ndarray] = {}
-        param_nodes: list[graph.Node] = []
+        param_nodes: list[graph.Node] = []  # anonymous array param nodes
+        callable_nodes: list[graph.Node] = []  # callable-backed nodes (no new axis)
 
-        # PARAMETER axes — positions 0..n_params-1.
-        for i, (idx, arr) in enumerate(parameters.items()):
-            ax = Axis(getattr(idx, "name", f"param_{i}"), PARAMETER)
+        # Named PARAMETER axes — positions 0..k-1.
+        # Build broadcast-ready shaped arrays (singleton at every position except own).
+        named_shaped: dict[str, np.ndarray] = {}
+        for i, (name, arr) in enumerate(parameter_axes.items()):
+            ax = Axis(name, PARAMETER)
             axis_layout[ax] = i
             axis_sizes[ax] = arr.size
-            shape = [1] * n_params
+            shape = [1] * k
             shape[i] = arr.size
+            named_shaped[name] = arr.reshape(shape)
+
+        # Callable entries — substitute standard model indexes using named axis arrays.
+        # Each callable receives the same broadcast-ready shaped arrays that _execute_plan
+        # would supply to a formula node in the equivalent traditional model.
+        for idx, fn in callable_params.items():
+            sig = inspect.signature(fn)
+            kwargs: dict[str, np.ndarray] = {}
+            has_var_keyword = False
+            for param_name, param in sig.parameters.items():
+                if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                    raise TypeError(
+                        f"Callable for index {getattr(idx, 'name', repr(idx))!r} uses *args; "
+                        "use named keyword parameters instead."
+                    )
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    has_var_keyword = True
+                    break
+                if param_name in named_shaped:
+                    kwargs[param_name] = named_shaped[param_name]
+                elif param.default is inspect.Parameter.empty:
+                    raise ValueError(
+                        f"Callable for index {getattr(idx, 'name', repr(idx))!r}: "
+                        f"required parameter {param_name!r} is not a declared named axis."
+                    )
+                # else: has a default and not an axis name → uses its default
+            if has_var_keyword:
+                kwargs = dict(named_shaped)
+            c_subs[idx.node] = np.asarray(fn(**kwargs))
+            callable_nodes.append(idx.node)
+
+        # Anonymous array PARAMETER axes — positions k..k+m-1.
+        for j, (idx, arr) in enumerate(array_params.items()):
+            ax = Axis(getattr(idx, "name", f"param_{k + j}"), PARAMETER)
+            axis_layout[ax] = k + j
+            axis_sizes[ax] = arr.size
+            shape = [1] * n_params
+            shape[k + j] = arr.size
             c_subs[idx.node] = arr.reshape(shape)
             param_nodes.append(idx.node)
 
@@ -624,15 +740,18 @@ class Evaluation:
                     target = target + (1,)
                 ens_subs[idx.node] = np.reshape(batched, target)
 
-        # Extend PARAMETER subs with trailing singleton dims:
-        # - one per ENSEMBLE axis (so PARAMETER arrays broadcast against ENSEMBLE arrays),
-        # - plus one extra timeseries placeholder when the graph has timeseries nodes
-        #   (so (N, …, 1) broadcasts against a bare (T,) timeseries).
+        # Extend substitutions with trailing singleton dims for broadcasting:
+        # - anonymous param nodes: shape (*P,) needs n_ensemble + extra_ts singletons.
+        # - callable-backed nodes: shape (*named_P,) needs m + n_ensemble + extra_ts singletons.
         extra_ts = 1 if _has_timeseries else 0
-        trailing_singletons = (1,) * (n_ensemble + extra_ts)
-        if trailing_singletons:
+        anon_trailing = (1,) * (n_ensemble + extra_ts)
+        if anon_trailing:
             for node in param_nodes:
-                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + trailing_singletons)
+                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + anon_trailing)
+        callable_trailing = (1,) * (m + n_ensemble + extra_ts)
+        if callable_trailing:
+            for node in callable_nodes:
+                c_subs[node] = c_subs[node].reshape(c_subs[node].shape + callable_trailing)
 
         c_subs.update(ens_subs)
         # Snapshot the substituted node keys before the executor mutates state.values.
@@ -648,16 +767,44 @@ class Evaluation:
         n_total = n_full + extra_ts
 
         # Validate ensemble cardinality when guarded regions are present.
+        # This check must come before the coverage validation so that a regional
+        # plan with no ensemble raises NotImplementedError (not ValueError).
         has_guarded = any(r.guard is not None for r in plan.regions)
         if has_guarded and n_ensemble != 1:
             raise NotImplementedError(
                 "Regional execution with a multi-axis or absent ensemble is not yet "
                 "supported. Use strategy='monolithic' or a single-axis ensemble."
             )
+
+        # Coverage validation (D_valid): every abstract index must have a value source.
+        # We check only abstract indexes (value=None or Distribution-backed) — NOT
+        # concrete-value placeholder nodes that may be "orphan" (not in model.indexes).
+        # Concrete-value orphan placeholders are handled via graph.placeholder.default_value
+        # or graph.timeseries_placeholder.default_values auto-populated at creation time.
+        abstract_nodes = {idx.node for idx in self._scenario.abstract_indexes()}
+        covered = set(scenario_subs.keys()) | set(c_subs.keys())
+        uncovered_abstract = abstract_nodes - covered
+        if uncovered_abstract:
+            node_to_idx = {idx.node: idx for idx in self._scenario.abstract_indexes()}
+            names = sorted(getattr(node_to_idx.get(n, n), "name", repr(n)) for n in uncovered_abstract)
+            raise ValueError(
+                f"The following abstract indexes are not covered by Scenario, parameters=, or ensemble: "
+                f"{', '.join(repr(n) for n in names)}"
+            )
+
+        # Overlap check: parameters= and Scenario.overrides must not overlap.
+        param_idx_ids = {id(idx) for idx in parameters.keys()}
+        override_idx_ids = {id(idx) for idx in self._scenario._overrides.keys()}
+        overlap_ids = param_idx_ids & override_idx_ids
+        if overlap_ids:
+            overlapping = [idx for idx in parameters.keys() if id(idx) in overlap_ids]
+            names_str = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in overlapping)
+            raise ValueError(f"The following indexes appear in both parameters= and Scenario.overrides: {names_str}")
+
         # Total scenario count (used for scatter-back in guarded regions).
         n_S: int = axis_sizes[list(ensemble.ensemble_axes)[0]] if (has_guarded and ensemble is not None) else 0
 
-        state = executor.State(c_subs, functions=functions or {})
+        state = executor.State({**scenario_subs, **c_subs}, functions=functions or {})
 
         # Execute regions in topological order.
         for region in plan.regions:
@@ -775,6 +922,31 @@ class Evaluation:
                 n_inject = n_total - arr.ndim
                 state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
 
+        # DOMAIN axis tracking: register Axis("time", DOMAIN) in axis_layout
+        # so that every result dimension is named.  T is read post-execution
+        # because abstract TimeseriesIndex nodes are filled at evaluate time.
+        # Assumption: T is uniform across all PARAMETER configurations (T is a
+        # structural property of the model, not a function of parameter values).
+        if _has_timeseries:
+            ts_nodes = [
+                n
+                for r in plan.regions
+                for n in r.nodes
+                if isinstance(n, (graph.timeseries_constant, graph.timeseries_placeholder))
+            ]
+            T = int(np.asarray(state.values[ts_nodes[0]]).shape[-1])
+            if __debug__:
+                for ts_n in ts_nodes:
+                    T_n = int(np.asarray(state.values[ts_n]).shape[-1])
+                    assert T_n == T, (
+                        f"Non-uniform timeseries length: node "
+                        f"{getattr(ts_n, 'name', repr(ts_n))!r} has T={T_n}, "
+                        f"expected T={T}. T must be constant across all PARAMETER "
+                        f"configurations (it is a structural model property)."
+                    )
+            time_axis = Axis("time", DOMAIN)
+            axis_layout[time_axis] = n_full
+            axis_sizes[time_axis] = T
         if __debug__:
             for node in actual_nodes:
                 assert node in state.values, (
@@ -795,9 +967,10 @@ class Evaluation:
         return EvaluationResult(
             state,
             axis_layout,
-            parameters,
+            array_params,
             axis_sizes=axis_sizes,
             factorized_weights=factorized_weights,
+            named_axis_values=parameter_axes if parameter_axes else None,
         )
 
     def evaluate_incremental(
@@ -805,7 +978,8 @@ class Evaluation:
         initial_ensemble_size: int,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
         rng: np.random.Generator | None = None,
         functions: dict[str, executor.Functor] | None = None,
@@ -853,14 +1027,17 @@ class Evaluation:
             rng = np.random.default_rng()
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
-        ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
-        result = self.execute_plan(plan, ensemble, parameters=parameters, functions=functions, backend=backend)
+        ensemble = DistributionEnsemble(self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters))
+        result = self.execute_plan(
+            plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
+        )
         return EvaluationHandle(
             evaluation=self,
             plan=plan,
             result=result,
             rng=rng,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -870,7 +1047,8 @@ class Evaluation:
         initial_ensemble_size: int,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
         rng: np.random.Generator | None = None,
         functions: dict[str, executor.Functor] | None = None,
@@ -926,13 +1104,14 @@ class Evaluation:
             rng = np.random.default_rng()
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
-        ensemble = DistributionEnsemble(self.model, initial_ensemble_size, rng=rng)
+        ensemble = DistributionEnsemble(self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters))
         _exec = pool or _get_default_executor()
         future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
             self.execute_plan,
             plan,
             ensemble,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -942,6 +1121,7 @@ class Evaluation:
             plan=plan,
             rng=rng,
             parameters=parameters,
+            parameter_axes=parameter_axes,
             functions=functions,
             backend=backend,
         )
@@ -951,7 +1131,8 @@ class Evaluation:
         scenarios: AxisEnsemble | Ensemble | None = None,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
         axes: dict[GenericIndex, np.ndarray] | None = None,
         ensemble: AxisEnsemble | Ensemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
@@ -970,11 +1151,20 @@ class Evaluation:
             automatically via :func:`linearize.forest`.  Defaults to all
             indexes in the model when ``None``.
         parameters:
-            PARAMETER axes for multi-dimensional evaluation.  Maps each
-            axis :class:`~dt_model.model.index.GenericIndex` to a 1-D numpy
-            array of values.  When provided, each axis index ``idx`` at
-            position ``i`` contributes a substitution array of shape
-            ``(1, …, N_i, …, 1, 1)`` where ``N_i = arr.size``.
+            Per-index value sources.  Each entry maps a
+            :class:`~dt_model.model.index.GenericIndex` to either a 1-D numpy
+            array (anonymous PARAMETER axis — current behaviour) or a callable
+            (correlated value computed from named axes declared in
+            *parameter_axes*).  Callables receive broadcast-ready shaped arrays
+            for each named axis whose name appears in the callable's signature;
+            parameters with defaults whose names are not axis names are ignored.
+            Callables are only valid when *parameter_axes* is also provided.
+        parameter_axes:
+            Named PARAMETER axes for correlated sweeps.  Maps axis name to a
+            1-D numpy array of axis values.  Named axes occupy the leading
+            dimensions of result arrays (before anonymous PARAMETER axes).
+            Access the raw arrays via :attr:`~EvaluationResult.named_axis_values`
+            on the returned result.
         axes:
             Deprecated alias for *parameters*.  Use ``parameters=`` instead.
         ensemble:
@@ -1050,4 +1240,6 @@ class Evaluation:
 
         # --- build plan and execute ---
         plan = self.build_plan(nodes_of_interest)
-        return self.execute_plan(plan, ensemble, parameters=parameters, functions=functions, backend=backend)
+        return self.execute_plan(
+            plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
+        )

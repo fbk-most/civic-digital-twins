@@ -11,6 +11,7 @@ from civic_digital_twins.dt_model.model.index import CategoricalIndex, Distribut
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import EnsembleAxisSpec, PartitionedEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -224,7 +225,7 @@ def test_marginalize_contracts_both_ensemble_axes():
         rng=np.random.default_rng(42),
     )
     result = Evaluation(model).evaluate(ensemble=ens)
-    marginalised = result.marginalize(i_result)
+    marginalised = result.expected_value(i_result)
     # Both a and b ~ Uniform(0,1); E[a+b] = 1.0
     assert marginalised.shape == ()
     assert float(marginalised) == pytest.approx(1.0, abs=0.1)
@@ -258,8 +259,8 @@ def test_marginalize_order_independence():
         ],
         rng=rng1,
     )
-    m_fwd = float(Evaluation(model).evaluate(ensemble=ens_fwd).marginalize(i_result))
-    m_rev = float(Evaluation(model).evaluate(ensemble=ens_rev).marginalize(i_result))
+    m_fwd = float(Evaluation(model).evaluate(ensemble=ens_fwd).expected_value(i_result))
+    m_rev = float(Evaluation(model).evaluate(ensemble=ens_rev).expected_value(i_result))
     assert m_fwd == pytest.approx(m_rev, rel=0.05)
 
 
@@ -318,13 +319,12 @@ def test_result_weights_with_two_ensemble_axes():
 
 
 def test_raises_on_non_samplable_index_in_spec():
-    """ValueError when assignments() is called with a plain abstract index (no distribution)."""
+    """ValueError at construction for a plain abstract index (no distribution)."""
     I_plain = Index("plain", None)  # abstract but no distribution
     model = _make_model(I_plain)
 
-    ens = PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
-    with pytest.raises(ValueError, match="not Distribution-backed"):
-        ens.assignments()
+    with pytest.raises(ValueError, match="requires all abstract indexes"):
+        PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
 
 
 def test_factorized_weights_are_uniform():
@@ -343,3 +343,27 @@ def test_factorized_weights_are_uniform():
     w0, w1 = ens.ensemble_weights
     assert np.allclose(w0, np.full(4, 0.25))
     assert np.allclose(w1, np.full(6, 1.0 / 6))
+
+
+# ---------------------------------------------------------------------------
+# PartitionedEnsemble — Scenario path and wrong-type guard
+# ---------------------------------------------------------------------------
+
+
+def test_partitioned_ensemble_accepts_scenario():
+    """PartitionedEnsemble can be constructed directly from a Scenario."""
+    i_a = _dist_index("a")
+    model = _make_model(i_a)
+    scenario = Scenario(model)
+    ens = PartitionedEnsemble(
+        scenario,
+        axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=4)],
+        rng=np.random.default_rng(0),
+    )
+    assert ens.ensemble_weights[0].shape == (4,)
+
+
+def test_partitioned_ensemble_rejects_wrong_type():
+    """PartitionedEnsemble raises TypeError when passed something other than Scenario/Model."""
+    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+        PartitionedEnsemble("not a model", axes=[])  # type: ignore[arg-type]

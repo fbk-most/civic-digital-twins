@@ -26,14 +26,18 @@ from typing import (
 
 import numpy as np
 
+from ...axes import DOMAIN, Axis
 from .. import compileflags
 from ..frontend import graph
 from . import numpy_ast
 
+_TIME_AXIS = Axis("time", DOMAIN)
+"""The only axis the numpybackend currently supports for ProjectionOp."""
+
 # Type aliases for operation function signatures
 type _BinaryOpFunc = Callable[[np.ndarray, np.ndarray], np.ndarray]
 type _UnaryOpFunc = Callable[[np.ndarray], np.ndarray]
-type _AxisOpFunc = Callable[[np.ndarray, graph.Axis], np.ndarray]
+type _ProjectionOpFunc = Callable[[np.ndarray, int], np.ndarray]
 
 _binary_operations: dict[type[graph.BinaryOp], _BinaryOpFunc] = {
     graph.add: np.add,
@@ -76,21 +80,7 @@ Add entries to this table to support more unary operations.
 """
 
 
-def _expand_dims(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
-    """Expand input array with a new axis at the specified position.
-
-    Args:
-        x: The input array to expand
-        axis: The position where the new axis is placed
-
-    Returns
-    -------
-        Array with the expanded dimension
-    """
-    return np.expand_dims(x, axis)
-
-
-def _reduce_sum(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_sum(x: np.ndarray, axis: int) -> np.ndarray:
     """Sum along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -104,7 +94,7 @@ def _reduce_sum(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.sum(x, axis=axis, keepdims=True)
 
 
-def _reduce_mean(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_mean(x: np.ndarray, axis: int) -> np.ndarray:
     """Average along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -118,7 +108,7 @@ def _reduce_mean(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.mean(x, axis=axis, keepdims=True)
 
 
-def _reduce_min(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_min(x: np.ndarray, axis: int) -> np.ndarray:
     """Minimum along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -132,7 +122,7 @@ def _reduce_min(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.min(x, axis=axis, keepdims=True)
 
 
-def _reduce_max(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_max(x: np.ndarray, axis: int) -> np.ndarray:
     """Maximum along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -146,7 +136,7 @@ def _reduce_max(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.max(x, axis=axis, keepdims=True)
 
 
-def _reduce_std(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_std(x: np.ndarray, axis: int) -> np.ndarray:
     """Compute standard deviation along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -160,7 +150,7 @@ def _reduce_std(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.std(x, axis=axis, keepdims=True)
 
 
-def _reduce_var(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_var(x: np.ndarray, axis: int) -> np.ndarray:
     """Variance along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -174,7 +164,7 @@ def _reduce_var(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.var(x, axis=axis, keepdims=True)
 
 
-def _reduce_median(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_median(x: np.ndarray, axis: int) -> np.ndarray:
     """Median along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -188,7 +178,7 @@ def _reduce_median(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.median(x, axis=axis, keepdims=True)
 
 
-def _reduce_prod(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_prod(x: np.ndarray, axis: int) -> np.ndarray:
     """Product along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -202,7 +192,7 @@ def _reduce_prod(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.prod(x, axis=axis, keepdims=True)
 
 
-def _reduce_any(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_any(x: np.ndarray, axis: int) -> np.ndarray:
     """Logical OR along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -216,7 +206,7 @@ def _reduce_any(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.any(x, axis=axis, keepdims=True)
 
 
-def _reduce_all(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_all(x: np.ndarray, axis: int) -> np.ndarray:
     """Logical AND along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -230,7 +220,7 @@ def _reduce_all(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.all(x, axis=axis, keepdims=True)
 
 
-def _reduce_count_nonzero(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
+def _reduce_count_nonzero(x: np.ndarray, axis: int) -> np.ndarray:
     """Count non-zero elements along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -244,7 +234,7 @@ def _reduce_count_nonzero(x: np.ndarray, axis: graph.Axis) -> np.ndarray:
     return np.count_nonzero(x, axis=axis, keepdims=True)
 
 
-def _reduce_quantile(x: np.ndarray, axis: graph.Axis, q: float) -> np.ndarray:
+def _reduce_quantile(x: np.ndarray, axis: int, q: float) -> np.ndarray:
     """Quantile along the specified axis, keeping the reduced axis as size 1.
 
     Args:
@@ -259,8 +249,7 @@ def _reduce_quantile(x: np.ndarray, axis: graph.Axis, q: float) -> np.ndarray:
     return np.quantile(x, q=q, axis=axis, keepdims=True)
 
 
-_axes_operations: dict[type[graph.AxisOp], _AxisOpFunc] = {
-    graph.expand_dims: _expand_dims,
+_projection_operations: dict[type[graph.Node], _ProjectionOpFunc] = {
     graph.project_using_sum: _reduce_sum,
     graph.project_using_mean: _reduce_mean,
     graph.project_using_min: _reduce_min,
@@ -273,13 +262,12 @@ _axes_operations: dict[type[graph.AxisOp], _AxisOpFunc] = {
     graph.project_using_all: _reduce_all,
     graph.project_using_count_nonzero: _reduce_count_nonzero,
 }
-"""Maps an axis op in the graph domain to the corresponding numpy operation.
+"""Maps a projection op in the graph domain to the corresponding numpy operation.
 
-These operations take an array and an axis parameter, performing
-transformations that affect the array's dimensionality or reduce values
-along the specified axis.
+All projection operations reduce along numpy axis ``-1`` (CDT convention:
+the DOMAIN axis always occupies the last numpy dimension).
 
-Add entries to this table to support more axis operations."""
+Add entries to this table to support more projection operations."""
 
 
 def _print_graph_node(node: graph.Node) -> None:
@@ -626,15 +614,26 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
     return np.select(conditions, values, default=default)
 
 
-def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
-    node = cast(graph.AxisOp, node)
+def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a ProjectionOp node.
+
+    The numpybackend maps ``Axis("time", DOMAIN)`` to numpy axis ``-1``
+    (CDT convention: the time axis always occupies the last numpy dimension).
+    Projecting along any other axis is not supported and raises immediately,
+    so that a future second DOMAIN axis cannot silently produce wrong results.
+    """
+    node = cast(graph.ProjectionOp, node)
+    if node.axis != _TIME_AXIS:
+        raise UnsupportedOperation(
+            f"executor: numpybackend only supports projection along {_TIME_AXIS!r}; got {node.axis!r}"
+        )
     operand = state.get_node_value(node.node)
     if isinstance(node, graph.project_using_quantile):
-        return _reduce_quantile(operand, node.axis, node.q)
+        return _reduce_quantile(operand, -1, node.q)
     try:
-        return _axes_operations[type(node)](operand, node.axis)
+        return _projection_operations[type(node)](operand, -1)
     except KeyError:
-        raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
+        raise UnsupportedOperation(f"executor: unsupported projection operation: {type(node)}")
 
 
 def _eval_function(state: State, node: graph.Node) -> np.ndarray:
@@ -674,7 +673,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.where, _eval_where_op),
     (graph.MultiClauseOp, _eval_multi_clause_where_op),
     (graph.variant_selector, _eval_variant_selector_noop),
-    (graph.AxisOp, _eval_axis_op),
+    (graph.ProjectionOp, _eval_projection_op),
     (graph.function_call, _eval_function),
 )
 

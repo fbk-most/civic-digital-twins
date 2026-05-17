@@ -19,6 +19,7 @@ from ..model.index import (
 )
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
+from .scenario import Scenario
 
 WeightedScenario = tuple[float, dict[GenericIndex, Any]]
 """A weighted scenario maps each abstract index to a concrete value.
@@ -144,7 +145,7 @@ class PartitionedEnsemble:
 
     Parameters
     ----------
-    model:
+    scenario_or_model:
         The model whose abstract indexes are sampled.
     axes:
         Ordered list of :class:`EnsembleAxisSpec` objects, each naming a subset
@@ -164,12 +165,33 @@ class PartitionedEnsemble:
 
     def __init__(
         self,
-        model: Model | ModelVariant,
+        scenario_or_model: Scenario | Model | ModelVariant,
         axes: list[EnsembleAxisSpec],
         default_axis: EnsembleAxisSpec | None = None,
         rng: np.random.Generator | None = None,
     ) -> None:
-        abstract = list(model.abstract_indexes())
+        import warnings
+
+        scenario: Scenario
+        model: Model | ModelVariant
+        if isinstance(scenario_or_model, Scenario):
+            scenario = scenario_or_model
+            model = scenario_or_model.model
+        elif isinstance(scenario_or_model, (Model, ModelVariant)):
+            warnings.warn(
+                f"Passing a Model or ModelVariant directly to {type(self).__name__}() is deprecated "
+                "and will be removed in a future version. Wrap it in Scenario(model) first.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            model = scenario_or_model
+            scenario = Scenario(model)
+        else:
+            raise TypeError(
+                f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
+                f"got {type(scenario_or_model).__name__!r}."
+            )
+        abstract = list(scenario.abstract_indexes())
         abstract_set = set(abstract)
 
         # Build mapping: index → spec
@@ -186,6 +208,18 @@ class PartitionedEnsemble:
                         f"Index {getattr(idx, 'name', repr(idx))!r} appears in more than one EnsembleAxisSpec."
                     )
                 assigned[idx] = spec
+
+        non_samplable = [
+            idx
+            for idx in abstract
+            if not (isinstance(idx, CategoricalIndex) or scenario.effective_distribution(idx) is not None)
+        ]
+        if non_samplable:
+            names = ", ".join(getattr(idx, "name", repr(idx)) for idx in non_samplable)
+            raise ValueError(
+                f"{type(self).__name__} requires all abstract indexes to be Distribution-backed "
+                f"or CategoricalIndex; unsupported indexes: {names}"
+            )
 
         # Handle unassigned indexes
         unassigned = [idx for idx in abstract if idx not in assigned]
@@ -216,6 +250,7 @@ class PartitionedEnsemble:
         self._specs = all_specs
         self._assigned = assigned
         self._rng = rng
+        self._scenario = scenario
 
     @property
     def ensemble_axes(self) -> tuple[Axis, ...]:
@@ -241,18 +276,18 @@ class PartitionedEnsemble:
             for idx in spec.indexes:
                 # Sample Sj values for this index.
                 if isinstance(idx, CategoricalIndex):
-                    raw = [idx.sample(self._rng) for _ in range(Sj)]
-                    samples = np.array(raw, dtype=object)  # shape (Sj,)
-                elif isinstance(idx, Index) and isinstance(idx.value, Distribution):
-                    if self._rng is not None:
-                        samples = np.asarray(idx.value.rvs(size=Sj, random_state=self._rng))
-                    else:
-                        samples = np.asarray(idx.value.rvs(size=Sj))
+                    samples = idx.sample(self._rng, size=Sj)  # shape (Sj,)
                 else:
-                    raise ValueError(
-                        f"Index {getattr(idx, 'name', repr(idx))!r} is not Distribution-backed "
-                        f"or CategoricalIndex; cannot sample."
-                    )
+                    dist = self._scenario.effective_distribution(idx)
+                    if dist is None:  # pragma: no cover — guarded by __init__ validation
+                        raise ValueError(
+                            f"Index {getattr(idx, 'name', repr(idx))!r} is not Distribution-backed "
+                            f"or CategoricalIndex in this scenario; cannot sample."
+                        )
+                    if self._rng is not None:
+                        samples = np.asarray(dist.rvs(size=Sj, random_state=self._rng))
+                    else:
+                        samples = np.asarray(dist.rvs(size=Sj))
 
                 # Reshape to (1, …, Sj, …, 1): size Sj at position j, 1 elsewhere.
                 shape = [1] * M
@@ -286,7 +321,7 @@ class DistributionEnsemble:
 
     Parameters
     ----------
-    model:
+    scenario_or_model:
         The model whose abstract indexes are sampled.  Every abstract index
         must be either :class:`~model.index.Distribution`-backed or a
         :class:`~model.index.CategoricalIndex`; a :class:`ValueError` is
@@ -296,11 +331,19 @@ class DistributionEnsemble:
     rng:
         Optional :class:`numpy.random.Generator` for reproducibility.  When
         ``None``, the global NumPy random state is used.
+    exclude:
+        Abstract indexes that will be supplied externally (e.g. via
+        ``parameters=`` at :meth:`~evaluation.Evaluation.evaluate` time) and
+        must not be sampled by this ensemble.  These indexes are silently
+        skipped in both the constructor validation and :meth:`assignments`.
+        Callers of :meth:`~evaluation.Evaluation.evaluate_incremental` and
+        :meth:`~evaluation.Evaluation.submit_evaluate` should not set this
+        directly; it is managed automatically from the ``parameters=`` dict.
 
     Raises
     ------
     ValueError
-        If any abstract index of *model* is neither
+        If any abstract index of *model* (not in *exclude*) is neither
         :class:`~model.index.Distribution`-backed nor a
         :class:`~model.index.CategoricalIndex`.
 
@@ -317,14 +360,51 @@ class DistributionEnsemble:
     Carlo budget and the categorical dimension cannot be separated out.
     """
 
-    def __init__(self, model: Model | ModelVariant, size: int, rng: np.random.Generator | None = None) -> None:
-        abstract = model.abstract_indexes()
+    def __init__(
+        self,
+        scenario_or_model: Scenario | Model | ModelVariant,
+        size: int,
+        rng: np.random.Generator | None = None,
+        *,
+        exclude: frozenset["GenericIndex"] | None = None,
+    ) -> None:
+        import warnings
+
+        scenario: Scenario
+        model: Model | ModelVariant
+        if isinstance(scenario_or_model, Scenario):
+            scenario = scenario_or_model
+            model = scenario_or_model.model
+        elif isinstance(scenario_or_model, (Model, ModelVariant)):
+            warnings.warn(
+                f"Passing a Model or ModelVariant directly to {type(self).__name__}() is deprecated "
+                "and will be removed in a future version. Wrap it in Scenario(model) first.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            model = scenario_or_model
+            scenario = Scenario(model)
+        else:
+            raise TypeError(
+                f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
+                f"got {type(scenario_or_model).__name__!r}."
+            )
+        self._scenario = scenario
+        self._size = size
+        self._rng = rng
+        self._axis = Axis("_ensemble", ENSEMBLE)
+        self._exclude: frozenset[GenericIndex] = exclude or frozenset()
+        # Validate that all abstract indexes can be sampled by this ensemble.
+        # Indexes in `exclude` are covered by parameters= at evaluate time and
+        # are skipped here. Abstract indexes that are neither Distribution-backed
+        # nor CategoricalIndex cannot be assigned here and will cause
+        # PlaceholderValueNotProvided at runtime.
+        abstract = scenario.abstract_indexes()
         non_samplable = [
             idx
             for idx in abstract
-            if not (
-                (isinstance(idx, CategoricalIndex)) or (isinstance(idx, Index) and isinstance(idx.value, Distribution))
-            )
+            if idx not in self._exclude
+            and not (isinstance(idx, CategoricalIndex) or scenario.effective_distribution(idx) is not None)
         ]
         if non_samplable:
             names = ", ".join(getattr(idx, "name", repr(idx)) for idx in non_samplable)
@@ -332,10 +412,6 @@ class DistributionEnsemble:
                 f"DistributionEnsemble requires all abstract indexes to be Distribution-backed "
                 f"or CategoricalIndex; unsupported indexes: {names}"
             )
-        self._model = model
-        self._size = size
-        self._rng = rng
-        self._axis = Axis("_ensemble", ENSEMBLE)
 
     # ------------------------------------------------------------------
     # AxisEnsemble protocol
@@ -359,18 +435,19 @@ class DistributionEnsemble:
         float arrays; :class:`~model.index.CategoricalIndex` indexes yield
         object arrays of string keys.
         """
-        abstract = self._model.abstract_indexes()
+        abstract = [idx for idx in self._scenario.abstract_indexes() if idx not in self._exclude]
         result: dict[GenericIndex, np.ndarray] = {}
         for idx in abstract:
             if isinstance(idx, CategoricalIndex):
-                raw_keys = [idx.sample(self._rng) for _ in range(self._size)]
-                result[idx] = np.array(raw_keys, dtype=object)  # shape (S,)
+                raw_keys = idx.sample(self._rng, size=self._size)  # shape (S,)
+                result[idx] = raw_keys  # shape (S,)
             else:
-                assert isinstance(idx, Index) and isinstance(idx.value, Distribution)
+                dist = self._scenario.effective_distribution(idx)
+                assert dist is not None
                 if self._rng is not None:
-                    raw = idx.value.rvs(size=self._size, random_state=self._rng)
+                    raw = dist.rvs(size=self._size, random_state=self._rng)
                 else:
-                    raw = idx.value.rvs(size=self._size)
+                    raw = dist.rvs(size=self._size)
                 result[idx] = np.asarray(raw)  # shape (S,)
         return result
 
@@ -380,7 +457,7 @@ class DistributionEnsemble:
 
     def __iter__(self) -> Iterator[WeightedScenario]:
         """Yield *size* equally-weighted scenarios, one sample per index per scenario."""
-        abstract = self._model.abstract_indexes()
+        abstract = self._scenario.abstract_indexes()
         weight = 1.0 / self._size
 
         # Pre-sample each index: shape (size, 1) so that stacking produces
@@ -389,15 +466,15 @@ class DistributionEnsemble:
         samples: dict[GenericIndex, np.ndarray] = {}
         for idx in abstract:
             if isinstance(idx, CategoricalIndex):
-                # Sample size string keys; wrap each as a 1-element object array.
-                raw_keys = [idx.sample(self._rng) for _ in range(self._size)]
-                samples[idx] = np.array(raw_keys, dtype=object).reshape(self._size, 1)
+                raw_keys = idx.sample(self._rng, size=self._size)
+                samples[idx] = raw_keys.reshape(self._size, 1)
             else:
-                assert isinstance(idx, Index) and isinstance(idx.value, Distribution)
+                dist = self._scenario.effective_distribution(idx)
+                assert dist is not None
                 if self._rng is not None:
-                    raw = idx.value.rvs(size=self._size, random_state=self._rng)
+                    raw = dist.rvs(size=self._size, random_state=self._rng)
                 else:
-                    raw = idx.value.rvs(size=self._size)
+                    raw = dist.rvs(size=self._size)
                 # Wrap each sample as a 1-element array so stacking gives (S, 1).
                 samples[idx] = np.asarray(raw).reshape(self._size, 1)
 
@@ -515,7 +592,7 @@ class CrossProductEnsemble:
 
     Parameters
     ----------
-    model:
+    scenario_or_model:
         Model whose abstract indexes are enumerated / sampled.
     restrictions:
         Maps a categorical index to the subset of support values to use
@@ -538,17 +615,38 @@ class CrossProductEnsemble:
 
     def __init__(
         self,
-        model: Model | ModelVariant,
+        scenario_or_model: Scenario | Model | ModelVariant,
         restrictions: Mapping[Any, Sequence[str]] | None = None,
         max_categorical_size: int = 20,
         exclude: Sequence[GenericIndex] | None = None,
         rng: np.random.Generator | None = None,
     ) -> None:
+        import warnings
+
+        scenario: Scenario
+        model: Model | ModelVariant
+        if isinstance(scenario_or_model, Scenario):
+            scenario = scenario_or_model
+            model = scenario_or_model.model
+        elif isinstance(scenario_or_model, (Model, ModelVariant)):
+            warnings.warn(
+                f"Passing a Model or ModelVariant directly to {type(self).__name__}() is deprecated "
+                "and will be removed in a future version. Wrap it in Scenario(model) first.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            model = scenario_or_model
+            scenario = Scenario(model)
+        else:
+            raise TypeError(
+                f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
+                f"got {type(scenario_or_model).__name__!r}."
+            )
         if restrictions is None:
             restrictions = {}
         excluded_ids = {id(idx) for idx in (exclude or [])}
 
-        abstract = list(model.abstract_indexes())
+        abstract = list(scenario.abstract_indexes())
 
         # Classify abstract indexes.
         cats_unordered: list[CategoricalIndex | ConditionalCategoricalIndex] = []
@@ -611,15 +709,17 @@ class CrossProductEnsemble:
                     samples[i] = float(d.rvs(random_state=rng) if rng is not None else d.rvs())
                 self._assignments[idx] = samples
             else:
-                assert isinstance(idx.value, Distribution)
+                dist = scenario.effective_distribution(idx)
+                assert dist is not None
                 if rng is not None:
-                    self._assignments[idx] = np.asarray(idx.value.rvs(size=S, random_state=rng))
+                    self._assignments[idx] = np.asarray(dist.rvs(size=S, random_state=rng))
                 else:
-                    self._assignments[idx] = np.asarray(idx.value.rvs(size=S))
+                    self._assignments[idx] = np.asarray(dist.rvs(size=S))
 
         self._axis = Axis("_cross_product", ENSEMBLE)
         self._weights_arr = weights
         self.size = S
+        self._scenario = scenario
 
     @property
     def ensemble_axes(self) -> tuple[Axis, ...]:

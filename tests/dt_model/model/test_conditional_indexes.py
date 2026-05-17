@@ -2,6 +2,7 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pytest
 from scipy import stats
 
@@ -307,6 +308,90 @@ def test_cdist_repr():
     r = repr(cdist)
     assert "ConditionalDistributionIndex" in r
     assert "temp" in r
+
+
+# ===========================================================================
+# ConditionalDistributionIndex — sample_for
+# ===========================================================================
+
+
+def test_cdist_sample_for_single_sample():
+    """sample_for returns a float ndarray of size 1 by default."""
+    cdist = ConditionalDistributionIndex("temp", parents=[_weather], factory=_dist_given_weather)
+    rng = np.random.default_rng(42)
+    result = cdist.sample_for(rng=rng, weather="good")
+    assert isinstance(result, np.ndarray)
+    assert result.shape == (1,)
+    assert isinstance(result[0], np.floating)
+    assert 15.0 < result[0] < 35.0
+
+
+def test_cdist_sample_for_size_n():
+    """sample_for returns an ndarray of shape (N,) for size N."""
+    cdist = ConditionalDistributionIndex("temp", parents=[_weather], factory=_dist_given_weather)
+    rng = np.random.default_rng(42)
+    result = cdist.sample_for(rng=rng, size=5, weather="good")
+    assert result.shape == (5,)
+    assert isinstance(result, np.ndarray)
+
+
+def test_cdist_sample_for_reproducible():
+    """Same rng seed produces same samples."""
+    cdist = ConditionalDistributionIndex("temp", parents=[_weather], factory=_dist_given_weather)
+    rng1 = np.random.default_rng(0)
+    rng2 = np.random.default_rng(0)
+    s1 = cdist.sample_for(rng=rng1, size=10, weather="good")
+    s2 = cdist.sample_for(rng=rng2, size=10, weather="good")
+    assert np.allclose(s1, s2)
+
+
+# ===========================================================================
+# ConditionalCategoricalIndex — sample_for
+# ===========================================================================
+
+
+def test_ccat_sample_for_single_sample():
+    """sample_for returns an object-dtype ndarray of shape (1,) by default."""
+    ccat = ConditionalCategoricalIndex(
+        "weather_cond",
+        parents=[_season],
+        support=["sunny", "rainy"],
+        factory=_weather_given_season,
+    )
+    rng = np.random.default_rng(42)
+    result = ccat.sample_for(rng=rng, season="summer")
+    assert isinstance(result, np.ndarray)
+    assert result.shape == (1,)
+    assert result[0] in ("sunny", "rainy")
+
+
+def test_ccat_sample_for_size_n():
+    """sample_for returns an ndarray of shape (N,) for size N."""
+    ccat = ConditionalCategoricalIndex(
+        "weather_cond",
+        parents=[_season],
+        support=["sunny", "rainy"],
+        factory=_weather_given_season,
+    )
+    rng = np.random.default_rng(42)
+    result = ccat.sample_for(rng=rng, size=20, season="summer")
+    assert result.shape == (20,)
+    assert all(k in ("sunny", "rainy") for k in result)
+
+
+def test_ccat_sample_for_reproducible():
+    """Same rng seed produces same samples."""
+    ccat = ConditionalCategoricalIndex(
+        "weather_cond",
+        parents=[_season],
+        support=["sunny", "rainy"],
+        factory=_weather_given_season,
+    )
+    rng1 = np.random.default_rng(0)
+    rng2 = np.random.default_rng(0)
+    s1 = ccat.sample_for(rng=rng1, size=10, season="summer")
+    s2 = ccat.sample_for(rng=rng2, size=10, season="summer")
+    assert list(s1) == list(s2)
 
 
 # ===========================================================================

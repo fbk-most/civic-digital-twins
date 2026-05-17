@@ -75,7 +75,7 @@ def test_no_shape_heuristic_constant_node():
     ens = DistributionEnsemble(model, size=4, rng=np.random.default_rng(0))
     result = Evaluation(model).evaluate(ensemble=ens)
 
-    marginalised = result.marginalize(i_c)
+    marginalised = result.expected_value(i_c)
     # Constant node: marginalize over ENSEMBLE should give scalar 42.0
     assert float(marginalised) == pytest.approx(42.0)
 
@@ -101,7 +101,7 @@ def test_s_equals_t_ensemble_contracted_not_time():
     result = Evaluation(model).evaluate(ensemble=ens)
 
     # ts is a constant timeseries — marginalize over ENSEMBLE should preserve (T,)
-    marginalised = result.marginalize(ts)
+    marginalised = result.expected_value(ts)
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.arange(float(T)))
 
@@ -113,7 +113,7 @@ def test_deterministic_timeseries_no_ensemble_contraction():
     model = _make_model(ts)
 
     result = Evaluation(model).evaluate(ensemble=None)
-    marginalised = result.marginalize(ts)
+    marginalised = result.expected_value(ts)
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.ones(T))
 
@@ -143,7 +143,7 @@ def test_two_ensemble_axes_one_equals_t():
     result = Evaluation(model).evaluate(ensemble=ens)
 
     # ts is constant — marginalize over both ENSEMBLE axes → shape (T,)
-    marginalised = result.marginalize(ts)
+    marginalised = result.expected_value(ts)
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.arange(float(T)))
 
@@ -171,13 +171,15 @@ def test_scalar_ensemble_broadcasts_with_timeseries():
 
 
 def test_index_sum_axis_minus1_over_timeseries_with_ensemble():
-    """Index.sum(axis=-1) on timeseries+ensemble: time reduced, shape (*ENSEMBLE, 1)."""
+    """Index.sum() over time axis on timeseries+ensemble: time reduced, shape (*ENSEMBLE, 1)."""
+    from civic_digital_twins.dt_model.model.axis import DOMAIN, Axis
+
     T = 6
     S = 4
     ts = TimeseriesIndex("ts", np.arange(1.0, T + 1))
     i_x = _dist_index("x")
     i_prod = Index("prod", i_x.node * ts.node)
-    i_sum = Index("sum", i_prod.sum(axis=-1))  # keepdims=True by convention
+    i_sum = Index("sum", i_prod.sum(Axis("time", DOMAIN)))  # keepdims=True by convention
     model = _make_model(ts, i_x, i_prod, i_sum)
 
     ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
@@ -240,7 +242,7 @@ def test_grid_ensemble_constant_no_indexerror():
     result = Evaluation(model).evaluate([(1.0, {})], parameters={i_x: xs, i_y: ys})
     # Must not raise IndexError.  The constant has 2 PARAMETER singleton dims
     # preserved after ENSEMBLE contraction → shape (1, 1).
-    marginalised = result.marginalize(i_c)
+    marginalised = result.expected_value(i_c)
     assert marginalised.shape == (1, 1)
     assert np.all(np.isclose(marginalised, 42.0))
 
@@ -271,7 +273,7 @@ def test_grid_ensemble_timeseries_broadcast_no_valueerror():
     # Shape: (N_p=3, S=4, T=7)
     assert arr.shape == (3, S, T)
     # marginalize() contracts the ENSEMBLE axis → (N_p, T) = (3, 7)
-    marginalised = result.marginalize(i_result)
+    marginalised = result.expected_value(i_result)
     assert marginalised.shape == (3, T)
 
 
@@ -298,14 +300,105 @@ def test_grid_ensemble_constant_and_timeseries_both_normalised():
     result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
     # Constant scalar: PARAMETER singleton dim preserved after ENSEMBLE contraction
     # → shape (1,).  All values equal 10.0.
-    marginalised_c = result.marginalize(i_c)
+    marginalised_c = result.expected_value(i_c)
     assert marginalised_c.shape == (1,)
     assert np.all(np.isclose(marginalised_c, 10.0))
     # Timeseries: not downstream of any substitution → (1, 1, T) after normalisation.
     # After squeezing ENSEMBLE singleton at pos 1 → (1, T); PARAMETER singleton preserved.
-    marginalised_ts = result.marginalize(ts)
+    marginalised_ts = result.expected_value(ts)
     assert marginalised_ts.shape == (1, T)
     assert np.allclose(marginalised_ts, np.arange(float(T))[None, :])
+
+
+# ---------------------------------------------------------------------------
+# Bug #157 — T=1 timeseries: expected_value() must preserve the time axis
+# ---------------------------------------------------------------------------
+
+
+def test_value_t1_timeseries_with_ensemble():
+    """T=1 timeseries + ensemble: value(ts) returns shape (1,), not ()."""
+    ts = TimeseriesIndex("ts", np.array([5.0]))
+    i_x = _dist_index("x")
+    model = _make_model(ts, i_x)
+
+    ens = DistributionEnsemble(model, size=4, rng=np.random.default_rng(0))
+    result = Evaluation(model).evaluate(ensemble=ens)
+
+    v = result.expected_value(ts)
+    assert v.shape == (1,), f"expected shape (1,), got {v.shape}"
+    assert np.isclose(v[0], 5.0)
+
+
+def test_value_t1_timeseries_no_ensemble():
+    """T=1 timeseries, deterministic: value(ts) returns shape (1,)."""
+    ts = TimeseriesIndex("ts", np.array([42.0]))
+    model = _make_model(ts)
+
+    result = Evaluation(model).evaluate(ensemble=None)
+
+    v = result.expected_value(ts)
+    assert v.shape == (1,), f"expected shape (1,), got {v.shape}"
+    assert np.isclose(v[0], 42.0)
+
+
+def test_value_t1_scalar_not_squeezed_to_wrong_shape():
+    """Scalar index in T=1 timeseries model: expected_value() still returns (*P,), not (*P,1)."""
+    ts = TimeseriesIndex("ts", np.array([42.0]))
+    i_c = Index("c", 10.0)
+    model = _make_model(ts, i_c)
+
+    result = Evaluation(model).evaluate(ensemble=None)
+
+    v = result.expected_value(i_c)
+    assert v.ndim == 0, f"expected 0-d scalar, got shape {v.shape}"
+    assert float(v) == pytest.approx(10.0)
+
+
+def test_value_t1_with_parameter_sweep():
+    """T=1 timeseries + PARAMETER sweep: output_axes inference preserves time axis.
+
+    Bug #157 fix: i_result = i_p * ts inherits the time axis via output_axes
+    inference, so expected_value() correctly returns shape (N_p, T=1), not (N_p,).
+    """
+    ts = TimeseriesIndex("ts", np.array([3.0]))
+    i_p = Index("p", 1.0)
+    i_result = Index("result", i_p.node * ts.node)
+    model = _make_model(ts, i_p, i_result)
+
+    pp = np.array([1.0, 2.0, 4.0])
+    result = Evaluation(model).evaluate(ensemble=None, parameters={i_p: pp})
+
+    # TimeseriesIndex preserves T: (N_p=1, T=1).
+    v = result.expected_value(ts)
+    assert v.shape == (1, 1), f"expected (1, 1), got {v.shape}"
+
+    # Index inheriting time axis from ts: output_axes = (Axis("time", DOMAIN),)
+    # → time dim preserved; shape (N_p=3, T=1).
+    v_result = result.expected_value(i_result)
+    assert v_result.shape == (3, 1), f"expected (3, 1), got {v_result.shape}"
+    assert np.allclose(v_result[:, 0], [3.0, 6.0, 12.0])
+
+
+# ---------------------------------------------------------------------------
+# marginalize() deprecation
+# ---------------------------------------------------------------------------
+
+
+def test_marginalize_deprecated_emits_warning():
+    """marginalize() emits DeprecationWarning and delegates to expected_value()."""
+    T = 5
+    ts = TimeseriesIndex("ts", np.arange(float(T)))
+    model = _make_model(ts)
+
+    result = Evaluation(model).evaluate(ensemble=None)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        v = result.marginalize(ts)
+
+    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert any("expected_value()" in str(w.message) for w in deprecations)
+    assert v.shape == (T,)  # same result as expected_value()
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +432,7 @@ def test_legacy_iterable_gives_correct_results():
         result = Evaluation(model).evaluate(scenarios)
 
     # E[result] = 0.5*(1*2) + 0.5*(3*2) = 0.5*2 + 0.5*6 = 4.0
-    assert float(result.marginalize(i_result)) == pytest.approx(4.0)
+    assert float(result.expected_value(i_result)) == pytest.approx(4.0)
 
 
 def test_empty_scenario_list_is_deterministic():
@@ -353,4 +446,4 @@ def test_empty_scenario_list_is_deterministic():
 
     deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert deprecations  # at least one deprecation warning
-    assert float(result.marginalize(i_c)) == pytest.approx(7.0)
+    assert float(result.expected_value(i_c)) == pytest.approx(7.0)

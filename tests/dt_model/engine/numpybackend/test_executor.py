@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model.axes import PARAMETER, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -300,44 +301,6 @@ def test_error_handling():
         executor.evaluate_single_node(state, y)  # Should fail, x not evaluated yet
 
 
-def test_expand_dims_operation():
-    """Test expand_dims operation with the executor."""
-    # Create nodes
-    x = graph.placeholder("x")
-    expanded0 = graph.expand_dims(x, axis=0)
-    expanded1 = graph.expand_dims(x, axis=1)
-    expanded2 = graph.expand_dims(x, axis=2)
-
-    # Create execution plans
-    plan0 = linearize.forest(expanded0)
-    plan1 = linearize.forest(expanded1)
-    plan2 = linearize.forest(expanded2)
-
-    # Test data
-    x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # 2x3
-
-    # Test expand dims on axis 0
-    state0 = executor.State({x: x_val})
-    executor.evaluate_nodes(state0, *plan0)
-    result0 = state0.values[expanded0]
-    assert result0.shape == (1, 2, 3)
-    assert np.array_equal(result0[0], x_val)
-
-    # Test expand dims on axis 1
-    state1 = executor.State({x: x_val})
-    executor.evaluate_nodes(state1, *plan1)
-    result1 = state1.values[expanded1]
-    assert result1.shape == (2, 1, 3)
-    assert np.array_equal(result1[:, 0, :], x_val)
-
-    # Test expand dims on axis 2
-    state2 = executor.State({x: x_val})
-    executor.evaluate_nodes(state2, *plan2)
-    result2 = state2.values[expanded2]
-    assert result2.shape == (2, 3, 1)
-    assert np.array_equal(result2[:, :, 0], x_val)
-
-
 def test_comparison_operations():
     """Test comparison operations with the executor."""
     # Create placeholder nodes
@@ -493,51 +456,27 @@ def test_unary_operations():
 
 
 def test_axis_operations():
-    """Test expand_dims and error handling for unsupported axis operations.
+    """Test error handling for unsupported projection operations.
 
     Reduction operations (sum, mean, min, max, etc.) are comprehensively tested in
     tests/dt_model/engine/numpybackend/test_axis_reduction_operators.py
     """
-    # Create placeholder node
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
     x = graph.placeholder("x")
-
-    # Create expand_dims node
-    expand_node = graph.expand_dims(x, axis=1)
-
-    # Create execution plan
-    expand_plan = linearize.forest(expand_node)
-
-    # Test data
     x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])  # 3x3
+    time_axis = Axis("time", DOMAIN)
 
-    # Test expand_dims
-    expand_state = executor.State({x: x_val})
-    executor.evaluate_nodes(expand_state, *expand_plan)
-    expected_expand = np.expand_dims(x_val, axis=1)
-    assert np.array_equal(expand_state.values[expand_node], expected_expand)
-    assert expand_state.values[expand_node].shape == (3, 1, 3)
-
-    # Test unsupported axis operation
-    class UnsupportedAxisOp(graph.AxisOp):
+    # Test unsupported projection operation
+    class UnsupportedProjectionOp(graph.ProjectionOp):
         pass
 
-    unsupported_node = UnsupportedAxisOp(x, axis=0)
+    unsupported_node = UnsupportedProjectionOp(x, axis=time_axis)
     unsupported_plan = linearize.forest(unsupported_node)
-
     unsupported_state = executor.State({x: x_val})
 
     with pytest.raises(executor.UnsupportedOperation):
         executor.evaluate_nodes(unsupported_state, *unsupported_plan)
-
-    # Test invalid axis value
-    with pytest.raises(ValueError):  # NumPy raises ValueError for invalid axes
-        # Create a valid node type but with invalid axis
-        # Note: x is only 2D, so axis=5 is invalid
-        invalid_axis_node = graph.project_using_sum(x, axis=5)
-        invalid_plan = linearize.forest(invalid_axis_node)
-        invalid_state = executor.State({x: x_val})
-
-        executor.evaluate_nodes(invalid_state, *invalid_plan)
 
 
 def test_state_post_init_tracing(capsys):
@@ -673,3 +612,15 @@ def test_neg_operator_evaluation():
     state = executor.State({n: np.array([4.0, 0.0, -5.0])})
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[result], [-4.0, 0.0, 5.0])
+
+
+def test_projection_op_unsupported_axis_raises():
+    """Executor raises UnsupportedOperation when a ProjectionOp uses a non-time axis."""
+    node = graph.constant(1.0)
+    bad_axis = Axis("space", PARAMETER)
+    proj = graph.project_using_sum(node, axis=bad_axis)
+    plan = linearize.forest(proj)
+    state = executor.State({})
+    executor.evaluate_nodes(state, *plan[:-1])  # evaluate prerequisites
+    with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
+        executor.evaluate_nodes(state, proj)
