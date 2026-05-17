@@ -233,9 +233,7 @@ class Scenario:
             return idx.value
         return None
 
-    def effective_outcomes(
-        self, idx: CategoricalIndex | ConditionalCategoricalIndex
-    ) -> dict[str, float] | None:
+    def effective_outcomes(self, idx: CategoricalIndex | ConditionalCategoricalIndex) -> dict[str, float] | None:
         """Return the effective outcome probabilities for *idx*.
 
         Checks ``overrides`` first.  Return value depends on index type and override:

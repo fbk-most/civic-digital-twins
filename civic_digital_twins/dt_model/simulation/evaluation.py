@@ -1027,9 +1027,7 @@ class Evaluation:
             rng = np.random.default_rng()
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
-        ensemble = DistributionEnsemble(
-            self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
-        )
+        ensemble = DistributionEnsemble(self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters))
         result = self.execute_plan(
             plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
         )
@@ -1106,9 +1104,7 @@ class Evaluation:
             rng = np.random.default_rng()
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
-        ensemble = DistributionEnsemble(
-            self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
-        )
+        ensemble = DistributionEnsemble(self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters))
         _exec = pool or _get_default_executor()
         future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
             self.execute_plan,
