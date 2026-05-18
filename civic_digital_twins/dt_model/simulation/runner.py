@@ -22,16 +22,18 @@ See :class:`ModelEvaluator` for the full protocol surface.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import importlib.metadata
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future
 from typing import Any, Generic, Self, TypeVar
 
 import numpy as np
 
-from ..engine.numpybackend.executor import Functor, NumpyBackend
+from ..engine.numpybackend.executor import Functor, NumpyBackend, State
+from ..model.axis import Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
@@ -302,20 +304,17 @@ class ModelRunHandle(Generic[OutputT]):
     :class:`~simulation.evaluation.EvaluationResult`; the post-processor
     converts it to the domain-specific :class:`ModelOutput` subtype ``OutputT``.
 
-    Two backing strategies are supported:
-
-    - **Engine-level async (tier 3)**: the future comes from
-      :meth:`~simulation.evaluation.Evaluation.submit_evaluate` via
-      :attr:`~simulation.handle.AsyncEvaluationHandle.future`
-      (e.g. Bologna with :class:`~simulation.ensemble.DistributionEnsemble`).
-    - **Protocol-level async (tier 2)**: the future wraps a blocking
-      :meth:`ModelEvaluator.evaluate` call submitted to a thread pool
-      (e.g. Molveno with :class:`~simulation.ensemble.CrossProductEnsemble`).
+    The future is obtained from either
+    :attr:`~simulation.handle.AsyncEvaluationHandle.future` (Bologna, tier 3
+    via :meth:`~simulation.evaluation.Evaluation.submit_evaluate`) or
+    :func:`~dt_model.simulation.evaluation._get_default_executor` with
+    :meth:`~simulation.evaluation.Evaluation.evaluate` as the submitted
+    callable (Molveno, thread-pool submit of the engine call).
 
     Parameters
     ----------
     future : Future[EvaluationResult]
-        The in-flight or completed computation.
+        The in-flight or completed engine evaluation.
     post_process : Callable[[EvaluationResult], OutputT]
         Domain-specific function that converts the raw
         :class:`~simulation.evaluation.EvaluationResult` into a ``ModelOutput``
@@ -355,6 +354,14 @@ class ModelRunHandle(Generic[OutputT]):
     def poll(self) -> tuple[bool, OutputT | None]:
         """Non-blocking status check.
 
+        .. note::
+
+            ``(False, None)`` means the evaluation is not yet complete.
+            Intermediate progress is not observable through this interface:
+            a handle that has completed zero rounds and one that has completed
+            some rounds both return ``(False, None)``.  See :issue:`188` for
+            the planned ``extend()`` / partial-result API at this level.
+
         Returns
         -------
         tuple[bool, OutputT | None]
@@ -376,6 +383,185 @@ class ModelRunHandle(Generic[OutputT]):
             ``True`` if the future was successfully cancelled.
         """
         return self._future.cancel()
+
+
+# ---------------------------------------------------------------------------
+# EvaluationResult codec helpers
+# ---------------------------------------------------------------------------
+
+
+def _encode_array(arr: np.ndarray) -> dict[str, Any]:
+    """Encode a numpy array to a JSON-serialisable dict.
+
+    Uses base64 encoding of the raw bytes together with dtype and shape
+    metadata so that the round-trip is lossless for all numeric dtypes.
+    Object-dtype arrays (e.g. categorical string assignments) are encoded
+    as a JSON list to avoid the ``frombuffer`` limitation on object buffers.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Array to encode.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dict with keys ``"data"`` (base64 string or list), ``"dtype"`` (str),
+        ``"shape"`` (list of int), and optionally ``"encoding"`` (``"json"``
+        for object-dtype arrays).
+    """
+    if arr.dtype == object:
+        # Object arrays (e.g. categorical string assignments) cannot be
+        # round-tripped via tobytes()/frombuffer.  Store as a JSON-safe list.
+        return {
+            "data": arr.tolist(),
+            "dtype": "object",
+            "shape": list(arr.shape),
+            "encoding": "json",
+        }
+    return {
+        "data": base64.b64encode(np.ascontiguousarray(arr).tobytes()).decode("ascii"),
+        "dtype": str(arr.dtype),
+        "shape": list(arr.shape),
+    }
+
+
+def _decode_array(d: dict[str, Any]) -> np.ndarray:
+    """Decode a numpy array from a dict produced by :func:`_encode_array`.
+
+    Handles both base64-encoded numeric arrays and JSON-encoded object arrays
+    (those produced with ``"encoding": "json"`` by :func:`_encode_array`).
+
+    Parameters
+    ----------
+    d : dict[str, Any]
+        Dict with keys ``"data"``, ``"dtype"``, ``"shape"``, and optionally
+        ``"encoding"``.
+
+    Returns
+    -------
+    np.ndarray
+        The decoded array.  Returns a writable copy (``frombuffer`` would
+        give a read-only view for the numeric path).
+    """
+    if d.get("encoding") == "json":
+        return np.array(d["data"], dtype=object).reshape(tuple(d["shape"]))
+    raw = base64.b64decode(d["data"].encode("ascii"))
+    return np.frombuffer(raw, dtype=np.dtype(d["dtype"])).reshape(tuple(d["shape"])).copy()
+
+
+def _encode_result(result: EvaluationResult, indexes: Iterable[GenericIndex]) -> dict[str, Any]:
+    """Encode an :class:`~simulation.evaluation.EvaluationResult` as a serialisable dict.
+
+    Iterates over *indexes* and stores each node's array under the index
+    name.  Also encodes the axis layout, factorized weights, parameter
+    arrays, named axis values, and axis sizes — everything
+    :func:`_decode_result` needs to reconstruct a fully functional
+    :class:`~simulation.evaluation.EvaluationResult`.
+
+    Parameters
+    ----------
+    result : EvaluationResult
+        The result to encode.
+    indexes : Iterable[GenericIndex]
+        Model indexes used to map graph nodes to stable string names.
+        Indexes whose nodes are absent from *result* are silently skipped.
+
+    Returns
+    -------
+    dict[str, Any]
+        JSON-serialisable dict suitable for embedding in a
+        :meth:`ModelOutput.to_dict` payload.
+    """
+    nodes: dict[str, Any] = {}
+    for idx in indexes:
+        try:
+            nodes[idx.name] = _encode_array(result[idx])
+        except KeyError:
+            pass  # index not computed in this evaluation
+
+    axis_layout = [
+        [ax.name, ax.role, pos]
+        for ax, pos in result._axis_layout.items()  # type: ignore[attr-defined]
+    ]
+    factorized_weights = {
+        ax.name: _encode_array(w)
+        for ax, w in result._factorized_weights.items()  # type: ignore[attr-defined]
+    }
+    parameter_arrays = {idx.name: _encode_array(arr) for idx, arr in result.parameter_values.items()}
+    named_axis_values = {name: _encode_array(arr) for name, arr in result.named_axis_values.items()}
+    axis_sizes = {
+        f"{ax.name}:{ax.role}": size
+        for ax, size in result._axis_sizes.items()  # type: ignore[attr-defined]
+    }
+    return {
+        "nodes": nodes,
+        "axis_layout": axis_layout,
+        "factorized_weights": factorized_weights,
+        "parameter_arrays": parameter_arrays,
+        "named_axis_values": named_axis_values,
+        "axis_sizes": axis_sizes,
+    }
+
+
+def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> EvaluationResult:
+    """Reconstruct an :class:`~simulation.evaluation.EvaluationResult` from an encoded dict.
+
+    Matches stored arrays back to model indexes by name, then constructs a
+    new :class:`~simulation.evaluation.EvaluationResult` whose node arrays,
+    axis layout, and weights are compatible with those produced by a fresh
+    :meth:`~simulation.evaluation.Evaluation.execute_plan` call on the same
+    scenario — so that :func:`~simulation.handle._merge_results` can merge
+    the loaded result with new samples.
+
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Dict previously produced by :func:`_encode_result`.
+    indexes : Iterable[GenericIndex]
+        Model indexes used to map names back to graph nodes and
+        :class:`~model.index.GenericIndex` keys.
+
+    Returns
+    -------
+    EvaluationResult
+        Reconstructed result.  Graph node identity is that of the current
+        model, so the result is valid for the current session.
+    """
+    idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in indexes}
+    axis_role: dict[str, str] = {row[0]: row[1] for row in data["axis_layout"]}
+
+    state_values: dict = {}
+    for name, encoded in data["nodes"].items():
+        if name in idx_by_name:
+            state_values[idx_by_name[name].node] = _decode_array(encoded)
+    state = State(values=state_values)
+
+    axis_layout: dict[Axis, int] = {Axis(row[0], row[1]): int(row[2]) for row in data["axis_layout"]}
+    factorized_weights: dict[Axis, np.ndarray] = {
+        Axis(name, axis_role[name]): _decode_array(encoded) for name, encoded in data["factorized_weights"].items()
+    }
+    parameter_arrays: dict[GenericIndex, np.ndarray] = {
+        idx_by_name[name]: _decode_array(encoded)
+        for name, encoded in data["parameter_arrays"].items()
+        if name in idx_by_name
+    }
+    named_axis_values: dict[str, np.ndarray] = {
+        name: _decode_array(encoded) for name, encoded in data["named_axis_values"].items()
+    }
+    axis_sizes: dict[Axis, int] = {}
+    for key, size in data["axis_sizes"].items():
+        ax_name, ax_role = key.split(":", 1)
+        axis_sizes[Axis(ax_name, ax_role)] = int(size)
+
+    return EvaluationResult(
+        state=state,
+        axis_layout=axis_layout,
+        parameter_arrays=parameter_arrays,
+        axis_sizes=axis_sizes,
+        factorized_weights=factorized_weights,
+        named_axis_values=named_axis_values,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ We include this model into the source tree as an illustrative example.
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Self, cast
 
 import matplotlib
 
@@ -31,8 +32,21 @@ from civic_digital_twins.dt_model import (
     Index,
     Model,
     NumpyBackend,
+    Scenario,
     TimeseriesIndex,
     graph,
+)
+from civic_digital_twins.dt_model.simulation.runner import (
+    EvaluationConfig,
+    ModelEvaluator,
+    ModelOutput,
+    ModelRunHandle,
+    ResumeState,
+    _decode_array,
+    _decode_result,
+    _encode_array,
+    _encode_result,
+    _get_dt_model_version,
 )
 
 _LN2: float = math.log(2)
@@ -883,66 +897,344 @@ def roundup(val):
     return round(v / 10**s) * 10**s
 
 
-def _save_scenario_plots(label: str, m: BolognaModel, result: EvaluationResult, out: Path) -> None:
+def _save_scenario_plots(label: str, m: BolognaModel, output: "BolognaOutput", out: Path) -> None:
     """Save inflow, traffic and emissions field graphs for one scenario."""
     fig = plot_field_graph(
-        result[m.expose.modified_inflow],
+        output.fields["modified_inflow"],
         horizontal_label="Time",
         vertical_label="Flow (vehicles/hour)",
         vertical_size=1600,
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
-        reference_line=result.expected_value(m.expose.ts_inflow),
+        reference_line=output.timeseries["ts_inflow"],
     )
     fig.savefig(out / f"{label}_inflow.png", dpi=150)
     plt.close(fig)
 
     fig = plot_field_graph(
-        result[m.expose.modified_traffic],
+        output.fields["modified_traffic"],
         horizontal_label="Time",
         vertical_label="Traffic (circulating vehicles)",
         vertical_size=15000,
-        reference_line=result.expected_value(m.expose.traffic),
+        reference_line=output.timeseries["traffic"],
     )
     fig.savefig(out / f"{label}_traffic.png", dpi=150)
     plt.close(fig)
 
     fig = plot_field_graph(
-        result[m.expose.modified_emissions],
+        output.fields["modified_emissions"],
         horizontal_label="Time",
         vertical_label="Emissions (NOx gr/h)",
         vertical_size=4000,
         vertical_formatter=mticker.FuncFormatter(lambda x, _: f"{int(x * 12)}"),
-        reference_line=result.expected_value(m.expose.emissions),
+        reference_line=output.timeseries["emissions"],
     )
     fig.savefig(out / f"{label}_emissions.png", dpi=150)
     plt.close(fig)
+
+
+class BolognaOutput(ModelOutput):
+    """Evaluation output for the Bologna mobility model.
+
+    Carries the post-processed KPIs, the expected-value 1-D timeseries for
+    the six ``expose`` indexes, the raw ensemble field arrays for the three
+    modified-quantity indexes, and an optional resume payload that allows
+    :meth:`BolognaEvaluator.resume` to extend the ensemble in a later session.
+
+    Parameters
+    ----------
+    kpis : dict[str, int]
+        Scalar KPI values keyed by human-readable label, produced by
+        :func:`~mobility_bologna.mobility_bologna.compute_kpis`.
+    timeseries : dict[str, numpy.ndarray]
+        Expected-value 1-D arrays for the six ``expose`` indexes:
+        ``"ts_inflow"``, ``"modified_inflow"``, ``"traffic"``,
+        ``"modified_traffic"``, ``"emissions"``, ``"modified_emissions"``.
+    fields : dict[str, numpy.ndarray]
+        Raw ensemble field arrays of shape ``(S, T)`` for the three
+        modified-quantity indexes: ``"modified_inflow"``,
+        ``"modified_traffic"``, ``"modified_emissions"``.
+        These are used by :func:`plot_field_graph` to render the full
+        stochastic distribution rather than only the expected value.
+    serialized_resume : dict or None, optional
+        Pre-encoded resume payload from :func:`_encode_result`.  When
+        provided the output is immediately marked resumable
+        (``is_resumable == True``).
+    """
+
+    def __init__(
+        self,
+        kpis: dict[str, int],
+        timeseries: dict[str, np.ndarray],
+        fields: dict[str, np.ndarray],
+        *,
+        serialized_resume: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.kpis = kpis
+        self.timeseries = timeseries
+        self.fields = fields
+        self._serialized_resume = serialized_resume
+        if serialized_resume is not None:
+            self._is_resumable = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise the output to a JSON-compatible dict.
+
+        Always includes ``"dt_model_version"``, ``"kpis"``, and
+        ``"timeseries"`` (arrays encoded via :func:`_encode_array`).
+        Also includes ``"_resume"`` when a resume payload is present.
+
+        Returns
+        -------
+        dict[str, Any]
+            Serialised output dict.
+        """
+        data: dict[str, Any] = {
+            "dt_model_version": _get_dt_model_version(),
+            "kpis": self.kpis,
+            "timeseries": {name: _encode_array(arr) for name, arr in self.timeseries.items()},
+            "fields": {name: _encode_array(arr) for name, arr in self.fields.items()},
+        }
+        if self._serialized_resume is not None:
+            data["_resume"] = self._serialized_resume
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Reconstruct a :class:`BolognaOutput` from a serialised dict.
+
+        Always reconstructs ``kpis`` and ``timeseries``.  If ``"_resume"``
+        is present the resume payload is stored and the output is marked
+        resumable.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Dict previously produced by :meth:`to_dict`.
+
+        Returns
+        -------
+        BolognaOutput
+            Reconstructed instance.
+        """
+        obj: BolognaOutput = cls.__new__(cls)
+        ModelOutput.__init__(obj)
+        obj.kpis = dict(data["kpis"])
+        obj.timeseries = {name: _decode_array(encoded) for name, encoded in data["timeseries"].items()}
+        obj.fields = {name: _decode_array(encoded) for name, encoded in data.get("fields", {}).items()}
+        obj._serialized_resume = None
+        if "_resume" in data:
+            obj._serialized_resume = data["_resume"]
+            obj._is_resumable = True
+        return obj
+
+
+class BolognaEvaluator(ModelEvaluator[BolognaOutput]):
+    """Scenario evaluator for the Bologna mobility model.
+
+    Implements the :class:`~dt_model.simulation.runner.ModelEvaluator` protocol
+    for :class:`~mobility_bologna.mobility_bologna.BolognaModel`, covering
+    blocking evaluation, engine-level async evaluation, resumability, and
+    model structure introspection.
+
+    Parameters
+    ----------
+    model : BolognaModel
+        A :class:`~mobility_bologna.mobility_bologna.BolognaModel` instance.
+    """
+
+    def __init__(self, model: BolognaModel) -> None:
+        super().__init__(model)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _post_process(self, scenario: Scenario, result: Any) -> BolognaOutput:
+        """Build a :class:`BolognaOutput` from a raw :class:`~simulation.evaluation.EvaluationResult`.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario that was evaluated.
+        result : EvaluationResult
+            The raw evaluation result.
+
+        Returns
+        -------
+        BolognaOutput
+            Fully populated output including resume payload.
+        """
+        m = cast(BolognaModel, scenario.model)
+        kpis = compute_kpis(m, result)
+        expose = m.expose
+        timeseries = {
+            "ts_inflow": result.expected_value(expose.ts_inflow),
+            "modified_inflow": result.expected_value(expose.modified_inflow),
+            "traffic": result.expected_value(expose.traffic),
+            "modified_traffic": result.expected_value(expose.modified_traffic),
+            "emissions": result.expected_value(expose.emissions),
+            "modified_emissions": result.expected_value(expose.modified_emissions),
+        }
+        fields = {
+            "modified_inflow": result[expose.modified_inflow],
+            "modified_traffic": result[expose.modified_traffic],
+            "modified_emissions": result[expose.modified_emissions],
+        }
+        encoded = _encode_result(result, scenario.model.indexes)
+        return BolognaOutput(kpis=kpis, timeseries=timeseries, fields=fields, serialized_resume=encoded)
+
+    # ------------------------------------------------------------------
+    # ModelEvaluator abstract interface
+    # ------------------------------------------------------------------
+
+    def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> BolognaOutput:
+        """Run a blocking evaluation and return a :class:`BolognaOutput`.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate.
+        config : EvaluationConfig
+            Evaluation parameters; ``config.ensemble_size`` controls the
+            number of Monte Carlo samples.
+
+        Returns
+        -------
+        BolognaOutput
+            Post-processed output with KPIs, timeseries, and resume payload.
+        """
+        ensemble = DistributionEnsemble(scenario, config.ensemble_size)
+        result = Evaluation(scenario).evaluate(
+            ensemble=ensemble,
+            functions={"ts_solve": NumpyBackend.adapt(_ts_solve)},
+            backend=NumpyBackend,
+        )
+        return self._post_process(scenario, result)
+
+    def run_async(self, scenario: Scenario, config: EvaluationConfig) -> ModelRunHandle[BolognaOutput]:
+        """Submit an engine-level async evaluation and return a handle immediately.
+
+        Uses :meth:`~simulation.evaluation.Evaluation.submit_evaluate` to run
+        the evaluation on a background thread.  The returned
+        :class:`~simulation.runner.ModelRunHandle` wraps the future and a
+        post-processor lambda.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate.
+        config : EvaluationConfig
+            Evaluation parameters.
+
+        Returns
+        -------
+        ModelRunHandle[BolognaOutput]
+            Handle whose :meth:`~simulation.runner.ModelRunHandle.get` returns
+            the :class:`BolognaOutput` once the evaluation completes.
+        """
+        async_handle = Evaluation(scenario).submit_evaluate(
+            config.ensemble_size,
+            functions={"ts_solve": NumpyBackend.adapt(_ts_solve)},
+            backend=NumpyBackend,
+        )
+        return ModelRunHandle(
+            future=async_handle.future,
+            post_process=lambda result: self._post_process(scenario, result),
+        )
+
+    def structure(self) -> dict[str, dict[str, Any]]:
+        """Return a schema dict for the tunable policy and behavioural indexes.
+
+        Covers all fields declared on :class:`~mobility_bologna.mobility_bologna.BolognaModel.Inputs`.
+        Each scalar :class:`~dt_model.Index` maps to ``{"type": "scalar"}``; each
+        :class:`~dt_model.DistributionIndex` maps to ``{"type": "distribution"}``.
+        List-valued fields (``i_p_cost``) produce one entry per element.
+
+        Returns
+        -------
+        dict[str, dict[str, Any]]
+            Index name to metadata dict.
+        """
+        m = cast(BolognaModel, self._model)
+        inputs = m.inputs
+        result: dict[str, dict[str, Any]] = {}
+
+        def _add(idx: Index | DistributionIndex) -> None:
+            entry_type = "distribution" if isinstance(idx, DistributionIndex) else "scalar"
+            result[idx.name] = {"type": entry_type}
+
+        _add(inputs.i_p_start_time)
+        _add(inputs.i_p_end_time)
+        for cost_idx in inputs.i_p_cost:
+            _add(cost_idx)
+        _add(inputs.i_p_fraction_exempted)
+        _add(inputs.i_b_p50_cost)
+        _add(inputs.i_b_p50_anticipating)
+        _add(inputs.i_b_p50_anticipation)
+        _add(inputs.i_b_p50_postponing)
+        _add(inputs.i_b_p50_postponement)
+        _add(inputs.i_b_starting_modified_factor)
+        return result
+
+    def _extract_resume_state(self, output: BolognaOutput) -> ResumeState:
+        """Extract the resume payload from a previously saved :class:`BolognaOutput`.
+
+        Parameters
+        ----------
+        output : BolognaOutput
+            A :class:`BolognaOutput` for which ``is_resumable`` is ``True``.
+
+        Returns
+        -------
+        ResumeState
+            All state needed to reconstruct an
+            :class:`~simulation.handle.EvaluationHandle`.
+
+        Raises
+        ------
+        AssertionError
+            If ``output._serialized_resume`` is ``None``.
+        """
+        assert output._serialized_resume is not None, "resume payload must not be None"
+        result = _decode_result(output._serialized_resume, self._model.indexes)
+        return ResumeState(
+            result=result,
+            parameters={},
+            functions={"ts_solve": NumpyBackend.adapt(_ts_solve)},
+            backend=NumpyBackend,
+        )
 
 
 if __name__ == "__main__":
     _out = Path(__file__).parent / "output"
     _out.mkdir(exist_ok=True)
 
+    _config = EvaluationConfig(ensemble_size=20)
+
     # ── Reference scenario (default parameters) ──────────────────────────────
-    m = BolognaModel(**BolognaModel.default_inputs())
-    result = evaluate(m, 20)
-    _save_scenario_plots("reference", m, result, _out)
+    _m = BolognaModel(**BolognaModel.default_inputs())
+    _evaluator = BolognaEvaluator(_m)
+    _output = _evaluator.evaluate(Scenario(_m), _config)
+    _save_scenario_plots("reference", _m, _output, _out)
 
     print("Reference scenario:")
-    for k, v in compute_kpis(m, result).items():
+    for k, v in _output.kpis.items():
         print(f"  {k} - {v:,}")
 
     # ── Stricter pricing scenario ─────────────────────────────────────────────
     # Higher fees with a steeper Euro-class gradient: older/more polluting
     # vehicles pay substantially more, incentivising fleet-mix shifts.
-    m_strict = BolognaModel(
+    _m_strict = BolognaModel(
         **{
             **BolognaModel.default_inputs(),
             "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
         }
     )
-    result_strict = evaluate(m_strict, 20)
-    _save_scenario_plots("strict", m_strict, result_strict, _out)
+    _evaluator_strict = BolognaEvaluator(_m_strict)
+    _output_strict = _evaluator_strict.evaluate(Scenario(_m_strict), _config)
+    _save_scenario_plots("strict", _m_strict, _output_strict, _out)
 
     print("\nStricter pricing scenario (euro_0: 8.00 €, euro_6: 5.00 €):")
-    for k, v in compute_kpis(m_strict, result_strict).items():
+    for k, v in _output_strict.kpis.items():
         print(f"  {k} - {v:,}")

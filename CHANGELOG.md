@@ -95,6 +95,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EvaluationResult.named_axis_values` — dict mapping each named axis name to
   its raw 1-D input array (from `parameter_axes=`).  Results for callable-backed
   indexes are accessed via `result[idx]` or `result.expected_value(idx)`.
+- `ModelEvaluator` / `ModelOutput` / `EvaluationConfig` — stable protocol
+  layer between `dt_model` and application code (web APIs, CLIs, UIs).
+  Domain packages subclass `ModelEvaluator` and `ModelOutput` to expose a
+  uniform evaluation lifecycle: blocking `evaluate()`, optional non-blocking
+  `run_async()` returning a `ModelRunHandle`, `get_index_diffs()` and
+  `get_model_values()` for scenario introspection, and `structure()` for
+  scenario-creation UIs.
+- `ModelEvaluator.resume()` — reconstruct an `EvaluationHandle` from a
+  previously saved `ModelOutput` and extend the ensemble across sessions.
+  `ModelOutput.is_resumable` and `IncompatibleResultError` form the
+  corresponding save/load contract.
+- `BolognaOutput` / `BolognaEvaluator` and `MolvenoOutput` / `MolvenoEvaluator`
+  — concrete `ModelEvaluator` implementations for the Bologna and Molveno
+  examples, replacing the previous ad-hoc module-level evaluation functions.
+- `Scenario.overrides` — public read-only property returning the active
+  override mapping.
 
 ### Changed
 

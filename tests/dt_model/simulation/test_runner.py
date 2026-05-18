@@ -39,7 +39,7 @@ from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBacke
 from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.runner import _get_dt_model_version
+from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value, _get_dt_model_version
 
 # ---------------------------------------------------------------------------
 # Minimal model fixture (reused from other simulation tests)
@@ -559,6 +559,45 @@ class TestModelEvaluatorEvaluate:
         evaluator = _MinimalEvaluator(model)
         output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=42))
         assert output.value == 42
+
+
+# ---------------------------------------------------------------------------
+# _format_value helper
+# ---------------------------------------------------------------------------
+
+
+class TestFormatValue:
+    """Unit tests for the _format_value private helper."""
+
+    def test_none_returns_none_marker(self) -> None:
+        """None produces the '(none)' marker string."""
+        assert _format_value(None) == "(none)"
+
+    def test_array_returns_shape_string(self) -> None:
+        """A numpy array produces 'array<shape>'."""
+        arr = np.ones((3, 4))
+        assert _format_value(arr) == "array(3, 4)"
+
+    def test_scalar_returns_str(self) -> None:
+        """A plain scalar is converted via str()."""
+        assert _format_value(42.0) == "42.0"
+
+
+# ---------------------------------------------------------------------------
+# _encode_result — KeyError path
+# ---------------------------------------------------------------------------
+
+
+class TestEncodeResultSkipsMissingIndex:
+    """_encode_result silently skips indexes not present in the result."""
+
+    def test_index_not_in_result_is_skipped(self) -> None:
+        """An index whose node is absent from the result is omitted without error."""
+        x, model = _make_simple_model()
+        result = _make_result_from(model)
+        extra = Index("extra", 42.0)  # node not in the evaluated state
+        encoded = _encode_result(result, [x, extra])
+        assert "extra" not in encoded["nodes"]
 
 
 # ---------------------------------------------------------------------------
