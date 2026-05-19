@@ -37,6 +37,7 @@ from ..model.axis import Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
+from .ensemble import DistributionEnsemble
 from .evaluation import Evaluation, EvaluationResult
 from .handle import EvaluationHandle
 from .scenario import Scenario
@@ -114,12 +115,12 @@ class EvaluationConfig:
 class ResumeState:
     """All state needed to reconstruct an :class:`~simulation.handle.EvaluationHandle`.
 
-    Returned by :meth:`ModelEvaluator._extract_resume_state` and consumed by
+    Returned by :meth:`ModelEvaluator.extract_resume_state` and consumed by
     the :meth:`ModelEvaluator.resume` template method to reconstruct an
     :class:`~simulation.handle.EvaluationHandle` from a previously saved
     :class:`ModelOutput`.
 
-    The concrete evaluator's ``_extract_resume_state`` implementation:
+    The concrete evaluator's ``extract_resume_state`` implementation:
 
     - Deserialises ``result``, ``parameters``, and ``parameter_axes`` from
       the resume payload stored by :meth:`ModelOutput.to_dict`.
@@ -174,6 +175,16 @@ class IncompatibleResultError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# ModelOutput helpers
+# ---------------------------------------------------------------------------
+
+
+def _looks_like_encoded_array(val: Any) -> bool:
+    """Return ``True`` when *val* is a dict produced by :func:`_encode_array`."""
+    return isinstance(val, dict) and "data" in val and "dtype" in val and "shape" in val
+
+
+# ---------------------------------------------------------------------------
 # ModelOutput
 # ---------------------------------------------------------------------------
 
@@ -198,16 +209,19 @@ class ModelOutput(ABC):
 
     Subclasses must:
 
-    1. Call ``super().__init__()`` in their ``__init__``.
-    2. Implement :meth:`to_dict` to serialise both layers, including
-       ``"dt_model_version": _get_dt_model_version()`` in the top-level dict.
-    3. Implement :meth:`from_dict` to reconstruct both layers when compatible,
-       calling ``self._is_resumable = True`` only when the resume payload
-       loads successfully.
+    1. Call ``super().__init__()`` in their ``__init__``.  To mark the
+       output as resumable, call :meth:`_store_resume` with the encoded
+       payload produced by :func:`_encode_result`.
+    2. Implement :meth:`_serialize` / :meth:`_deserialize` **only if** the
+       subclass is not a dataclass or has fields that need special handling;
+       the base provides a dataclass-aware default.  The base :meth:`to_dict`
+       stamps ``"dt_model_version"`` and appends the resume payload
+       automatically; :meth:`from_dict` handles object construction and resume
+       payload loading.
 
     The :attr:`is_resumable` property is **not abstract**; its value is
-    determined entirely by whether :meth:`from_dict` succeeded in loading the
-    resume payload.  Subclasses must not override it.
+    determined entirely by whether :meth:`_store_resume` was called.
+    Subclasses must not override it.
 
     See Also
     --------
@@ -217,48 +231,117 @@ class ModelOutput(ABC):
 
     def __init__(self) -> None:
         self._is_resumable: bool = False
+        self._serialized_resume: dict[str, Any] | None = None
 
-    @abstractmethod
+    def _store_resume(self, payload: dict[str, Any]) -> None:
+        """Store a resume payload and mark this output as resumable.
+
+        Called by subclass ``__init__`` implementations to record the
+        serialised :class:`~simulation.evaluation.EvaluationResult`
+        payload produced by :func:`_encode_result`.  Sets
+        :attr:`is_resumable` to ``True``.
+
+        Parameters
+        ----------
+        payload : dict[str, Any]
+            The encoded result dict returned by :func:`_encode_result`.
+        """
+        self._serialized_resume = payload
+        self._is_resumable = True
+
     def to_dict(self) -> dict[str, Any]:
         """Serialise both the summary layer and the resume payload to a dict.
 
-        The returned dict must always include:
-
-        - ``"dt_model_version"``: the result of :func:`_get_dt_model_version`.
-        - All summary data (KPIs, derived arrays, scenario metadata).
-        - The resume payload (raw node arrays, weights, parameter grid).
-
-        Numpy arrays should be encoded as base64 + dtype + shape for
-        JSON-serialisable output, or kept as :class:`numpy.ndarray` when the
-        application layer uses a binary-friendly persistence format (e.g.
-        pickle or ``numpy.savez``).
+        Concrete template method.  Stamps ``"dt_model_version"`` automatically,
+        merges in the domain-specific summary returned by
+        :meth:`_serialize`, and appends ``"_resume"`` when a payload
+        has been stored via :meth:`_store_resume`.
 
         Returns
         -------
         dict[str, Any]
-            Serialised output.  The exact schema is defined by the concrete
-            subclass.
+            Serialised output including version stamp and, if resumable, the
+            resume payload under the ``"_resume"`` key.
         """
+        data: dict[str, Any] = {"dt_model_version": _get_dt_model_version()}
+        data.update(self._serialize())
+        if self._serialized_resume is not None:
+            data["_resume"] = self._serialized_resume
+        return data
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serialisable snapshot suitable for API responses.
+
+        Concrete default.  Stamps ``"dt_model_version"`` and merges in
+        :meth:`_serialize` — identical to :meth:`to_dict` but **without**
+        the ``"_resume"`` payload.
+
+        Override in subclasses to append derived / computed fields that the
+        frontend needs but that are not stored in the checkpoint
+        (e.g. sustainability metrics computed from the raw arrays).  Call
+        ``super().to_snapshot()`` and add entries to the returned dict.
+
+        The ``"_resume"`` key is structurally absent from the return value;
+        it is never included even if :attr:`is_resumable` is ``True``.
+
+        Returns
+        -------
+        dict[str, Any]
+            Snapshot dict.  Contains ``"dt_model_version"`` and all fields
+            from :meth:`_serialize`, plus any derived fields added by the
+            subclass override.
+        """
+        data: dict[str, Any] = {"dt_model_version": _get_dt_model_version()}
+        data.update(self._serialize())
+        return data
+
+    def _serialize(self) -> dict[str, Any]:
+        """Return the summary layer as a JSON-compatible dict.
+
+        Default implementation for :func:`~dataclasses.dataclass` subclasses.
+        Inspects every dataclass field:
+
+        - :class:`numpy.ndarray` values are encoded with :func:`_encode_array`.
+        - ``dict`` values whose values are all :class:`numpy.ndarray` are encoded
+          per-value with :func:`_encode_array`.
+        - All other values are stored as-is (assumed JSON-serialisable).
+
+        Override this method for outputs that are not dataclasses or that have
+        fields requiring special handling.
+
+        Returns
+        -------
+        dict[str, Any]
+            Summary layer dict.  Must not contain the keys
+            ``"dt_model_version"`` or ``"_resume"``.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass is not a dataclass and has not overridden this method.
+        """
+        if not dataclasses.is_dataclass(self):
+            raise NotImplementedError(
+                f"{type(self).__name__} is not a dataclass. Override _serialize() to provide custom serialization."
+            )
+        out: dict[str, Any] = {}
+        for f in dataclasses.fields(self):  # type: ignore[arg-type]
+            val = getattr(self, f.name)
+            if isinstance(val, np.ndarray):
+                out[f.name] = _encode_array(val)
+            elif isinstance(val, dict) and all(isinstance(v, np.ndarray) for v in val.values()):
+                out[f.name] = {k: _encode_array(v) for k, v in val.items()}
+            else:
+                out[f.name] = val
+        return out
 
     @classmethod
-    @abstractmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
         """Reconstruct a :class:`ModelOutput` from a serialised dict.
 
-        Always succeeds for the summary layer.  Attempts to load the resume
-        payload; sets ``self._is_resumable = True`` only when the payload is
-        present and the serialised ``dt_model_version`` is compatible with the
-        running version.
-
-        Concrete implementations should follow this pattern::
-
-            obj = cls.__new__(cls)
-            ModelOutput.__init__(obj)          # sets _is_resumable = False
-            # ... populate summary fields ...
-            if _resume_payload_is_compatible(data):
-                # ... populate resume fields ...
-                obj._is_resumable = True
-            return obj
+        Concrete template method.  Creates an empty instance, delegates
+        summary-field population to :meth:`_deserialize`, then
+        restores the resume payload from the ``"_resume"`` key if present.
 
         Parameters
         ----------
@@ -268,15 +351,71 @@ class ModelOutput(ABC):
         Returns
         -------
         Self
-            A reconstructed instance of the concrete subclass.
+            Reconstructed instance.  :attr:`is_resumable` is ``True`` iff
+            ``"_resume"`` was present in *data*.
         """
+        obj = cls.__new__(cls)
+        ModelOutput.__init__(obj)
+        obj._deserialize(data)
+        if "_resume" in data:
+            obj._store_resume(data["_resume"])
+        return obj
+
+    def _deserialize(self, data: dict[str, Any]) -> None:
+        """Populate summary fields from a serialised dict.
+
+        Default implementation for :func:`~dataclasses.dataclass` subclasses.
+        For each dataclass field present in *data*:
+
+        - If the stored value looks like an :func:`_encode_array` envelope
+          (dict with ``"data"``, ``"dtype"``, ``"shape"`` keys) it is decoded
+          with :func:`_decode_array`.
+        - If the stored value is a ``dict`` whose values all look like
+          array envelopes, each is decoded with :func:`_decode_array`.
+        - Otherwise the value is set as-is.
+
+        Override this method for outputs that are not dataclasses or that
+        require special handling (e.g. backward-compatibility shims, optional
+        keys with defaults).
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Dict previously produced by :meth:`to_dict`.
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass is not a dataclass and has not overridden this method.
+        """
+        if not dataclasses.is_dataclass(self):
+            raise NotImplementedError(
+                f"{type(self).__name__} is not a dataclass. Override _deserialize() to provide custom deserialization."
+            )
+        for f in dataclasses.fields(self):  # type: ignore[arg-type]
+            if f.name not in data:
+                if f.default is not dataclasses.MISSING:
+                    setattr(self, f.name, f.default)
+                elif f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+                    setattr(self, f.name, f.default_factory())  # type: ignore[misc]
+                continue
+            raw = data[f.name]
+            if _looks_like_encoded_array(raw):
+                setattr(self, f.name, _decode_array(raw))
+            elif isinstance(raw, dict) and all(_looks_like_encoded_array(v) for v in raw.values()):
+                setattr(self, f.name, {k: _decode_array(v) for k, v in raw.items()})
+            else:
+                setattr(self, f.name, raw)
 
     @property
     def is_resumable(self) -> bool:
-        """``True`` iff the resume payload is present and version-compatible.
+        """``True`` iff the resume payload is available on this output.
 
-        Set to ``False`` on construction.  Flipped to ``True`` by
-        :meth:`from_dict` only when the resume payload loaded successfully.
+        Set to ``True`` whenever :meth:`_store_resume` is called — either
+        directly in a subclass ``__init__`` after evaluation, or by
+        :meth:`from_dict` when the serialised dict contains a ``"_resume"``
+        key.  Remains ``False`` when the checkpoint was saved without a
+        resume payload or was produced by an incompatible version.
 
         This property is concrete and must not be overridden by subclasses;
         its value is controlled exclusively by the ``_is_resumable`` flag.
@@ -295,6 +434,7 @@ class ModelOutput(ABC):
 # ---------------------------------------------------------------------------
 
 OutputT = TypeVar("OutputT", bound=ModelOutput)
+ModelT = TypeVar("ModelT", bound="Model | ModelVariant")
 
 
 class ModelRunHandle(Generic[OutputT]):
@@ -599,11 +739,13 @@ def _format_value(val: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-class ModelEvaluator(ABC, Generic[OutputT]):
+class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
     """Abstract base class for domain-specific scenario evaluators.
 
-    Each domain package subclasses :class:`ModelEvaluator` and binds the
-    type parameter ``OutputT`` to its concrete :class:`ModelOutput` subclass.
+    Each domain package subclasses :class:`ModelEvaluator` and binds
+    ``ModelT`` to its concrete :class:`~dt_model.model.model.Model` or
+    :class:`~dt_model.model.model_variant.ModelVariant` subclass and
+    ``OutputT`` to its concrete :class:`ModelOutput` subclass.
     The application layer then drives the uniform lifecycle::
 
         evaluator = DomainEvaluator(model)
@@ -612,59 +754,44 @@ class ModelEvaluator(ABC, Generic[OutputT]):
         output2   = DomainOutput.from_dict(data)            # load
         handle    = evaluator.resume(scenario, output2, config)  # extend
 
-    **Implementation tiers for** :meth:`run_async`:
+    **Abstract interface**: subclasses must implement :meth:`input_schema`.
+    They should implement *either* :meth:`post_process` (letting the base
+    handle :meth:`evaluate` and :meth:`run_async`) or override those methods
+    directly for full control.
 
-    1. *Sync only* — implement :meth:`evaluate` only; leave :meth:`run_async`
-       at its default (raises :exc:`NotImplementedError`).
-    2. *Protocol-level async* — implement :meth:`run_async` to submit the
-       blocking :meth:`evaluate` to :func:`~simulation.evaluation._get_default_executor`.
-       Suitable for models that use
-       :class:`~simulation.ensemble.CrossProductEnsemble` (e.g. Molveno).
-    3. *Engine-level async* — implement :meth:`run_async` to call
-       :meth:`~simulation.evaluation.Evaluation.submit_evaluate` and wrap the
-       returned :attr:`~simulation.handle.AsyncEvaluationHandle.future` in a
-       :class:`ModelRunHandle`.  Suitable for models that use
-       :class:`~simulation.ensemble.DistributionEnsemble` (e.g. Bologna).
+    **Override points for** :meth:`evaluate` **/**:meth:`run_async`:
+
+    1. *Simple DistributionEnsemble model* — implement :meth:`post_process`
+       only; override :attr:`eval_functions` if the model needs custom engine
+       callables.  The base templates for :meth:`evaluate` and
+       :meth:`run_async` handle everything else, including calling
+       :meth:`attach_resume` automatically.
+    2. *Parametric / complex model* — override :meth:`evaluate` (and
+       :meth:`run_async`) in full, then also override
+       :meth:`extract_resume_state` to reconstruct the parameter arrays.
+       Call :meth:`attach_resume` explicitly in your overrides when you
+       want the output to be resumable.
+
+    The :class:`ModelOutput` side of the contract uses :meth:`_serialize` /
+    :meth:`_deserialize` for the summary layer.
 
     Parameters
     ----------
-    model : Model or ModelVariant
+    model : ModelT
         The model this evaluator operates on.  Stored as ``self._model`` and
         used by the default implementations of :meth:`get_index_diffs`,
-        :meth:`get_model_values`, and :meth:`structure`.
+        :meth:`get_model_values`, and :meth:`input_schema`.
     """
 
-    def __init__(self, model: Model | ModelVariant) -> None:
-        self._model = model
+    def __init__(self, model: ModelT) -> None:
+        self._model: ModelT = model
 
     # ------------------------------------------------------------------
     # Abstract interface
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> OutputT:
-        """Run a blocking evaluation and return the domain output.
-
-        The subclass builds the appropriate ensemble, calls
-        :class:`~simulation.evaluation.Evaluation`, runs domain-specific
-        post-processing, and returns a fully populated :class:`ModelOutput`.
-
-        Parameters
-        ----------
-        scenario : Scenario
-            The scenario to evaluate, carrying optional value overrides.
-        config : EvaluationConfig
-            Evaluation parameters; ``config.ensemble_size`` controls how many
-            Monte Carlo samples are drawn.
-
-        Returns
-        -------
-        OutputT
-            The domain-specific evaluation output.
-        """
-
-    @abstractmethod
-    def structure(self) -> dict[str, dict[str, Any]]:
+    def input_schema(self) -> dict[str, dict[str, Any]]:
         """Return a schema dict describing the model's tunable indexes.
 
         Maps each index name to a metadata dict::
@@ -684,38 +811,158 @@ class ModelEvaluator(ABC, Generic[OutputT]):
             Index name \u2192 metadata dict.
         """
 
-    @abstractmethod
-    def _extract_resume_state(self, output: OutputT) -> ResumeState:
-        """Extract the resume payload from a previously saved output.
+    # ------------------------------------------------------------------
+    # Overridable engine configuration
+    # ------------------------------------------------------------------
 
-        Called by :meth:`resume` (template method).  The subclass
-        deserialises ``result``, ``parameters``, and ``parameter_axes`` from
-        ``output``'s resume payload, and re-injects ``functions`` and
-        ``backend`` from its own domain knowledge (same values used in
-        :meth:`evaluate`).
+    @property
+    def eval_functions(self) -> dict[str, Functor] | None:
+        """Custom functions injected into the engine executor.
 
-        Parameters
-        ----------
-        output : OutputT
-            A :class:`ModelOutput` for which ``is_resumable`` is ``True``.
+        Return a ``{name: functor}`` dict or ``None`` (default) when no
+        custom functions are needed.  Override in subclasses that use
+        model-specific callables (e.g. ``_ts_solve`` in the Bologna model).
+
+        The value is used by the default :meth:`evaluate`, :meth:`run_async`,
+        and :meth:`extract_resume_state` implementations.
 
         Returns
         -------
-        ResumeState
-            All state needed to reconstruct an
-            :class:`~simulation.handle.EvaluationHandle`.
+        dict[str, Functor] or None
         """
+        return None
 
-    # ------------------------------------------------------------------
-    # Optional async interface
-    # ------------------------------------------------------------------
+    @property
+    def eval_backend(self) -> type[NumpyBackend]:
+        """Computation backend class.
+
+        Defaults to :class:`~dt_model.engine.numpybackend.executor.NumpyBackend`.
+        Override only when a different backend is required.
+
+        Returns
+        -------
+        type[NumpyBackend]
+        """
+        return NumpyBackend
+
+    def make_ensemble(self, scenario: Scenario, config: EvaluationConfig) -> Any:
+        """Construct the ensemble for a blocking :meth:`evaluate` call.
+
+        Default implementation returns a
+        :class:`~dt_model.simulation.ensemble.DistributionEnsemble` of size
+        ``config.ensemble_size``.  Override for models that use a different
+        ensemble type (e.g. :class:`~dt_model.simulation.ensemble.CrossProductEnsemble`
+        with a parameter grid — in that case override :meth:`evaluate` as a whole).
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario being evaluated.
+        config : EvaluationConfig
+            Evaluation parameters.
+
+        Returns
+        -------
+        Any
+            An ensemble compatible with :meth:`~simulation.evaluation.Evaluation.evaluate`.
+        """
+        return DistributionEnsemble(scenario, config.ensemble_size)
+
+    def attach_resume(self, output: ModelOutput, result: EvaluationResult) -> None:
+        """Encode *result* and store it as the resume payload on *output*.
+
+        Convenience wrapper around :func:`_encode_result` +
+        :meth:`~ModelOutput._store_resume`.  Called automatically by the
+        default :meth:`evaluate` and :meth:`run_async` templates.  Evaluators
+        that override those methods should call this explicitly when they want
+        their outputs to be resumable.
+
+        Parameters
+        ----------
+        output : ModelOutput
+            The output object to attach the resume payload to.
+        result : EvaluationResult
+            The raw evaluation result to encode.
+        """
+        output._store_resume(_encode_result(result, self._model.indexes))
+
+    def post_process(self, scenario: Scenario, result: EvaluationResult) -> OutputT:
+        """Convert a raw :class:`~simulation.evaluation.EvaluationResult` to ``OutputT``.
+
+        Called by the default :meth:`evaluate` and :meth:`run_async`
+        implementations.  Override when using these defaults; leave
+        unimplemented if you override :meth:`evaluate` directly.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario that was evaluated.
+        result : EvaluationResult
+            The raw engine result.
+
+        Returns
+        -------
+        OutputT
+            The domain-specific :class:`ModelOutput` for this evaluation.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, in the base implementation.  Override in subclasses that
+            rely on the default :meth:`evaluate` template.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement post_process() when using the default evaluate() template."
+        )
+
+    def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> OutputT:
+        """Run a blocking evaluation and return the domain output.
+
+        Concrete template method.  Builds the ensemble via
+        :meth:`make_ensemble`, calls
+        :class:`~simulation.evaluation.Evaluation` with
+        :attr:`eval_functions` and :attr:`eval_backend`, then delegates
+        post-processing to :meth:`post_process`.
+
+        Override entirely for models that require a parameter grid or a
+        different ensemble setup (e.g. Molveno).  Override
+        :meth:`post_process` instead when only the output construction
+        differs (e.g. Bologna).
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate, carrying optional value overrides.
+        config : EvaluationConfig
+            Evaluation parameters; ``config.ensemble_size`` controls how many
+            Monte Carlo samples are drawn.
+
+        Returns
+        -------
+        OutputT
+            The domain-specific evaluation output.
+        """
+        ensemble = self.make_ensemble(scenario, config)
+        result = Evaluation(scenario).evaluate(
+            ensemble=ensemble,
+            functions=self.eval_functions,
+            backend=self.eval_backend,
+        )
+        output = self.post_process(scenario, result)
+        self.attach_resume(output, result)
+        return output
 
     def run_async(self, scenario: Scenario, config: EvaluationConfig) -> ModelRunHandle[OutputT]:
-        """Submit an async evaluation and return a handle immediately.
+        """Submit an engine-level async evaluation and return a handle immediately.
 
-        Not implemented by default.  Override in tier-2 or tier-3
-        subclasses to enable non-blocking evaluation; see class docstring
-        for the three implementation tiers.
+        Concrete tier-3 default.  Calls
+        :meth:`~simulation.evaluation.Evaluation.submit_evaluate` with
+        :attr:`eval_functions` and :attr:`eval_backend`, then wraps the
+        result in a :class:`ModelRunHandle` whose post-processor is
+        :meth:`post_process`.
+
+        Override for models that need synchronous pre-computation or a
+        parameter grid before the async engine call (e.g. Molveno).
 
         Parameters
         ----------
@@ -728,14 +975,65 @@ class ModelEvaluator(ABC, Generic[OutputT]):
         -------
         ModelRunHandle[OutputT]
             Handle whose :meth:`~ModelRunHandle.get` returns the output.
+        """
+        async_handle = Evaluation(scenario).submit_evaluate(
+            config.ensemble_size,
+            functions=self.eval_functions,
+            backend=self.eval_backend,
+        )
+
+        def _post(result: EvaluationResult) -> OutputT:
+            output = self.post_process(scenario, result)
+            self.attach_resume(output, result)
+            return output
+
+        return ModelRunHandle(
+            future=async_handle.future,
+            post_process=_post,
+        )
+
+    def extract_resume_state(self, output: OutputT) -> ResumeState:
+        """Extract the resume payload from a previously saved output.
+
+        Concrete default for parameter-free
+        :class:`~dt_model.simulation.ensemble.DistributionEnsemble`
+        evaluations.  Decodes the stored result (encoded by
+        :meth:`attach_resume` via :func:`_encode_result`) and re-injects
+        :attr:`eval_functions` and :attr:`eval_backend`.
+
+        Override when the evaluation used a parameter grid (the parameter
+        arrays must be decoded and passed back as ``parameters``).
+
+        .. note::
+            The default implementation reads ``parameters`` directly from
+            ``result.parameter_values`` as decoded by :func:`_decode_result`.
+            This correctly handles both parameter-free evaluations (empty dict)
+            and evaluations with a parameter grid, so overriding is only needed
+            for unusual resume-state requirements beyond parameters and functions.
+
+        Parameters
+        ----------
+        output : OutputT
+            A :class:`ModelOutput` for which ``is_resumable`` is ``True``.
+
+        Returns
+        -------
+        ResumeState
+            All state needed to reconstruct an
+            :class:`~simulation.handle.EvaluationHandle`.
 
         Raises
         ------
-        NotImplementedError
-            Always, in the default implementation.
+        AssertionError
+            If ``output._serialized_resume`` is ``None``.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement run_async(). Override it or use evaluate() directly."
+        assert output._serialized_resume is not None, "extract_resume_state called on non-resumable output"
+        result = _decode_result(output._serialized_resume, self._model.indexes)
+        return ResumeState(
+            result=result,
+            parameters=dict(result.parameter_values),
+            functions=self.eval_functions,
+            backend=self.eval_backend,
         )
 
     # ------------------------------------------------------------------
@@ -851,7 +1149,7 @@ class ModelEvaluator(ABC, Generic[OutputT]):
                 "incompatible version of civic-digital-twins. "
                 "Re-plotting from the summary layer is still possible."
             )
-        state = self._extract_resume_state(output)
+        state = self.extract_resume_state(output)
         evaluation = Evaluation(scenario)
         plan = evaluation.build_plan()
         return EvaluationHandle(

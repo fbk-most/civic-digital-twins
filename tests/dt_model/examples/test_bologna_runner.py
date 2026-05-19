@@ -3,7 +3,7 @@
 
 import numpy as np
 import pytest
-from mobility_bologna.mobility_bologna import BolognaEvaluator, BolognaModel, BolognaOutput
+from mobility_bologna.bologna_model import BolognaEvaluator, BolognaModel, BolognaOutput
 
 from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle
 from civic_digital_twins.dt_model.simulation.runner import EvaluationConfig, ModelRunHandle
@@ -163,6 +163,23 @@ def test_from_dict_without_resume_not_resumable() -> None:
     assert restored.is_resumable is False
 
 
+def test_resume_raises_when_not_resumable(
+    evaluator: BolognaEvaluator,
+    scenario: Scenario,
+    output: BolognaOutput,
+    config: EvaluationConfig,
+) -> None:
+    """resume() must raise IncompatibleResultError when is_resumable is False."""
+    from civic_digital_twins.dt_model import IncompatibleResultError
+
+    data = output.to_dict()
+    data.pop("_resume")
+    non_resumable = BolognaOutput.from_dict(data)
+    assert non_resumable.is_resumable is False
+    with pytest.raises(IncompatibleResultError):
+        evaluator.resume(scenario, non_resumable, config)
+
+
 def test_resume_returns_evaluation_handle(
     evaluator: BolognaEvaluator,
     scenario: Scenario,
@@ -223,14 +240,14 @@ def test_run_async_get_has_kpis(
 
 def test_structure_returns_non_empty_dict(evaluator: BolognaEvaluator) -> None:
     """structure() must return a non-empty dict."""
-    schema = evaluator.structure()
+    schema = evaluator.input_schema()
     assert isinstance(schema, dict)
     assert len(schema) >= 1
 
 
 def test_structure_type_values(evaluator: BolognaEvaluator) -> None:
     """Every entry in structure() must have a 'type' key with 'scalar' or 'distribution'."""
-    schema = evaluator.structure()
+    schema = evaluator.input_schema()
     valid_types = {"scalar", "distribution"}
     for name, meta in schema.items():
         assert "type" in meta, f"structure()['{name}'] missing 'type' key"
@@ -239,6 +256,6 @@ def test_structure_type_values(evaluator: BolognaEvaluator) -> None:
 
 def test_structure_contains_distribution_index(evaluator: BolognaEvaluator) -> None:
     """structure() must contain at least one 'distribution' entry for i_b_p50_cost."""
-    schema = evaluator.structure()
+    schema = evaluator.input_schema()
     distribution_entries = {name: meta for name, meta in schema.items() if meta["type"] == "distribution"}
     assert len(distribution_entries) >= 1, "Expected at least one distribution entry in structure()"

@@ -86,7 +86,6 @@ from civic_digital_twins.dt_model import (
     GenericIndex,
     Index,
     Model,
-    NumpyBackend,
     graph,
     sample_across,
 )
@@ -97,12 +96,6 @@ from civic_digital_twins.dt_model.simulation.runner import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
-    ResumeState,
-    _decode_array,
-    _decode_result,
-    _encode_array,
-    _encode_result,
-    _get_dt_model_version,
 )
 
 try:
@@ -808,9 +801,7 @@ def compute_sustainable_area(field: np.ndarray, tt: np.ndarray, ee: np.ndarray) 
     float
         Integral approximation of the sustainable area.
     """
-    from functools import reduce
-
-    return field.sum() * reduce(
+    return field.sum() * functools.reduce(
         lambda x, y: x * y,
         [axis.max() / (axis.size - 1) + 1 for axis in (tt, ee)],
     )
@@ -878,7 +869,7 @@ def compute_sustainability_by_constraint(
     """
     result = {}
     for key, fe in field_elements.items():
-        name = key if isinstance(key, str) else key.name
+        name = key
         index = interpolate.interpn((tt, ee), fe, np.array(presences), bounds_error=False, fill_value=0.0)
         m, se = np.mean(index), stats.sem(index)
         h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
@@ -910,7 +901,7 @@ def compute_modal_lines(
     bounds = [tt.max(), ee.max()]
     modal_lines = {}
     for key, fe in field_elements.items():
-        name = key if isinstance(key, str) else key.name
+        name = key
         matrix = (fe <= 0.5) & (
             (ndimage.shift(fe, (0, 1)) > 0.5)
             | (ndimage.shift(fe, (0, -1)) > 0.5)
@@ -1017,6 +1008,7 @@ def compute_sustainability_field(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(eq=False)
 class MolvenoOutput(ModelOutput):
     """Evaluation output for the Molveno overtourism model.
 
@@ -1030,10 +1022,8 @@ class MolvenoOutput(ModelOutput):
         Sustainability field of shape ``(N_t, N_e)`` where each entry is
         ``P(all constraints satisfied | tourists=tt[t], excursionists=ee[e])``.
     field_elements : dict
-        Per-constraint field arrays ``{constraint_key: np.ndarray}``.  Keys are
-        :class:`~overtourism_molveno.molveno_model.Constraint` objects when
-        produced by :meth:`MolvenoEvaluator.evaluate`, and plain strings (constraint
-        names) when loaded via :meth:`from_dict`.
+        Per-constraint field arrays ``{name: np.ndarray}``.  Keys are
+        constraint name strings in all cases.
     tt : np.ndarray
         Tourist parameter axis (1-D, shape ``(N_t,)``).
     ee : np.ndarray
@@ -1042,35 +1032,19 @@ class MolvenoOutput(ModelOutput):
         Transformed tourist presence samples for scatter-plot overlays.
     sample_excursionists : list[float]
         Transformed excursionist presence samples for scatter-plot overlays.
-    serialized_resume : dict or None, optional
-        Encoded resume payload produced by
-        :func:`~dt_model.simulation.runner._encode_result`.  When not ``None``
-        the output is immediately marked as resumable.
     """
 
-    def __init__(
-        self,
-        field: np.ndarray,
-        field_elements: dict,
-        tt: np.ndarray,
-        ee: np.ndarray,
-        sample_tourists: list[float],
-        sample_excursionists: list[float],
-        *,
-        serialized_resume: dict | None = None,
-        confidence: float = 0.8,
-    ) -> None:
+    field: np.ndarray
+    field_elements: dict
+    tt: np.ndarray
+    ee: np.ndarray
+    sample_tourists: list[float]
+    sample_excursionists: list[float]
+    confidence: float = 0.8
+
+    def __post_init__(self) -> None:
+        """Initialise the :class:`ModelOutput` base after dataclass field assignment."""
         super().__init__()
-        self._confidence = confidence
-        self.field = field
-        self.field_elements = field_elements
-        self.tt = tt
-        self.ee = ee
-        self.sample_tourists = sample_tourists
-        self.sample_excursionists = sample_excursionists
-        self._serialized_resume: dict | None = serialized_resume
-        if serialized_resume is not None:
-            self._is_resumable = True
 
     @functools.cached_property
     def _zip_samples(self) -> list[tuple[float, float]]:
@@ -1085,13 +1059,13 @@ class MolvenoOutput(ModelOutput):
     @functools.cached_property
     def sustainability_index(self) -> tuple[float, float]:
         """Overall sustainability index and CI half-width at ``self._confidence``."""
-        return compute_sustainability_index_with_ci(self.field, self.tt, self.ee, self._zip_samples, self._confidence)
+        return compute_sustainability_index_with_ci(self.field, self.tt, self.ee, self._zip_samples, self.confidence)
 
     @functools.cached_property
     def sustainability_by_constraint(self) -> dict[str, tuple[float, float]]:
         """Per-constraint sustainability index and CI half-width."""
         return compute_sustainability_by_constraint(
-            self.field_elements, self.tt, self.ee, self._zip_samples, self._confidence
+            self.field_elements, self.tt, self.ee, self._zip_samples, self.confidence
         )
 
     @functools.cached_property
@@ -1099,77 +1073,40 @@ class MolvenoOutput(ModelOutput):
         """Per-constraint modal lines as ``((t0, t1), (e0, e1))`` coordinate pairs."""
         return compute_modal_lines(self.field_elements, self.tt, self.ee)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialise the output to a JSON-serialisable dict.
+    def to_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serialisable snapshot including derived sustainability metrics.
 
-        Returns a dict containing both the summary layer (field, per-constraint
-        field elements, parameter axes) and the resume payload when available.
+        Extends the base :meth:`~dt_model.simulation.runner.ModelOutput.to_snapshot`
+        with the four derived properties that the frontend needs but that are
+        not stored in the checkpoint:
+
+        ``"sustainable_area"``
+            Scalar fraction of the parameter space that is sustainable.
+        ``"sustainability_index"``
+            ``{"value": float, "ci": float}`` — overall sustainability index
+            and half-width of the confidence interval.
+        ``"sustainability_by_constraint"``
+            ``{name: {"value": float, "ci": float}}`` per-constraint.
+        ``"modal_lines"``
+            ``{name: {"t": [t0, t1], "e": [e0, e1]}}`` per-constraint
+            orthogonal-regression modal lines.
 
         Returns
         -------
         dict[str, Any]
-            Dict with keys ``"dt_model_version"``, ``"field"``,
-            ``"field_elements"``, ``"tt"``, ``"ee"``, and optionally
-            ``"_resume"`` (encoded :class:`~dt_model.simulation.evaluation.EvaluationResult`).
+            Snapshot dict including all base fields plus the above entries.
         """
-        d: dict[str, Any] = {
-            "dt_model_version": _get_dt_model_version(),
-            "field": _encode_array(self.field),
-            "field_elements": {name: _encode_array(arr) for name, arr in self.field_elements.items()},
-            "tt": _encode_array(self.tt),
-            "ee": _encode_array(self.ee),
-            "sample_tourists": list(self.sample_tourists),
-            "sample_excursionists": list(self.sample_excursionists),
-            "confidence": self._confidence,
+        d = super().to_snapshot()
+        d["sustainable_area"] = float(self.sustainable_area)
+        idx, ci = self.sustainability_index
+        d["sustainability_index"] = {"value": float(idx), "ci": float(ci)}
+        d["sustainability_by_constraint"] = {
+            k: {"value": float(v), "ci": float(c)} for k, (v, c) in self.sustainability_by_constraint.items()
         }
-        if self._serialized_resume is not None:
-            d["_resume"] = self._serialized_resume
+        d["modal_lines"] = {
+            k: {"t": list(t_coords), "e": list(e_coords)} for k, (t_coords, e_coords) in self.modal_lines.items()
+        }
         return d
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MolvenoOutput":
-        """Reconstruct a :class:`MolvenoOutput` from a serialised dict.
-
-        Always restores the summary layer (field, field_elements, tt, ee).
-        Restores the resume payload when the ``"_resume"`` key is present,
-        setting :attr:`~dt_model.simulation.runner.ModelOutput.is_resumable`
-        to ``True``.
-
-        Concrete pattern used::
-
-            obj = cls.__new__(cls)
-            ModelOutput.__init__(obj)      # sets _is_resumable = False
-            # populate summary fields ...
-            if "_resume" in data:
-                obj._serialized_resume = data["_resume"]
-                obj._is_resumable = True
-            return obj
-
-        Parameters
-        ----------
-        data : dict[str, Any]
-            Dict previously produced by :meth:`to_dict`.
-
-        Returns
-        -------
-        MolvenoOutput
-            Reconstructed instance.  ``field_elements`` uses string keys
-            (constraint names) rather than :class:`Constraint` objects.
-        """
-        obj = cls.__new__(cls)
-        ModelOutput.__init__(obj)
-        obj.field = _decode_array(data["field"])
-        obj.field_elements = {name: _decode_array(arr) for name, arr in data["field_elements"].items()}
-        obj.tt = _decode_array(data["tt"])
-        obj.ee = _decode_array(data["ee"])
-        obj.sample_tourists = list(data["sample_tourists"])
-        obj.sample_excursionists = list(data["sample_excursionists"])
-        obj._confidence = float(data.get("confidence", 0.8))
-        obj._serialized_resume = None
-        if "_resume" in data:
-            obj._serialized_resume = data["_resume"]
-            obj._is_resumable = True
-        return obj
 
 
 # ---------------------------------------------------------------------------
@@ -1177,7 +1114,7 @@ class MolvenoOutput(ModelOutput):
 # ---------------------------------------------------------------------------
 
 
-class MolvenoEvaluator(ModelEvaluator[MolvenoOutput]):
+class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
     """Evaluator for the Molveno overtourism model.
 
     Implements the :class:`~dt_model.simulation.runner.ModelEvaluator` protocol
@@ -1220,20 +1157,98 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoOutput]):
         self._e_sample = e_sample
         self._target_presence_samples = target_presence_samples
 
+    def _pre_compute(self, scenario: Any, config: EvaluationConfig) -> tuple[np.ndarray, np.ndarray, dict]:
+        """Pre-compute parameter axes and presence samples (no result dependency).
+
+        Used by both :meth:`evaluate` and :meth:`run_async` to share the
+        synchronous setup work.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario being evaluated.
+        config : EvaluationConfig
+            Evaluation parameters; ``ensemble_size`` controls the cross-product
+            size for the sampling ensemble.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray, dict]
+            ``(tt, ee, pv_samples)`` where ``tt`` and ``ee`` are the parameter
+            axes and ``pv_samples`` maps each presence index to its samples.
+        """
+        model = self._model
+        tt = np.linspace(0, self._t_max, self._t_sample + 1)
+        ee = np.linspace(0, self._e_max, self._e_sample + 1)
+        sampling_ensemble = CrossProductEnsemble(
+            type(scenario)(model),
+            max_categorical_size=config.ensemble_size,
+            exclude=model.pvs,
+        )
+        pv_samples = sample_across(
+            sampling_ensemble, [model.pv_tourists, model.pv_excursionists], total=self._target_presence_samples
+        )
+        return tt, ee, pv_samples
+
+    def _build_output(
+        self,
+        result: EvaluationResult,
+        tt: np.ndarray,
+        ee: np.ndarray,
+        pv_samples: dict,
+    ) -> MolvenoOutput:
+        """Build a :class:`MolvenoOutput` from an evaluated result and pre-computed axes.
+
+        Computes the sustainability field, transforms presence samples, constructs
+        the output, and attaches the resume payload via :meth:`attach_resume`.
+
+        Parameters
+        ----------
+        result : EvaluationResult
+            The raw engine result.
+        tt : np.ndarray
+            Tourist parameter axis.
+        ee : np.ndarray
+            Excursionist parameter axis.
+        pv_samples : dict
+            Pre-computed presence samples from :meth:`_pre_compute`.
+
+        Returns
+        -------
+        MolvenoOutput
+            Fully populated output with resume payload attached.
+        """
+        model = self._model
+        field, field_elements = compute_sustainability_field(model, result)
+        rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
+        sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
+        rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
+        sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
+        sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
+        sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
+        output = MolvenoOutput(
+            field=field,
+            field_elements=field_elements,
+            tt=tt,
+            ee=ee,
+            sample_tourists=sample_tourists,
+            sample_excursionists=sample_excursionists,
+        )
+        self.attach_resume(output, result)
+        return output
+
     def evaluate(self, scenario: Any, config: EvaluationConfig) -> MolvenoOutput:
         """Run a blocking evaluation and return a :class:`MolvenoOutput`.
 
         Steps:
 
-        1. Extract categorical restrictions from ``scenario.overrides``.
-        2. Build a ``(t_sample+1) × (e_sample+1)`` parameter grid.
-        3. Build a :class:`~dt_model.CrossProductEnsemble` for the ensemble
-           dimension.
-        4. Run :class:`~dt_model.Evaluation` over the grid.
-        5. Compute the sustainability field and per-constraint elements from
-           the raw result (same logic as ``plot_scenario`` in
-           ``overtourism_molveno.py``).
-        6. Encode the full result as the resume payload.
+        1. Pre-compute the ``(t_sample+1) × (e_sample+1)`` parameter axes and
+           presence samples via :meth:`_pre_compute`.
+        2. Build a :class:`~dt_model.CrossProductEnsemble` for the categorical
+           dimension (context variables × their probability weights).
+        3. Run :class:`~dt_model.Evaluation` over the full 2-D parameter grid.
+        4. Compute the sustainability field, transform presence samples, and
+           attach the resume payload via :meth:`_build_output`.
 
         Parameters
         ----------
@@ -1250,66 +1265,18 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoOutput]):
             Contains the sustainability field, per-constraint field elements,
             parameter axes, and a resume payload.
         """
-        model: MolvenoModel = self._model  # type: ignore[assignment]
-
-        # 2. Build parameter grid.
-        tt = np.linspace(0, self._t_max, self._t_sample + 1)
-        ee = np.linspace(0, self._e_max, self._e_sample + 1)
-
-        # 3. Build ensemble.
-        # CrossProductEnsemble respects scenario.effective_outcomes() for CategoricalIndex:
-        # a dict override restricts the support to its keys and uses its values as weights.
-        # String overrides (concrete pins) are handled via base_substitutions() — the CV is
-        # excluded from the cross-product axis and injected as a constant.
+        model = self._model
+        tt, ee, pv_samples = self._pre_compute(scenario, config)
         ensemble = CrossProductEnsemble(
             scenario,
             max_categorical_size=config.ensemble_size,
             exclude=model.pvs,
         )
-
-        # 4. Evaluate.
         result = Evaluation(scenario).evaluate(
             ensemble=ensemble,
             parameters={model.pv_tourists: tt, model.pv_excursionists: ee},
         )
-
-        # 5. Compute sustainability field.
-        field, field_elements = compute_sustainability_field(model, result)
-
-        # 5b. Generate presence samples for scatter-plot overlays.
-        # sample_across requires all CV parents in ensemble.assignments().  When a CV is
-        # concretely overridden (str), Scenario.abstract_indexes() excludes it, collapsing it
-        # out of the ensemble axis.  Use an unrestricted base scenario so every parent CV
-        # is always present in assignments.  The scatter dots then represent the marginal
-        # presence distribution, agnostic of any single-value restrictions.
-        sampling_ensemble = CrossProductEnsemble(
-            type(scenario)(model),
-            max_categorical_size=config.ensemble_size,
-            exclude=model.pvs,
-        )
-        pv_samples = sample_across(
-            sampling_ensemble, [model.pv_tourists, model.pv_excursionists], total=self._target_presence_samples
-        )
-        rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
-        sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
-        rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
-        sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
-        sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
-        sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
-
-        # 6. Encode resume payload.
-        encoded_resume = _encode_result(result, scenario.model.indexes)
-
-        # 7. Return output.
-        return MolvenoOutput(
-            field=field,
-            field_elements=field_elements,
-            tt=tt,
-            ee=ee,
-            sample_tourists=sample_tourists,
-            sample_excursionists=sample_excursionists,
-            serialized_resume=encoded_resume,
-        )
+        return self._build_output(result, tt, ee, pv_samples)
 
     def run_async(self, scenario: Any, config: EvaluationConfig) -> ModelRunHandle[MolvenoOutput]:
         """Submit an engine-level async evaluation and return a handle immediately.
@@ -1340,55 +1307,25 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoOutput]):
             Handle whose :meth:`~dt_model.simulation.runner.ModelRunHandle.get`
             returns a :class:`MolvenoOutput`.
         """
-        model: MolvenoModel = self._model  # type: ignore[assignment]
-
-        # --- synchronous pre-computation (no result dependency) ---
-        tt = np.linspace(0, self._t_max, self._t_sample + 1)
-        ee = np.linspace(0, self._e_max, self._e_sample + 1)
+        model = self._model
+        tt, ee, pv_samples = self._pre_compute(scenario, config)
         ensemble = CrossProductEnsemble(
             scenario,
             max_categorical_size=config.ensemble_size,
             exclude=model.pvs,
         )
-        sampling_ensemble = CrossProductEnsemble(
-            type(scenario)(model),
-            max_categorical_size=config.ensemble_size,
-            exclude=model.pvs,
-        )
-        pv_samples = sample_across(
-            sampling_ensemble, [model.pv_tourists, model.pv_excursionists], total=self._target_presence_samples
-        )
-
-        # --- async: only the engine evaluation ---
         future = _get_default_executor().submit(
             Evaluation(scenario).evaluate,
             ensemble=ensemble,
             parameters={model.pv_tourists: tt, model.pv_excursionists: ee},
         )
 
-        # --- post-processor closure (runs on .get() / .poll()) ---
         def _post(result: EvaluationResult) -> MolvenoOutput:
-            field, field_elements = compute_sustainability_field(model, result)
-            rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
-            sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
-            rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
-            sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
-            sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
-            sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
-            encoded_resume = _encode_result(result, scenario.model.indexes)
-            return MolvenoOutput(
-                field=field,
-                field_elements=field_elements,
-                tt=tt,
-                ee=ee,
-                sample_tourists=sample_tourists,
-                sample_excursionists=sample_excursionists,
-                serialized_resume=encoded_resume,
-            )
+            return self._build_output(result, tt, ee, pv_samples)
 
         return ModelRunHandle(future, _post)
 
-    def structure(self) -> dict[str, dict[str, Any]]:
+    def input_schema(self) -> dict[str, dict[str, Any]]:
         """Return a schema dict describing the Molveno model's tunable indexes.
 
         Includes entries for the three categorical context variables
@@ -1403,48 +1340,13 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoOutput]):
 
         Examples
         --------
-        >>> evaluator.structure()
+        >>> evaluator.input_schema()
         {"weekday": {"type": "categorical", "support": [...]}, ...}
         """
-        model: MolvenoModel = self._model  # type: ignore[assignment]
+        model = self._model
         schema: dict[str, dict[str, Any]] = {}
         for cv in model.cvs:
             schema[cv.name] = {"type": "categorical", "support": list(cv.support)}
         for cap in model.capacities:
             schema[cap.name] = {"type": "distribution"}
         return schema
-
-    def _extract_resume_state(self, output: MolvenoOutput) -> ResumeState:
-        """Extract the resume payload from a previously saved :class:`MolvenoOutput`.
-
-        Deserialises the raw :class:`~dt_model.simulation.evaluation.EvaluationResult`
-        and the original parameter arrays from the encoded resume payload stored
-        in ``output._serialized_resume``.
-
-        Parameters
-        ----------
-        output : MolvenoOutput
-            A :class:`MolvenoOutput` for which ``is_resumable`` is ``True``.
-
-        Returns
-        -------
-        ResumeState
-            All state needed to reconstruct an
-            :class:`~dt_model.simulation.handle.EvaluationHandle`.
-        """
-        model: MolvenoModel = self._model  # type: ignore[assignment]
-        assert output._serialized_resume is not None, "_extract_resume_state called on non-resumable output"
-        resume = output._serialized_resume
-        result = _decode_result(resume, model.indexes)
-        idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in model.indexes}
-        parameter_arrays: dict[GenericIndex, np.ndarray] = {
-            idx_by_name[name]: _decode_array(encoded)
-            for name, encoded in resume["parameter_arrays"].items()
-            if name in idx_by_name
-        }
-        return ResumeState(
-            result=result,
-            parameters=parameter_arrays,
-            functions=None,
-            backend=NumpyBackend,
-        )

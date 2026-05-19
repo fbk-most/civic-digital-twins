@@ -182,6 +182,41 @@ def test_roundtrip_without_resume(output: MolvenoOutput) -> None:
     assert not loaded.is_resumable
 
 
+def test_to_snapshot_contains_derived_keys(output: MolvenoOutput) -> None:
+    """to_snapshot() must include all derived sustainability metrics."""
+    snap = output.to_snapshot()
+    for key in (
+        "dt_model_version",
+        "field",
+        "field_elements",
+        "tt",
+        "ee",
+        "sample_tourists",
+        "sample_excursionists",
+        "sustainable_area",
+        "sustainability_index",
+        "sustainability_by_constraint",
+        "modal_lines",
+    ):
+        assert key in snap, f"Missing key in snapshot: {key!r}"
+
+
+def test_to_snapshot_excludes_resume(output: MolvenoOutput) -> None:
+    """to_snapshot() must never include the '_resume' payload."""
+    snap = output.to_snapshot()
+    assert "_resume" not in snap
+
+
+def test_to_snapshot_sustainability_index_structure(output: MolvenoOutput) -> None:
+    """sustainability_index in snapshot must be a dict with 'value' and 'ci' keys."""
+    snap = output.to_snapshot()
+    si = snap["sustainability_index"]
+    assert isinstance(si, dict)
+    assert "value" in si and "ci" in si
+    assert isinstance(si["value"], float)
+    assert isinstance(si["ci"], float)
+
+
 # ---------------------------------------------------------------------------
 # Tests: resume()
 # ---------------------------------------------------------------------------
@@ -197,6 +232,38 @@ def test_resume_returns_evaluation_handle(
     loaded = MolvenoOutput.from_dict(output.to_dict())
     handle = evaluator.resume(scenario, loaded, config)
     assert isinstance(handle, EvaluationHandle)
+
+
+def test_resume_raises_when_not_resumable(
+    evaluator: MolvenoEvaluator,
+    scenario: Scenario,
+    output: MolvenoOutput,
+    config: EvaluationConfig,
+) -> None:
+    """resume() must raise IncompatibleResultError when is_resumable is False."""
+    from civic_digital_twins.dt_model import IncompatibleResultError
+
+    d = output.to_dict()
+    d.pop("_resume")
+    non_resumable = MolvenoOutput.from_dict(d)
+    assert non_resumable.is_resumable is False
+    with pytest.raises(IncompatibleResultError):
+        evaluator.resume(scenario, non_resumable, config)
+
+
+def test_resume_after_round_trip_can_extend(
+    evaluator: MolvenoEvaluator,
+    scenario: Scenario,
+    output: MolvenoOutput,
+    config: EvaluationConfig,
+) -> None:
+    """Full save-and-restore cycle: evaluate → to_dict → from_dict → resume → extend."""
+    loaded = MolvenoOutput.from_dict(output.to_dict())
+    assert loaded.is_resumable
+    handle = evaluator.resume(scenario, loaded, config)
+    assert isinstance(handle, EvaluationHandle)
+    extended = handle.extend(ensemble_size=_ENSEMBLE_SIZE)
+    assert extended is handle.result
 
 
 # ---------------------------------------------------------------------------
@@ -243,14 +310,14 @@ def test_run_async_output_field_shape(
 
 def test_structure_returns_non_empty_dict(evaluator: MolvenoEvaluator) -> None:
     """structure() must return a non-empty dict."""
-    schema = evaluator.structure()
+    schema = evaluator.input_schema()
     assert isinstance(schema, dict)
     assert len(schema) > 0
 
 
 def test_structure_contains_categorical_cvs(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
     """structure() must include all three categorical context variables."""
-    schema = evaluator.structure()
+    schema = evaluator.input_schema()
     for cv in model.cvs:
         assert cv.name in schema, f"Missing CV {cv.name!r} in structure()"
         assert schema[cv.name]["type"] == "categorical"
@@ -259,7 +326,7 @@ def test_structure_contains_categorical_cvs(evaluator: MolvenoEvaluator, model: 
 
 def test_structure_contains_capacity_parameters(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
     """structure() must include all capacity parameters."""
-    schema = evaluator.structure()
+    schema = evaluator.input_schema()
     for cap in model.capacities:
         assert cap.name in schema, f"Missing capacity {cap.name!r} in structure()"
         assert schema[cap.name]["type"] == "distribution"

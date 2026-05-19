@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import dataclasses
-from typing import Any, Self
+from typing import Any
 
 import numpy as np
 import pytest
@@ -39,7 +39,7 @@ from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBacke
 from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value, _get_dt_model_version
+from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value
 
 # ---------------------------------------------------------------------------
 # Minimal model fixture (reused from other simulation tests)
@@ -126,32 +126,22 @@ class _StubOutput(ModelOutput):
         super().__init__()
         self._value = value
         self._include_resume = include_resume
+        if include_resume:
+            self._store_resume({"value": self._value})
 
     @property
     def value(self) -> int:
         """The stored summary integer."""
         return self._value
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialise summary + optional resume payload."""
-        d: dict[str, Any] = {
-            "dt_model_version": _get_dt_model_version(),
-            "value": self._value,
-        }
-        if self._include_resume:
-            d["_resume"] = {"value": self._value}
-        return d
+    def _serialize(self) -> dict[str, Any]:
+        """Serialise summary layer."""
+        return {"value": self._value}
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        """Reconstruct; set ``is_resumable`` only when resume payload present."""
-        obj = cls.__new__(cls)
-        ModelOutput.__init__(obj)
-        obj._value = data["value"]
-        obj._include_resume = "_resume" in data
-        if "_resume" in data:
-            obj._is_resumable = True
-        return obj
+    def _deserialize(self, data: dict[str, Any]) -> None:
+        """Reconstruct summary fields."""
+        self._value = data["value"]
+        self._include_resume = "_resume" in data
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +243,16 @@ class TestIncompatibleResultError:
 class TestModelOutput:
     """Unit tests for ModelOutput ABC mechanics via _StubOutput."""
 
-    def test_cannot_instantiate_abc(self) -> None:
-        """ModelOutput cannot be instantiated directly."""
-        with pytest.raises(TypeError):
-            ModelOutput()  # type: ignore[abstract]
+    def test_cannot_instantiate_abc_directly(self) -> None:
+        """ModelOutput has no abstract methods; instantiation succeeds but _serialize raises NotImplementedError."""
+        out = ModelOutput()  # type: ignore[abstract]
+        assert out.is_resumable is False
+        with pytest.raises(NotImplementedError):
+            out._serialize()
 
     def test_is_resumable_false_on_construction(self) -> None:
-        """is_resumable is False immediately after __init__."""
-        out = _StubOutput(42)
+        """is_resumable is False when no resume payload is stored at construction."""
+        out = _StubOutput(42, include_resume=False)
         assert out.is_resumable is False
 
     def test_is_resumable_false_when_no_resume_payload(self) -> None:
@@ -292,11 +284,13 @@ class TestModelOutput:
         """is_resumable is a concrete property — not listed as abstract."""
         assert "is_resumable" not in getattr(ModelOutput, "__abstractmethods__", set())
 
-    def test_to_dict_and_from_dict_are_abstract(self) -> None:
-        """to_dict and from_dict are abstract methods."""
-        abstract = ModelOutput.__abstractmethods__
-        assert "to_dict" in abstract
-        assert "from_dict" in abstract
+    def test_serialize_deserialize_have_defaults_not_abstract(self) -> None:
+        """_serialize and _deserialize have defaults (non-abstract); to_dict and from_dict are not abstract."""
+        abstract = getattr(ModelOutput, "__abstractmethods__", frozenset())
+        assert "_serialize" not in abstract
+        assert "_deserialize" not in abstract
+        assert "to_dict" not in abstract
+        assert "from_dict" not in abstract
 
 
 # ---------------------------------------------------------------------------
@@ -451,40 +445,38 @@ class _ResumableOutput(ModelOutput):
     def __init__(self, result: EvaluationResult) -> None:
         super().__init__()
         self._result = result
-        self._is_resumable = True
+        self._store_resume({"stub": True})
 
     @property
     def raw_result(self) -> EvaluationResult:
         """The stored EvaluationResult."""
         return self._result
 
-    def to_dict(self) -> dict:
+    def _serialize(self) -> dict[str, Any]:
         """Minimal stub serialisation."""
         return {}
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "_ResumableOutput":
-        """Not needed for these tests."""
-        raise NotImplementedError
+    def _deserialize(self, data: dict[str, Any]) -> None:
+        """Not meaningfully used; required by the ABC."""
 
 
-class _MinimalEvaluator(ModelEvaluator[_StubOutput]):
+class _MinimalEvaluator(ModelEvaluator[Model, _StubOutput]):
     """Minimal concrete evaluator for structural/introspection tests."""
 
     def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> _StubOutput:
         """Return a stub output whose value equals ensemble_size."""
         return _StubOutput(config.ensemble_size)
 
-    def structure(self) -> dict:
+    def input_schema(self) -> dict:
         """Return a minimal schema."""
         return {"y": {"type": "scalar"}}
 
-    def _extract_resume_state(self, output: _StubOutput) -> ResumeState:
+    def extract_resume_state(self, output: _StubOutput) -> ResumeState:
         """Unused in these tests."""
         raise NotImplementedError
 
 
-class _ResumableEvaluator(ModelEvaluator[_ResumableOutput]):
+class _ResumableEvaluator(ModelEvaluator[Model, _ResumableOutput]):
     """Evaluator that produces resumable outputs backed by real EvaluationResults."""
 
     def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> _ResumableOutput:
@@ -492,11 +484,11 @@ class _ResumableEvaluator(ModelEvaluator[_ResumableOutput]):
         result = _make_result_from(scenario.model, config.ensemble_size)
         return _ResumableOutput(result)
 
-    def structure(self) -> dict:
+    def input_schema(self) -> dict:
         """Return a minimal schema."""
         return {}
 
-    def _extract_resume_state(self, output: _ResumableOutput) -> ResumeState:
+    def extract_resume_state(self, output: _ResumableOutput) -> ResumeState:
         """Extract the stored EvaluationResult."""
         return ResumeState(result=output.raw_result, parameters={})
 
@@ -510,32 +502,33 @@ class TestModelEvaluatorStructure:
     """Verify abstract method enforcement and default run_async behaviour."""
 
     def test_cannot_instantiate_without_abstract_methods(self) -> None:
-        """Subclass missing evaluate() or structure() cannot be instantiated."""
+        """Subclass missing schema() cannot be instantiated."""
 
-        class _Incomplete(ModelEvaluator[_StubOutput]):  # type: ignore[abstract]
+        class _Incomplete(ModelEvaluator[Model, _StubOutput]):  # type: ignore[abstract]
             pass
 
         with pytest.raises(TypeError):
             _Incomplete(_make_simple_model()[1])  # type: ignore[abstract]
 
-    def test_run_async_raises_not_implemented_by_default(self) -> None:
-        """run_async() raises NotImplementedError when not overridden."""
+    def test_run_async_post_process_raises_not_implemented(self) -> None:
+        """run_async() returns a handle; handle.get() raises NotImplementedError when post_process not overridden."""
         _, model = _make_simple_model()
         evaluator = _MinimalEvaluator(model)
-        with pytest.raises(NotImplementedError, match="run_async"):
-            evaluator.run_async(Scenario(model), EvaluationConfig(ensemble_size=10))
+        handle = evaluator.run_async(Scenario(model), EvaluationConfig(ensemble_size=10))
+        with pytest.raises(NotImplementedError):
+            handle.get()
 
-    def test_evaluate_is_abstract(self) -> None:
-        """Evaluate is listed as an abstract method."""
-        assert "evaluate" in ModelEvaluator.__abstractmethods__
+    def test_evaluate_is_not_abstract(self) -> None:
+        """'evaluate' is a concrete template method — not listed as abstract."""
+        assert "evaluate" not in ModelEvaluator.__abstractmethods__
 
-    def test_structure_is_abstract(self) -> None:
-        """Structure is listed as an abstract method."""
-        assert "structure" in ModelEvaluator.__abstractmethods__
+    def test_schema_is_abstract(self) -> None:
+        """Schema is listed as an abstract method."""
+        assert "input_schema" in ModelEvaluator.__abstractmethods__
 
-    def test_extract_resume_state_is_abstract(self) -> None:
-        """_extract_resume_state is listed as an abstract method."""
-        assert "_extract_resume_state" in ModelEvaluator.__abstractmethods__
+    def test_extract_resume_state_is_not_abstract(self) -> None:
+        """extract_resume_state is a concrete default — not listed as abstract."""
+        assert "extract_resume_state" not in ModelEvaluator.__abstractmethods__
 
 
 # ---------------------------------------------------------------------------
