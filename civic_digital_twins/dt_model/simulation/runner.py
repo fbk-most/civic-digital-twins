@@ -175,13 +175,188 @@ class IncompatibleResultError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# ModelOutput helpers
+# Codec helpers (used by ModelOutput._serialize/_deserialize and
+# ModelEvaluator.attach_resume/extract_resume_state)
 # ---------------------------------------------------------------------------
 
 
 def _looks_like_encoded_array(val: Any) -> bool:
     """Return ``True`` when *val* is a dict produced by :func:`_encode_array`."""
     return isinstance(val, dict) and "data" in val and "dtype" in val and "shape" in val
+
+
+def _encode_array(arr: np.ndarray) -> dict[str, Any]:
+    """Encode a numpy array to a JSON-serialisable dict.
+
+    Uses base64 encoding of the raw bytes together with dtype and shape
+    metadata so that the round-trip is lossless for all numeric dtypes.
+    Object-dtype arrays (e.g. categorical string assignments) are encoded
+    as a JSON list to avoid the ``frombuffer`` limitation on object buffers.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Array to encode.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dict with keys ``"data"`` (base64 string or list), ``"dtype"`` (str),
+        ``"shape"`` (list of int), and optionally ``"encoding"`` (``"json"``
+        for object-dtype arrays).
+    """
+    if arr.dtype == object:
+        # Object arrays (e.g. categorical string assignments) cannot be
+        # round-tripped via tobytes()/frombuffer.  Store as a JSON-safe list.
+        return {
+            "data": arr.tolist(),
+            "dtype": "object",
+            "shape": list(arr.shape),
+            "encoding": "json",
+        }
+    return {
+        "data": base64.b64encode(np.ascontiguousarray(arr).tobytes()).decode("ascii"),
+        "dtype": str(arr.dtype),
+        "shape": list(arr.shape),
+    }
+
+
+def _decode_array(d: dict[str, Any]) -> np.ndarray:
+    """Decode a numpy array from a dict produced by :func:`_encode_array`.
+
+    Handles both base64-encoded numeric arrays and JSON-encoded object arrays
+    (those produced with ``"encoding": "json"`` by :func:`_encode_array`).
+
+    Parameters
+    ----------
+    d : dict[str, Any]
+        Dict with keys ``"data"``, ``"dtype"``, ``"shape"``, and optionally
+        ``"encoding"``.
+
+    Returns
+    -------
+    np.ndarray
+        The decoded array.  Returns a writable copy (``frombuffer`` would
+        give a read-only view for the numeric path).
+    """
+    if d.get("encoding") == "json":
+        return np.array(d["data"], dtype=object).reshape(tuple(d["shape"]))
+    raw = base64.b64decode(d["data"].encode("ascii"))
+    return np.frombuffer(raw, dtype=np.dtype(d["dtype"])).reshape(tuple(d["shape"])).copy()
+
+
+def _encode_result(result: EvaluationResult, indexes: Iterable[GenericIndex]) -> dict[str, Any]:
+    """Encode an :class:`~simulation.evaluation.EvaluationResult` as a serialisable dict.
+
+    Iterates over *indexes* and stores each node's array under the index
+    name.  Also encodes the axis layout, factorized weights, parameter
+    arrays, named axis values, and axis sizes — everything
+    :func:`_decode_result` needs to reconstruct a fully functional
+    :class:`~simulation.evaluation.EvaluationResult`.
+
+    Parameters
+    ----------
+    result : EvaluationResult
+        The result to encode.
+    indexes : Iterable[GenericIndex]
+        Model indexes used to map graph nodes to stable string names.
+        Indexes whose nodes are absent from *result* are silently skipped.
+
+    Returns
+    -------
+    dict[str, Any]
+        JSON-serialisable dict suitable for embedding in a
+        :meth:`ModelOutput.to_dict` payload.
+    """
+    nodes: dict[str, Any] = {}
+    for idx in indexes:
+        try:
+            nodes[idx.name] = _encode_array(result[idx])
+        except KeyError:
+            pass  # index not computed in this evaluation
+
+    axis_layout = [
+        [ax.name, ax.role, pos]
+        for ax, pos in result._axis_layout.items()  # type: ignore[attr-defined]
+    ]
+    factorized_weights = {
+        ax.name: _encode_array(w)
+        for ax, w in result._factorized_weights.items()  # type: ignore[attr-defined]
+    }
+    parameter_arrays = {idx.name: _encode_array(arr) for idx, arr in result.parameter_values.items()}
+    named_axis_values = {name: _encode_array(arr) for name, arr in result.named_axis_values.items()}
+    axis_sizes = {
+        f"{ax.name}:{ax.role}": size
+        for ax, size in result._axis_sizes.items()  # type: ignore[attr-defined]
+    }
+    return {
+        "nodes": nodes,
+        "axis_layout": axis_layout,
+        "factorized_weights": factorized_weights,
+        "parameter_arrays": parameter_arrays,
+        "named_axis_values": named_axis_values,
+        "axis_sizes": axis_sizes,
+    }
+
+
+def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> EvaluationResult:
+    """Reconstruct an :class:`~simulation.evaluation.EvaluationResult` from an encoded dict.
+
+    Matches stored arrays back to model indexes by name, then constructs a
+    new :class:`~simulation.evaluation.EvaluationResult` whose node arrays,
+    axis layout, and weights are compatible with those produced by a fresh
+    :meth:`~simulation.evaluation.Evaluation.execute_plan` call on the same
+    scenario — so that :func:`~simulation.handle._merge_results` can merge
+    the loaded result with new samples.
+
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Dict previously produced by :func:`_encode_result`.
+    indexes : Iterable[GenericIndex]
+        Model indexes used to map names back to graph nodes and
+        :class:`~model.index.GenericIndex` keys.
+
+    Returns
+    -------
+    EvaluationResult
+        Reconstructed result.  Graph node identity is that of the current
+        model, so the result is valid for the current session.
+    """
+    idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in indexes}
+    axis_role: dict[str, str] = {row[0]: row[1] for row in data["axis_layout"]}
+
+    state_values: dict = {}
+    for name, encoded in data["nodes"].items():
+        if name in idx_by_name:
+            state_values[idx_by_name[name].node] = _decode_array(encoded)
+    state = State(values=state_values)
+
+    axis_layout: dict[Axis, int] = {Axis(row[0], row[1]): int(row[2]) for row in data["axis_layout"]}
+    factorized_weights: dict[Axis, np.ndarray] = {
+        Axis(name, axis_role[name]): _decode_array(encoded) for name, encoded in data["factorized_weights"].items()
+    }
+    parameter_arrays: dict[GenericIndex, np.ndarray] = {
+        idx_by_name[name]: _decode_array(encoded)
+        for name, encoded in data["parameter_arrays"].items()
+        if name in idx_by_name
+    }
+    named_axis_values: dict[str, np.ndarray] = {
+        name: _decode_array(encoded) for name, encoded in data["named_axis_values"].items()
+    }
+    axis_sizes: dict[Axis, int] = {}
+    for key, size in data["axis_sizes"].items():
+        ax_name, ax_role = key.split(":", 1)
+        axis_sizes[Axis(ax_name, ax_role)] = int(size)
+
+    return EvaluationResult(
+        state=state,
+        axis_layout=axis_layout,
+        parameter_arrays=parameter_arrays,
+        axis_sizes=axis_sizes,
+        factorized_weights=factorized_weights,
+        named_axis_values=named_axis_values,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -523,185 +698,6 @@ class ModelRunHandle(Generic[OutputT]):
             ``True`` if the future was successfully cancelled.
         """
         return self._future.cancel()
-
-
-# ---------------------------------------------------------------------------
-# EvaluationResult codec helpers
-# ---------------------------------------------------------------------------
-
-
-def _encode_array(arr: np.ndarray) -> dict[str, Any]:
-    """Encode a numpy array to a JSON-serialisable dict.
-
-    Uses base64 encoding of the raw bytes together with dtype and shape
-    metadata so that the round-trip is lossless for all numeric dtypes.
-    Object-dtype arrays (e.g. categorical string assignments) are encoded
-    as a JSON list to avoid the ``frombuffer`` limitation on object buffers.
-
-    Parameters
-    ----------
-    arr : np.ndarray
-        Array to encode.
-
-    Returns
-    -------
-    dict[str, Any]
-        Dict with keys ``"data"`` (base64 string or list), ``"dtype"`` (str),
-        ``"shape"`` (list of int), and optionally ``"encoding"`` (``"json"``
-        for object-dtype arrays).
-    """
-    if arr.dtype == object:
-        # Object arrays (e.g. categorical string assignments) cannot be
-        # round-tripped via tobytes()/frombuffer.  Store as a JSON-safe list.
-        return {
-            "data": arr.tolist(),
-            "dtype": "object",
-            "shape": list(arr.shape),
-            "encoding": "json",
-        }
-    return {
-        "data": base64.b64encode(np.ascontiguousarray(arr).tobytes()).decode("ascii"),
-        "dtype": str(arr.dtype),
-        "shape": list(arr.shape),
-    }
-
-
-def _decode_array(d: dict[str, Any]) -> np.ndarray:
-    """Decode a numpy array from a dict produced by :func:`_encode_array`.
-
-    Handles both base64-encoded numeric arrays and JSON-encoded object arrays
-    (those produced with ``"encoding": "json"`` by :func:`_encode_array`).
-
-    Parameters
-    ----------
-    d : dict[str, Any]
-        Dict with keys ``"data"``, ``"dtype"``, ``"shape"``, and optionally
-        ``"encoding"``.
-
-    Returns
-    -------
-    np.ndarray
-        The decoded array.  Returns a writable copy (``frombuffer`` would
-        give a read-only view for the numeric path).
-    """
-    if d.get("encoding") == "json":
-        return np.array(d["data"], dtype=object).reshape(tuple(d["shape"]))
-    raw = base64.b64decode(d["data"].encode("ascii"))
-    return np.frombuffer(raw, dtype=np.dtype(d["dtype"])).reshape(tuple(d["shape"])).copy()
-
-
-def _encode_result(result: EvaluationResult, indexes: Iterable[GenericIndex]) -> dict[str, Any]:
-    """Encode an :class:`~simulation.evaluation.EvaluationResult` as a serialisable dict.
-
-    Iterates over *indexes* and stores each node's array under the index
-    name.  Also encodes the axis layout, factorized weights, parameter
-    arrays, named axis values, and axis sizes — everything
-    :func:`_decode_result` needs to reconstruct a fully functional
-    :class:`~simulation.evaluation.EvaluationResult`.
-
-    Parameters
-    ----------
-    result : EvaluationResult
-        The result to encode.
-    indexes : Iterable[GenericIndex]
-        Model indexes used to map graph nodes to stable string names.
-        Indexes whose nodes are absent from *result* are silently skipped.
-
-    Returns
-    -------
-    dict[str, Any]
-        JSON-serialisable dict suitable for embedding in a
-        :meth:`ModelOutput.to_dict` payload.
-    """
-    nodes: dict[str, Any] = {}
-    for idx in indexes:
-        try:
-            nodes[idx.name] = _encode_array(result[idx])
-        except KeyError:
-            pass  # index not computed in this evaluation
-
-    axis_layout = [
-        [ax.name, ax.role, pos]
-        for ax, pos in result._axis_layout.items()  # type: ignore[attr-defined]
-    ]
-    factorized_weights = {
-        ax.name: _encode_array(w)
-        for ax, w in result._factorized_weights.items()  # type: ignore[attr-defined]
-    }
-    parameter_arrays = {idx.name: _encode_array(arr) for idx, arr in result.parameter_values.items()}
-    named_axis_values = {name: _encode_array(arr) for name, arr in result.named_axis_values.items()}
-    axis_sizes = {
-        f"{ax.name}:{ax.role}": size
-        for ax, size in result._axis_sizes.items()  # type: ignore[attr-defined]
-    }
-    return {
-        "nodes": nodes,
-        "axis_layout": axis_layout,
-        "factorized_weights": factorized_weights,
-        "parameter_arrays": parameter_arrays,
-        "named_axis_values": named_axis_values,
-        "axis_sizes": axis_sizes,
-    }
-
-
-def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> EvaluationResult:
-    """Reconstruct an :class:`~simulation.evaluation.EvaluationResult` from an encoded dict.
-
-    Matches stored arrays back to model indexes by name, then constructs a
-    new :class:`~simulation.evaluation.EvaluationResult` whose node arrays,
-    axis layout, and weights are compatible with those produced by a fresh
-    :meth:`~simulation.evaluation.Evaluation.execute_plan` call on the same
-    scenario — so that :func:`~simulation.handle._merge_results` can merge
-    the loaded result with new samples.
-
-    Parameters
-    ----------
-    data : dict[str, Any]
-        Dict previously produced by :func:`_encode_result`.
-    indexes : Iterable[GenericIndex]
-        Model indexes used to map names back to graph nodes and
-        :class:`~model.index.GenericIndex` keys.
-
-    Returns
-    -------
-    EvaluationResult
-        Reconstructed result.  Graph node identity is that of the current
-        model, so the result is valid for the current session.
-    """
-    idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in indexes}
-    axis_role: dict[str, str] = {row[0]: row[1] for row in data["axis_layout"]}
-
-    state_values: dict = {}
-    for name, encoded in data["nodes"].items():
-        if name in idx_by_name:
-            state_values[idx_by_name[name].node] = _decode_array(encoded)
-    state = State(values=state_values)
-
-    axis_layout: dict[Axis, int] = {Axis(row[0], row[1]): int(row[2]) for row in data["axis_layout"]}
-    factorized_weights: dict[Axis, np.ndarray] = {
-        Axis(name, axis_role[name]): _decode_array(encoded) for name, encoded in data["factorized_weights"].items()
-    }
-    parameter_arrays: dict[GenericIndex, np.ndarray] = {
-        idx_by_name[name]: _decode_array(encoded)
-        for name, encoded in data["parameter_arrays"].items()
-        if name in idx_by_name
-    }
-    named_axis_values: dict[str, np.ndarray] = {
-        name: _decode_array(encoded) for name, encoded in data["named_axis_values"].items()
-    }
-    axis_sizes: dict[Axis, int] = {}
-    for key, size in data["axis_sizes"].items():
-        ax_name, ax_role = key.split(":", 1)
-        axis_sizes[Axis(ax_name, ax_role)] = int(size)
-
-    return EvaluationResult(
-        state=state,
-        axis_layout=axis_layout,
-        parameter_arrays=parameter_arrays,
-        axis_sizes=axis_sizes,
-        factorized_weights=factorized_weights,
-        named_axis_values=named_axis_values,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1094,30 +1090,17 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         scenario: Scenario,
         output: OutputT,
         config: EvaluationConfig,
+        *,
+        rng: np.random.Generator | None = None,
     ) -> EvaluationHandle:
         """Reconstruct an :class:`~simulation.handle.EvaluationHandle` from a saved output.
 
         Template method.  Checks that *output* is resumable, delegates
-        deserialisation to :meth:`_extract_resume_state`, builds a fresh
+        deserialisation to :meth:`extract_resume_state`, builds a fresh
         :class:`~simulation.evaluation.Evaluation` plan, and returns an
         :class:`~simulation.handle.EvaluationHandle` ready for
         :meth:`~simulation.handle.EvaluationHandle.extend`.
 
-        .. note::
-            :class:`~simulation.handle.EvaluationHandle` is constructed
-            directly here rather than via
-            :meth:`~simulation.evaluation.Evaluation.evaluate_incremental`.
-            This is an intentional exception to the convention documented on
-            that class, necessary to seed the handle with a pre-existing
-            result.
-
-        .. note::
-            The :class:`~simulation.handle.EvaluationHandle` is seeded with
-            a fresh :func:`numpy.random.default_rng` with no fixed seed, so
-            samples drawn by subsequent :meth:`~simulation.handle.EvaluationHandle.extend`
-            calls are not reproducible across sessions.  If reproducibility
-            matters, add an optional ``rng=`` parameter to this method in a
-            future milestone.
 
         Parameters
         ----------
@@ -1129,6 +1112,9 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         config : EvaluationConfig
             Evaluation parameters (currently unused; reserved for future
             convergence-loop support).
+        rng : numpy.random.Generator, optional
+            Random number generator for reproducible extension sampling.
+            When ``None``, a fresh :func:`numpy.random.default_rng` is used.
 
         Returns
         -------
@@ -1156,7 +1142,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             evaluation=evaluation,
             plan=plan,
             result=state.result,
-            rng=np.random.default_rng(),
+            rng=rng if rng is not None else np.random.default_rng(),
             parameters=state.parameters,
             parameter_axes=state.parameter_axes,
             functions=state.functions,
