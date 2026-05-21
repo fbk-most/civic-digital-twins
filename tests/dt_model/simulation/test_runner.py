@@ -292,6 +292,44 @@ class TestModelOutput:
         assert "to_dict" not in abstract
         assert "from_dict" not in abstract
 
+    def test_deserialize_raises_for_non_dataclass(self) -> None:
+        """_deserialize raises NotImplementedError when the subclass is not a dataclass."""
+        out = ModelOutput()  # type: ignore[abstract]
+        with pytest.raises(NotImplementedError):
+            out._deserialize({})
+
+    def test_deserialize_uses_field_default_when_key_missing(self) -> None:
+        """_deserialize falls back to field default when the key is absent from data."""
+
+        @dataclasses.dataclass(eq=False)
+        class _WithDefault(ModelOutput):
+            required: int
+            optional: str = "fallback"
+
+            def __post_init__(self) -> None:
+                super().__init__()
+
+        obj = _WithDefault.__new__(_WithDefault)
+        ModelOutput.__init__(obj)
+        obj._deserialize({"required": 1})
+        assert obj.optional == "fallback"
+
+    def test_deserialize_uses_field_default_factory_when_key_missing(self) -> None:
+        """_deserialize calls the default_factory when the key is absent from data."""
+
+        @dataclasses.dataclass(eq=False)
+        class _WithFactory(ModelOutput):
+            required: int
+            items: list = dataclasses.field(default_factory=list)
+
+            def __post_init__(self) -> None:
+                super().__init__()
+
+        obj = _WithFactory.__new__(_WithFactory)
+        ModelOutput.__init__(obj)
+        obj._deserialize({"required": 1})
+        assert obj.items == []
+
 
 # ---------------------------------------------------------------------------
 # ModelRunHandle
