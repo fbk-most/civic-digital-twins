@@ -25,6 +25,7 @@ from civic_digital_twins.dt_model import (  # noqa: E402
     GenericIndex,
     Index,
     Model,
+    Scenario,
     graph,
 )
 
@@ -157,7 +158,7 @@ scenario: dict[CategoricalIndex, list[str]] = {
     CV_weather: ["good", "unsettled", "bad"],
 }
 
-ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
+ensemble = CrossProductEnsemble(Scenario(model), restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
 # 2 × 3 = 6 scenarios (max_categorical_size=10 >= support sizes 2 and 3,
 # so all CV values are enumerated rather than sampled randomly)
 assert len(ensemble) == 6
@@ -171,7 +172,7 @@ assert abs(ensemble.ensemble_weights[0].sum() - 1.0) < 1e-10
 
 visitors_axis = np.linspace(0, 20_000, 201)
 
-result = Evaluation(model).evaluate(
+result = Evaluation(Scenario(model)).evaluate(
     ensemble=ensemble,
     parameters={PV_visitors: visitors_axis},
 )
