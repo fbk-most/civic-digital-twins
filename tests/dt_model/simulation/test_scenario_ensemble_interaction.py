@@ -448,3 +448,81 @@ def test_cross_product_ensemble_rejects_wrong_type():
     """CrossProductEnsemble raises TypeError when passed something other than Scenario/Model."""
     with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
         CrossProductEnsemble("not a model")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# CrossProductEnsemble - scenario dict override weights respected
+# ---------------------------------------------------------------------------
+
+
+def test_cross_product_ensemble_honors_dict_override_weights():
+    """CrossProductEnsemble uses scenario dict override probabilities, not model probs.
+
+    Regression for the bug where cat.outcomes was always used, silently
+    discarding any dict[str, float] override probability set on the scenario.
+    With max_categorical_size >= support size the ensemble enumerates exactly,
+    so weights are deterministic.
+    """
+    # Model declares heavily skewed probs: a=0.9, b=0.1.
+    cat = CategoricalIndex("cat", {"a": 0.9, "b": 0.1})
+    model = _make_model(cat)
+
+    # Override to equal weights - the ensemble must reflect these, not the model probs.
+    scenario = Scenario(model, overrides={cat: {"a": 0.5, "b": 0.5}})  # type: ignore[dict-item]
+    ens = CrossProductEnsemble(scenario, max_categorical_size=20)
+
+    weights = ens.ensemble_weights[0]  # shape (2,) - one entry per outcome
+    assignments = ens.assignments()[cat]  # shape (2,)
+
+    # Build a mapping outcome -> weight for order-independent comparison.
+    weight_by_value = {str(v): float(w) for v, w in zip(assignments, weights)}
+    assert weight_by_value == pytest.approx({"a": 0.5, "b": 0.5})
+
+
+def test_cross_product_ensemble_dict_override_restricts_support():
+    """CrossProductEnsemble auto-restricts to the dict override's keys.
+
+    When the scenario dict override covers only a strict subset of the model's
+    support, the ensemble must sample only those outcomes and must not include
+    any value absent from the override.
+    """
+    # Model has three outcomes: a, b, c.
+    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.3, "c": 0.2})
+    model = _make_model(cat)
+
+    # Override restricts to {a, b} with custom weights.
+    scenario = Scenario(model, overrides={cat: {"a": 0.7, "b": 0.3}})  # type: ignore[dict-item]
+    ens = CrossProductEnsemble(scenario, max_categorical_size=20)
+
+    assignments = ens.assignments()[cat]
+    sampled_values = {str(v) for v in assignments}
+    assert sampled_values == {"a", "b"}, f"unexpected values in ensemble: {sampled_values}"
+    assert ens.size == 2  # exactly the two restricted outcomes
+
+    weights = ens.ensemble_weights[0]
+    weight_by_value = {str(v): float(w) for v, w in zip(assignments, weights)}
+    assert weight_by_value == pytest.approx({"a": 0.7, "b": 0.3})
+
+
+def test_cross_product_ensemble_explicit_restriction_overrides_dict_keys():
+    """An explicit restrictions= entry takes precedence over the dict override's key set.
+
+    The restriction controls which values are sampled; probabilities still come
+    from the scenario dict override (not the model).
+    """
+    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.3, "c": 0.2})
+    model = _make_model(cat)
+    # Scenario override covers {a, b, c} with custom probs.
+    scenario = Scenario(model, overrides={cat: {"a": 0.6, "b": 0.3, "c": 0.1}})  # type: ignore[dict-item]
+
+    # Explicit restriction further limits to just {a, b}.
+    ens = CrossProductEnsemble(scenario, restrictions={cat: ["a", "b"]}, max_categorical_size=20)
+
+    assignments = ens.assignments()[cat]
+    sampled_values = {str(v) for v in assignments}
+    assert sampled_values == {"a", "b"}
+
+    # Weights must come from the override dict, renormalised over {a, b}: 0.6/0.9, 0.3/0.9.
+    weights = ens.ensemble_weights[0]
+    weight_by_value = {str(v): float(w) for v, w in zip(assignments, weights)}
+    assert weight_by_value == pytest.approx({"a": 0.6 / 0.9, "b": 0.3 / 0.9})

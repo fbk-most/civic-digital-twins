@@ -69,18 +69,33 @@ Design rules:
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
+from typing import Any
 
-from scipy import stats
+import numpy as np
+from scipy import interpolate, ndimage, stats
 
 from civic_digital_twins.dt_model import (
     CategoricalIndex,
     ConditionalDistributionIndex,
+    CrossProductEnsemble,
     DistributionIndex,
+    Evaluation,
+    EvaluationResult,
     GenericIndex,
     Index,
     Model,
     graph,
+    sample_across,
+)
+from civic_digital_twins.dt_model.model.index import Distribution
+from civic_digital_twins.dt_model.simulation.evaluation import _get_default_executor
+from civic_digital_twins.dt_model.simulation.runner import (
+    EvaluationConfig,
+    ModelEvaluator,
+    ModelOutput,
+    ModelRunHandle,
 )
 
 try:
@@ -762,3 +777,576 @@ class MolvenoModel(Model):
         self.i_p_excursionists_reduction_factor = i_p_excursionists_reduction_factor
         self.i_p_tourists_saturation_level = i_p_tourists_saturation_level
         self.i_p_excursionists_saturation_level = i_p_excursionists_saturation_level
+
+
+# ---------------------------------------------------------------------------
+# Post-processing helpers
+# ---------------------------------------------------------------------------
+
+
+def compute_sustainable_area(field: np.ndarray, tt: np.ndarray, ee: np.ndarray) -> float:
+    """Compute the sustainable area under the sustainability field.
+
+    Parameters
+    ----------
+    field : np.ndarray
+        Sustainability field of shape ``(N_t, N_e)``.
+    tt : np.ndarray
+        Tourist parameter axis (1-D, shape ``(N_t,)``).
+    ee : np.ndarray
+        Excursionist parameter axis (1-D, shape ``(N_e,)``).
+
+    Returns
+    -------
+    float
+        Integral approximation of the sustainable area.
+    """
+    return field.sum() * functools.reduce(
+        lambda x, y: x * y,
+        [axis.max() / (axis.size - 1) + 1 for axis in (tt, ee)],
+    )
+
+
+def compute_sustainability_index_with_ci(
+    field: np.ndarray,
+    tt: np.ndarray,
+    ee: np.ndarray,
+    presences: list,
+    confidence: float = 0.9,
+) -> tuple[float, float]:
+    """Return the sustainability index and its confidence half-width.
+
+    Parameters
+    ----------
+    field : np.ndarray
+        Sustainability field of shape ``(N_t, N_e)``.
+    tt : np.ndarray
+        Tourist parameter axis (1-D, shape ``(N_t,)``).
+    ee : np.ndarray
+        Excursionist parameter axis (1-D, shape ``(N_e,)``).
+    presences : list
+        List of ``(tourist, excursionist)`` presence pairs.
+    confidence : float, optional
+        Confidence level for the interval (default 0.9).
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(mean_index, ci_half_width)``.
+    """
+    index = interpolate.interpn((tt, ee), field, np.array(presences), bounds_error=False, fill_value=0.0)
+    m, se = np.mean(index), stats.sem(index)
+    h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
+    return float(m), float(h)
+
+
+def compute_sustainability_by_constraint(
+    field_elements: dict,
+    tt: np.ndarray,
+    ee: np.ndarray,
+    presences: list,
+    confidence: float = 0.9,
+) -> dict[str, tuple[float, float]]:
+    """Return (sustainability_index, CI_half_width) per constraint name.
+
+    Parameters
+    ----------
+    field_elements : dict
+        Mapping of constraint name (str) to per-constraint field array ``(N_t, N_e)``.
+    tt : np.ndarray
+        Tourist parameter axis (1-D, shape ``(N_t,)``).
+    ee : np.ndarray
+        Excursionist parameter axis (1-D, shape ``(N_e,)``).
+    presences : list
+        List of ``(tourist, excursionist)`` presence pairs.
+    confidence : float, optional
+        Confidence level for the interval (default 0.9).
+
+    Returns
+    -------
+    dict[str, tuple[float, float]]
+        Mapping of constraint name to ``(mean_index, ci_half_width)``.
+    """
+    result = {}
+    for key, fe in field_elements.items():
+        name = key
+        index = interpolate.interpn((tt, ee), fe, np.array(presences), bounds_error=False, fill_value=0.0)
+        m, se = np.mean(index), stats.sem(index)
+        h = se * stats.t.ppf((1 + confidence) / 2.0, index.size - 1)
+        result[name] = (float(m), float(h))
+    return result
+
+
+def compute_modal_lines(
+    field_elements: dict,
+    tt: np.ndarray,
+    ee: np.ndarray,
+) -> dict[str, tuple[tuple, tuple]]:
+    """Compute the modal line per constraint via orthogonal regression (first PC).
+
+    Parameters
+    ----------
+    field_elements : dict
+        Mapping of constraint name (str) to per-constraint field array ``(N_t, N_e)``.
+    tt : np.ndarray
+        Tourist parameter axis (1-D, shape ``(N_t,)``).
+    ee : np.ndarray
+        Excursionist parameter axis (1-D, shape ``(N_e,)``).
+
+    Returns
+    -------
+    dict[str, tuple[tuple, tuple]]
+        Mapping of constraint name to ``((t0, t1), (e0, e1))`` line endpoints.
+    """
+    bounds = [tt.max(), ee.max()]
+    modal_lines = {}
+    for key, fe in field_elements.items():
+        name = key
+        matrix = (fe <= 0.5) & (
+            (ndimage.shift(fe, (0, 1)) > 0.5)
+            | (ndimage.shift(fe, (0, -1)) > 0.5)
+            | (ndimage.shift(fe, (1, 0)) > 0.5)
+            | (ndimage.shift(fe, (-1, 0)) > 0.5)
+        )
+        yi, xi = np.nonzero(matrix)
+        if len(yi) < 3:
+            continue
+        pts = np.stack([tt[yi], ee[xi]], axis=1)
+        centroid = pts.mean(axis=0)
+        _, _, Vt = np.linalg.svd(pts - centroid, full_matrices=False)
+        direction = Vt[0]
+        t_lo, t_hi = -np.inf, np.inf
+        for i, bound in enumerate(bounds):
+            if abs(direction[i]) > 1e-10:
+                ta = -centroid[i] / direction[i]
+                tb = (bound - centroid[i]) / direction[i]
+                t_lo = max(t_lo, min(ta, tb))
+                t_hi = min(t_hi, max(ta, tb))
+        if t_lo >= t_hi:
+            continue
+        p0 = centroid + t_lo * direction
+        p1 = centroid + t_hi * direction
+        modal_lines[name] = ((p0[0], p1[0]), (p0[1], p1[1]))
+    return modal_lines
+
+
+# ---------------------------------------------------------------------------
+# Field helpers
+# ---------------------------------------------------------------------------
+
+
+def _presence_transformation(
+    presence: float,
+    reduction_factor: float,
+    saturation_level: float,
+    sharpness: int = 3,
+) -> float:
+    """Apply the presence saturation transformation used for scatter-plot samples.
+
+    Parameters
+    ----------
+    presence : float
+        Raw sampled presence value.
+    reduction_factor : float
+        Multiplicative reduction factor for the presence.
+    saturation_level : float
+        Saturation level; controls where the curve bends.
+    sharpness : int, optional
+        Controls the steepness of the saturation curve (default 3).
+
+    Returns
+    -------
+    float
+        Transformed presence value.
+    """
+    tmp = presence * reduction_factor
+    return tmp * saturation_level / ((tmp**sharpness + saturation_level**sharpness) ** (1 / sharpness))
+
+
+def compute_sustainability_field(
+    model: MolvenoModel,
+    result: Any,  # EvaluationResult
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Compute the sustainability field and per-constraint field elements.
+
+    Parameters
+    ----------
+    model : MolvenoModel
+        The model whose constraints define the field.
+    result : EvaluationResult
+        The raw evaluation result from Evaluation.evaluate().
+
+    Returns
+    -------
+    tuple[np.ndarray, dict[str, np.ndarray]]
+        ``(field, field_elements)`` where ``field`` has shape ``(N_t, N_e)``
+        and ``field_elements`` maps each constraint name (str) to its
+        ``(N_t, N_e)`` component array.
+    """
+    field = np.ones(
+        (
+            result.parameter_values[model.pv_tourists].size,
+            result.parameter_values[model.pv_excursionists].size,
+        )
+    )
+    field_elements: dict = {}
+    for c in model.constraints:
+        usage = np.broadcast_to(result[c.usage], result.full_shape)
+        if isinstance(c.capacity.value, Distribution):
+            mask = (1.0 - c.capacity.value.cdf(usage)).astype(float)
+        else:
+            cap = np.broadcast_to(result[c.capacity], result.full_shape)
+            mask = (usage <= cap).astype(float)
+        field_elem = np.tensordot(mask, result.weights, axes=([-1], [0]))
+        field_elements[c.name] = field_elem
+        field *= field_elem
+    return field, field_elements
+
+
+# ---------------------------------------------------------------------------
+# MolvenoOutput
+# ---------------------------------------------------------------------------
+
+
+@dataclass(eq=False)
+class MolvenoOutput(ModelOutput):
+    """Evaluation output for the Molveno overtourism model.
+
+    Carries the sustainability field (and per-constraint field elements) computed
+    from an :class:`~dt_model.simulation.evaluation.EvaluationResult`, together
+    with the parameter axes and presence samples used to produce it.
+
+    Parameters
+    ----------
+    field : np.ndarray
+        Sustainability field of shape ``(N_t, N_e)`` where each entry is
+        ``P(all constraints satisfied | tourists=tt[t], excursionists=ee[e])``.
+    field_elements : dict
+        Per-constraint field arrays ``{name: np.ndarray}``.  Keys are
+        constraint name strings in all cases.
+    tt : np.ndarray
+        Tourist parameter axis (1-D, shape ``(N_t,)``).
+    ee : np.ndarray
+        Excursionist parameter axis (1-D, shape ``(N_e,)``).
+    sample_tourists : list[float]
+        Transformed tourist presence samples for scatter-plot overlays.
+    sample_excursionists : list[float]
+        Transformed excursionist presence samples for scatter-plot overlays.
+    """
+
+    field: np.ndarray
+    field_elements: dict
+    tt: np.ndarray
+    ee: np.ndarray
+    sample_tourists: list[float]
+    sample_excursionists: list[float]
+    confidence: float = 0.8
+
+    def __post_init__(self) -> None:
+        """Initialise the :class:`ModelOutput` base after dataclass field assignment."""
+        super().__init__()
+
+    @functools.cached_property
+    def _zip_samples(self) -> list[tuple[float, float]]:
+        """Zipped (tourist, excursionist) presence sample pairs."""
+        return list(zip(self.sample_tourists, self.sample_excursionists))
+
+    @functools.cached_property
+    def sustainable_area(self) -> float:
+        """Sustainable area under the sustainability field."""
+        return compute_sustainable_area(self.field, self.tt, self.ee)
+
+    @functools.cached_property
+    def sustainability_index(self) -> tuple[float, float]:
+        """Overall sustainability index and CI half-width at ``self._confidence``."""
+        return compute_sustainability_index_with_ci(self.field, self.tt, self.ee, self._zip_samples, self.confidence)
+
+    @functools.cached_property
+    def sustainability_by_constraint(self) -> dict[str, tuple[float, float]]:
+        """Per-constraint sustainability index and CI half-width."""
+        return compute_sustainability_by_constraint(
+            self.field_elements, self.tt, self.ee, self._zip_samples, self.confidence
+        )
+
+    @functools.cached_property
+    def modal_lines(self) -> dict[str, tuple[tuple, tuple]]:
+        """Per-constraint modal lines as ``((t0, t1), (e0, e1))`` coordinate pairs."""
+        return compute_modal_lines(self.field_elements, self.tt, self.ee)
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serialisable snapshot including derived sustainability metrics.
+
+        Extends the base :meth:`~dt_model.simulation.runner.ModelOutput.to_snapshot`
+        with the four derived properties that the frontend needs but that are
+        not stored in the checkpoint:
+
+        ``"sustainable_area"``
+            Scalar fraction of the parameter space that is sustainable.
+        ``"sustainability_index"``
+            ``{"value": float, "ci": float}`` — overall sustainability index
+            and half-width of the confidence interval.
+        ``"sustainability_by_constraint"``
+            ``{name: {"value": float, "ci": float}}`` per-constraint.
+        ``"modal_lines"``
+            ``{name: {"t": [t0, t1], "e": [e0, e1]}}`` per-constraint
+            orthogonal-regression modal lines.
+
+        Returns
+        -------
+        dict[str, Any]
+            Snapshot dict including all base fields plus the above entries.
+        """
+        d = super().to_snapshot()
+        d["sustainable_area"] = float(self.sustainable_area)
+        idx, ci = self.sustainability_index
+        d["sustainability_index"] = {"value": float(idx), "ci": float(ci)}
+        d["sustainability_by_constraint"] = {
+            k: {"value": float(v), "ci": float(c)} for k, (v, c) in self.sustainability_by_constraint.items()
+        }
+        d["modal_lines"] = {
+            k: {"t": list(t_coords), "e": list(e_coords)} for k, (t_coords, e_coords) in self.modal_lines.items()
+        }
+        return d
+
+
+# ---------------------------------------------------------------------------
+# MolvenoEvaluator
+# ---------------------------------------------------------------------------
+
+
+class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
+    """Evaluator for the Molveno overtourism model.
+
+    Implements the :class:`~dt_model.simulation.runner.ModelEvaluator` protocol
+    for :class:`~overtourism_molveno.molveno_model.MolvenoModel`, producing a
+    :class:`MolvenoOutput` that carries the sustainability field and a resume
+    payload.
+
+    Parameters
+    ----------
+    model : MolvenoModel
+        The model instance to evaluate.
+    t_max : int, optional
+        Maximum tourist presence value on the parameter grid (default 10000).
+    e_max : int, optional
+        Maximum excursionist presence value on the parameter grid (default 10000).
+    t_sample : int, optional
+        Number of intervals along the tourist axis; grid has ``t_sample + 1``
+        points (default 100).
+    e_sample : int, optional
+        Number of intervals along the excursionist axis; grid has ``e_sample + 1``
+        points (default 100).
+    target_presence_samples : int, optional
+        Number of presence samples drawn for scatter-plot overlays (default 200).
+    """
+
+    def __init__(
+        self,
+        model: MolvenoModel,
+        *,
+        t_max: int = 10000,
+        e_max: int = 10000,
+        t_sample: int = 100,
+        e_sample: int = 100,
+        target_presence_samples: int = 200,
+    ) -> None:
+        super().__init__(model)
+        self._t_max = t_max
+        self._e_max = e_max
+        self._t_sample = t_sample
+        self._e_sample = e_sample
+        self._target_presence_samples = target_presence_samples
+
+    def _pre_compute(self, scenario: Any, config: EvaluationConfig) -> tuple[np.ndarray, np.ndarray, dict]:
+        """Pre-compute parameter axes and presence samples (no result dependency).
+
+        Used by both :meth:`evaluate` and :meth:`run_async` to share the
+        synchronous setup work.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario being evaluated.
+        config : EvaluationConfig
+            Evaluation parameters; ``ensemble_size`` controls the cross-product
+            size for the sampling ensemble.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray, dict]
+            ``(tt, ee, pv_samples)`` where ``tt`` and ``ee`` are the parameter
+            axes and ``pv_samples`` maps each presence index to its samples.
+        """
+        model = self._model
+        tt = np.linspace(0, self._t_max, self._t_sample + 1)
+        ee = np.linspace(0, self._e_max, self._e_sample + 1)
+        sampling_ensemble = CrossProductEnsemble(
+            type(scenario)(model),
+            max_categorical_size=config.ensemble_size,
+            exclude=model.pvs,
+        )
+        pv_samples = sample_across(
+            sampling_ensemble, [model.pv_tourists, model.pv_excursionists], total=self._target_presence_samples
+        )
+        return tt, ee, pv_samples
+
+    def _build_output(
+        self,
+        result: EvaluationResult,
+        tt: np.ndarray,
+        ee: np.ndarray,
+        pv_samples: dict,
+    ) -> MolvenoOutput:
+        """Build a :class:`MolvenoOutput` from an evaluated result and pre-computed axes.
+
+        Computes the sustainability field, transforms presence samples, constructs
+        the output, and attaches the resume payload via :meth:`attach_resume`.
+
+        Parameters
+        ----------
+        result : EvaluationResult
+            The raw engine result.
+        tt : np.ndarray
+            Tourist parameter axis.
+        ee : np.ndarray
+            Excursionist parameter axis.
+        pv_samples : dict
+            Pre-computed presence samples from :meth:`_pre_compute`.
+
+        Returns
+        -------
+        MolvenoOutput
+            Fully populated output with resume payload attached.
+        """
+        model = self._model
+        field, field_elements = compute_sustainability_field(model, result)
+        rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
+        sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
+        rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
+        sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
+        sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
+        sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
+        output = MolvenoOutput(
+            field=field,
+            field_elements=field_elements,
+            tt=tt,
+            ee=ee,
+            sample_tourists=sample_tourists,
+            sample_excursionists=sample_excursionists,
+        )
+        self.attach_resume(output, result)
+        return output
+
+    def evaluate(self, scenario: Any, config: EvaluationConfig) -> MolvenoOutput:
+        """Run a blocking evaluation and return a :class:`MolvenoOutput`.
+
+        Steps:
+
+        1. Pre-compute the ``(t_sample+1) × (e_sample+1)`` parameter axes and
+           presence samples via :meth:`_pre_compute`.
+        2. Build a :class:`~dt_model.CrossProductEnsemble` for the categorical
+           dimension (context variables × their probability weights).
+        3. Run :class:`~dt_model.Evaluation` over the full 2-D parameter grid.
+        4. Compute the sustainability field, transform presence samples, and
+           attach the resume payload via :meth:`_build_output`.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate, optionally carrying value overrides.
+        config : EvaluationConfig
+            Evaluation parameters; ``config.ensemble_size`` controls the
+            maximum categorical cross-product size passed to
+            :class:`~dt_model.CrossProductEnsemble`.
+
+        Returns
+        -------
+        MolvenoOutput
+            Contains the sustainability field, per-constraint field elements,
+            parameter axes, and a resume payload.
+        """
+        model = self._model
+        tt, ee, pv_samples = self._pre_compute(scenario, config)
+        ensemble = CrossProductEnsemble(
+            scenario,
+            max_categorical_size=config.ensemble_size,
+            exclude=model.pvs,
+        )
+        result = Evaluation(scenario).evaluate(
+            ensemble=ensemble,
+            parameters={model.pv_tourists: tt, model.pv_excursionists: ee},
+        )
+        return self._build_output(result, tt, ee, pv_samples)
+
+    def run_async(self, scenario: Any, config: EvaluationConfig) -> ModelRunHandle[MolvenoOutput]:
+        """Submit an engine-level async evaluation and return a handle immediately.
+
+        Pre-computes everything that does not depend on the evaluation result
+        (parameter grids, ensembles, presence samples) synchronously on the
+        calling thread, then submits only the
+        :meth:`~dt_model.Evaluation.evaluate` call to the shared
+        :func:`~dt_model.simulation.evaluation._get_default_executor` thread
+        pool.  The :class:`~dt_model.simulation.runner.ModelRunHandle`
+        post-processor closure completes the rest of the work once the result
+        is available.
+
+        This matches Bologna's tier-3 pattern: the future holds a
+        :class:`~dt_model.EvaluationResult`, satisfying
+        :class:`~dt_model.simulation.runner.ModelRunHandle`'s type contract.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate.
+        config : EvaluationConfig
+            Evaluation parameters.
+
+        Returns
+        -------
+        ModelRunHandle[MolvenoOutput]
+            Handle whose :meth:`~dt_model.simulation.runner.ModelRunHandle.get`
+            returns a :class:`MolvenoOutput`.
+        """
+        model = self._model
+        tt, ee, pv_samples = self._pre_compute(scenario, config)
+        ensemble = CrossProductEnsemble(
+            scenario,
+            max_categorical_size=config.ensemble_size,
+            exclude=model.pvs,
+        )
+        future = _get_default_executor().submit(
+            Evaluation(scenario).evaluate,
+            ensemble=ensemble,
+            parameters={model.pv_tourists: tt, model.pv_excursionists: ee},
+        )
+
+        def _post(result: EvaluationResult) -> MolvenoOutput:
+            return self._build_output(result, tt, ee, pv_samples)
+
+        return ModelRunHandle(future, _post)
+
+    def input_schema(self) -> dict[str, dict[str, Any]]:
+        """Return a schema dict describing the Molveno model's tunable indexes.
+
+        Includes entries for the three categorical context variables
+        (``cv_weekday``, ``cv_season``, ``cv_weather``) and the four
+        capacity distribution parameters.
+
+        Returns
+        -------
+        dict[str, dict[str, Any]]
+            Maps each index name to a metadata dict describing its type and,
+            for categoricals, its full support.
+
+        Examples
+        --------
+        >>> evaluator.input_schema()
+        {"weekday": {"type": "categorical", "support": [...]}, ...}
+        """
+        model = self._model
+        schema: dict[str, dict[str, Any]] = {}
+        for cv in model.cvs:
+            schema[cv.name] = {"type": "categorical", "support": list(cv.support)}
+        for cap in model.capacities:
+            schema[cap.name] = {"type": "distribution"}
+        return schema

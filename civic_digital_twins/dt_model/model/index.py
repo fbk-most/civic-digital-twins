@@ -83,6 +83,11 @@ class GenericIndex(ABC):
         """The underlying computation graph node."""
 
     @property
+    @abstractmethod
+    def name(self) -> str:
+        """The human-readable name of this index."""
+
+    @property
     def output_axes(self) -> tuple[Axis, ...]:
         """Semantic domain axes carried by this index's output.
 

@@ -186,14 +186,14 @@ uses `.constraints`.  For a production model with multiple sub-models see
 ## 5 — Ensemble
 
 ```python
-from civic_digital_twins.dt_model import CrossProductEnsemble
+from civic_digital_twins.dt_model import CrossProductEnsemble, Scenario
 
 scenario: dict[CategoricalIndex, list[str]] = {
     CV_season:  ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }
 
-ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
+ensemble = CrossProductEnsemble(Scenario(model), restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
 # 2 × 3 = 6 scenarios (all CV combinations enumerated)
 ```
 
@@ -218,11 +218,11 @@ grid axes over which the sustainability field is computed:
 
 ```python
 import numpy as np
-from civic_digital_twins.dt_model import Evaluation
+from civic_digital_twins.dt_model import Evaluation, Scenario
 
 visitors_axis = np.linspace(0, 20_000, 201)
 
-result = Evaluation(model).evaluate(
+result = Evaluation(Scenario(model)).evaluate(
     ensemble=ensemble,
     parameters={PV_visitors: visitors_axis},
 )

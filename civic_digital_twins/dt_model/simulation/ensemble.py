@@ -590,6 +590,18 @@ class CrossProductEnsemble:
             restrictions={cv_weather: ["good", "unsettled"]},
         )
 
+    **Scenario dict overrides** are respected automatically.  When the scenario
+    carries a ``dict[str, float]`` override for a
+    :class:`~model.index.CategoricalIndex`, the override probabilities replace
+    the model's declared probabilities *and* the support is automatically
+    restricted to the override's keys (so only those outcomes are sampled).
+    An explicit ``restrictions`` entry for the same index takes precedence for
+    the value subset, but probabilities still come from the override::
+
+        # cv_weather model probs: good=0.33, unsettled=0.33, bad=0.34
+        scenario = Scenario(model, overrides={cv_weather: {"good": 0.8, "unsettled": 0.2}})
+        ensemble = CrossProductEnsemble(scenario)  # only good/unsettled, with 80/20 weights
+
     Parameters
     ----------
     scenario_or_model:
@@ -676,10 +688,12 @@ class CrossProductEnsemble:
                 if isinstance(cat, ConditionalCategoricalIndex):
                     parent_values = {p.name: assignments[id(p)] for p in cat.parents}
                     outcomes = cat.outcomes_for(**parent_values)
+                    subset = restrictions.get(cat)
+                    values = list(subset) if subset is not None else cat.support
                 else:
-                    outcomes = cat.outcomes
-                subset = restrictions.get(cat)
-                values = cat.support if subset is None else list(subset)
+                    outcomes = scenario.effective_outcomes(cat) or cat.outcomes
+                    subset = restrictions.get(cat)
+                    values = list(subset) if subset is not None else list(outcomes.keys())
                 probs = [outcomes[v] for v in values]
                 for sub_w, val in _cat_samples(values, probs, max_categorical_size, rng):
                     new_combos.append((w * sub_w, {**assignments, id(cat): val}))

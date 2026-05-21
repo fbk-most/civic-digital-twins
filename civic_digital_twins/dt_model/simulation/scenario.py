@@ -208,6 +208,23 @@ class Scenario:
         """The wrapped model."""
         return self._model
 
+    @property
+    def overrides(self) -> dict[GenericIndex, DomainValue]:
+        """A shallow copy of the active override mapping.
+
+        Returns a new dict so that callers cannot mutate the internal state.
+        Each key is a :class:`~model.index.GenericIndex`; each value is the
+        :data:`~model.index.DomainValue` that shadows the index's own value
+        at evaluation time.
+
+        Returns
+        -------
+        dict[GenericIndex, DomainValue]
+            Copy of the overrides passed at construction, or an empty dict
+            when no overrides were given.
+        """
+        return dict(self._overrides)
+
     def effective_distribution(self, idx: GenericIndex) -> Distribution | None:
         """Return the effective :class:`~model.index.Distribution` for *idx*.
 
