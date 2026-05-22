@@ -21,7 +21,10 @@ from civic_digital_twins.dt_model import (
     NumpyBackend,
     Scenario,
     TimeseriesIndex,
+    expose,
     graph,
+    inputs,
+    outputs,
 )
 from civic_digital_twins.dt_model.simulation.runner import (
     ModelEvaluator,
@@ -79,7 +82,7 @@ class InflowModel(Model):
     statistics.
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Inputs of :class:`InflowModel`."""
 
@@ -97,7 +100,7 @@ class InflowModel(Model):
         i_b_p50_postponement: Index
         i_b_starting_modified_factor: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         """Outputs of :class:`InflowModel`."""
 
@@ -113,7 +116,7 @@ class InflowModel(Model):
         total_paid: Index
         total_shifted: Index
 
-    @dataclass
+    @expose
     class Expose:
         """Inspectable intermediate indexes of :class:`InflowModel`."""
 
@@ -377,7 +380,7 @@ class TrafficModel(Model):
     scenarios together with ratio indexes.
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Inputs of :class:`TrafficModel`."""
 
@@ -386,7 +389,7 @@ class TrafficModel(Model):
         modified_inflow: Index
         modified_starting: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         """Outputs of :class:`TrafficModel`."""
 
@@ -455,7 +458,7 @@ class EmissionsModel(Model):
     to derive the modified average emissions.
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Inputs of :class:`EmissionsModel`."""
 
@@ -466,7 +469,7 @@ class EmissionsModel(Model):
         modified_traffic: TimeseriesIndex
         modified_euro_class_split: list[Index]
 
-    @dataclass
+    @outputs
     class Outputs:
         """Outputs of :class:`EmissionsModel`."""
 
@@ -574,7 +577,7 @@ class BolognaModel(Model):
     helpers are surfaced via ``expose``.
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Policy and behavioural parameters of :class:`BolognaModel`."""
 
@@ -591,7 +594,7 @@ class BolognaModel(Model):
         i_b_p50_postponement: Index
         i_b_starting_modified_factor: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         """KPI outputs of :class:`BolognaModel`."""
 
@@ -604,7 +607,7 @@ class BolognaModel(Model):
         total_emissions: Index
         total_modified_emissions: Index
 
-    @dataclass
+    @expose
     class Expose:
         """Inspectable timeseries used by plotting helpers."""
 
