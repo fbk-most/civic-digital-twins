@@ -25,6 +25,7 @@ from .model import (
     ModelContractWarning,
     ModelVariant,
     TimeseriesIndex,
+    functions,
 )
 from .simulation import (
     AsyncEvaluationHandle,
@@ -83,6 +84,7 @@ __all__ = [
     "Index",
     "InputsContractWarning",
     "IncompatibleResultError",
+    "functions",
     "Model",
     "ModelContractWarning",
     "ModelEvaluator",

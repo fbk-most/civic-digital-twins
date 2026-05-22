@@ -437,6 +437,7 @@ class State:
     values: dict[graph.Node, np.ndarray]
     flags: int = compileflags.defaults
     functions: dict[str, Functor] = field(default_factory=dict)
+    node_functions: dict[graph.Node, Functor] = field(default_factory=dict)
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -644,9 +645,9 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
         args.append(state.get_node_value(arg))
     for key, value in node.kwargs.items():
         kwargs[key] = state.get_node_value(value)
-    try:
-        function = state.functions[node.name]
-    except KeyError:
+    # Node-identity dispatch (explicit @functions binding) takes priority over name-based dispatch.
+    function = state.node_functions.get(node) or state.functions.get(node.name)
+    if function is None:
         raise FunctionNotFound(f"executor: cannot find functor for: {node.name}")
     return function(*args, **kwargs)
 

@@ -804,7 +804,11 @@ class Evaluation:
         # Total scenario count (used for scatter-back in guarded regions).
         n_S: int = axis_sizes[list(ensemble.ensemble_axes)[0]] if (has_guarded and ensemble is not None) else 0
 
-        state = executor.State({**scenario_subs, **c_subs}, functions=functions or {})
+        state = executor.State(
+            {**scenario_subs, **c_subs},
+            functions=functions or {},
+            node_functions=getattr(plan.model, "_node_functions", {}),
+        )
 
         # Execute regions in topological order.
         for region in plan.regions:
@@ -855,7 +859,11 @@ class Evaluation:
                     if ens_node in branch_region_nodes:
                         branch_values[ens_node] = np.take(ens_arr, branch_idx, axis=n_params)
 
-                branch_state = executor.State(branch_values, functions=functions or {})
+                branch_state = executor.State(
+                    branch_values,
+                    functions=functions or {},
+                    node_functions=getattr(plan.model, "_node_functions", {}),
+                )
                 executor.evaluate_nodes(branch_state, *region.nodes)
 
                 # Scatter branch results back into the main state as full-S arrays,
