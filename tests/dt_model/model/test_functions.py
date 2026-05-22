@@ -2,13 +2,12 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model import NumpyBackend, functions
+from civic_digital_twins.dt_model import NumpyBackend, functions, inputs, outputs
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import Index
@@ -134,11 +133,11 @@ def _make_model_with_function_call():
 def test_model_node_functions_empty_without_functions_arg():
     inp, out, _p, _fc = _make_model_with_function_call()
 
-    @dataclass
+    @inputs
     class Inputs:
         inp: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         out: Index
 
@@ -158,11 +157,11 @@ def test_model_node_functions_populated_with_functions_arg():
     inp, out, _p, fc = _make_model_with_function_call()
     functor = NumpyBackend.adapt(lambda x: x * 3)
 
-    @dataclass
+    @inputs
     class Inputs:
         inp: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         out: Index
 
@@ -192,11 +191,11 @@ def test_model_node_functions_input_node_not_claimed():
     out = Index("out", fc)
     functor = NumpyBackend.adapt(lambda x: x)
 
-    @dataclass
+    @inputs
     class Inputs:
         inp: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         out: Index
 
@@ -228,11 +227,11 @@ def test_model_node_functions_submodel_inherits():
 
     functor = NumpyBackend.adapt(lambda x: x * 7)
 
-    @dataclass
+    @inputs
     class InnerInputs:
         inp: Index
 
-    @dataclass
+    @outputs
     class InnerOutputs:
         out: Index
 
@@ -325,11 +324,11 @@ def test_evaluation_uses_node_functions():
     inp_idx = Index("x", p)
     out_idx = Index("out", fc)
 
-    @dataclass
+    @inputs
     class Inputs:
         x: Index
 
-    @dataclass
+    @outputs
     class Outputs:
         out: Index
 
@@ -368,11 +367,11 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
     b_inp = Index("b_inp", p_b)
     b_out = Index("b_out", fc_b)
 
-    @dataclass
+    @inputs
     class SingleInputs:
         inp: Index
 
-    @dataclass
+    @outputs
     class SingleOutputs:
         out: Index
 
@@ -389,7 +388,7 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
                 functions=fns,
             )
 
-    @dataclass
+    @outputs
     class ParentOutputs:
         a_out: Index
         b_out: Index

@@ -15,14 +15,17 @@ from .index import (
     Index,
     TimeseriesIndex,
 )
-from .functions import functions
+from .contracts import expose, functions, inputs, outputs
 from .model import AbstractIndexNotInInputsWarning, InputsContractWarning, Model, ModelContractWarning
 from .model_variant import ModelVariant
 
 __all__ = [
     "AbstractIndexNotInInputsWarning",
     "Axis",
+    "expose",
     "functions",
+    "inputs",
+    "outputs",
     "AxisRole",
     "CategoricalIndex",
     "ConditionalCategoricalIndex",

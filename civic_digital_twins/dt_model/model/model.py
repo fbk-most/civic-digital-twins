@@ -734,7 +734,7 @@ class Model:
             # ------------------------------------------------------------------
             warnings.warn(
                 "Passing 'indexes' explicitly is deprecated and will be removed in a future version. "
-                "Use the dataclass-based inputs/outputs/expose API instead.",
+                "Use the @inputs/@outputs/@expose contract decorators instead.",
                 DeprecationWarning,
                 stacklevel=3,
             )
@@ -759,6 +759,22 @@ class Model:
             # ------------------------------------------------------------------
             # New dataclass-based path
             # ------------------------------------------------------------------
+
+            # Warn when plain @dataclass instances are used instead of the
+            # dedicated @inputs / @outputs / @expose contract decorators.
+            for _label, _val, _marker in (
+                ("inputs", inputs, "_is_inputs"),
+                ("outputs", outputs, "_is_outputs"),
+                ("expose", expose, "_is_expose"),
+            ):
+                if _val is not None and dataclasses.is_dataclass(_val) and not getattr(type(_val), _marker, False):
+                    warnings.warn(
+                        f"Passing a plain @dataclass as {_label}= is deprecated. "
+                        f"Replace @dataclass with @{_label} from civic_digital_twins.dt_model.",
+                        DeprecationWarning,
+                        stacklevel=3,
+                    )
+
             self.indexes = _collect_indexes(inputs, outputs, expose)
 
             self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]

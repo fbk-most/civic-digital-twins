@@ -87,6 +87,8 @@ from civic_digital_twins.dt_model import (
     Index,
     Model,
     graph,
+    inputs,
+    outputs,
     sample_across,
 )
 from civic_digital_twins.dt_model.model.index import Distribution
@@ -186,7 +188,7 @@ class ParkingModel(Model):
         The parking constraint (usage / capacity pair).
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Contractual inputs of :class:`ParkingModel`."""
 
@@ -201,7 +203,7 @@ class ParkingModel(Model):
         i_xo_excursionists_parking: Index
         i_c_parking: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
         """Contractual outputs of :class:`ParkingModel`."""
 
@@ -295,7 +297,7 @@ class BeachModel(Model):
         The beach constraint (usage / capacity pair).
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Contractual inputs of :class:`BeachModel`."""
 
@@ -308,7 +310,7 @@ class BeachModel(Model):
         i_xo_excursionists_beach: Index
         i_c_beach: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
         """Contractual outputs of :class:`BeachModel`."""
 
@@ -380,7 +382,7 @@ class AccommodationModel(Model):
         The accommodation constraint (usage / capacity pair).
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Contractual inputs of :class:`AccommodationModel`."""
 
@@ -389,7 +391,7 @@ class AccommodationModel(Model):
         i_xa_tourists_accommodation: Index
         i_c_accommodation: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
         """Contractual outputs of :class:`AccommodationModel`."""
 
@@ -464,7 +466,7 @@ class FoodModel(Model):
         The food-service constraint (usage / capacity pair).
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Contractual inputs of :class:`FoodModel`."""
 
@@ -477,7 +479,7 @@ class FoodModel(Model):
         i_xo_visitors_food: Index
         i_c_food: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
         """Contractual outputs of :class:`FoodModel`."""
 
@@ -555,7 +557,7 @@ class MolvenoModel(Model):
         m.parking.constraint              # Constraint object
     """
 
-    @dataclass
+    @inputs
     class Inputs:
         """Contractual inputs of :class:`MolvenoModel`."""
 
@@ -564,7 +566,7 @@ class MolvenoModel(Model):
         domain_indexes: list[GenericIndex]
         capacities: list[GenericIndex]
 
-    @dataclass
+    @outputs
     class Outputs:
         """Contractual outputs of :class:`MolvenoModel`."""
 
