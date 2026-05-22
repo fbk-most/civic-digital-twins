@@ -409,3 +409,63 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
     assert float(result[a_out]) == pytest.approx(6.0)
     # sub_b: 5.0 * 3 = 15.0
     assert float(result[b_out]) == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# ModelVariant: per-branch @functions dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_model_variant_node_functions_merged_from_branches():
+    """ModelVariant._node_functions is the union of all branch models' maps."""
+    from civic_digital_twins.dt_model.model.model_variant import ModelVariant
+    from civic_digital_twins.dt_model.model.index import CategoricalIndex
+
+    p_bike = graph.placeholder("inp", default_value=1.0)
+    fc_bike = graph.function_call("compute", p_bike)
+    bike_inp = Index("inp", p_bike)
+    bike_out = Index("out", fc_bike)
+
+    p_train = graph.placeholder("inp", default_value=1.0)
+    fc_train = graph.function_call("compute", p_train)
+    train_inp = Index("inp", p_train)
+    train_out = Index("out", fc_train)
+
+    bike_fn = NumpyBackend.adapt(lambda x: x * 2)
+    train_fn = NumpyBackend.adapt(lambda x: x * 10)
+
+    @functions
+    class F:
+        compute: Any
+
+    @inputs
+    class Inp:
+        inp: Index
+
+    @outputs
+    class Out:
+        out: Index
+
+    class BikeModel(Model):
+        def __init__(self, inp: Index, *, fns: F) -> None:
+            super().__init__("Bike", inputs=Inp(inp=inp), outputs=Out(out=bike_out), functions=fns)
+
+    class TrainModel(Model):
+        def __init__(self, inp: Index, *, fns: F) -> None:
+            super().__init__("Train", inputs=Inp(inp=inp), outputs=Out(out=train_out), functions=fns)
+
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = ModelVariant(
+        "Transport",
+        {
+            "bike": BikeModel(bike_inp, fns=F(compute=bike_fn)),
+            "train": TrainModel(train_inp, fns=F(compute=train_fn)),
+        },
+        selector=mode,
+    )
+
+    # Both branch nodes should be present in the merged map.
+    assert fc_bike in mv._node_functions
+    assert fc_train in mv._node_functions
+    assert mv._node_functions[fc_bike] is bike_fn
+    assert mv._node_functions[fc_train] is train_fn

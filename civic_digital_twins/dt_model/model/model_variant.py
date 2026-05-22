@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..engine.frontend import graph
+from ..engine.numpybackend.executor import Functor
 from .index import CategoricalIndex, GenericIndex, Index
 from .model import IOProxy, Model
 
@@ -210,6 +211,13 @@ class ModelVariant:
         merged_outputs = IOProxy(merged_entries)  # type: ignore[arg-type]
         selector_index = Index(f"selector:{name}", selector_node)
 
+        # Aggregate _node_functions from all branch models.  Node identity is
+        # unique per branch (each model creates its own function_call nodes),
+        # so a flat merge is correct — no key collisions can occur.
+        merged_node_fns: dict[graph.Node, Functor] = {}
+        for v in variants_dict.values():
+            merged_node_fns.update(v._node_functions)
+
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "variants", variants_dict)
         object.__setattr__(self, "_is_static", False)
@@ -218,6 +226,7 @@ class ModelVariant:
         object.__setattr__(self, "_selector_index", selector_index)
         object.__setattr__(self, "_merged_outputs", merged_outputs)
         object.__setattr__(self, "_variant_selector", vs)
+        object.__setattr__(self, "_node_functions", merged_node_fns)
 
     # -------------------------------------------------------------------
     # Static helper
