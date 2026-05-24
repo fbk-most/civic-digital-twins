@@ -16,12 +16,14 @@ from civic_digital_twins.dt_model import (
     ConstTimeseriesIndex,
     DistributionIndex,
     EvaluationResult,
+    Functor,
     Index,
     Model,
     NumpyBackend,
     Scenario,
     TimeseriesIndex,
     expose,
+    functions,
     graph,
     inputs,
     outputs,
@@ -400,12 +402,20 @@ class TrafficModel(Model):
         starting_ratio: Index
         traffic_ratio: Index
 
+    @functions
+    class Functions:
+        """Functions required by :class:`TrafficModel`."""
+
+        ts_solve: Functor
+
     def __init__(
         self,
         ts_inflow: TimeseriesIndex,
         ts_starting: TimeseriesIndex,
         modified_inflow: Index,
         modified_starting: Index,
+        *,
+        functions: TrafficModel.Functions,
     ) -> None:
         Inputs = TrafficModel.Inputs
         Outputs = TrafficModel.Outputs
@@ -447,6 +457,7 @@ class TrafficModel(Model):
                 starting_ratio=starting_ratio,
                 traffic_ratio=traffic_ratio,
             ),
+            functions=functions,
         )
 
 
@@ -618,6 +629,12 @@ class BolognaModel(Model):
         emissions: TimeseriesIndex
         modified_emissions: Index
 
+    @functions
+    class Functions:
+        """Functions required by :class:`BolognaModel`."""
+
+        ts_solve: Functor
+
     @classmethod
     def default_inputs(cls) -> dict:
         """Return the reference-scenario input parameters as a keyword-argument dict.
@@ -655,7 +672,9 @@ class BolognaModel(Model):
         i_b_p50_postponing: Index,
         i_b_p50_postponement: Index,
         i_b_starting_modified_factor: Index,
+        functions: BolognaModel.Functions | None = None,
     ) -> None:
+        fns = functions or BolognaModel.Functions(ts_solve=NumpyBackend.adapt(_ts_solve))
         Inputs = BolognaModel.Inputs
         Outputs = BolognaModel.Outputs
         Expose = BolognaModel.Expose
@@ -706,6 +725,7 @@ class BolognaModel(Model):
             ts_starting=ts_starting,
             modified_inflow=_inflow.outputs.modified_inflow,
             modified_starting=_inflow.outputs.modified_starting,
+            functions=TrafficModel.Functions(ts_solve=fns.ts_solve),
         )
 
         _emissions = EmissionsModel(
@@ -738,6 +758,7 @@ class BolognaModel(Model):
                 emissions=_emissions.outputs.emissions,
                 modified_emissions=_emissions.outputs.modified_emissions,
             ),
+            functions=fns,
         )
 
 
@@ -826,21 +847,6 @@ class BolognaEvaluator(ModelEvaluator[BolognaModel, BolognaOutput]):
 
     def __init__(self, model: BolognaModel) -> None:
         super().__init__(model)
-
-    # ------------------------------------------------------------------
-    # Overridable engine configuration
-    # ------------------------------------------------------------------
-
-    @property
-    def eval_functions(self) -> dict[str, Any] | None:
-        """Return the Bologna-specific ``ts_solve`` function for the engine executor.
-
-        Returns
-        -------
-        dict[str, Any]
-            ``{"ts_solve": NumpyBackend.adapt(_ts_solve)}``.
-        """
-        return {"ts_solve": NumpyBackend.adapt(_ts_solve)}
 
     def post_process(self, scenario: Scenario, result: EvaluationResult) -> BolognaOutput:
         """Build a :class:`BolognaOutput` from a raw :class:`~simulation.evaluation.EvaluationResult`.
