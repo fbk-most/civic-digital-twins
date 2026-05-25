@@ -14,13 +14,14 @@ from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 
-
 # ---------------------------------------------------------------------------
 # @functions decorator — unit tests
 # ---------------------------------------------------------------------------
 
 
 def test_functions_decorator_sets_declared_field():
+    """Declared field is accessible as an attribute after construction."""
+
     @functions
     class F:
         solve: Any
@@ -31,6 +32,8 @@ def test_functions_decorator_sets_declared_field():
 
 
 def test_functions_decorator_missing_required_raises():
+    """Missing required declared field raises TypeError at construction."""
+
     @functions
     class F:
         solve: Any
@@ -40,6 +43,8 @@ def test_functions_decorator_missing_required_raises():
 
 
 def test_functions_decorator_extra_allow_default():
+    """Extra kwargs land in _extra when extra='allow' (the default)."""
+
     @functions
     class F:
         solve: Any
@@ -51,6 +56,8 @@ def test_functions_decorator_extra_allow_default():
 
 
 def test_functions_decorator_extra_forbid_raises():
+    """Extra kwargs raise TypeError when extra='forbid'."""
+
     @functions(extra="forbid")
     class F:
         solve: Any
@@ -61,6 +68,8 @@ def test_functions_decorator_extra_forbid_raises():
 
 
 def test_functions_decorator_items_yields_declared_then_extra():
+    """items() yields declared fields first, then extra fields."""
+
     @functions
     class F:
         a: Any
@@ -77,6 +86,8 @@ def test_functions_decorator_items_yields_declared_then_extra():
 
 
 def test_functions_decorator_repr():
+    """repr() includes the class name and declared field names."""
+
     @functions
     class F:
         solve: Any
@@ -100,6 +111,8 @@ def test_functions_decorator_class_level_default():
 
 
 def test_functions_decorator_declared_frozenset():
+    """_declared contains exactly the annotated field names."""
+
     @functions
     class F:
         x: Any
@@ -109,6 +122,8 @@ def test_functions_decorator_declared_frozenset():
 
 
 def test_functions_is_functions_flag():
+    """_is_functions class attribute is set to True by the decorator."""
+
     @functions
     class F:
         x: Any
@@ -131,6 +146,7 @@ def _make_model_with_function_call():
 
 
 def test_model_node_functions_empty_without_functions_arg():
+    """_node_functions is empty when no functions= arg is passed to Model.__init__."""
     inp, out, _p, _fc = _make_model_with_function_call()
 
     @inputs
@@ -154,6 +170,7 @@ def test_model_node_functions_empty_without_functions_arg():
 
 
 def test_model_node_functions_populated_with_functions_arg():
+    """function_call node is claimed when a matching @functions instance is passed."""
     inp, out, _p, fc = _make_model_with_function_call()
     functor = NumpyBackend.adapt(lambda x: x * 3)
 
@@ -219,7 +236,7 @@ def test_model_node_functions_input_node_not_claimed():
 
 
 def test_model_node_functions_submodel_inherits():
-    """Parent model aggregates sub-model _node_functions without re-claiming."""
+    """Parent aggregates sub-model _node_functions without re-claiming owned nodes."""
     p_inner = graph.placeholder("inp", default_value=5.0)
     fc_inner = graph.function_call("solve", p_inner)
     inner_inp = Index("inp", p_inner)
@@ -269,7 +286,7 @@ def test_model_node_functions_submodel_inherits():
 
 
 def test_executor_node_identity_dispatch_takes_priority():
-    """node_functions[node] wins over functions[name] when both are present."""
+    """node_functions[node] wins over functions[name] when both present."""
     p = graph.placeholder("x", default_value=3.0)
     fc = graph.function_call("f", p)
 
@@ -287,7 +304,7 @@ def test_executor_node_identity_dispatch_takes_priority():
 
 
 def test_executor_name_dispatch_fallback():
-    """functions[name] is used when node_functions does not contain the node."""
+    """functions[name] is used when node is absent from node_functions."""
     p = graph.placeholder("x", default_value=3.0)
     fc = graph.function_call("f", p)
 
@@ -304,6 +321,7 @@ def test_executor_name_dispatch_fallback():
 
 
 def test_executor_no_function_raises():
+    """FunctionNotFound raised when no functor is registered for the node name."""
     p = graph.placeholder("x", default_value=1.0)
     fc = graph.function_call("missing", p)
 
@@ -318,7 +336,7 @@ def test_executor_no_function_raises():
 
 
 def test_evaluation_uses_node_functions():
-    """Evaluation picks up _node_functions from the model and dispatches correctly."""
+    """Evaluation injects _node_functions into State and dispatches by node identity."""
     p = graph.placeholder("x", default_value=4.0)
     fc = graph.function_call("double", p)
     inp_idx = Index("x", p)
@@ -354,7 +372,7 @@ def test_evaluation_uses_node_functions():
 
 
 def test_evaluation_two_submodels_same_function_name_different_functors():
-    """Two sub-models with the same function name get independent functors via node identity."""
+    """Two sub-models sharing a function name get independent functors via node identity."""
     # Sub-model A: doubles its input.
     p_a = graph.placeholder("a_inp", default_value=3.0)
     fc_a = graph.function_call("transform", p_a)
@@ -417,9 +435,9 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
 
 
 def test_model_variant_node_functions_merged_from_branches():
-    """ModelVariant._node_functions is the union of all branch models' maps."""
-    from civic_digital_twins.dt_model.model.model_variant import ModelVariant
+    """ModelVariant._node_functions is the union of all branch _node_functions maps."""
     from civic_digital_twins.dt_model.model.index import CategoricalIndex
+    from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 
     p_bike = graph.placeholder("inp", default_value=1.0)
     fc_bike = graph.function_call("compute", p_bike)
@@ -469,3 +487,247 @@ def test_model_variant_node_functions_merged_from_branches():
     assert fc_train in mv._node_functions
     assert mv._node_functions[fc_bike] is bike_fn
     assert mv._node_functions[fc_train] is train_fn
+
+
+# ---------------------------------------------------------------------------
+# _iter_node_deps: coverage for each graph node type branch
+# ---------------------------------------------------------------------------
+
+
+def _simple_model_with_output(out_node: Any, inp_idx: Any, functor: Any) -> Any:
+    """Return a Model whose only output is *out_node*, using a solve functor."""
+
+    @inputs
+    class Inputs:
+        inp: Index
+
+    @outputs
+    class Outputs:
+        out: Index
+
+    @functions
+    class F:
+        solve: Any
+
+    class M(Model):
+        def __init__(self, inp: Index, *, fns: F) -> None:
+            out = Index("out", out_node)
+            super().__init__("M", inputs=Inputs(inp=inp), outputs=Outputs(out=out), functions=fns)
+
+    return M(inp_idx, fns=F(solve=functor))
+
+
+def test_iter_node_deps_binary_op():
+    """function_call reachable through a BinaryOp (add) is claimed."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    binary = graph.add(fc, p)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x * 2)
+    m = _simple_model_with_output(binary, inp_idx, functor)
+    assert fc in m._node_functions
+
+
+def test_iter_node_deps_unary_op():
+    """function_call reachable through a UnaryOp (negate) is claimed."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    unary = graph.negate(fc)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: -x)
+    m = _simple_model_with_output(unary, inp_idx, functor)
+    assert fc in m._node_functions
+
+
+def test_iter_node_deps_where():
+    """function_call reachable through a where node is claimed."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    cond = graph.constant(True)
+    default = graph.constant(0.0)
+    w = graph.where(cond, fc, default)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = _simple_model_with_output(w, inp_idx, functor)
+    assert fc in m._node_functions
+
+
+def test_iter_node_deps_multi_clause_where():
+    """function_call reachable through a multi_clause_where (MultiClauseOp) is claimed."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    cond = graph.constant(True)
+    default = graph.constant(0.0)
+    mcw = graph.multi_clause_where([(cond, fc)], default)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = _simple_model_with_output(mcw, inp_idx, functor)
+    assert fc in m._node_functions
+
+
+def test_iter_node_deps_exclusive_multi_clause_where_and_variant_selector():
+    """function_call in exclusive_multi_clause_where clauses, companion variant_selector in branch_map."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    fc2 = graph.function_call("solve", p)  # in branch_map only
+    cond = graph.constant(True)
+    default = graph.constant(0.0)
+    vs = graph.variant_selector(p, {"a": [fc2]}, [])
+    emcw = graph.exclusive_multi_clause_where([(cond, fc)], default, vs)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = _simple_model_with_output(emcw, inp_idx, functor)
+    # fc is in the clause value; fc2 is in the branch_map of the companion
+    assert fc in m._node_functions
+    assert fc2 in m._node_functions
+
+
+def test_iter_node_deps_projection_op():
+    """function_call reachable through a ProjectionOp (project_using_sum) is claimed."""
+    from civic_digital_twins.dt_model.model.axis import DOMAIN, Axis
+
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    axis = Axis("time", DOMAIN)
+    proj = graph.project_using_sum(fc, axis=axis)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = _simple_model_with_output(proj, inp_idx, functor)
+    assert fc in m._node_functions
+
+
+# ---------------------------------------------------------------------------
+# _build_node_functions_map: early return and diamond traversal
+# ---------------------------------------------------------------------------
+
+
+def test_build_node_functions_map_empty_fn_map_returns_claimed():
+    """_build_node_functions_map returns early when @functions has no declared fields."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    inp_idx = Index("inp", p)
+    out_idx = Index("out", fc)
+
+    @inputs
+    class Inputs:
+        inp: Index
+
+    @outputs
+    class Outputs:
+        out: Index
+
+    @functions
+    class F:
+        pass  # no declared fields
+
+    class M(Model):
+        def __init__(self, inp: Index) -> None:
+            super().__init__("M", inputs=Inputs(inp=inp), outputs=Outputs(out=out_idx), functions=F())
+
+    m = M(inp_idx)
+    assert m._node_functions == {}
+
+
+def test_build_node_functions_map_diamond_graph_skips_visited():
+    """Shared output node backed by a function_call is claimed once (visited-node skip)."""
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    inp_idx = Index("inp", p)
+    # Two outputs share the same function_call node → start_nodes = [fc, fc]
+    out1 = Index("out1", fc)
+    out2 = Index("out2", fc)
+
+    @inputs
+    class Inputs:
+        inp: Index
+
+    @outputs
+    class Outputs:
+        out1: Index
+        out2: Index
+
+    @functions
+    class F:
+        solve: Any
+
+    class M(Model):
+        def __init__(self, inp: Index, *, fns: F) -> None:
+            super().__init__("M", inputs=Inputs(inp=inp), outputs=Outputs(out1=out1, out2=out2), functions=fns)
+
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = M(inp_idx, fns=F(solve=functor))
+    assert fc in m._node_functions
+    assert m._node_functions[fc] is functor
+
+
+# ---------------------------------------------------------------------------
+# _collect_submodel_node_functions: list and dict branches
+# ---------------------------------------------------------------------------
+
+
+def test_collect_submodel_node_functions_list():
+    """Sub-model stored in a list attribute contributes its _node_functions."""
+    p_inner = graph.placeholder("inp", default_value=5.0)
+    fc_inner = graph.function_call("solve", p_inner)
+    inner_inp = Index("inp", p_inner)
+    inner_out = Index("out", fc_inner)
+    functor = NumpyBackend.adapt(lambda x: x * 3)
+
+    @inputs
+    class InnerInputs:
+        inp: Index
+
+    @outputs
+    class InnerOutputs:
+        out: Index
+
+    @functions
+    class InnerF:
+        solve: Any
+
+    class InnerModel(Model):
+        def __init__(self, inp: Index, *, fns: InnerF) -> None:
+            super().__init__("Inner", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out), functions=fns)
+
+    class OuterModel(Model):
+        def __init__(self, inp: Index) -> None:
+            self.models_list = [InnerModel(inp, fns=InnerF(solve=functor))]
+            super().__init__("Outer", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out))
+
+    m = OuterModel(inner_inp)
+    assert fc_inner in m._node_functions
+    assert m._node_functions[fc_inner] is functor
+
+
+def test_collect_submodel_node_functions_dict():
+    """Sub-model stored in a dict attribute contributes its _node_functions."""
+    p_inner = graph.placeholder("inp", default_value=7.0)
+    fc_inner = graph.function_call("solve", p_inner)
+    inner_inp = Index("inp", p_inner)
+    inner_out = Index("out", fc_inner)
+    functor = NumpyBackend.adapt(lambda x: x * 5)
+
+    @inputs
+    class InnerInputs:
+        inp: Index
+
+    @outputs
+    class InnerOutputs:
+        out: Index
+
+    @functions
+    class InnerF:
+        solve: Any
+
+    class InnerModel(Model):
+        def __init__(self, inp: Index, *, fns: InnerF) -> None:
+            super().__init__("Inner", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out), functions=fns)
+
+    class OuterModel(Model):
+        def __init__(self, inp: Index) -> None:
+            self.models_dict = {"key": InnerModel(inp, fns=InnerF(solve=functor))}
+            super().__init__("Outer", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out))
+
+    m = OuterModel(inner_inp)
+    assert fc_inner in m._node_functions
+    assert m._node_functions[fc_inner] is functor

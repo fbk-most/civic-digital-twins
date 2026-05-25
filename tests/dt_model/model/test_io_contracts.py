@@ -11,13 +11,14 @@ from civic_digital_twins.dt_model import expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import Model
 
-
 # ---------------------------------------------------------------------------
 # @inputs
 # ---------------------------------------------------------------------------
 
 
 def test_inputs_decorator_applies_dataclass():
+    """@inputs applies @dataclass so the class becomes a dataclass."""
+
     @inputs
     class Inputs:
         x: Index
@@ -26,6 +27,8 @@ def test_inputs_decorator_applies_dataclass():
 
 
 def test_inputs_decorator_stamps_marker():
+    """@inputs sets _is_inputs = True on the decorated class."""
+
     @inputs
     class Inputs:
         x: Index
@@ -34,6 +37,8 @@ def test_inputs_decorator_stamps_marker():
 
 
 def test_inputs_accepts_scalar_index():
+    """A scalar GenericIndex field is accepted without error."""
+
     @inputs
     class Inputs:
         x: Index
@@ -44,6 +49,8 @@ def test_inputs_accepts_scalar_index():
 
 
 def test_inputs_accepts_list_of_indexes():
+    """A list[GenericIndex] field is accepted without error."""
+
     @inputs
     class Inputs:
         xs: list
@@ -54,6 +61,8 @@ def test_inputs_accepts_list_of_indexes():
 
 
 def test_inputs_accepts_dict_of_indexes():
+    """A dict[str, GenericIndex] field is accepted without error."""
+
     @inputs
     class Inputs:
         xs: dict
@@ -64,6 +73,8 @@ def test_inputs_accepts_dict_of_indexes():
 
 
 def test_inputs_rejects_scalar_non_index():
+    """A non-GenericIndex scalar value raises TypeError."""
+
     @inputs
     class Inputs:
         x: Index
@@ -73,6 +84,8 @@ def test_inputs_rejects_scalar_non_index():
 
 
 def test_inputs_rejects_list_with_non_index_element():
+    """A list containing a non-GenericIndex element raises TypeError with field[i] context."""
+
     @inputs
     class Inputs:
         xs: list
@@ -82,6 +95,8 @@ def test_inputs_rejects_list_with_non_index_element():
 
 
 def test_inputs_rejects_dict_with_non_index_value():
+    """A dict with a non-GenericIndex value raises TypeError with field['key'] context."""
+
     @inputs
     class Inputs:
         xs: dict
@@ -91,6 +106,8 @@ def test_inputs_rejects_dict_with_non_index_value():
 
 
 def test_inputs_empty_list_is_valid():
+    """An empty list field passes validation."""
+
     @inputs
     class Inputs:
         xs: list
@@ -99,6 +116,8 @@ def test_inputs_empty_list_is_valid():
 
 
 def test_inputs_empty_dict_is_valid():
+    """An empty dict field passes validation."""
+
     @inputs
     class Inputs:
         xs: dict
@@ -107,6 +126,8 @@ def test_inputs_empty_dict_is_valid():
 
 
 def test_inputs_timeseries_index_accepted():
+    """TimeseriesIndex (a GenericIndex subclass) is accepted by @inputs."""
+
     @inputs
     class Inputs:
         ts: TimeseriesIndex
@@ -138,6 +159,8 @@ def test_inputs_supports_both_call_forms():
 
 
 def test_outputs_decorator_stamps_marker():
+    """@outputs sets _is_outputs = True on the decorated class."""
+
     @outputs
     class Outputs:
         y: Index
@@ -146,6 +169,8 @@ def test_outputs_decorator_stamps_marker():
 
 
 def test_outputs_validates_fields():
+    """@outputs validates that field values are GenericIndex instances."""
+
     @outputs
     class Outputs:
         y: Index
@@ -160,6 +185,8 @@ def test_outputs_validates_fields():
 
 
 def test_expose_decorator_stamps_marker():
+    """@expose sets _is_expose = True on the decorated class."""
+
     @expose
     class Expose:
         z: Index
@@ -168,6 +195,8 @@ def test_expose_decorator_stamps_marker():
 
 
 def test_expose_validates_fields():
+    """@expose validates that field values are GenericIndex instances."""
+
     @expose
     class Expose:
         z: Index
@@ -182,6 +211,8 @@ def test_expose_validates_fields():
 
 
 def test_plain_dataclass_inputs_emits_deprecation_warning():
+    """Passing a plain @dataclass as inputs= emits a DeprecationWarning pointing at @inputs."""
+
     @dataclasses.dataclass
     class Inputs:
         x: Index
@@ -197,6 +228,8 @@ def test_plain_dataclass_inputs_emits_deprecation_warning():
 
 
 def test_plain_dataclass_outputs_emits_deprecation_warning():
+    """Passing a plain @dataclass as outputs= emits a DeprecationWarning pointing at @outputs."""
+
     @dataclasses.dataclass
     class Outputs:
         y: Index
@@ -212,6 +245,8 @@ def test_plain_dataclass_outputs_emits_deprecation_warning():
 
 
 def test_inputs_decorator_no_deprecation_warning():
+    """Using @inputs does not trigger any DeprecationWarning."""
+
     @inputs
     class Inputs:
         x: Index
@@ -233,6 +268,8 @@ def test_inputs_decorator_no_deprecation_warning():
 
 
 def test_model_uses_inputs_proxy_from_decorated_class():
+    """model.inputs.x and model.outputs.y are accessible after construction."""
+
     @inputs
     class Inputs:
         x: Index
@@ -258,6 +295,8 @@ def test_model_uses_inputs_proxy_from_decorated_class():
 
 
 def test_model_expose_decorated_class():
+    """model.expose.internal is accessible when @expose is used."""
+
     @expose
     class Expose:
         internal: Index

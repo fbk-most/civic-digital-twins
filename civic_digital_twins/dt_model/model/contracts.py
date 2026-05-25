@@ -31,7 +31,7 @@ def functions(
     *,
     extra: Literal["allow", "forbid"] = "allow",
 ) -> Any:
-    """Decorator for declaring an explicit function contract on a :class:`~.model.Model` subclass.
+    """Declare an explicit function contract on a :class:`~.model.Model` subclass.
 
     Annotated fields are **explicit** (declared) functions: the caller must
     supply a :class:`~..engine.numpybackend.executor.Functor` for each one.
@@ -109,7 +109,7 @@ def functions(
                     extra_kw[k] = v
 
             for name in declared:
-                if not hasattr(self, name):
+                if name not in self.__dict__:
                     default = getattr(type(self), name, _MISSING)
                     if default is _MISSING:
                         raise TypeError(f"{cls.__name__}() missing required argument: {name!r}")

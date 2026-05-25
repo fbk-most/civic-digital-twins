@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `@functions` decorator — declare the custom functions a `Model` subclass
+  requires as part of its typed signature.  Each annotated field is a required
+  `Functor`; pass the completed `Functions` instance to `super().__init__()` at
+  construction time, and the model automatically routes each functor to the
+  correct `function_call` graph node.  Two sub-models that share the same
+  function name each receive an independent functor — no name collisions even
+  within a composite model.  `ModelVariant` branches are also handled: each
+  branch gets its own functor map.  Use `extra="forbid"` to enforce a strict
+  contract.  Exported from `civic_digital_twins.dt_model`.
+- `@inputs`, `@outputs`, `@expose` decorators — replace bare `@dataclass` on
+  `Model` inner classes to make the inter-model interface explicit and
+  machine-checkable.  Each validates that fields hold `GenericIndex` instances
+  (or lists/dicts thereof) at construction time, catching wiring errors early.
+  Passing a plain `@dataclass` now emits `DeprecationWarning`.  Exported from
+  `civic_digital_twins.dt_model`.
+- `BolognaModel` now declares its solver as a typed `@functions` contract,
+  replacing the previous evaluation-time `functions={"ts_solve": ...}` dict.
+  A custom solver can be injected at construction time via
+  `BolognaModel(…, functions=BolognaModel.Functions(ts_solve=my_functor))`;
+  the default NumPy implementation is used when `functions=` is omitted.
 - `EvaluationResult.expected_value(idx)` — canonical weighted expectation over
   the ensemble and parameter dimensions, replacing `marginalize()`.  Uses
   `GenericIndex.output_axes` to determine which dimensions are DOMAIN (kept) vs
