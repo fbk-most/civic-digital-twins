@@ -646,7 +646,9 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
     for key, value in node.kwargs.items():
         kwargs[key] = state.get_node_value(value)
     # Node-identity dispatch (explicit @functions binding) takes priority over name-based dispatch.
-    function = state.node_functions.get(node) or state.functions.get(node.name)
+    function = state.node_functions.get(node)
+    if function is None:
+        function = state.functions.get(node.name)
     if function is None:
         raise FunctionNotFound(f"executor: cannot find functor for: {node.name}")
     return function(*args, **kwargs)
