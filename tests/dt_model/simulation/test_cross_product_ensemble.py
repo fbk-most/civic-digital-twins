@@ -431,6 +431,158 @@ def test_sample_across_multi_axis_raises():
 
 
 # ---------------------------------------------------------------------------
+# n_samples_per_combo
+# ---------------------------------------------------------------------------
+
+
+def test_cpe_n_samples_per_combo_size():
+    """Total size equals |categorical cross-product| × n_samples_per_combo."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    weather = CategoricalIndex("weather", {"good": 0.7, "bad": 0.3})
+    model = _simple_model(season, weather)
+    ens = CrossProductEnsemble(model, n_samples_per_combo=10)
+    assert ens.size == 4 * 10
+    assert len(ens) == 4 * 10
+
+
+def test_cpe_n_samples_per_combo_weights_sum_to_one():
+    """Weights still sum to 1.0 with n_samples_per_combo > 1."""
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    model = _simple_model(season)
+    ens = CrossProductEnsemble(model, n_samples_per_combo=7)
+    assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
+
+
+def test_cpe_n_samples_per_combo_equal_weight_within_combo():
+    """Within each categorical combo all replicates share equal weight w_combo / N."""
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    model = _simple_model(season)
+    N = 5
+    ens = CrossProductEnsemble(model, n_samples_per_combo=N)
+    weights = ens.ensemble_weights[0]
+    cat_arr = ens.assignments()[season]
+    for value, expected_combo_weight in [("summer", 0.6), ("winter", 0.4)]:
+        mask = cat_arr == value
+        replicate_weights = weights[mask]
+        assert len(replicate_weights) == N
+        np.testing.assert_allclose(replicate_weights, expected_combo_weight / N, rtol=1e-9)
+
+
+def test_cpe_n_samples_per_combo_cat_values_repeated():
+    """Categorical assignments contain each combo value exactly n_samples_per_combo times."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    model = _simple_model(season)
+    N = 4
+    ens = CrossProductEnsemble(model, n_samples_per_combo=N)
+    cat_arr = ens.assignments()[season].tolist()
+    assert cat_arr.count("summer") == N
+    assert cat_arr.count("winter") == N
+
+
+def test_cpe_n_samples_per_combo_dist_samples_vary():
+    """Distribution samples are drawn independently for each replicate (not all equal)."""
+    season = CategoricalIndex("season", {"summer": 1.0})  # single combo
+    cap = DistributionIndex("cap", stats.norm, {"loc": 100.0, "scale": 10.0})
+    model = _simple_model(season, cap)
+    N = 50
+    ens = CrossProductEnsemble(model, n_samples_per_combo=N, rng=np.random.default_rng(0))
+    assert ens.size == N
+    # All samples should not be identical (astronomically unlikely with N=50).
+    assert len(set(ens.assignments()[cap].tolist())) > 1
+
+
+def test_cpe_n_samples_per_combo_reduces_variance():
+    """Larger n_samples_per_combo reduces variance of the weighted-mean estimate."""
+    season = CategoricalIndex("season", {"a": 1.0})  # single combo
+    cap = DistributionIndex("cap", stats.norm, {"loc": 0.0, "scale": 1.0})
+    model = _simple_model(season, cap)
+
+    def weighted_mean(ens: CrossProductEnsemble) -> float:
+        w = ens.ensemble_weights[0]
+        v = ens.assignments()[cap]
+        return float(np.dot(w, v))
+
+    rng_seed = 12345
+    n_trials = 200
+    means_small = [
+        weighted_mean(CrossProductEnsemble(model, n_samples_per_combo=1, rng=np.random.default_rng(rng_seed + i)))
+        for i in range(n_trials)
+    ]
+    means_large = [
+        weighted_mean(CrossProductEnsemble(model, n_samples_per_combo=100, rng=np.random.default_rng(rng_seed + i)))
+        for i in range(n_trials)
+    ]
+    # Variance with N=100 should be ~100× smaller than with N=1.
+    assert np.var(means_large) < np.var(means_small) / 10
+
+
+def test_cpe_n_samples_per_combo_conditional_dist_per_categorical():
+    """ConditionalDistributionIndex gets N independent samples per categorical combo."""
+    weather = CategoricalIndex("weather", {"hot": 0.5, "cold": 0.5})
+    temp = ConditionalDistributionIndex(
+        "temp",
+        parents=[weather],
+        factory=lambda weather: stats.norm(loc=30.0, scale=1.0) if weather == "hot" else stats.norm(loc=5.0, scale=1.0),
+    )
+    model = _simple_model(weather, temp)
+    N = 20
+    ens = CrossProductEnsemble(model, n_samples_per_combo=N, rng=np.random.default_rng(7))
+    assert ens.size == 2 * N
+    a = ens.assignments()
+    # Hot replicates should cluster near 30; cold near 5.
+    hot_mask = a[weather] == "hot"
+    cold_mask = a[weather] == "cold"
+    assert np.all((a[temp][hot_mask] > 25.0) & (a[temp][hot_mask] < 35.0))
+    assert np.all((a[temp][cold_mask] > 0.0) & (a[temp][cold_mask] < 10.0))
+
+
+def test_cpe_n_samples_per_combo_dist_parent_uses_replicate_value():
+    """When a ConditionalDistributionIndex has a DistributionIndex parent.
+
+    Each replicate uses that replicate's parent sample, not a shared one.
+    """
+    season = CategoricalIndex("season", {"summer": 1.0})  # one combo
+    base = DistributionIndex("base", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    derived = ConditionalDistributionIndex(
+        "derived",
+        parents=[season, base],
+        # derived = base + tiny noise; so derived ≈ base per replicate
+        factory=lambda **kw: stats.norm(loc=float(kw["base"]), scale=1e-6),
+    )
+    model = _simple_model(season, base, derived)
+    N = 30
+    ens = CrossProductEnsemble(model, n_samples_per_combo=N, rng=np.random.default_rng(42))
+    a = ens.assignments()
+    assert a[base].shape == (N,)
+    assert a[derived].shape == (N,)
+    # Each derived value should be very close to its corresponding base value.
+    np.testing.assert_allclose(a[derived], a[base], atol=1e-4)
+
+
+def test_cpe_n_samples_per_combo_one_is_default():
+    """n_samples_per_combo=1 (default) matches behaviour of omitting the parameter."""
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    cap = DistributionIndex("cap", stats.norm, {"loc": 0.0, "scale": 1.0})
+    model = _simple_model(season, cap)
+    rng = np.random.default_rng(0)
+    ens_default = CrossProductEnsemble(model, rng=np.random.default_rng(0))
+    ens_explicit = CrossProductEnsemble(model, n_samples_per_combo=1, rng=np.random.default_rng(0))
+    assert ens_default.size == ens_explicit.size
+    np.testing.assert_array_equal(ens_default.ensemble_weights[0], ens_explicit.ensemble_weights[0])
+    np.testing.assert_array_equal(ens_default.assignments()[season], ens_explicit.assignments()[season])
+    np.testing.assert_array_equal(ens_default.assignments()[cap], ens_explicit.assignments()[cap])
+    del rng  # unused; silence linter
+
+
+def test_cpe_n_samples_per_combo_invalid_raises():
+    """n_samples_per_combo < 1 raises ValueError."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    model = _simple_model(season)
+    with pytest.raises(ValueError, match="n_samples_per_combo"):
+        CrossProductEnsemble(model, n_samples_per_combo=0)
+
+
+# ---------------------------------------------------------------------------
 # Public export
 # ---------------------------------------------------------------------------
 
