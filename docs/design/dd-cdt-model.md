@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-05-02                                     |
+| Last-Updated | 2026-05-27                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -524,7 +524,7 @@ ens = PartitionedEnsemble(
 
 ### CrossProductEnsemble
 
-`CrossProductEnsemble(model, restrictions, max_categorical_size, exclude, rng)` implements
+`CrossProductEnsemble(model, restrictions, max_categorical_size, n_samples_per_combo, exclude, rng)` implements
 `AxisEnsemble`.  It materialises a batched ENSEMBLE axis by:
 
 1. Discovering the model's abstract indexes via `model.abstract_indexes()`.
@@ -533,8 +533,12 @@ ens = PartitionedEnsemble(
    probability weights are the product of per-category outcome probabilities.
    When a categorical's support exceeds `max_categorical_size`, values are
    Monte-Carlo sampled instead.
-3. Pre-sampling one value per distribution-backed abstract index
-   (e.g. stochastic capacities) for each scenario.
+3. Pre-sampling `n_samples_per_combo` independent values per distribution-backed
+   abstract index (e.g. stochastic capacities) for each categorical combination.
+   Total ensemble size is `|categorical cross-product| × n_samples_per_combo`.
+   The default `n_samples_per_combo=1` draws one sample per combination;
+   increase it to reduce Monte Carlo variance when distribution-backed indexes
+   are retained in the ensemble.
 
 Indexes passed via `exclude` are skipped in steps 2–3 — they are provided
 as PARAMETER axes at evaluation time.  See [Domain Modeling Pattern](#domain-modeling-pattern)
@@ -547,6 +551,7 @@ class CrossProductEnsemble:
         model: Model | ModelVariant,
         restrictions: Mapping[Any, Sequence[str]] | None = None,
         max_categorical_size: int = 20,
+        n_samples_per_combo: int = 1,
         exclude: Sequence[GenericIndex] | None = None,
         rng: np.random.Generator | None = None,
     ) -> None: ...
@@ -702,10 +707,12 @@ objects can be used as dictionary keys, matching the convention of
 ### Step 2 — Ensemble (CV cross-product)
 
 `CrossProductEnsemble` enumerates the joint support of the model's
-`CategoricalIndex` instances into weighted scenarios.  Each scenario also
-includes one Monte-Carlo sample of every distribution-backed abstract index
-that is *not* listed in `exclude` (PVs are excluded because they are swept
-on the grid in step 3 instead):
+`CategoricalIndex` instances into weighted scenarios.  Each categorical
+combination also draws `n_samples_per_combo` independent Monte-Carlo samples
+of every distribution-backed abstract index that is *not* listed in `exclude`
+(PVs are excluded because they are swept on the grid in step 3 instead).
+The default `n_samples_per_combo=1` gives one sample per combination; increase
+it to reduce variance when stochastic capacities are retained in the ensemble:
 
 ```python
 from civic_digital_twins.dt_model import CrossProductEnsemble

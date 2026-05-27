@@ -602,6 +602,22 @@ class CrossProductEnsemble:
         scenario = Scenario(model, overrides={cv_weather: {"good": 0.8, "unsettled": 0.2}})
         ensemble = CrossProductEnsemble(scenario)  # only good/unsettled, with 80/20 weights
 
+    **Sampling budget for distribution-backed indexes** — when a model retains
+    distribution-backed indexes in the ensemble (i.e. they are *not* in
+    *exclude*), each categorical combination would by default receive exactly
+    one sample from those distributions, giving a total of only
+    ``|categorical cross-product|`` samples and high run-to-run variance.  Use
+    *n_samples_per_combo* to draw more independent samples per categorical
+    combination::
+
+        # 3 weather × 2 seasons = 6 combos × 50 samples = 300 total scenarios
+        ensemble = CrossProductEnsemble(model, n_samples_per_combo=50)
+
+    Each combo's weight ``w`` is split equally among its *n_samples_per_combo*
+    replicates (each replicate carries weight ``w / n_samples_per_combo``), so
+    the ensemble weights still sum to 1.0.  The default value of 1 preserves
+    the previous behaviour exactly.
+
     Parameters
     ----------
     scenario_or_model:
@@ -614,6 +630,11 @@ class CrossProductEnsemble:
         Maximum number of samples per categorical axis.  When the support (or
         restricted subset) is larger than this threshold, the axis is Monte-Carlo
         sampled *max_categorical_size* times.
+    n_samples_per_combo:
+        Number of independent distribution samples to draw for each categorical
+        combination.  Total ensemble size is
+        ``|categorical cross-product| × n_samples_per_combo``.  Must be >= 1.
+        Has no effect when all distribution-backed indexes are in *exclude*.
     exclude:
         Indexes to exclude from ensemble enumeration / sampling.  Use this to
         mark PARAMETER-axis indexes (e.g. presence variables supplied as grid
@@ -630,6 +651,7 @@ class CrossProductEnsemble:
         scenario_or_model: Scenario | Model | ModelVariant,
         restrictions: Mapping[Any, Sequence[str]] | None = None,
         max_categorical_size: int = 20,
+        n_samples_per_combo: int = 1,
         exclude: Sequence[GenericIndex] | None = None,
         rng: np.random.Generator | None = None,
     ) -> None:
@@ -654,6 +676,8 @@ class CrossProductEnsemble:
                 f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
                 f"got {type(scenario_or_model).__name__!r}."
             )
+        if n_samples_per_combo < 1:
+            raise ValueError(f"n_samples_per_combo must be >= 1; got {n_samples_per_combo}.")
         if restrictions is None:
             restrictions = {}
         excluded_ids = {id(idx) for idx in (exclude or [])}
@@ -700,39 +724,65 @@ class CrossProductEnsemble:
             combos = new_combos
 
         S = len(combos)
-        weights = np.array([w for (w, _) in combos])
-        weights /= weights.sum()  # normalise against FP drift
+        S_total = S * n_samples_per_combo
+        combo_weights = np.array([w for (w, _) in combos])
+        combo_weights /= combo_weights.sum()  # normalise against FP drift
+        # Each combo is replicated n_samples_per_combo times; its weight is
+        # split equally across all replicates so the total still sums to 1.0.
+        weights = np.repeat(combo_weights, n_samples_per_combo) / n_samples_per_combo
 
-        # Build categorical assignment arrays.
+        # Build categorical assignment arrays (each value repeated n_samples_per_combo times).
         self._assignments: dict[GenericIndex, np.ndarray] = {}
         for cat in categoricals:
-            self._assignments[cat] = np.array([combo[1][id(cat)] for combo in combos], dtype=object)
+            cat_arr = np.array([combo[1][id(cat)] for combo in combos], dtype=object)
+            self._assignments[cat] = np.repeat(cat_arr, n_samples_per_combo)
 
         # Sample distribution-backed indexes (topo order — parents before children).
         for idx in distributions:
             if isinstance(idx, ConditionalDistributionIndex):
-                samples = np.empty(S)
+                samples = np.empty(S_total)
                 for i, (_, combo_cats) in enumerate(combos):
-                    parent_vals: dict[str, Any] = {}
+                    # Separate categorical parents (fixed for all replicates of this combo)
+                    # from distribution parents (vary per replicate).
+                    cat_parent_vals: dict[str, Any] = {}
+                    dist_parents: list[Any] = []
                     for p in idx.parents:
                         if isinstance(p, CategoricalIndex | ConditionalCategoricalIndex):
-                            parent_vals[p.name] = combo_cats[id(p)]
+                            cat_parent_vals[p.name] = combo_cats[id(p)]
                         else:
-                            parent_vals[p.name] = float(self._assignments[p][i])
-                    d = idx.distribution_for(**parent_vals)
-                    samples[i] = float(d.rvs(random_state=rng) if rng is not None else d.rvs())
+                            dist_parents.append(p)
+                    if not dist_parents:
+                        # All parents are categorical → same distribution for every replicate;
+                        # draw all n_samples_per_combo values in one vectorised call.
+                        d = idx.distribution_for(**cat_parent_vals)
+                        start = i * n_samples_per_combo
+                        raws = (
+                            d.rvs(size=n_samples_per_combo, random_state=rng)
+                            if rng is not None
+                            else d.rvs(size=n_samples_per_combo)
+                        )
+                        samples[start : start + n_samples_per_combo] = np.asarray(raws).ravel()
+                    else:
+                        # At least one distribution parent → distribution differs per replicate.
+                        for r in range(n_samples_per_combo):
+                            full_idx = i * n_samples_per_combo + r
+                            parent_vals: dict[str, Any] = dict(cat_parent_vals)
+                            for p in dist_parents:
+                                parent_vals[p.name] = float(self._assignments[p][full_idx])
+                            d = idx.distribution_for(**parent_vals)
+                            samples[full_idx] = float(d.rvs(random_state=rng) if rng is not None else d.rvs())
                 self._assignments[idx] = samples
             else:
                 dist = scenario.effective_distribution(idx)
                 assert dist is not None
                 if rng is not None:
-                    self._assignments[idx] = np.asarray(dist.rvs(size=S, random_state=rng))
+                    self._assignments[idx] = np.asarray(dist.rvs(size=S_total, random_state=rng))
                 else:
-                    self._assignments[idx] = np.asarray(dist.rvs(size=S))
+                    self._assignments[idx] = np.asarray(dist.rvs(size=S_total))
 
         self._axis = Axis("_cross_product", ENSEMBLE)
         self._weights_arr = weights
-        self.size = S
+        self.size = S_total
         self._scenario = scenario
 
     @property

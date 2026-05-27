@@ -111,6 +111,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   examples, replacing the previous ad-hoc module-level evaluation functions.
 - `Scenario.overrides` — public read-only property returning the active
   override mapping.
+- `CrossProductEnsemble`: new `n_samples_per_combo: int = 1` constructor
+  parameter.  When `> 1`, each categorical combination is replicated
+  `n_samples_per_combo` times with independently drawn distribution samples;
+  total ensemble size becomes `|categorical cross-product| × n_samples_per_combo`
+  and each replicate carries weight `w_combo / n_samples_per_combo`, so ensemble
+  weights still sum to 1.0.  Decouples the categorical enumeration budget from
+  the distribution sampling budget, reducing Monte Carlo variance for models
+  that retain distribution-backed indexes in the ensemble (closing #192).
+  Default `n_samples_per_combo=1` preserves existing behaviour exactly.
 
 ### Changed
 
