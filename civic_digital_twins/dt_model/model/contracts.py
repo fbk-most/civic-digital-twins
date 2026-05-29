@@ -1,6 +1,6 @@
 """Contract decorators for :class:`~.model.Model` subclasses.
 
-``@model``, ``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace
+``@define``, ``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace
 the bare ``@dataclass`` convention with purpose-specific decorators that make
 intent explicit and validate field types at construction time.
 """
@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from .index import GenericIndex
 
-__all__ = ["expose", "functions", "inputs", "model", "outputs"]
+__all__ = ["define", "expose", "functions", "inputs", "outputs"]
 
 _MISSING = object()
 
@@ -252,11 +252,11 @@ Passing a plain ``@dataclass`` instance as ``expose=`` to
 
 
 # ---------------------------------------------------------------------------
-# @model
+# @define
 # ---------------------------------------------------------------------------
 
 
-def model(name: str) -> Any:
+def define(name: str) -> Any:
     """Declare a leaf :class:`~.model.Model` subclass via a ``compute()`` method.
 
     Generates a typed ``__init__(self, inp: Inputs)`` (plus ``fns: Functions``
@@ -273,7 +273,7 @@ def model(name: str) -> Any:
     -----
     Leaf model without ``Expose``::
 
-        @model("Parking")
+        @define("Parking")
         class ParkingModel(Model):
 
             @inputs
@@ -290,7 +290,7 @@ def model(name: str) -> Any:
 
     With ``@functions`` and ``Expose``::
 
-        @model("Traffic")
+        @define("Traffic")
         class TrafficModel(Model):
 
             @inputs
@@ -339,11 +339,11 @@ def model(name: str) -> Any:
         # Validate class structure at decoration time.
         if "compute" not in cls.__dict__:
             raise TypeError(
-                f"@model({name!r}) requires {cls.__name__} to define a compute() method."
+                f"@define({name!r}) requires {cls.__name__} to define a compute() method."
             )
         if "__init__" in cls.__dict__:
             raise TypeError(
-                f"@model class {cls.__name__} must not define __init__. "
+                f"@define class {cls.__name__} must not define __init__. "
                 f"Implement compute() instead."
             )
 
@@ -377,13 +377,13 @@ def model(name: str) -> Any:
         # Consistency check: @expose declared → must appear in return annotation.
         if has_expose_cls and not returns_expose:
             raise TypeError(
-                f"@model class {cls.__name__} declares an @expose Expose inner class "
+                f"@define class {cls.__name__} declares an @expose Expose inner class "
                 f"but compute() return annotation is not tuple[Outputs, Expose]. "
                 f"Update the return annotation to include Expose, or remove the Expose declaration."
             )
 
         # Capture for closure so the generated __init__ uses the right class in
-        # super() even if the @model class is later subclassed.
+        # super() even if the @define class is later subclassed.
         _cls = cls
         _name = name
         _returns_expose = returns_expose

@@ -454,65 +454,70 @@ def _build_proxy(
 class Model:
     """A named collection of :class:`~.index.GenericIndex` objects with an optional I/O contract.
 
-    Two APIs are supported:
+    Three APIs are supported, from most to least recommended:
 
-    **New dataclass-based API** (recommended)
-        Declare ``Inputs``, ``Outputs``, and/or ``Expose`` as inner
-        ``@dataclass`` classes on the subclass.  Construct instances of them
-        and pass to ``super().__init__()``::
+    **`@define` + `compute()` (recommended for leaf models)**
+        Declare ``Inputs``, ``Outputs``, and optionally ``Expose`` and
+        ``Functions`` as inner classes decorated with :func:`~.contracts.inputs`,
+        :func:`~.contracts.outputs`, :func:`~.contracts.expose`, and
+        :func:`~.contracts.functions`.  Implement ``compute()`` to return the
+        outputs; :func:`~.contracts.define` generates the ``__init__``
+        automatically::
 
-            from dataclasses import dataclass
+            from civic_digital_twins.dt_model import Index, Model, define, inputs, outputs
 
+            @define("My Model")
             class MyModel(Model):
 
-                @dataclass
+                @inputs
                 class Inputs:
                     inflow: TimeseriesIndex
 
-                @dataclass
+                @outputs
                 class Outputs:
                     traffic: TimeseriesIndex
                     total:   Index
 
-                @dataclass
-                class Expose:
-                    ratio: Index   # inspectable but not contractual
-
-                def __init__(self, inflow: TimeseriesIndex) -> None:
-                    Inputs  = MyModel.Inputs
-                    Outputs = MyModel.Outputs
-                    Expose  = MyModel.Expose
-
+                def compute(self, inp: Inputs) -> Outputs:
                     traffic = TimeseriesIndex("traffic", ...)
                     total   = Index("total", traffic.sum())
-                    ratio   = Index("ratio", ...)
+                    return MyModel.Outputs(traffic=traffic, total=total)
 
-                    super().__init__(
-                        "My Model",
-                        inputs=Inputs(inflow=inflow),
-                        outputs=Outputs(traffic=traffic, total=total),
-                        expose=Expose(ratio=ratio),
-                    )
-
-            m = MyModel(inflow_ts)
+            m = MyModel(inp=MyModel.Inputs(inflow=inflow_ts))
             m.inputs.inflow    # the wired inflow index
             m.outputs.traffic  # contractual output
-            m.expose.ratio     # inspectable, non-contractual
 
-        The local aliases (``Inputs = MyModel.Inputs``, etc.) avoid the
-        fully-qualified form inside ``__init__`` and keep the construction
-        calls concise.
+    **Contract decorators + `__init__` (composite / root models)**
+        Use :func:`~.contracts.inputs`, :func:`~.contracts.outputs`, and
+        :func:`~.contracts.expose` on the inner classes, then write ``__init__``
+        manually and call ``super().__init__()``.  Required for models that
+        assign sub-model attributes before ``super().__init__()`` is called.
+        Pass ``legacy=True`` to suppress the ``DeprecationWarning``::
 
-        ``Inputs`` and ``Outputs`` are plural because they name a *collection*
-        of fields.  ``Expose`` is a verb-derived noun (like ``Meta`` or
-        ``Config``) — "Exposes" would be grammatically wrong — so it stays
-        singular by design.
+            from civic_digital_twins.dt_model import Model, inputs, outputs
+
+            class RootModel(Model, legacy=True):
+
+                @inputs
+                class Inputs:
+                    inflow: TimeseriesIndex
+
+                @outputs
+                class Outputs:
+                    traffic: TimeseriesIndex
+
+                def __init__(self) -> None:
+                    self.leaf = LeafModel(...)
+                    super().__init__(
+                        "Root",
+                        inputs=RootModel.Inputs(inflow=...),
+                        outputs=RootModel.Outputs(traffic=...),
+                    )
 
         Dataclass fields may hold a single :class:`~.index.GenericIndex`, a
         ``list`` of them, or a ``dict`` mapping strings to them.  The flat
-        ``indexes`` list is derived automatically by collecting and
-        deduplicating all scalar indexes from ``inputs``, ``outputs``, and
-        ``expose``.
+        ``indexes`` list is derived automatically from ``inputs``, ``outputs``,
+        and ``expose``.
 
     **Legacy API** (deprecated)
         Pass a flat ``indexes`` list directly, along with optional
@@ -578,17 +583,17 @@ class Model:
     """
 
     def __init_subclass__(cls, *, legacy: bool = False, **kwargs: Any) -> None:
-        """Warn when a subclass defines ``__init__`` directly instead of using ``@model``.
+        """Warn when a subclass defines ``__init__`` directly instead of using ``@define``.
 
         Fired at class-definition time (before class decorators run), so
-        ``@model``-decorated classes — which have no ``__init__`` at that point
+        ``@define``-decorated classes — which have no ``__init__`` at that point
         — are not affected.
 
         Parameters
         ----------
         legacy:
             Pass ``True`` to suppress the warning for models that cannot be
-            expressed with :func:`~.contracts.model` + ``compute()`` (e.g.
+            expressed with :func:`~.contracts.define` + ``compute()`` (e.g.
             composite models that assign sub-model attributes before calling
             ``super().__init__()``).
         """
@@ -596,7 +601,7 @@ class Model:
         if "__init__" in cls.__dict__ and not legacy:
             warnings.warn(
                 f"{cls.__name__} defines __init__ directly. "
-                "Use @model with compute() instead, or pass legacy=True to suppress this warning.",
+                "Use @define with compute() instead, or pass legacy=True to suppress this warning.",
                 DeprecationWarning,
                 stacklevel=2,
             )

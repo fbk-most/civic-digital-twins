@@ -25,10 +25,10 @@ from .model import (
     ModelContractWarning,
     ModelVariant,
     TimeseriesIndex,
+    define,
     expose,
     functions,
     inputs,
-    model,
     outputs,
 )
 from .simulation import (
@@ -88,10 +88,10 @@ __all__ = [
     "Index",
     "InputsContractWarning",
     "IncompatibleResultError",
+    "define",
     "expose",
     "functions",
     "inputs",
-    "model",
     "outputs",
     "Model",
     "ModelContractWarning",

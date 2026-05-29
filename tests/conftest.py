@@ -10,6 +10,6 @@ import warnings
 # @dataclass-for-inputs warning asserted in test_io_contracts.py) are unaffected.
 warnings.filterwarnings(
     "ignore",
-    message=r".*Use @model with compute\(\).*",
+    message=r".*Use @define with compute\(\).*",
     category=DeprecationWarning,
 )
