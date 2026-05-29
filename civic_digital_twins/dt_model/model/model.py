@@ -577,6 +577,30 @@ class Model:
     work while the contract is incrementally tightened.
     """
 
+    def __init_subclass__(cls, *, legacy: bool = False, **kwargs: Any) -> None:
+        """Warn when a subclass defines ``__init__`` directly instead of using ``@model``.
+
+        Fired at class-definition time (before class decorators run), so
+        ``@model``-decorated classes — which have no ``__init__`` at that point
+        — are not affected.
+
+        Parameters
+        ----------
+        legacy:
+            Pass ``True`` to suppress the warning for models that cannot be
+            expressed with :func:`~.contracts.model` + ``compute()`` (e.g.
+            composite models that assign sub-model attributes before calling
+            ``super().__init__()``).
+        """
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__ and not legacy:
+            warnings.warn(
+                f"{cls.__name__} defines __init__ directly. "
+                "Use @model with compute() instead, or pass legacy=True to suppress this warning.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
     def __init__(
         self,
         name: str,

@@ -28,6 +28,7 @@ from .model import (
     expose,
     functions,
     inputs,
+    model,
     outputs,
 )
 from .simulation import (
@@ -90,6 +91,7 @@ __all__ = [
     "expose",
     "functions",
     "inputs",
+    "model",
     "outputs",
     "Model",
     "ModelContractWarning",

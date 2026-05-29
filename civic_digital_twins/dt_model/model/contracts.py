@@ -1,8 +1,8 @@
 """Contract decorators for :class:`~.model.Model` subclasses.
 
-``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace the bare
-``@dataclass`` convention with purpose-specific decorators that make intent
-explicit and validate field types at construction time.
+``@model``, ``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace
+the bare ``@dataclass`` convention with purpose-specific decorators that make
+intent explicit and validate field types at construction time.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import sys
+import typing
 from collections.abc import Iterator
 from typing import Any, Literal
 
 from .index import GenericIndex
 
-__all__ = ["expose", "functions", "inputs", "outputs"]
+__all__ = ["expose", "functions", "inputs", "model", "outputs"]
 
 _MISSING = object()
 
@@ -247,3 +249,168 @@ mapping strings to them.
 Passing a plain ``@dataclass`` instance as ``expose=`` to
 :class:`~.model.Model` is deprecated; use ``@expose`` instead.
 """
+
+
+# ---------------------------------------------------------------------------
+# @model
+# ---------------------------------------------------------------------------
+
+
+def model(name: str) -> Any:
+    """Declare a leaf :class:`~.model.Model` subclass via a ``compute()`` method.
+
+    Generates a typed ``__init__(self, inp: Inputs)`` (plus ``fns: Functions``
+    when a ``@functions`` inner class is declared) and wires the result of
+    :meth:`compute` into ``super().__init__()`` automatically.
+
+    Parameters
+    ----------
+    name:
+        Human-readable model name forwarded to
+        :class:`~.model.Model.__init__`.
+
+    Usage
+    -----
+    Leaf model without ``Expose``::
+
+        @model("Parking")
+        class ParkingModel(Model):
+
+            @inputs
+            class Inputs:
+                pv_tourists: ConditionalDistributionIndex
+
+            @outputs
+            class Outputs:
+                i_u_parking: Index
+
+            def compute(self, inp: Inputs) -> Outputs:
+                i_u_parking = Index("parking_usage", inp.pv_tourists * ...)
+                return ParkingModel.Outputs(i_u_parking=i_u_parking)
+
+    With ``@functions`` and ``Expose``::
+
+        @model("Traffic")
+        class TrafficModel(Model):
+
+            @inputs
+            class Inputs:
+                ts_inflow: TimeseriesIndex
+
+            @functions
+            class Functions:
+                ts_solve: Functor
+
+            @outputs
+            class Outputs:
+                ts_traffic: TimeseriesIndex
+
+            @expose
+            class Expose:
+                ts_raw: TimeseriesIndex
+
+            def compute(self, inp: Inputs, *, fns: Functions) -> tuple[Outputs, Expose]:
+                ts_raw     = TimeseriesIndex("raw", graph.function_call("ts_solve", inp.ts_inflow))
+                ts_traffic = TimeseriesIndex("traffic", ts_raw * ...)
+                return (
+                    TrafficModel.Outputs(ts_traffic=ts_traffic),
+                    TrafficModel.Expose(ts_raw=ts_raw),
+                )
+
+    Composite / root models that assign sub-model attributes before calling
+    ``super().__init__()`` cannot use ``compute()`` and should declare
+    ``legacy=True``::
+
+        class BolognaModel(Model, legacy=True):
+            def __init__(self) -> None:
+                self.traffic = TrafficModel(...)
+                super().__init__("Bologna mobility", ...)
+
+    Raises
+    ------
+    TypeError
+        At decoration time if ``compute()`` is absent, if both ``compute``
+        and ``__init__`` are defined, or if an ``@expose Expose`` class is
+        declared but the ``compute`` return annotation does not include
+        ``Expose``.
+    """
+
+    def decorator(cls: type) -> type:
+        # Validate class structure at decoration time.
+        if "compute" not in cls.__dict__:
+            raise TypeError(
+                f"@model({name!r}) requires {cls.__name__} to define a compute() method."
+            )
+        if "__init__" in cls.__dict__:
+            raise TypeError(
+                f"@model class {cls.__name__} must not define __init__. "
+                f"Implement compute() instead."
+            )
+
+        # Detect @functions inner class via its role marker.
+        has_functions = (
+            "Functions" in cls.__dict__
+            and getattr(cls.__dict__["Functions"], "_is_functions", False)
+        )
+
+        # Detect @expose Expose inner class declared directly on this class.
+        has_expose_cls = (
+            "Expose" in cls.__dict__
+            and getattr(cls.__dict__["Expose"], "_is_expose", False)
+        )
+
+        # Resolve compute()'s return annotation.  Using typing.get_type_hints()
+        # rather than .__annotations__ handles `from __future__ import annotations`,
+        # which otherwise stores all annotations as strings.
+        try:
+            hints = typing.get_type_hints(
+                cls.compute,
+                globalns=vars(sys.modules[cls.__module__]),
+                localns=vars(cls),
+            )
+        except Exception:
+            hints = getattr(cls.compute, "__annotations__", {})
+
+        return_hint = hints.get("return", None)
+        returns_expose = return_hint is not None and getattr(return_hint, "__origin__", None) is tuple
+
+        # Consistency check: @expose declared → must appear in return annotation.
+        if has_expose_cls and not returns_expose:
+            raise TypeError(
+                f"@model class {cls.__name__} declares an @expose Expose inner class "
+                f"but compute() return annotation is not tuple[Outputs, Expose]. "
+                f"Update the return annotation to include Expose, or remove the Expose declaration."
+            )
+
+        # Capture for closure so the generated __init__ uses the right class in
+        # super() even if the @model class is later subclassed.
+        _cls = cls
+        _name = name
+        _returns_expose = returns_expose
+
+        # Use distinct names to avoid Pyright reportRedeclaration in the if/else.
+        if has_functions:
+            def _init_with_fns(self: Any, inp: Any, *, fns: Any) -> None:
+                if _returns_expose:
+                    out, exp = self.compute(inp, fns=fns)
+                    super(_cls, self).__init__(_name, inputs=inp, outputs=out, expose=exp, functions=fns)  # type: ignore[misc]
+                else:
+                    out = self.compute(inp, fns=fns)
+                    super(_cls, self).__init__(_name, inputs=inp, outputs=out, functions=fns)  # type: ignore[misc]
+
+            cls.__init__ = _init_with_fns  # type: ignore[assignment]
+        else:
+            def _init_no_fns(self: Any, inp: Any) -> None:
+                if _returns_expose:
+                    out, exp = self.compute(inp)
+                    super(_cls, self).__init__(_name, inputs=inp, outputs=out, expose=exp)  # type: ignore[misc]
+                else:
+                    out = self.compute(inp)
+                    super(_cls, self).__init__(_name, inputs=inp, outputs=out)  # type: ignore[misc]
+
+            cls.__init__ = _init_no_fns  # type: ignore[assignment]
+
+        cls._is_model_decorated = True
+        return cls
+
+    return decorator

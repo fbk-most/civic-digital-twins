@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from .axis import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
-from .contracts import expose, functions, inputs, outputs
+from .contracts import expose, functions, inputs, model, outputs
 from .index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -25,6 +25,7 @@ __all__ = [
     "expose",
     "functions",
     "inputs",
+    "model",
     "outputs",
     "AxisRole",
     "CategoricalIndex",
