@@ -22,6 +22,7 @@ from civic_digital_twins.dt_model import (
     NumpyBackend,
     Scenario,
     TimeseriesIndex,
+    define,
     expose,
     functions,
     graph,
@@ -76,6 +77,7 @@ def _ts_solve(ts: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+@define("Inflow")
 class InflowModel(Model):
     """Sub-model that computes modified vehicle inflow under a pricing policy.
 
@@ -139,42 +141,8 @@ class InflowModel(Model):
         i_total_anticipated: Index
         i_total_postponed: Index
 
-    def __init__(
-        self,
-        ts_inflow: TimeseriesIndex,
-        ts_starting: TimeseriesIndex,
-        ts: TimeseriesIndex,
-        i_p_start_time: Index,
-        i_p_end_time: Index,
-        i_p_cost: list[Index],
-        i_p_fraction_exempted: Index,
-        i_b_p50_cost: DistributionIndex,
-        i_b_p50_anticipating: Index,
-        i_b_p50_anticipation: Index,
-        i_b_p50_postponing: Index,
-        i_b_p50_postponement: Index,
-        i_b_starting_modified_factor: Index,
-    ) -> None:
-        Inputs = InflowModel.Inputs
-        Outputs = InflowModel.Outputs
-        Expose = InflowModel.Expose
-
-        inputs = Inputs(
-            ts_inflow=ts_inflow,
-            ts_starting=ts_starting,
-            ts=ts,
-            i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
-            i_p_fraction_exempted=i_p_fraction_exempted,
-            i_b_p50_cost=i_b_p50_cost,
-            i_b_p50_anticipating=i_b_p50_anticipating,
-            i_b_p50_anticipation=i_b_p50_anticipation,
-            i_b_p50_postponing=i_b_p50_postponing,
-            i_b_p50_postponement=i_b_p50_postponement,
-            i_b_starting_modified_factor=i_b_starting_modified_factor,
-        )
-
+    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
+        """Compute modified inflow, payment stats, and exposed intermediates."""
         avg_cost = Index(
             "average cost",
             inputs.i_p_cost[0] * euro_class_split["euro_0"]
@@ -337,10 +305,8 @@ class InflowModel(Model):
         # TODO: fix, compute real value!
         total_paid = Index("total paid fees", total_paying * avg_cost)
 
-        super().__init__(
-            "Inflow",
-            inputs=inputs,
-            outputs=Outputs(
+        return (
+            InflowModel.Outputs(
                 modified_inflow=modified_inflow,
                 modified_starting=modified_starting,
                 total_base_inflow=total_base_inflow,
@@ -353,7 +319,7 @@ class InflowModel(Model):
                 total_paid=total_paid,
                 total_shifted=total_shifted,
             ),
-            expose=Expose(
+            InflowModel.Expose(
                 i_fraction_rigid_euro=i_fraction_rigid_euro,
                 i_delta_from_start=i_delta_from_start,
                 i_fraction_anticipating=i_fraction_anticipating,
@@ -374,6 +340,7 @@ class InflowModel(Model):
         )
 
 
+@define("Traffic")
 class TrafficModel(Model):
     """Sub-model that computes both baseline and modified circulating traffic.
 
@@ -408,25 +375,8 @@ class TrafficModel(Model):
 
         ts_solve: Functor
 
-    def __init__(
-        self,
-        ts_inflow: TimeseriesIndex,
-        ts_starting: TimeseriesIndex,
-        modified_inflow: Index,
-        modified_starting: Index,
-        *,
-        functions: TrafficModel.Functions,
-    ) -> None:
-        Inputs = TrafficModel.Inputs
-        Outputs = TrafficModel.Outputs
-
-        inputs = Inputs(
-            ts_inflow=ts_inflow,
-            ts_starting=ts_starting,
-            modified_inflow=modified_inflow,
-            modified_starting=modified_starting,
-        )
-
+    def compute(self, inputs: Inputs, *, fns: Functions) -> Outputs:
+        """Compute steady-state traffic for baseline and modified scenarios."""
         traffic = TimeseriesIndex(
             "reference traffic",
             graph.function_call("ts_solve", inputs.ts_inflow + inputs.ts_starting),
@@ -445,22 +395,17 @@ class TrafficModel(Model):
             "ratio between modified traffic and base traffic",
             traffic / modified_traffic,
         )
-
-        super().__init__(
-            "Traffic",
-            inputs=inputs,
-            outputs=Outputs(
-                traffic=traffic,
-                modified_traffic=modified_traffic,
-                total_modified_traffic=total_modified_traffic,
-                inflow_ratio=inflow_ratio,
-                starting_ratio=starting_ratio,
-                traffic_ratio=traffic_ratio,
-            ),
-            functions=functions,
+        return TrafficModel.Outputs(
+            traffic=traffic,
+            modified_traffic=modified_traffic,
+            total_modified_traffic=total_modified_traffic,
+            inflow_ratio=inflow_ratio,
+            starting_ratio=starting_ratio,
+            traffic_ratio=traffic_ratio,
         )
 
 
+@define("Emissions")
 class EmissionsModel(Model):
     """Sub-model that computes both baseline and modified emissions.
 
@@ -490,27 +435,8 @@ class EmissionsModel(Model):
         total_emissions: Index
         total_modified_emissions: Index
 
-    def __init__(
-        self,
-        ts: TimeseriesIndex,
-        i_p_start_time: Index,
-        i_p_end_time: Index,
-        traffic: TimeseriesIndex,
-        modified_traffic: TimeseriesIndex,
-        modified_euro_class_split: list[Index],
-    ) -> None:
-        Inputs = EmissionsModel.Inputs
-        Outputs = EmissionsModel.Outputs
-
-        inputs = Inputs(
-            ts=ts,
-            i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
-            traffic=traffic,
-            modified_traffic=modified_traffic,
-            modified_euro_class_split=modified_euro_class_split,
-        )
-
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute baseline and modified vehicle emissions."""
         average_emissions = ConstIndex(
             "average emissions (per vehicle, per km)",
             euro_class_emission["euro_0"] * euro_class_split["euro_0"]
@@ -555,16 +481,12 @@ class EmissionsModel(Model):
         total_emissions = Index("total emissions", emissions.sum())
         total_modified_emissions = Index("total modified emissions", modified_emissions.sum())
 
-        super().__init__(
-            "Emissions",
-            inputs=inputs,
-            outputs=Outputs(
-                average_emissions=average_emissions,
-                emissions=emissions,
-                modified_emissions=modified_emissions,
-                total_emissions=total_emissions,
-                total_modified_emissions=total_modified_emissions,
-            ),
+        return EmissionsModel.Outputs(
+            average_emissions=average_emissions,
+            emissions=emissions,
+            modified_emissions=modified_emissions,
+            total_emissions=total_emissions,
+            total_modified_emissions=total_modified_emissions,
         )
 
 
@@ -573,7 +495,7 @@ class EmissionsModel(Model):
 # ---------------------------------------------------------------------------
 
 
-class BolognaModel(Model):
+class BolognaModel(Model, legacy=True):
     """Root model for the Bologna mobility example.
 
     Composes three sub-models:
@@ -704,7 +626,7 @@ class BolognaModel(Model):
         ts_inflow = ConstTimeseriesIndex("inflow", vehicle_inflow)
         ts_starting = ConstTimeseriesIndex("staring", vehicle_starting)
 
-        _inflow = InflowModel(
+        _inflow = InflowModel(inputs=InflowModel.Inputs(  # type: ignore[call-arg]
             ts_inflow=ts_inflow,
             ts_starting=ts_starting,
             ts=ts,
@@ -718,24 +640,26 @@ class BolognaModel(Model):
             i_b_p50_postponing=i_b_p50_postponing,
             i_b_p50_postponement=i_b_p50_postponement,
             i_b_starting_modified_factor=i_b_starting_modified_factor,
+        ))
+
+        _traffic = TrafficModel(  # type: ignore[call-arg]
+            inputs=TrafficModel.Inputs(
+                ts_inflow=ts_inflow,
+                ts_starting=ts_starting,
+                modified_inflow=_inflow.outputs.modified_inflow,
+                modified_starting=_inflow.outputs.modified_starting,
+            ),
+            fns=TrafficModel.Functions(ts_solve=fns.ts_solve),
         )
 
-        _traffic = TrafficModel(
-            ts_inflow=ts_inflow,
-            ts_starting=ts_starting,
-            modified_inflow=_inflow.outputs.modified_inflow,
-            modified_starting=_inflow.outputs.modified_starting,
-            functions=TrafficModel.Functions(ts_solve=fns.ts_solve),
-        )
-
-        _emissions = EmissionsModel(
+        _emissions = EmissionsModel(inputs=EmissionsModel.Inputs(  # type: ignore[call-arg]
             ts=ts,
             i_p_start_time=i_p_start_time,
             i_p_end_time=i_p_end_time,
             traffic=_traffic.outputs.traffic,
             modified_traffic=_traffic.outputs.modified_traffic,
             modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
-        )
+        ))
 
         super().__init__(
             "Bologna mobility",

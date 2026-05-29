@@ -86,6 +86,7 @@ from civic_digital_twins.dt_model import (
     GenericIndex,
     Index,
     Model,
+    define,
     graph,
     inputs,
     outputs,
@@ -147,6 +148,7 @@ class Constraint:
 # ---------------------------------------------------------------------------
 
 
+@define("Parking")
 class ParkingModel(Model):
     """Concern sub-model — parking usage.
 
@@ -158,29 +160,6 @@ class ParkingModel(Model):
     The usage formula ``i_u_parking`` is the single contractual ``Output``.
     The :class:`~overtourism_molveno.molveno_model.Constraint` is
     stored as a plain instance attribute ``self.constraint``.
-
-    Parameters
-    ----------
-    pv_tourists : ConditionalDistributionIndex
-        Tourist presence (wired from :class:`MolvenoModel`).
-    pv_excursionists : ConditionalDistributionIndex
-        Excursionist presence (wired from :class:`MolvenoModel`).
-    cv_weather : CategoricalIndex
-        Weather context variable (needed for the piecewise usage factor).
-    i_u_tourists_parking : Index
-        Tourist parking usage factor.
-    i_u_excursionists_parking : Index
-        Excursionist parking usage factor (piecewise on weather).
-    i_xa_tourists_per_vehicle : Index
-        Tourists per vehicle allocation factor.
-    i_xa_excursionists_per_vehicle : Index
-        Excursionists per vehicle allocation factor.
-    i_xo_tourists_parking : Index
-        Tourists in parking rotation factor.
-    i_xo_excursionists_parking : Index
-        Excursionists in parking rotation factor.
-    i_c_parking : DistributionIndex
-        Parking capacity (uncertain).
 
     Attributes
     ----------
@@ -209,35 +188,8 @@ class ParkingModel(Model):
 
         i_u_parking: Index
 
-    def __init__(
-        self,
-        pv_tourists: ConditionalDistributionIndex,
-        pv_excursionists: ConditionalDistributionIndex,
-        cv_weather: CategoricalIndex,
-        i_u_tourists_parking: Index,
-        i_u_excursionists_parking: Index,
-        i_xa_tourists_per_vehicle: Index,
-        i_xa_excursionists_per_vehicle: Index,
-        i_xo_tourists_parking: Index,
-        i_xo_excursionists_parking: Index,
-        i_c_parking: DistributionIndex,
-    ) -> None:
-        Inputs = ParkingModel.Inputs
-        Outputs = ParkingModel.Outputs
-
-        inputs = Inputs(
-            pv_tourists=pv_tourists,
-            pv_excursionists=pv_excursionists,
-            cv_weather=cv_weather,
-            i_u_tourists_parking=i_u_tourists_parking,
-            i_u_excursionists_parking=i_u_excursionists_parking,
-            i_xa_tourists_per_vehicle=i_xa_tourists_per_vehicle,
-            i_xa_excursionists_per_vehicle=i_xa_excursionists_per_vehicle,
-            i_xo_tourists_parking=i_xo_tourists_parking,
-            i_xo_excursionists_parking=i_xo_excursionists_parking,
-            i_c_parking=i_c_parking,
-        )
-
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute parking usage from inputs."""
         i_u_parking = Index(
             "parking usage",
             inputs.pv_tourists
@@ -247,15 +199,9 @@ class ParkingModel(Model):
             * inputs.i_u_excursionists_parking
             / (inputs.i_xa_excursionists_per_vehicle * inputs.i_xo_excursionists_parking),
         )
-
-        super().__init__(
-            "Parking",
-            inputs=inputs,
-            outputs=Outputs(i_u_parking=i_u_parking),
-        )
-
         # Constraint stored as a plain attribute — not a GenericIndex.
         self.constraint = Constraint(name="parking", usage=i_u_parking, capacity=inputs.i_c_parking)
+        return ParkingModel.Outputs(i_u_parking=i_u_parking)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +209,7 @@ class ParkingModel(Model):
 # ---------------------------------------------------------------------------
 
 
+@define("Beach")
 class BeachModel(Model):
     """Concern sub-model — beach usage.
 
@@ -271,25 +218,6 @@ class BeachModel(Model):
     passed in from :class:`MolvenoModel` so it appears in the root
     ``model.indexes`` and is sampled by
     :class:`~dt_model.CrossProductEnsemble`.
-
-    Parameters
-    ----------
-    pv_tourists : ConditionalDistributionIndex
-        Tourist presence (wired from :class:`MolvenoModel`).
-    pv_excursionists : ConditionalDistributionIndex
-        Excursionist presence (wired from :class:`MolvenoModel`).
-    cv_weather : CategoricalIndex
-        Weather context variable (needed for the piecewise usage factors).
-    i_u_tourists_beach : Index
-        Tourist beach usage factor (piecewise on weather).
-    i_u_excursionists_beach : Index
-        Excursionist beach usage factor (piecewise on weather).
-    i_xo_tourists_beach : DistributionIndex
-        Tourists on beach rotation factor (uncertain).
-    i_xo_excursionists_beach : Index
-        Excursionists on beach rotation factor.
-    i_c_beach : DistributionIndex
-        Beach capacity (uncertain).
 
     Attributes
     ----------
@@ -316,45 +244,16 @@ class BeachModel(Model):
 
         i_u_beach: Index
 
-    def __init__(
-        self,
-        pv_tourists: ConditionalDistributionIndex,
-        pv_excursionists: ConditionalDistributionIndex,
-        cv_weather: CategoricalIndex,
-        i_u_tourists_beach: Index,
-        i_u_excursionists_beach: Index,
-        i_xo_tourists_beach: DistributionIndex,
-        i_xo_excursionists_beach: Index,
-        i_c_beach: DistributionIndex,
-    ) -> None:
-        Inputs = BeachModel.Inputs
-        Outputs = BeachModel.Outputs
-
-        inputs = Inputs(
-            pv_tourists=pv_tourists,
-            pv_excursionists=pv_excursionists,
-            cv_weather=cv_weather,
-            i_u_tourists_beach=i_u_tourists_beach,
-            i_u_excursionists_beach=i_u_excursionists_beach,
-            i_xo_tourists_beach=i_xo_tourists_beach,
-            i_xo_excursionists_beach=i_xo_excursionists_beach,
-            i_c_beach=i_c_beach,
-        )
-
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute beach usage from inputs."""
         i_u_beach = Index(
             "beach usage",
             inputs.pv_tourists * inputs.i_u_tourists_beach / inputs.i_xo_tourists_beach
             + inputs.pv_excursionists * inputs.i_u_excursionists_beach / inputs.i_xo_excursionists_beach,
         )
-
-        super().__init__(
-            "Beach",
-            inputs=inputs,
-            outputs=Outputs(i_u_beach=i_u_beach),
-        )
-
         # Constraint stored as a plain attribute — not a GenericIndex.
         self.constraint = Constraint(name="beach", usage=i_u_beach, capacity=inputs.i_c_beach)
+        return BeachModel.Outputs(i_u_beach=i_u_beach)
 
 
 # ---------------------------------------------------------------------------
@@ -362,19 +261,9 @@ class BeachModel(Model):
 # ---------------------------------------------------------------------------
 
 
+@define("Accommodation")
 class AccommodationModel(Model):
     """Concern sub-model — accommodation usage.
-
-    Parameters
-    ----------
-    pv_tourists : ConditionalDistributionIndex
-        Tourist presence (wired from :class:`MolvenoModel`).
-    i_u_tourists_accommodation : Index
-        Tourist accommodation usage factor.
-    i_xa_tourists_accommodation : Index
-        Tourists per accommodation allocation factor.
-    i_c_accommodation : DistributionIndex
-        Accommodation capacity (uncertain).
 
     Attributes
     ----------
@@ -397,40 +286,15 @@ class AccommodationModel(Model):
 
         i_u_accommodation: Index
 
-    def __init__(
-        self,
-        pv_tourists: ConditionalDistributionIndex,
-        i_u_tourists_accommodation: Index,
-        i_xa_tourists_accommodation: Index,
-        i_c_accommodation: DistributionIndex,
-    ) -> None:
-        Inputs = AccommodationModel.Inputs
-        Outputs = AccommodationModel.Outputs
-
-        inputs = Inputs(
-            pv_tourists=pv_tourists,
-            i_u_tourists_accommodation=i_u_tourists_accommodation,
-            i_xa_tourists_accommodation=i_xa_tourists_accommodation,
-            i_c_accommodation=i_c_accommodation,
-        )
-
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute accommodation usage from inputs."""
         i_u_accommodation = Index(
             "accommodation usage",
             inputs.pv_tourists * inputs.i_u_tourists_accommodation / inputs.i_xa_tourists_accommodation,
         )
-
-        super().__init__(
-            "Accommodation",
-            inputs=inputs,
-            outputs=Outputs(i_u_accommodation=i_u_accommodation),
-        )
-
         # Constraint stored as a plain attribute — not a GenericIndex.
-        self.constraint = Constraint(
-            name="accommodation",
-            usage=i_u_accommodation,
-            capacity=inputs.i_c_accommodation,
-        )
+        self.constraint = Constraint(name="accommodation", usage=i_u_accommodation, capacity=inputs.i_c_accommodation)
+        return AccommodationModel.Outputs(i_u_accommodation=i_u_accommodation)
 
 
 # ---------------------------------------------------------------------------
@@ -438,27 +302,9 @@ class AccommodationModel(Model):
 # ---------------------------------------------------------------------------
 
 
+@define("Food")
 class FoodModel(Model):
     """Concern sub-model — food-service usage.
-
-    Parameters
-    ----------
-    pv_tourists : ConditionalDistributionIndex
-        Tourist presence (wired from :class:`MolvenoModel`).
-    pv_excursionists : ConditionalDistributionIndex
-        Excursionist presence (wired from :class:`MolvenoModel`).
-    cv_weather : CategoricalIndex
-        Weather context variable (needed for the piecewise usage factor).
-    i_u_tourists_food : Index
-        Tourist food-service usage factor.
-    i_u_excursionists_food : Index
-        Excursionist food-service usage factor (piecewise on weather).
-    i_xa_visitors_food : Index
-        Visitors in food-service allocation factor.
-    i_xo_visitors_food : Index
-        Visitors in food-service rotation factor.
-    i_c_food : DistributionIndex
-        Food-service capacity (uncertain).
 
     Attributes
     ----------
@@ -485,45 +331,16 @@ class FoodModel(Model):
 
         i_u_food: Index
 
-    def __init__(
-        self,
-        pv_tourists: ConditionalDistributionIndex,
-        pv_excursionists: ConditionalDistributionIndex,
-        cv_weather: CategoricalIndex,
-        i_u_tourists_food: Index,
-        i_u_excursionists_food: Index,
-        i_xa_visitors_food: Index,
-        i_xo_visitors_food: Index,
-        i_c_food: DistributionIndex,
-    ) -> None:
-        Inputs = FoodModel.Inputs
-        Outputs = FoodModel.Outputs
-
-        inputs = Inputs(
-            pv_tourists=pv_tourists,
-            pv_excursionists=pv_excursionists,
-            cv_weather=cv_weather,
-            i_u_tourists_food=i_u_tourists_food,
-            i_u_excursionists_food=i_u_excursionists_food,
-            i_xa_visitors_food=i_xa_visitors_food,
-            i_xo_visitors_food=i_xo_visitors_food,
-            i_c_food=i_c_food,
-        )
-
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute food-service usage from inputs."""
         i_u_food = Index(
             "food usage",
             (inputs.pv_tourists * inputs.i_u_tourists_food + inputs.pv_excursionists * inputs.i_u_excursionists_food)
             / (inputs.i_xa_visitors_food * inputs.i_xo_visitors_food),
         )
-
-        super().__init__(
-            "Food",
-            inputs=inputs,
-            outputs=Outputs(i_u_food=i_u_food),
-        )
-
         # Constraint stored as a plain attribute — not a GenericIndex.
         self.constraint = Constraint(name="food", usage=i_u_food, capacity=inputs.i_c_food)
+        return FoodModel.Outputs(i_u_food=i_u_food)
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +348,7 @@ class FoodModel(Model):
 # ---------------------------------------------------------------------------
 
 
-class MolvenoModel(Model):
+class MolvenoModel(Model, legacy=True):
     """Root overtourism model that wires the four concern sub-models.
 
     ``MolvenoModel`` owns:
@@ -656,7 +473,7 @@ class MolvenoModel(Model):
         # ------------------------------------------------------------------
         # Stage 2 / 3 — concern sub-models
         # ------------------------------------------------------------------
-        parking = ParkingModel(
+        parking = ParkingModel(inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
             pv_tourists=pv_tourists,
             pv_excursionists=pv_excursionists,
             cv_weather=cv_weather,
@@ -667,8 +484,8 @@ class MolvenoModel(Model):
             i_xo_tourists_parking=i_xo_tourists_parking,
             i_xo_excursionists_parking=i_xo_excursionists_parking,
             i_c_parking=i_c_parking,
-        )
-        beach = BeachModel(
+        ))
+        beach = BeachModel(inputs=BeachModel.Inputs(  # type: ignore[call-arg]
             pv_tourists=pv_tourists,
             pv_excursionists=pv_excursionists,
             cv_weather=cv_weather,
@@ -677,14 +494,14 @@ class MolvenoModel(Model):
             i_xo_tourists_beach=i_xo_tourists_beach,
             i_xo_excursionists_beach=i_xo_excursionists_beach,
             i_c_beach=i_c_beach,
-        )
-        accommodation = AccommodationModel(
+        ))
+        accommodation = AccommodationModel(inputs=AccommodationModel.Inputs(  # type: ignore[call-arg]
             pv_tourists=pv_tourists,
             i_u_tourists_accommodation=i_u_tourists_accommodation,
             i_xa_tourists_accommodation=i_xa_tourists_accommodation,
             i_c_accommodation=i_c_accommodation,
-        )
-        food = FoodModel(
+        ))
+        food = FoodModel(inputs=FoodModel.Inputs(  # type: ignore[call-arg]
             pv_tourists=pv_tourists,
             pv_excursionists=pv_excursionists,
             cv_weather=cv_weather,
@@ -693,7 +510,7 @@ class MolvenoModel(Model):
             i_xa_visitors_food=i_xa_visitors_food,
             i_xo_visitors_food=i_xo_visitors_food,
             i_c_food=i_c_food,
-        )
+        ))
 
         # ------------------------------------------------------------------
         # Collect domain lists consumed by CrossProductEnsemble
