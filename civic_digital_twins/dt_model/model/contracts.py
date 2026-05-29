@@ -93,11 +93,7 @@ def functions(
     """
 
     def decorator(cls: type) -> type:
-        declared: dict[str, Any] = {
-            name: ann
-            for name, ann in cls.__annotations__.items()
-            if not name.startswith("_")
-        }
+        declared: dict[str, Any] = {name: ann for name, ann in cls.__annotations__.items() if not name.startswith("_")}
         extra_mode = extra
 
         def __init__(self: Any, **kwargs: Any) -> None:
@@ -116,9 +112,7 @@ def functions(
                     setattr(self, name, default)
 
             if extra_mode == "forbid" and extra_kw:
-                raise TypeError(
-                    f"{cls.__name__}() got unexpected keyword arguments: {sorted(extra_kw)}"
-                )
+                raise TypeError(f"{cls.__name__}() got unexpected keyword arguments: {sorted(extra_kw)}")
             self._extra = extra_kw
 
         def items(self: Any) -> Iterator[tuple[str, Any]]:
@@ -162,23 +156,14 @@ def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
     if isinstance(val, list):
         for i, item in enumerate(val):
             if not isinstance(item, GenericIndex):
-                raise TypeError(
-                    f"{cls_name}.{field_name}[{i}]: expected GenericIndex, "
-                    f"got {type(item).__name__}"
-                )
+                raise TypeError(f"{cls_name}.{field_name}[{i}]: expected GenericIndex, got {type(item).__name__}")
         return
     if isinstance(val, dict):
         for k, item in val.items():
             if not isinstance(item, GenericIndex):
-                raise TypeError(
-                    f"{cls_name}.{field_name}[{k!r}]: expected GenericIndex, "
-                    f"got {type(item).__name__}"
-                )
+                raise TypeError(f"{cls_name}.{field_name}[{k!r}]: expected GenericIndex, got {type(item).__name__}")
         return
-    raise TypeError(
-        f"{cls_name}.{field_name}: expected GenericIndex (or list/dict thereof), "
-        f"got {type(val).__name__}"
-    )
+    raise TypeError(f"{cls_name}.{field_name}: expected GenericIndex (or list/dict thereof), got {type(val).__name__}")
 
 
 def _make_io_decorator(marker: str) -> Any:

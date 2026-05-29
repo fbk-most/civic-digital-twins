@@ -291,7 +291,7 @@ def test_executor_node_identity_dispatch_takes_priority():
     fc = graph.function_call("f", p)
 
     node_functor = NumpyBackend.adapt(lambda x: x * 10)  # should be used
-    name_functor = NumpyBackend.adapt(lambda x: x + 1)   # should be ignored
+    name_functor = NumpyBackend.adapt(lambda x: x + 1)  # should be ignored
 
     state = executor.State(
         {p: np.array(3.0)},

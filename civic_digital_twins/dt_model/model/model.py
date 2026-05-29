@@ -446,8 +446,6 @@ def _build_proxy(
     return IOProxy(entries, dc=None)
 
 
-
-
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -647,14 +645,11 @@ class Model:
             # Build node-function map: collect sub-model claims first, then this
             # model's own @functions declarations (closest-ancestor wins).
             _scan = {
-                k: v for k, v in self.__dict__.items()
-                if k not in ("name", "indexes", "inputs", "outputs", "expose")
+                k: v for k, v in self.__dict__.items() if k not in ("name", "indexes", "inputs", "outputs", "expose")
             }
             _submodel_fns = _collect_submodel_node_functions(_scan)
             if functions is not None and getattr(type(functions), "_is_functions", False):
-                self._node_functions = _build_node_functions_map(
-                    self.indexes, self.inputs, functions, _submodel_fns
-                )
+                self._node_functions = _build_node_functions_map(self.indexes, self.inputs, functions, _submodel_fns)
             else:
                 self._node_functions = _submodel_fns
 
@@ -846,9 +841,7 @@ def _build_node_functions_map(
     stop_ids: set[int] = input_ids | claimed_ids
 
     # Start the traversal from every non-input index node.
-    start_nodes: list[graph.Node] = [
-        idx.node for idx in indexes if id(idx.node) not in input_ids
-    ]
+    start_nodes: list[graph.Node] = [idx.node for idx in indexes if id(idx.node) not in input_ids]
 
     result: dict[graph.Node, Functor] = dict(claimed)
     visited_ids: set[int] = set()
