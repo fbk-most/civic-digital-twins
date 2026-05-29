@@ -420,7 +420,12 @@ class State:
         flags: Bitmask containing debug flags (e.g., compileflags.BREAK) set
             by default using the `DTMODEL_ENGINE_FLAGS` environement
             variable as documented by the `compileflags` package docs.
-        functions: user-defined functions assignments.
+        functions: name-keyed user-defined function assignments (implicit,
+            evaluate-time binding).
+        node_functions: node-identity-keyed function assignments (explicit,
+            construction-time binding via ``@functions`` contract).  Checked
+            before ``functions`` so that two sub-models sharing the same
+            function name each receive their own functor.
 
     Notes
     -----

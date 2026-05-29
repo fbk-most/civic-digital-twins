@@ -540,6 +540,14 @@ class Model:
         Dataclass instance (new API) or ``list[GenericIndex]`` (legacy).
     expose:
         Dataclass instance (new API) or ``None``.  Ignored in legacy mode.
+    functions:
+        Instance of a ``@functions``-decorated class declaring the custom
+        functors this model requires.  At construction time the model
+        performs a backward BFS from its output nodes to claim each
+        matching ``function_call`` graph node; the resulting
+        ``_node_functions`` map is injected into the executor ``State``
+        at evaluation time.  Pass ``None`` (default) when the model uses
+        no explicit function contract.
 
     Notes
     -----
