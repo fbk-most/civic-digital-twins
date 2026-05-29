@@ -27,6 +27,8 @@ from civic_digital_twins.dt_model import (  # noqa: E402
     Model,
     Scenario,
     graph,
+    inputs,
+    outputs,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,14 +116,14 @@ assert C_beach.name == "beach"
 
 
 class MinimalOvertourismModel(Model):  # noqa: D101
-    @dataclass
+    @inputs
     class Inputs:  # noqa: D106
         cvs: list[CategoricalIndex]
         pvs: list[ConditionalDistributionIndex]
         domain_indexes: list[GenericIndex]
         capacities: list[GenericIndex]
 
-    @dataclass
+    @outputs
     class Outputs:  # noqa: D106
         usage_indexes: list[GenericIndex]
 

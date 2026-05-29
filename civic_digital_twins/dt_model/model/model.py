@@ -8,6 +8,8 @@ import warnings
 from collections.abc import Iterator
 from typing import Any
 
+from ..engine.frontend import graph
+from ..engine.numpybackend.executor import Functor
 from .index import DistributionIndex, GenericIndex, Index, TimeseriesIndex
 
 
@@ -536,6 +538,14 @@ class Model:
         Dataclass instance (new API) or ``list[GenericIndex]`` (legacy).
     expose:
         Dataclass instance (new API) or ``None``.  Ignored in legacy mode.
+    functions:
+        Instance of a ``@functions``-decorated class declaring the custom
+        functors this model requires.  At construction time the model
+        performs a backward BFS from its output nodes to claim each
+        matching ``function_call`` graph node; the resulting
+        ``_node_functions`` map is injected into the executor ``State``
+        at evaluation time.  Pass ``None`` (default) when the model uses
+        no explicit function contract.
 
     Notes
     -----
@@ -575,6 +585,7 @@ class Model:
         inputs: Any | None = None,
         outputs: Any | None = None,
         expose: Any | None = None,
+        functions: Any | None = None,
     ) -> None:
         self.name = name
 
@@ -584,7 +595,7 @@ class Model:
             # ------------------------------------------------------------------
             warnings.warn(
                 "Passing 'indexes' explicitly is deprecated and will be removed in a future version. "
-                "Use the dataclass-based inputs/outputs/expose API instead.",
+                "Use the @inputs/@outputs/@expose contract decorators instead.",
                 DeprecationWarning,
                 stacklevel=3,
             )
@@ -603,16 +614,44 @@ class Model:
             self.inputs: IOProxy[Any] = _build_proxy("inputs", legacy_inputs, instance_dict, indexes, name)
             self.outputs: IOProxy[Any] = _build_proxy("outputs", legacy_outputs, instance_dict, indexes, name)
             self.expose: IOProxy[Any] = IOProxy([])
+            self._node_functions: dict[graph.Node, Functor] = _collect_submodel_node_functions(instance_dict)
 
         else:
             # ------------------------------------------------------------------
             # New dataclass-based path
             # ------------------------------------------------------------------
+
+            # Warn when plain @dataclass instances are used instead of the
+            # dedicated @inputs / @outputs / @expose contract decorators.
+            for _label, _val, _marker in (
+                ("inputs", inputs, "_is_inputs"),
+                ("outputs", outputs, "_is_outputs"),
+                ("expose", expose, "_is_expose"),
+            ):
+                if _val is not None and dataclasses.is_dataclass(_val) and not getattr(type(_val), _marker, False):
+                    warnings.warn(
+                        f"Passing a plain @dataclass as {_label}= is deprecated. "
+                        f"Replace @dataclass with @{_label} from civic_digital_twins.dt_model.",
+                        DeprecationWarning,
+                        stacklevel=3,
+                    )
+
             self.indexes = _collect_indexes(inputs, outputs, expose)
 
             self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]
             self.outputs = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])  # type: ignore[assignment]
             self.expose = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])  # type: ignore[assignment]
+
+            # Build node-function map: collect sub-model claims first, then this
+            # model's own @functions declarations (closest-ancestor wins).
+            _scan = {
+                k: v for k, v in self.__dict__.items() if k not in ("name", "indexes", "inputs", "outputs", "expose")
+            }
+            _submodel_fns = _collect_submodel_node_functions(_scan)
+            if functions is not None and getattr(type(functions), "_is_functions", False):
+                self._node_functions = _build_node_functions_map(self.indexes, self.inputs, functions, _submodel_fns)
+            else:
+                self._node_functions = _submodel_fns
 
             # Convention check: every GenericIndex constructor parameter should
             # be declared in Inputs.  We inspect the immediate caller's frame
@@ -675,3 +714,158 @@ class Model:
             ``True`` if :meth:`abstract_indexes` is empty.
         """
         return len(self.abstract_indexes()) == 0
+
+
+# ---------------------------------------------------------------------------
+# Functions contract helpers
+# (defined after Model so _collect_submodel_node_functions can reference Model
+# directly without a forward-reference workaround)
+# ---------------------------------------------------------------------------
+
+
+def _iter_node_deps(node: graph.Node) -> list[graph.Node]:
+    """Return direct graph dependencies of *node* for backward traversal.
+
+    This function is exhaustive over all non-leaf node types.  Leaf nodes
+    (``constant``, ``placeholder``, ``timeseries_constant``,
+    ``timeseries_placeholder``) have no dependencies and fall through to the
+    ``return []`` at the end.
+
+    **Maintenance note**: every new non-leaf ``graph.Node`` subclass must be
+    handled here; omitting one will silently stop BFS traversal at that node,
+    causing ``function_call`` nodes reachable through it to go unclaimed.
+    """
+    if isinstance(node, graph.BinaryOp):
+        return [node.left, node.right]
+    if isinstance(node, graph.UnaryOp):
+        return [node.node]
+    if isinstance(node, graph.where):
+        return [node.condition, node.then, node.otherwise]
+    if isinstance(node, graph.exclusive_multi_clause_where):
+        deps: list[graph.Node] = []
+        for cond, val in node.clauses:
+            deps.append(cond)
+            deps.append(val)
+        deps.append(node.default_value)
+        deps.append(node.companion)
+        return deps
+    if isinstance(node, graph.MultiClauseOp):
+        deps = []
+        for cond, val in node.clauses:
+            deps.append(cond)
+            deps.append(val)
+        deps.append(node.default_value)
+        return deps
+    if isinstance(node, graph.variant_selector):
+        deps = [node.selector_node]
+        for branch_nodes in node.branch_map.values():
+            deps.extend(branch_nodes)
+        return deps
+    if isinstance(node, graph.ProjectionOp):
+        return [node.node]
+    if isinstance(node, graph.function_call):
+        return list(node.args) + list(node.kwargs.values())
+    # Leaf nodes: constant, placeholder, timeseries_constant, timeseries_placeholder.
+    return []
+
+
+def _collect_submodel_node_functions(instance_dict: dict[str, Any]) -> dict[graph.Node, Functor]:
+    """Collect ``_node_functions`` from ``Model``-typed attributes (one level deep).
+
+    Handles three value shapes: a direct ``Model`` attribute, a ``list`` of
+    ``Model`` instances, or a ``dict`` whose values are ``Model`` instances.
+    Deeper nesting (e.g. ``dict[str, list[Model]]``) is not flattened.
+    """
+    claimed: dict[graph.Node, Functor] = {}
+    for val in instance_dict.values():
+        if isinstance(val, Model):
+            claimed.update(val._node_functions)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, Model):
+                    claimed.update(item._node_functions)
+        elif isinstance(val, dict):
+            for item in val.values():
+                if isinstance(item, Model):
+                    claimed.update(item._node_functions)
+    return claimed
+
+
+def _build_node_functions_map(
+    indexes: list[GenericIndex],
+    inputs_proxy: "IOProxy[Any]",
+    functions: Any,
+    claimed: dict[graph.Node, Functor],
+) -> dict[graph.Node, Functor]:
+    """Backward BFS from own output/expose nodes to find and claim ``function_call`` nodes.
+
+    Traversal starts from all non-input index nodes and walks backward through
+    graph dependencies.  Two stopping conditions prevent over-claiming:
+
+    1. **Input placeholder nodes** — the ``.node`` of each index in *inputs_proxy*.
+       These are the construction-time boundary; their dependencies were created
+       outside this model.
+    2. **Already-claimed nodes** — nodes in *claimed* (sub-models' ``_node_functions``).
+       Stopping here prevents traversal into a sub-model's internal graph.
+
+    The "closest-ancestor wins" rule is enforced by *claimed*: sub-model
+    declarations populate it before this function is called, so a parent model
+    cannot re-claim a node that a child already owns.
+
+    Parameters
+    ----------
+    indexes:
+        All ``GenericIndex`` objects belonging to this model.
+    inputs_proxy:
+        Proxy over the model's declared ``Inputs``; provides the input
+        boundary nodes.
+    functions:
+        Instance of a ``@functions``-decorated class; ``functions.items()``
+        yields ``(name, Functor)`` pairs for declared and extra fields.
+    claimed:
+        Pre-populated ``{node: Functor}`` map from sub-models.  Updated
+        in-place is avoided — a new dict is returned.
+
+    Returns
+    -------
+    dict[graph.Node, Functor]
+        Merged map: sub-model claims unioned with this model's own claims.
+    """
+    fn_map: dict[str, Functor] = dict(functions.items())
+    if not fn_map:
+        return dict(claimed)
+
+    # Boundary sets use id() for O(1) membership tests.
+    input_ids: set[int] = {id(idx.node) for idx in inputs_proxy}
+    claimed_ids: set[int] = {id(n) for n in claimed}
+    stop_ids: set[int] = input_ids | claimed_ids
+
+    # Start the traversal from every non-input index node.
+    start_nodes: list[graph.Node] = [idx.node for idx in indexes if id(idx.node) not in input_ids]
+
+    result: dict[graph.Node, Functor] = dict(claimed)
+    visited_ids: set[int] = set()
+    queue = list(start_nodes)
+
+    while queue:
+        node = queue.pop()
+        nid = id(node)
+        if nid in visited_ids:
+            continue
+        visited_ids.add(nid)
+
+        # Stop at input boundaries and already-claimed nodes; do not recurse.
+        if nid in stop_ids:
+            continue
+
+        # Claim this function_call node if its name is declared and it is unclaimed.
+        if isinstance(node, graph.function_call) and nid not in claimed_ids:
+            functor = fn_map.get(node.name)
+            if functor is not None:
+                result[node] = functor
+
+        for dep in _iter_node_deps(node):
+            if id(dep) not in visited_ids:
+                queue.append(dep)
+
+    return result

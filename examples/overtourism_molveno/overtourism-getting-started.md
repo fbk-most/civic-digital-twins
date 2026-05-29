@@ -139,20 +139,18 @@ declare the abstract-index contract.  Expose `.cvs`, `.pvs`, and
 sustainability-field loop can find them.
 
 ```python
-from dataclasses import dataclass
-
-from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex, GenericIndex, Model
+from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex, GenericIndex, Model, inputs, outputs
 
 
 class MinimalOvertourismModel(Model):
-    @dataclass
+    @inputs
     class Inputs:
         cvs: list[CategoricalIndex]
         pvs: list[ConditionalDistributionIndex]
         domain_indexes: list[GenericIndex]
         capacities: list[GenericIndex]
 
-    @dataclass
+    @outputs
     class Outputs:
         usage_indexes: list[GenericIndex]
 
