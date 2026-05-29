@@ -68,12 +68,12 @@ def functions(
             class Functions:
                 ts_solve: Functor     # required explicit function
 
-            def __init__(self, inp: Inputs, *, fns: Functions) -> None:
+            def __init__(self, inputs: Inputs, *, fns: Functions) -> None:
                 traffic = TimeseriesIndex(
                     "traffic",
-                    graph.function_call("ts_solve", inp.ts_inflow.node),
+                    graph.function_call("ts_solve", inputs.ts_inflow.node),
                 )
-                super().__init__("Traffic", inputs=inp, functions=fns)
+                super().__init__("Traffic", inputs=inputs, functions=fns)
 
         model = TrafficModel(
             TrafficModel.Inputs(ts_inflow=ts_inflow),
@@ -83,15 +83,15 @@ def functions(
     Promote an implicit function from a parent::
 
         class MobilityModel(Model):
-            def __init__(self, inp: TrafficModel.Inputs) -> None:
+            def __init__(self, inputs: TrafficModel.Inputs) -> None:
                 self.traffic = TrafficModel(
-                    inp,
+                    inputs,
                     fns=TrafficModel.Functions(
                         ts_solve=NumpyBackend.adapt(_ts_solve),
                         smooth=NumpyBackend.adapt(_smooth),   # implicit, goes into _extra
                     ),
                 )
-                super().__init__("Mobility", inputs=inp)
+                super().__init__("Mobility", inputs=inputs)
     """
 
     def decorator(cls: type) -> type:
@@ -221,9 +221,9 @@ Examples
         class Outputs:
             traffic: TimeseriesIndex
 
-        def __init__(self, inp: Inputs) -> None:
+        def __init__(self, inputs: Inputs) -> None:
             ...
-            super().__init__("MyModel", inputs=inp, outputs=...)
+            super().__init__("MyModel", inputs=inputs, outputs=...)
 """
 
 outputs = _make_io_decorator("_is_outputs")
@@ -259,7 +259,7 @@ Passing a plain ``@dataclass`` instance as ``expose=`` to
 def define(name: str) -> Any:
     """Declare a leaf :class:`~.model.Model` subclass via a ``compute()`` method.
 
-    Generates a typed ``__init__(self, inp: Inputs)`` (plus ``fns: Functions``
+    Generates a typed ``__init__(self, inputs: Inputs)`` (plus ``fns: Functions``
     when a ``@functions`` inner class is declared) and wires the result of
     :meth:`compute` into ``super().__init__()`` automatically.
 
@@ -284,8 +284,8 @@ def define(name: str) -> Any:
             class Outputs:
                 i_u_parking: Index
 
-            def compute(self, inp: Inputs) -> Outputs:
-                i_u_parking = Index("parking_usage", inp.pv_tourists * ...)
+            def compute(self, inputs: Inputs) -> Outputs:
+                i_u_parking = Index("parking_usage", inputs.pv_tourists * ...)
                 return ParkingModel.Outputs(i_u_parking=i_u_parking)
 
     With ``@functions`` and ``Expose``::
@@ -309,8 +309,8 @@ def define(name: str) -> Any:
             class Expose:
                 ts_raw: TimeseriesIndex
 
-            def compute(self, inp: Inputs, *, fns: Functions) -> tuple[Outputs, Expose]:
-                ts_raw     = TimeseriesIndex("raw", graph.function_call("ts_solve", inp.ts_inflow))
+            def compute(self, inputs: Inputs, *, fns: Functions) -> tuple[Outputs, Expose]:
+                ts_raw     = TimeseriesIndex("raw", graph.function_call("ts_solve", inputs.ts_inflow))
                 ts_traffic = TimeseriesIndex("traffic", ts_raw * ...)
                 return (
                     TrafficModel.Outputs(ts_traffic=ts_traffic),
@@ -390,23 +390,23 @@ def define(name: str) -> Any:
 
         # Use distinct names to avoid Pyright reportRedeclaration in the if/else.
         if has_functions:
-            def _init_with_fns(self: Any, inp: Any, *, fns: Any) -> None:
+            def _init_with_fns(self: Any, inputs: Any, *, fns: Any) -> None:
                 if _returns_expose:
-                    out, exp = self.compute(inp, fns=fns)
-                    super(_cls, self).__init__(_name, inputs=inp, outputs=out, expose=exp, functions=fns)  # type: ignore[misc]
+                    out, exp = self.compute(inputs, fns=fns)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp, functions=fns)  # type: ignore[misc]
                 else:
-                    out = self.compute(inp, fns=fns)
-                    super(_cls, self).__init__(_name, inputs=inp, outputs=out, functions=fns)  # type: ignore[misc]
+                    out = self.compute(inputs, fns=fns)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, functions=fns)  # type: ignore[misc]
 
             cls.__init__ = _init_with_fns  # type: ignore[assignment]
         else:
-            def _init_no_fns(self: Any, inp: Any) -> None:
+            def _init_no_fns(self: Any, inputs: Any) -> None:
                 if _returns_expose:
-                    out, exp = self.compute(inp)
-                    super(_cls, self).__init__(_name, inputs=inp, outputs=out, expose=exp)  # type: ignore[misc]
+                    out, exp = self.compute(inputs)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp)  # type: ignore[misc]
                 else:
-                    out = self.compute(inp)
-                    super(_cls, self).__init__(_name, inputs=inp, outputs=out)  # type: ignore[misc]
+                    out = self.compute(inputs)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out)  # type: ignore[misc]
 
             cls.__init__ = _init_no_fns  # type: ignore[assignment]
 

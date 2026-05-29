@@ -478,12 +478,12 @@ class Model:
                     traffic: TimeseriesIndex
                     total:   Index
 
-                def compute(self, inp: Inputs) -> Outputs:
+                def compute(self, inputs: Inputs) -> Outputs:
                     traffic = TimeseriesIndex("traffic", ...)
                     total   = Index("total", traffic.sum())
                     return MyModel.Outputs(traffic=traffic, total=total)
 
-            m = MyModel(inp=MyModel.Inputs(inflow=inflow_ts))
+            m = MyModel(inputs=MyModel.Inputs(inflow=inflow_ts))
             m.inputs.inflow    # the wired inflow index
             m.outputs.traffic  # contractual output
 
