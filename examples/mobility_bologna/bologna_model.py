@@ -495,7 +495,8 @@ class EmissionsModel(Model):
 # ---------------------------------------------------------------------------
 
 
-class BolognaModel(Model, legacy=True):
+@define("Bologna mobility")
+class BolognaModel(Model):
     """Root model for the Bologna mobility example.
 
     Composes three sub-models:
@@ -558,62 +559,40 @@ class BolognaModel(Model, legacy=True):
         ts_solve: Functor
 
     @classmethod
-    def default_inputs(cls) -> dict:
-        """Return the reference-scenario input parameters as a keyword-argument dict.
+    def default_inputs(cls) -> Inputs:
+        """Return the reference-scenario inputs as an :class:`~.Inputs` instance.
 
-        Pass directly to :class:`BolognaModel` or override individual entries::
+        Pass to :class:`BolognaModel` or override individual fields with
+        :func:`dataclasses.replace`::
 
-            m = BolognaModel(**BolognaModel.default_inputs())
-            m_alt = BolognaModel(**{**BolognaModel.default_inputs(), "i_p_cost": [...]})
+            m = BolognaModel(inputs=BolognaModel.default_inputs(), fns=BolognaModel.default_fns())
+            m_alt = BolognaModel(
+                inputs=dataclasses.replace(BolognaModel.default_inputs(), i_p_cost=[...]),
+                fns=BolognaModel.default_fns(),
+            )
         """
-        return {
-            "i_p_start_time": Index(
+        return cls.Inputs(
+            i_p_start_time=Index(
                 "start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds()
             ),
-            "i_p_end_time": Index("end time", (pd.Timestamp("19:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
-            "i_p_cost": [Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)],
-            "i_p_fraction_exempted": Index("exempted vehicles %", 0.15),
-            "i_b_p50_cost": DistributionIndex("cost 50% threshold", stats.uniform, {"loc": 4.00, "scale": 7.00}),
-            "i_b_p50_anticipating": Index("anticipation 50% likelihood", 0.5),
-            "i_b_p50_anticipation": Index("anticipation distribution 50% threshold", 0.25),
-            "i_b_p50_postponing": Index("postponement 50% likelihood", 0.8),
-            "i_b_p50_postponement": Index("postponement distribution 50% threshold", 0.50),
-            "i_b_starting_modified_factor": Index("starting modified factor", 1.00),
-        }
-
-    def __init__(
-        self,
-        *,
-        i_p_start_time: Index,
-        i_p_end_time: Index,
-        i_p_cost: list[Index],
-        i_p_fraction_exempted: Index,
-        i_b_p50_cost: DistributionIndex,
-        i_b_p50_anticipating: Index,
-        i_b_p50_anticipation: Index,
-        i_b_p50_postponing: Index,
-        i_b_p50_postponement: Index,
-        i_b_starting_modified_factor: Index,
-        functions: BolognaModel.Functions | None = None,
-    ) -> None:
-        fns = functions or BolognaModel.Functions(ts_solve=NumpyBackend.adapt(_ts_solve))
-        Inputs = BolognaModel.Inputs
-        Outputs = BolognaModel.Outputs
-        Expose = BolognaModel.Expose
-
-        inputs = Inputs(
-            i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
-            i_p_fraction_exempted=i_p_fraction_exempted,
-            i_b_p50_cost=i_b_p50_cost,
-            i_b_p50_anticipating=i_b_p50_anticipating,
-            i_b_p50_anticipation=i_b_p50_anticipation,
-            i_b_p50_postponing=i_b_p50_postponing,
-            i_b_p50_postponement=i_b_p50_postponement,
-            i_b_starting_modified_factor=i_b_starting_modified_factor,
+            i_p_end_time=Index("end time", (pd.Timestamp("19:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
+            i_p_cost=[Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)],
+            i_p_fraction_exempted=Index("exempted vehicles %", 0.15),
+            i_b_p50_cost=DistributionIndex("cost 50% threshold", stats.uniform, {"loc": 4.00, "scale": 7.00}),
+            i_b_p50_anticipating=Index("anticipation 50% likelihood", 0.5),
+            i_b_p50_anticipation=Index("anticipation distribution 50% threshold", 0.25),
+            i_b_p50_postponing=Index("postponement 50% likelihood", 0.8),
+            i_b_p50_postponement=Index("postponement distribution 50% threshold", 0.50),
+            i_b_starting_modified_factor=Index("starting modified factor", 1.00),
         )
 
+    @classmethod
+    def default_fns(cls) -> Functions:
+        """Return the default :class:`~.Functions` using the built-in traffic solver."""
+        return cls.Functions(ts_solve=NumpyBackend.adapt(_ts_solve))
+
+    def compute(self, inputs: Inputs, *, fns: Functions) -> tuple[Outputs, Expose]:
+        """Compose sub-models from inputs and return KPI outputs with expose timeseries."""
         ts = ConstTimeseriesIndex(
             "time range",
             np.array(
@@ -630,16 +609,16 @@ class BolognaModel(Model, legacy=True):
             ts_inflow=ts_inflow,
             ts_starting=ts_starting,
             ts=ts,
-            i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
-            i_p_cost=i_p_cost,
-            i_p_fraction_exempted=i_p_fraction_exempted,
-            i_b_p50_cost=i_b_p50_cost,
-            i_b_p50_anticipating=i_b_p50_anticipating,
-            i_b_p50_anticipation=i_b_p50_anticipation,
-            i_b_p50_postponing=i_b_p50_postponing,
-            i_b_p50_postponement=i_b_p50_postponement,
-            i_b_starting_modified_factor=i_b_starting_modified_factor,
+            i_p_start_time=inputs.i_p_start_time,
+            i_p_end_time=inputs.i_p_end_time,
+            i_p_cost=inputs.i_p_cost,
+            i_p_fraction_exempted=inputs.i_p_fraction_exempted,
+            i_b_p50_cost=inputs.i_b_p50_cost,
+            i_b_p50_anticipating=inputs.i_b_p50_anticipating,
+            i_b_p50_anticipation=inputs.i_b_p50_anticipation,
+            i_b_p50_postponing=inputs.i_b_p50_postponing,
+            i_b_p50_postponement=inputs.i_b_p50_postponement,
+            i_b_starting_modified_factor=inputs.i_b_starting_modified_factor,
         ))
 
         _traffic = TrafficModel(  # type: ignore[call-arg]
@@ -654,17 +633,15 @@ class BolognaModel(Model, legacy=True):
 
         _emissions = EmissionsModel(inputs=EmissionsModel.Inputs(  # type: ignore[call-arg]
             ts=ts,
-            i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
+            i_p_start_time=inputs.i_p_start_time,
+            i_p_end_time=inputs.i_p_end_time,
             traffic=_traffic.outputs.traffic,
             modified_traffic=_traffic.outputs.modified_traffic,
             modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
         ))
 
-        super().__init__(
-            "Bologna mobility",
-            inputs=inputs,
-            outputs=Outputs(
+        return (
+            BolognaModel.Outputs(
                 total_base_inflow=_inflow.outputs.total_base_inflow,
                 total_modified_inflow=_inflow.outputs.total_modified_inflow,
                 total_shifted=_inflow.outputs.total_shifted,
@@ -674,7 +651,7 @@ class BolognaModel(Model, legacy=True):
                 total_emissions=_emissions.outputs.total_emissions,
                 total_modified_emissions=_emissions.outputs.total_modified_emissions,
             ),
-            expose=Expose(
+            BolognaModel.Expose(
                 ts_inflow=ts_inflow,
                 modified_inflow=_inflow.outputs.modified_inflow,
                 traffic=_traffic.outputs.traffic,
@@ -682,7 +659,6 @@ class BolognaModel(Model, legacy=True):
                 emissions=_emissions.outputs.emissions,
                 modified_emissions=_emissions.outputs.modified_emissions,
             ),
-            functions=fns,
         )
 
 

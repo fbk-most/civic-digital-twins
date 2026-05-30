@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from pathlib import Path
 
@@ -144,7 +145,7 @@ if __name__ == "__main__":
     _config = EvaluationConfig(ensemble_size=20)
 
     # ── Reference scenario (default parameters) ──────────────────────────────
-    _m = BolognaModel(**BolognaModel.default_inputs())
+    _m = BolognaModel(inputs=BolognaModel.default_inputs(), fns=BolognaModel.default_fns())
     _evaluator = BolognaEvaluator(_m)
     _output = _evaluator.evaluate(Scenario(_m), _config)
     _save_scenario_plots("reference", _m, _output, _out)
@@ -157,10 +158,11 @@ if __name__ == "__main__":
     # Higher fees with a steeper Euro-class gradient: older/more polluting
     # vehicles pay substantially more, incentivising fleet-mix shifts.
     _m_strict = BolognaModel(
-        **{
-            **BolognaModel.default_inputs(),
-            "i_p_cost": [Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
-        }
+        inputs=dataclasses.replace(
+            BolognaModel.default_inputs(),
+            i_p_cost=[Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
+        ),
+        fns=BolognaModel.default_fns(),
     )
     _evaluator_strict = BolognaEvaluator(_m_strict)
     _output_strict = _evaluator_strict.evaluate(Scenario(_m_strict), _config)
