@@ -318,13 +318,14 @@ def define(name: str) -> Any:
                 )
 
     Composite / root models that assign sub-model attributes before calling
-    ``super().__init__()`` cannot use ``compute()`` and should declare
-    ``legacy=True``::
+    ``super().__init__()`` can remain on the direct-``__init__`` path by
+    declaring ``legacy=True``::
 
-        class BolognaModel(Model, legacy=True):
+        class CompositeModel(Model, legacy=True):
             def __init__(self) -> None:
-                self.traffic = TrafficModel(...)
-                super().__init__("Bologna mobility", ...)
+                self.leaf = LeafModel(...)
+                ...
+                super().__init__("composite", ...)
 
     Raises
     ------
@@ -388,9 +389,20 @@ def define(name: str) -> Any:
         _name = name
         _returns_expose = returns_expose
 
+        # If Inputs has no declared fields it can be auto-constructed, so
+        # make the `inputs` parameter optional (default None → Inputs()).
+        _inputs_cls = cls.__dict__.get("Inputs")
+        _inputs_is_empty = (
+            _inputs_cls is not None
+            and dataclasses.is_dataclass(_inputs_cls)
+            and len(dataclasses.fields(_inputs_cls)) == 0  # type: ignore[arg-type]
+        )
+
         # Use distinct names to avoid Pyright reportRedeclaration in the if/else.
         if has_functions:
-            def _init_with_fns(self: Any, inputs: Any, *, fns: Any) -> None:
+            def _init_with_fns(self: Any, inputs: Any = None, *, fns: Any) -> None:  # type: ignore[misc]
+                if _inputs_is_empty and inputs is None and _inputs_cls is not None:
+                    inputs = _inputs_cls()  # type: ignore[operator]
                 if _returns_expose:
                     out, exp = self.compute(inputs, fns=fns)
                     super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp, functions=fns)  # type: ignore[misc]
@@ -400,7 +412,9 @@ def define(name: str) -> Any:
 
             cls.__init__ = _init_with_fns  # type: ignore[assignment]
         else:
-            def _init_no_fns(self: Any, inputs: Any) -> None:
+            def _init_no_fns(self: Any, inputs: Any = None) -> None:
+                if _inputs_is_empty and inputs is None and _inputs_cls is not None:
+                    inputs = _inputs_cls()  # type: ignore[operator]
                 if _returns_expose:
                     out, exp = self.compute(inputs)
                     super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp)  # type: ignore[misc]
