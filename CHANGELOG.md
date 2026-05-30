@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `@define` decorator — declare a leaf `Model` subclass via a `compute()`
+  method instead of a hand-written `__init__`.  `@define("Name")` generates
+  `__init__(self, inputs: Inputs)` (plus `fns: Functions` when a `@functions`
+  inner class is declared), calls `compute()`, and wires the result into
+  `super().__init__()` automatically.  `compute()` returns `Outputs` for the
+  common case, or `tuple[Outputs, Expose]` when an `@expose` inner class is
+  also declared — the decorator detects the form from the return annotation
+  at decoration time.  `Model.__init_subclass__` now emits `DeprecationWarning`
+  for subclasses that define `__init__` directly; composite models that cannot
+  use `compute()` opt out with `legacy=True`.  Exported from
+  `civic_digital_twins.dt_model`.  Closes #190.
+- The four Molveno concern sub-models (`ParkingModel`, `BeachModel`,
+  `AccommodationModel`, `FoodModel`) and the three Bologna sub-models
+  (`InflowModel`, `TrafficModel`, `EmissionsModel`) are migrated to
+  `@define` + `compute()`.
 - `@functions` decorator — declare the custom functions a `Model` subclass
   requires as part of its typed signature.  Each annotated field is a required
   `Functor`; pass the completed `Functions` instance to `super().__init__()` at
