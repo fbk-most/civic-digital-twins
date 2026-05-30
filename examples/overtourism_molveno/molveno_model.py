@@ -87,6 +87,7 @@ from civic_digital_twins.dt_model import (
     Index,
     Model,
     define,
+    expose,
     graph,
     inputs,
     outputs,
@@ -348,39 +349,28 @@ class FoodModel(Model):
 # ---------------------------------------------------------------------------
 
 
-class MolvenoModel(Model, legacy=True):
+@define("base model")
+class MolvenoModel(Model):
     """Root overtourism model that wires the four concern sub-models.
 
-    ``MolvenoModel`` owns:
+    Supply the domain parameters via :meth:`default_inputs`, or override
+    individual fields with :func:`dataclasses.replace`::
 
-    * the three context variables (``cv_weekday``, ``cv_season``, ``cv_weather``);
-    * the two presence variables (``pv_tourists``, ``pv_excursionists``);
-    * the default values for every ``i_*`` parameter.
-
-    Callers who need to override a parameter can subclass ``MolvenoModel``
-    or construct the concern sub-models directly with different values.
-
-    The ``cvs``, ``pvs``, and ``constraints`` attributes are required by
-    :class:`~dt_model.CrossProductEnsemble`.
-
-    CVs, PVs, and sub-models are accessible as named attributes::
-
-        m = MolvenoModel()
-        m.cv_weather                      # CategoricalIndex
-        m.pv_tourists                     # ConditionalDistributionIndex
-        m.parking.inputs.i_c_parking      # capacity DistributionIndex
-        m.beach.inputs.i_xo_tourists_beach  # rotation DistributionIndex
-        m.parking.outputs.i_u_parking     # usage formula Index
-        m.parking.constraint              # Constraint object
+        m = MolvenoModel(inputs=MolvenoModel.default_inputs())
+        m.inputs.cvs                        # list of CategoricalIndex (weekday, season, weather)
+        m.inputs.pvs                        # list of ConditionalDistributionIndex
+        m.cv_weather                        # named alias set by compute()
+        m.parking.inputs.i_c_parking        # capacity DistributionIndex
+        m.parking.outputs.i_u_parking       # usage formula Index
+        m.parking.constraint                # Constraint object
     """
 
     @inputs
     class Inputs:
-        """Contractual inputs of :class:`MolvenoModel`."""
+        """CVs, PVs, and distribution-backed parameters of :class:`MolvenoModel`."""
 
         cvs: list[CategoricalIndex]
         pvs: list[ConditionalDistributionIndex]
-        domain_indexes: list[GenericIndex]
         capacities: list[GenericIndex]
 
     @outputs
@@ -389,14 +379,28 @@ class MolvenoModel(Model, legacy=True):
 
         usage_indexes: list[GenericIndex]
 
-    def __init__(self) -> None:
-        # ------------------------------------------------------------------
-        # Stage 1 — context and presence variables
-        # ------------------------------------------------------------------
+    @expose
+    class Expose:
+        """Sub-model formula indexes (for evaluation state) and presence-transformation parameters."""
+
+        domain_indexes: list[GenericIndex]
+        i_p_tourists_reduction_factor: Index
+        i_p_excursionists_reduction_factor: Index
+        i_p_tourists_saturation_level: Index
+        i_p_excursionists_saturation_level: Index
+
+    @classmethod
+    def default_inputs(cls) -> Inputs:
+        """Return the default domain inputs: CVs, PVs, and distribution-backed parameters.
+
+        Pass to :class:`MolvenoModel` or override individual fields with
+        :func:`dataclasses.replace`::
+
+            m = MolvenoModel(inputs=MolvenoModel.default_inputs())
+        """
         cv_weekday = CategoricalIndex("weekday", {d: 1.0 / len(weekday) for d in weekday})
         cv_season = CategoricalIndex("season", {v: season[v] for v in season})
         cv_weather = CategoricalIndex("weather", {v: weather[v] for v in weather})
-
         pv_tourists = ConditionalDistributionIndex(
             "tourists",
             [cv_weekday, cv_season, cv_weather],
@@ -407,9 +411,45 @@ class MolvenoModel(Model, legacy=True):
             [cv_weekday, cv_season, cv_weather],
             excursionist_presences_stats,
         )
+        return cls.Inputs(
+            cvs=[cv_weekday, cv_season, cv_weather],
+            pvs=[pv_tourists, pv_excursionists],
+            capacities=[
+                DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0}),
+                DistributionIndex("beach capacity", stats.uniform, {"loc": 6000.0, "scale": 1000.0}),
+                DistributionIndex(
+                    "accommodation capacity",
+                    stats.lognorm,
+                    {"s": 0.125, "loc": 0.0, "scale": 5000.0},
+                ),
+                DistributionIndex(
+                    "food service capacity",
+                    stats.triang,
+                    {"loc": 3000.0, "scale": 1000.0, "c": 0.5},
+                ),
+                DistributionIndex(
+                    "tourists on beach rotation factor",
+                    stats.uniform,
+                    {"loc": 1.0, "scale": 2.0},
+                ),
+            ],
+        )
+
+    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
+        """Compose concern sub-models from inputs and return usage outputs."""
+        cv_weekday, cv_season, cv_weather = inputs.cvs
+        pv_tourists, pv_excursionists = inputs.pvs
+        i_c_parking, i_c_beach, i_c_accommodation, i_c_food, i_xo_tourists_beach = inputs.capacities
+
+        # Side effects — named attribute access used by evaluators and scenarios.
+        self.cv_weekday = cv_weekday
+        self.cv_season = cv_season
+        self.cv_weather = cv_weather
+        self.pv_tourists = pv_tourists
+        self.pv_excursionists = pv_excursionists
 
         # ------------------------------------------------------------------
-        # Default i_* parameters — created here so callers can override them
+        # Default i_* parameters
         # ------------------------------------------------------------------
 
         # Parking parameters
@@ -422,7 +462,6 @@ class MolvenoModel(Model, legacy=True):
         i_xa_excursionists_per_vehicle = Index("excursionists per vehicle allocation factor", 2.5)
         i_xo_tourists_parking = Index("tourists in parking rotation factor", 1.02)
         i_xo_excursionists_parking = Index("excursionists in parking rotation factor", 3.5)
-        i_c_parking = DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0})
 
         # Beach parameters
         i_u_tourists_beach = Index(
@@ -433,22 +472,11 @@ class MolvenoModel(Model, legacy=True):
             "excursionist beach usage factor",
             graph.piecewise((0.35, cv_weather == "bad"), (0.80, True)),
         )
-        i_xo_tourists_beach = DistributionIndex(
-            "tourists on beach rotation factor",
-            stats.uniform,
-            {"loc": 1.0, "scale": 2.0},
-        )
         i_xo_excursionists_beach = Index("excursionists on beach rotation factor", 1.02)
-        i_c_beach = DistributionIndex("beach capacity", stats.uniform, {"loc": 6000.0, "scale": 1000.0})
 
         # Accommodation parameters
         i_u_tourists_accommodation = Index("tourist accommodation usage factor", 0.90)
         i_xa_tourists_accommodation = Index("tourists per accommodation allocation factor", 1.05)
-        i_c_accommodation = DistributionIndex(
-            "accommodation capacity",
-            stats.lognorm,
-            {"s": 0.125, "loc": 0.0, "scale": 5000.0},
-        )
 
         # Food parameters
         i_u_tourists_food = Index("tourist food service usage factor", 0.20)
@@ -458,11 +486,6 @@ class MolvenoModel(Model, legacy=True):
         )
         i_xa_visitors_food = Index("visitors in food service allocation factor", 0.9)
         i_xo_visitors_food = Index("visitors in food service rotation factor", 2.0)
-        i_c_food = DistributionIndex(
-            "food service capacity",
-            stats.triang,
-            {"loc": 3000.0, "scale": 1000.0, "c": 0.5},
-        )
 
         # Presence-transformation parameters (used in overtourism_molveno.py)
         i_p_tourists_reduction_factor = Index("tourists reduction factor", 1.0)
@@ -471,7 +494,7 @@ class MolvenoModel(Model, legacy=True):
         i_p_excursionists_saturation_level = Index("excursionists saturation level", 10000)
 
         # ------------------------------------------------------------------
-        # Stage 2 / 3 — concern sub-models
+        # Concern sub-models
         # ------------------------------------------------------------------
         parking = ParkingModel(inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
             pv_tourists=pv_tourists,
@@ -512,90 +535,34 @@ class MolvenoModel(Model, legacy=True):
             i_c_food=i_c_food,
         ))
 
-        # ------------------------------------------------------------------
-        # Collect domain lists consumed by CrossProductEnsemble
-        # ------------------------------------------------------------------
-        cvs: list[CategoricalIndex] = [cv_weekday, cv_season, cv_weather]
-        pvs: list[ConditionalDistributionIndex] = [pv_tourists, pv_excursionists]
-        constraints = [
+        self.constraints = [
             parking.constraint,
             beach.constraint,
             accommodation.constraint,
             food.constraint,
         ]
-        capacities: list[GenericIndex] = [i_c_parking, i_c_beach, i_c_accommodation, i_c_food]
-
-        # Collect and deduplicate all indexes from sub-models plus the root
-        # presence-transformation parameters.  Identity-based deduplication
-        # ensures shared indexes (pv_*, cv_*) are not registered twice.
-        seen: set[int] = set()
-        all_indexes: list[GenericIndex] = []
-        for idx in (
-            list(parking.indexes)
-            + list(beach.indexes)
-            + list(accommodation.indexes)
-            + list(food.indexes)
-            + [
-                i_p_tourists_reduction_factor,
-                i_p_excursionists_reduction_factor,
-                i_p_tourists_saturation_level,
-                i_p_excursionists_saturation_level,
-            ]
-        ):
-            if id(idx) not in seen:
-                seen.add(id(idx))
-                all_indexes.append(idx)
-
-        # domain_indexes: everything that is not a CV, PV, capacity, or usage-formula index.
-        cv_pv_ids = {id(x) for x in cvs + pvs}
-        cap_ids = {id(x) for x in capacities}
-        usage_ids = {id(c.usage) for c in constraints}
-        domain_indexes: list[GenericIndex] = [
-            idx
-            for idx in all_indexes
-            if id(idx) not in cv_pv_ids and id(idx) not in cap_ids and id(idx) not in usage_ids
-        ]
-
-        # ------------------------------------------------------------------
-        # Initialise Model with the declarative Inputs/Outputs API
-        # ------------------------------------------------------------------
-        Inputs = MolvenoModel.Inputs
-        Outputs = MolvenoModel.Outputs
-        super().__init__(
-            "base model",
-            inputs=Inputs(
-                cvs=cvs,
-                pvs=pvs,
-                domain_indexes=domain_indexes,
-                capacities=capacities,
-            ),
-            outputs=Outputs(usage_indexes=[c.usage for c in constraints]),
-        )
-
-        self.cvs = cvs
-        self.pvs = pvs
-        self.domain_indexes = domain_indexes
-        self.capacities = capacities
-        self.constraints = constraints
-
-        # ------------------------------------------------------------------
-        # Attach CVs, PVs, and sub-models as named attributes
-        # ------------------------------------------------------------------
-        self.cv_weekday = cv_weekday
-        self.cv_season = cv_season
-        self.cv_weather = cv_weather
-        self.pv_tourists = pv_tourists
-        self.pv_excursionists = pv_excursionists
-
         self.parking = parking
         self.beach = beach
         self.accommodation = accommodation
         self.food = food
 
-        self.i_p_tourists_reduction_factor = i_p_tourists_reduction_factor
-        self.i_p_excursionists_reduction_factor = i_p_excursionists_reduction_factor
-        self.i_p_tourists_saturation_level = i_p_tourists_saturation_level
-        self.i_p_excursionists_saturation_level = i_p_excursionists_saturation_level
+        domain_indexes = (
+            list(parking.indexes)
+            + list(beach.indexes)
+            + list(accommodation.indexes)
+            + list(food.indexes)
+        )
+
+        return (
+            MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints]),
+            MolvenoModel.Expose(
+                domain_indexes=domain_indexes,
+                i_p_tourists_reduction_factor=i_p_tourists_reduction_factor,
+                i_p_excursionists_reduction_factor=i_p_excursionists_reduction_factor,
+                i_p_tourists_saturation_level=i_p_tourists_saturation_level,
+                i_p_excursionists_saturation_level=i_p_excursionists_saturation_level,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1002,7 +969,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         sampling_ensemble = CrossProductEnsemble(
             type(scenario)(model),
             max_categorical_size=config.ensemble_size,
-            exclude=model.pvs,
+            exclude=model.inputs.pvs,
         )
         pv_samples = sample_across(
             sampling_ensemble, [model.pv_tourists, model.pv_excursionists], total=self._target_presence_samples
@@ -1039,10 +1006,10 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         """
         model = self._model
         field, field_elements = compute_sustainability_field(model, result)
-        rf_t = float(np.mean(result[model.i_p_tourists_reduction_factor]))
-        sl_t = float(np.mean(result[model.i_p_tourists_saturation_level]))
-        rf_e = float(np.mean(result[model.i_p_excursionists_reduction_factor]))
-        sl_e = float(np.mean(result[model.i_p_excursionists_saturation_level]))
+        rf_t = float(np.mean(result[model.expose.i_p_tourists_reduction_factor]))
+        sl_t = float(np.mean(result[model.expose.i_p_tourists_saturation_level]))
+        rf_e = float(np.mean(result[model.expose.i_p_excursionists_reduction_factor]))
+        sl_e = float(np.mean(result[model.expose.i_p_excursionists_saturation_level]))
         sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
         sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
         output = MolvenoOutput(
@@ -1089,7 +1056,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         ensemble = CrossProductEnsemble(
             scenario,
             max_categorical_size=config.ensemble_size,
-            exclude=model.pvs,
+            exclude=model.inputs.pvs,
         )
         result = Evaluation(scenario).evaluate(
             ensemble=ensemble,
@@ -1131,7 +1098,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         ensemble = CrossProductEnsemble(
             scenario,
             max_categorical_size=config.ensemble_size,
-            exclude=model.pvs,
+            exclude=model.inputs.pvs,
         )
         future = _get_default_executor().submit(
             Evaluation(scenario).evaluate,
@@ -1164,8 +1131,8 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         """
         model = self._model
         schema: dict[str, dict[str, Any]] = {}
-        for cv in model.cvs:
+        for cv in model.inputs.cvs:
             schema[cv.name] = {"type": "categorical", "support": list(cv.support)}
-        for cap in model.capacities:
+        for cap in model.inputs.capacities:
             schema[cap.name] = {"type": "distribution"}
         return schema

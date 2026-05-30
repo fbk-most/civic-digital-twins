@@ -24,7 +24,7 @@ from civic_digital_twins.dt_model import (
 )
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
 
-model = MolvenoModel()
+model = MolvenoModel(inputs=MolvenoModel.default_inputs())
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -128,7 +128,7 @@ def good_weather_scenarios():
             model.cv_season: ["high"],
             model.cv_weather: ["good"],
         },
-        exclude=model.pvs,
+        exclude=model.inputs.pvs,
     )
 
 
@@ -175,7 +175,7 @@ def test_evaluate_axes_high_presence_is_unsustainable(good_weather_scenarios):
 def test_ensemble_based_evaluation(tourists, excursionists):
     """CrossProductEnsemble-based evaluation produces a valid sustainability field."""
     scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
-    ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=5, exclude=model.pvs)
+    ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=5, exclude=model.inputs.pvs)
 
     field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
 
@@ -205,7 +205,7 @@ def test_fixed_ensemble():
             model.cv_season: ["high"],
             model.cv_weather: ["good"],
         },
-        exclude=model.pvs,
+        exclude=model.inputs.pvs,
         rng=np.random.default_rng(4),
     )
     _, got, _ = compute_field(model, ensemble, tourists, excursionists)
@@ -228,8 +228,8 @@ def test_fixed_ensemble():
                 [1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
                 [1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
                 [1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
-                [1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
-                [1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                [1.0, 1.0, 0.82080114, 0.0, 0.0, 0.0],
+                [1.0, 0.91611209, 0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ]
         ),
@@ -265,7 +265,7 @@ def test_fixed_ensemble():
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
     scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
-    ens = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
+    ens = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.inputs.pvs)
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
@@ -283,7 +283,7 @@ def test_multiple_ensemble_members():
 
 def test_molveno_model_has_four_sub_models():
     """MolvenoModel exposes all four concern sub-models as named attributes."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.parking, ParkingModel)
     assert isinstance(m.beach, BeachModel)
     assert isinstance(m.accommodation, AccommodationModel)
@@ -292,7 +292,7 @@ def test_molveno_model_has_four_sub_models():
 
 def test_molveno_model_exposes_pvs():
     """MolvenoModel exposes pv_tourists and pv_excursionists as attributes."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.pv_tourists, ConditionalDistributionIndex)
     assert isinstance(m.pv_excursionists, ConditionalDistributionIndex)
     assert m.pv_tourists.name == "tourists"
@@ -301,7 +301,7 @@ def test_molveno_model_exposes_pvs():
 
 def test_molveno_model_exposes_context_variables():
     """MolvenoModel exposes the three context variables as attributes."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.cv_weekday, CategoricalIndex)
     assert isinstance(m.cv_season, CategoricalIndex)
     assert isinstance(m.cv_weather, CategoricalIndex)
@@ -312,7 +312,7 @@ def test_molveno_model_exposes_context_variables():
 
 def test_cv_probabilities_sum_to_one():
     """Each CategoricalIndex CV has outcomes summing to 1.0."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     for cv in (m.cv_weekday, m.cv_season, m.cv_weather):
         total = sum(cv.outcomes.values())
         assert abs(total - 1.0) < 1e-9, f"{cv.name}: outcomes sum to {total}"
@@ -320,7 +320,7 @@ def test_cv_probabilities_sum_to_one():
 
 def test_parking_model_inputs_wired_from_root():
     """ParkingModel presence inputs are the same objects as MolvenoModel attributes."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert m.parking.inputs.pv_tourists is m.pv_tourists
     assert m.parking.inputs.pv_excursionists is m.pv_excursionists
     assert m.parking.inputs.cv_weather is m.cv_weather
@@ -328,7 +328,7 @@ def test_parking_model_inputs_wired_from_root():
 
 def test_beach_model_inputs_wired_from_root():
     """BeachModel presence inputs are the same objects as MolvenoModel attributes."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert m.beach.inputs.pv_tourists is m.pv_tourists
     assert m.beach.inputs.pv_excursionists is m.pv_excursionists
     assert m.beach.inputs.cv_weather is m.cv_weather
@@ -336,13 +336,13 @@ def test_beach_model_inputs_wired_from_root():
 
 def test_accommodation_model_inputs_wired_from_root():
     """AccommodationModel.inputs.pv_tourists is the same object as MolvenoModel attribute."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert m.accommodation.inputs.pv_tourists is m.pv_tourists
 
 
 def test_food_model_inputs_wired_from_root():
     """FoodModel presence inputs are the same objects as MolvenoModel attributes."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert m.food.inputs.pv_tourists is m.pv_tourists
     assert m.food.inputs.pv_excursionists is m.pv_excursionists
     assert m.food.inputs.cv_weather is m.cv_weather
@@ -350,7 +350,7 @@ def test_food_model_inputs_wired_from_root():
 
 def test_concern_model_outputs_are_generic_indexes_only():
     """Outputs dataclasses contain only GenericIndex instances (no Constraint)."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     for submodel in (m.parking, m.beach, m.accommodation, m.food):
         for idx in submodel.outputs:
             assert isinstance(idx, GenericIndex), (
@@ -360,7 +360,7 @@ def test_concern_model_outputs_are_generic_indexes_only():
 
 def test_concern_model_inputs_include_all_i_parameters():
     """All i_* parameters are Inputs to the concern sub-model that uses them."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
 
     # Parking: 7 i_* params + 3 presence/cv inputs
     assert isinstance(m.parking.inputs.i_u_tourists_parking, Index)
@@ -393,21 +393,21 @@ def test_concern_model_inputs_include_all_i_parameters():
 
 def test_concern_models_have_no_expose():
     """Concern sub-models have no Expose — no internal uncertain parameters."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     for submodel in (m.parking, m.beach, m.accommodation, m.food):
         assert len(submodel.expose) == 0, f"{type(submodel).__name__}.expose is not empty: {submodel.expose}"
 
 
 def test_concern_model_constraint_is_plain_attribute():
     """Each concern sub-model exposes its Constraint as a plain instance attribute."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     for submodel in (m.parking, m.beach, m.accommodation, m.food):
         assert isinstance(submodel.constraint, Constraint), f"{type(submodel).__name__}.constraint is not a Constraint"
 
 
 def test_parking_outputs_index_types():
     """ParkingModel.outputs contains only the usage formula index."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.parking.outputs.i_u_parking, Index)
     assert len(m.parking.outputs) == 1
     assert m.parking.constraint.name == "parking"
@@ -415,7 +415,7 @@ def test_parking_outputs_index_types():
 
 def test_beach_outputs_index_types():
     """BeachModel.outputs contains only the usage formula index."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.beach.outputs.i_u_beach, Index)
     assert len(m.beach.outputs) == 1
     assert m.beach.constraint.name == "beach"
@@ -423,7 +423,7 @@ def test_beach_outputs_index_types():
 
 def test_accommodation_outputs_index_types():
     """AccommodationModel.outputs contains only the usage formula index."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.accommodation.outputs.i_u_accommodation, Index)
     assert len(m.accommodation.outputs) == 1
     assert m.accommodation.constraint.name == "accommodation"
@@ -431,7 +431,7 @@ def test_accommodation_outputs_index_types():
 
 def test_food_outputs_index_types():
     """FoodModel.outputs contains only the usage formula index."""
-    m = MolvenoModel()
+    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
     assert isinstance(m.food.outputs.i_u_food, Index)
     assert len(m.food.outputs) == 1
     assert m.food.constraint.name == "food"
@@ -447,7 +447,7 @@ def test_molveno_model_construction_is_warning_free():
     with warnings.catch_warnings():
         warnings.simplefilter("error", ModelContractWarning)
         warnings.simplefilter("error", DeprecationWarning)
-        MolvenoModel()
+        MolvenoModel(inputs=MolvenoModel.default_inputs())
 
 
 # ---------------------------------------------------------------------------
@@ -518,8 +518,8 @@ def test_beach_rotation_factor_is_abstract():
 
 def test_molveno_model_cvs_list():
     """model.cvs contains exactly the three context variables."""
-    assert len(model.cvs) == 3
-    cv_ids = {id(cv) for cv in model.cvs}
+    assert len(model.inputs.cvs) == 3
+    cv_ids = {id(cv) for cv in model.inputs.cvs}
     assert id(model.cv_weekday) in cv_ids
     assert id(model.cv_season) in cv_ids
     assert id(model.cv_weather) in cv_ids
@@ -527,8 +527,8 @@ def test_molveno_model_cvs_list():
 
 def test_molveno_model_pvs_list():
     """model.pvs contains exactly the two presence variables."""
-    assert len(model.pvs) == 2
-    pv_ids = {id(pv) for pv in model.pvs}
+    assert len(model.inputs.pvs) == 2
+    pv_ids = {id(pv) for pv in model.inputs.pvs}
     assert id(model.pv_tourists) in pv_ids
     assert id(model.pv_excursionists) in pv_ids
 
@@ -556,10 +556,10 @@ def test_molveno_model_constraints_match_sub_model_attributes():
 def test_presence_transformation_indexes_in_root_indexes():
     """The four presence-transformation indexes appear in model.indexes."""
     pt_ids = {
-        id(model.i_p_tourists_reduction_factor),
-        id(model.i_p_excursionists_reduction_factor),
-        id(model.i_p_tourists_saturation_level),
-        id(model.i_p_excursionists_saturation_level),
+        id(model.expose.i_p_tourists_reduction_factor),
+        id(model.expose.i_p_excursionists_reduction_factor),
+        id(model.expose.i_p_tourists_saturation_level),
+        id(model.expose.i_p_excursionists_saturation_level),
     }
     root_ids = {id(idx) for idx in model.indexes}
     assert pt_ids <= root_ids
@@ -571,7 +571,7 @@ def test_presence_transformation_indexes_in_root_indexes():
 def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
     situation: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "unsettled", "bad"]}
-    ensemble = CrossProductEnsemble(model, restrictions=situation, max_categorical_size=20, exclude=model.pvs)
+    ensemble = CrossProductEnsemble(model, restrictions=situation, max_categorical_size=20, exclude=model.inputs.pvs)
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])

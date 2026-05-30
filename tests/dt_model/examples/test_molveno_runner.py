@@ -32,7 +32,7 @@ _ENSEMBLE_SIZE = 3
 @pytest.fixture(scope="module")
 def model() -> MolvenoModel:
     """Shared MolvenoModel instance (graph construction is the expensive part)."""
-    return MolvenoModel()
+    return MolvenoModel(inputs=MolvenoModel.default_inputs())
 
 
 @pytest.fixture(scope="module")
@@ -318,7 +318,7 @@ def test_structure_returns_non_empty_dict(evaluator: MolvenoEvaluator) -> None:
 def test_structure_contains_categorical_cvs(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
     """structure() must include all three categorical context variables."""
     schema = evaluator.input_schema()
-    for cv in model.cvs:
+    for cv in model.inputs.cvs:
         assert cv.name in schema, f"Missing CV {cv.name!r} in structure()"
         assert schema[cv.name]["type"] == "categorical"
         assert "support" in schema[cv.name]
@@ -327,7 +327,7 @@ def test_structure_contains_categorical_cvs(evaluator: MolvenoEvaluator, model: 
 def test_structure_contains_capacity_parameters(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
     """structure() must include all capacity parameters."""
     schema = evaluator.input_schema()
-    for cap in model.capacities:
+    for cap in model.inputs.capacities:
         assert cap.name in schema, f"Missing capacity {cap.name!r} in structure()"
         assert schema[cap.name]["type"] == "distribution"
 

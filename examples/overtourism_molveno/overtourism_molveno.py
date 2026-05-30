@@ -27,7 +27,7 @@ try:
 except ImportError:
     from molveno_model import MolvenoEvaluator, MolvenoModel, MolvenoOutput
 
-model = MolvenoModel()
+model = MolvenoModel(inputs=MolvenoModel.default_inputs())
 
 # PLOTTING
 
