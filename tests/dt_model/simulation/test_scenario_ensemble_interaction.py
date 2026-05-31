@@ -526,3 +526,36 @@ def test_cross_product_ensemble_explicit_restriction_overrides_dict_keys():
     weights = ens.ensemble_weights[0]
     weight_by_value = {str(v): float(w) for v, w in zip(assignments, weights)}
     assert weight_by_value == pytest.approx({"a": 0.6 / 0.9, "b": 0.3 / 0.9})
+
+
+# ---------------------------------------------------------------------------
+# Foreign-index checks — override keys not in model.indexes
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_override_foreign_index_raises():
+    """Scenario raises ValueError when an override key is not in the model's indexes."""
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)  # NOT added to the model
+    model = _make_model(a)
+    with pytest.raises(ValueError, match="not part of this model"):
+        Scenario(model, overrides={b: 3.0})
+
+
+def test_scenario_override_foreign_index_error_names_the_culprit():
+    """Error message includes the name of the foreign index."""
+    a = Index("a", 1.0)
+    foreign = Index("foreign_idx", 99.0)  # NOT in the model
+    model = _make_model(a)
+    with pytest.raises(ValueError, match="foreign_idx"):
+        Scenario(model, overrides={foreign: 42.0})
+
+
+def test_scenario_override_index_in_model_does_not_raise():
+    """Scenario does not raise when all override keys belong to the model."""
+    a = Index("a", 1.0)
+    b = Index("b", 2.0)
+    model = _make_model(a, b)
+    # Both a and b are in the model — no error expected.
+    scenario = Scenario(model, overrides={a: 10.0, b: 20.0})
+    assert scenario.overrides == {a: 10.0, b: 20.0}

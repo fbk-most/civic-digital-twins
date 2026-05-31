@@ -604,12 +604,17 @@ def test_inputs_contract_warning_fires_for_undeclared_index():
         class Outputs:
             result: Index
 
+        @dataclasses.dataclass
+        class Expose:
+            received: Index  # tracked so the model is valid, but not in Inputs
+
         def __init__(self, received: Index) -> None:
             result = Index("result", received + 1.0)
-            # received is NOT stored in any Inputs dataclass
+            # received is in Expose (so it's covered), but NOT in any Inputs dataclass
             super().__init__(
                 "Bad",
                 outputs=_Bad.Outputs(result=result),
+                expose=_Bad.Expose(received=received),
             )
 
     received = Index("x", 1.0)
@@ -625,9 +630,13 @@ def test_inputs_contract_warning_fires_for_undeclared_timeseries():
         class Outputs:
             out: Index
 
+        @dataclasses.dataclass
+        class Expose:
+            ts: TimeseriesIndex  # tracked so the model is valid, but not in Inputs
+
         def __init__(self, ts: TimeseriesIndex) -> None:
             out = Index("out", ts.sum())
-            super().__init__("Bad", outputs=_Bad.Outputs(out=out))
+            super().__init__("Bad", outputs=_Bad.Outputs(out=out), expose=_Bad.Expose(ts=ts))
 
     ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
     with pytest.warns(InputsContractWarning, match="'ts'"):
@@ -642,9 +651,13 @@ def test_inputs_contract_warning_fires_for_undeclared_list():
         class Outputs:
             total: Index
 
+        @dataclasses.dataclass
+        class Expose:
+            costs: list  # tracked so the model is valid, but not in Inputs
+
         def __init__(self, costs: list[Index]) -> None:
             total = Index("total", costs[0] + costs[1])
-            super().__init__("Bad", outputs=_Bad.Outputs(total=total))
+            super().__init__("Bad", outputs=_Bad.Outputs(total=total), expose=_Bad.Expose(costs=costs))
 
     costs = [Index("c0", 1.0), Index("c1", 2.0)]
     with pytest.warns(InputsContractWarning) as record:
@@ -725,9 +738,13 @@ def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
         class Outputs:
             result: Index
 
+        @dataclasses.dataclass
+        class Expose:
+            received: Index
+
         def __init__(self, received: Index) -> None:
             result = Index("result", received + 1.0)
-            super().__init__("Bad", outputs=_Bad.Outputs(result=result))
+            super().__init__("Bad", outputs=_Bad.Outputs(result=result), expose=_Bad.Expose(received=received))
 
     received = Index("x", 1.0)
     with pytest.warns(ModelContractWarning):
@@ -807,9 +824,13 @@ def test_inputs_contract_no_crash_when_signature_unavailable():
         class Outputs:
             result: Index
 
+        @dataclasses.dataclass
+        class Expose:
+            x: Index
+
         def __init__(self, x: Index) -> None:
             result = Index("result", x + 1.0)
-            super().__init__("M", outputs=_Model.Outputs(result=result))
+            super().__init__("M", outputs=_Model.Outputs(result=result), expose=_Model.Expose(x=x))
 
     x = Index("x", 1.0)
     # Patch inspect.signature to raise TypeError, simulating a built-in or
@@ -861,3 +882,305 @@ def test_inputs_contract_skips_params_absent_from_locals():
     # No warning fires: x is declared in Inputs; y was deleted before inspection.
     contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
     assert len(contract_warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# Dropped concrete sub-model index detection (issue #195)
+# ---------------------------------------------------------------------------
+
+
+def test_dropped_concrete_submodel_index_raises_at_construction():
+    """Model.__init__ raises ValueError when a sub-model's concrete Index is not in parent.indexes.
+
+    The canonical failure mode: a parent model builds a sub-model with
+    concrete-valued Index parameters (e.g. Index('k', 0.5)), stores the
+    sub-model as self.sub, but does not include those concrete indexes in its
+    own Inputs/Outputs/Expose.  Scenario.base_substitutions() would silently
+    skip them, causing PlaceholderValueNotProvided at evaluation time.  The
+    check here surfaces the problem at model construction.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Inner")
+    class InnerModel(Model):
+        @inputs
+        class Inputs:
+            k: Index
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return InnerModel.Outputs(result=Index("result", inp.k.node * 2.0))
+
+    class OuterModel(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass  # intentionally empty — k is NOT forwarded to the parent
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def __init__(self) -> None:
+            k = Index("k", 0.5)  # concrete value, will be in inner.indexes
+            self.inner = InnerModel(InnerModel.Inputs(k=k))
+            super().__init__(
+                "Outer",
+                inputs=OuterModel.Inputs(),
+                outputs=OuterModel.Outputs(result=self.inner.outputs.result),
+            )
+
+    with pytest.raises(ValueError, match="appear in the model's formulas but are not declared"):
+        OuterModel()
+
+
+def test_dropped_concrete_submodel_index_error_names_culprits():
+    """Error message includes the names of the dropped concrete indexes."""
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Inner")
+    class _Inner(Model):
+        @inputs
+        class Inputs:
+            alpha: Index
+            beta: Index
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return _Inner.Outputs(result=Index("result", inp.alpha.node + inp.beta.node))
+
+    class _Outer(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def __init__(self) -> None:
+            alpha = Index("alpha_param", 1.0)
+            beta = Index("beta_param", 2.0)
+            self.inner = _Inner(_Inner.Inputs(alpha=alpha, beta=beta))
+            super().__init__(
+                "Outer2",
+                inputs=_Outer.Inputs(),
+                outputs=_Outer.Outputs(result=self.inner.outputs.result),
+            )
+
+    with pytest.raises(ValueError, match="alpha_param"):
+        _Outer()
+
+
+def test_concrete_submodel_index_in_parent_expose_does_not_raise():
+    """No error when all concrete sub-model indexes are included in parent Expose."""
+    from civic_digital_twins.dt_model.model.contracts import define, expose, inputs, outputs
+
+    @define("Inner")
+    class _InnerOK(Model):
+        @inputs
+        class Inputs:
+            k: Index
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return _InnerOK.Outputs(result=Index("result", inp.k.node * 3.0))
+
+    @define("Outer")
+    class _OuterOK(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        @expose
+        class Expose:
+            domain_indexes: list[Index]
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            k = Index("k", 0.5)
+            inner = _InnerOK(_InnerOK.Inputs(k=k))
+            self.inner = inner
+            return (
+                _OuterOK.Outputs(result=inner.outputs.result),
+                _OuterOK.Expose(domain_indexes=list(inner.indexes)),
+            )
+
+    # Should construct without error — k is tracked via domain_indexes in Expose.
+    m = _OuterOK()
+    assert any(getattr(i, "name", None) == "k" for i in m.expose.domain_indexes)
+
+
+def test_const_index_in_submodel_does_not_raise():
+    """ConstIndex in a sub-model is exempt: its value is baked into the graph."""
+    from civic_digital_twins.dt_model import ConstIndex
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Inner")
+    class _InnerConst(Model):
+        @inputs
+        class Inputs:
+            k: ConstIndex
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return _InnerConst.Outputs(result=Index("result", inp.k.node * 1.0))
+
+    class _OuterConst(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def __init__(self) -> None:
+            k = ConstIndex("k", 0.5)  # value baked into graph — exempt from check
+            self.inner = _InnerConst(_InnerConst.Inputs(k=k))
+            super().__init__(
+                "OuterConst",
+                inputs=_OuterConst.Inputs(),
+                outputs=_OuterConst.Outputs(result=self.inner.outputs.result),
+            )
+
+    # Should construct without error — ConstIndex values are baked into the graph.
+    m = _OuterConst()
+    assert m is not None
+
+
+def test_inline_concrete_index_not_in_outputs_raises():
+    """Single model: Index(name, scalar) used in a formula but not in Outputs/Expose raises.
+
+    This is the single-model analogue of the sub-model dropped-index bug:
+    Index('a', 0.2) creates a graph.placeholder whose value must be injected
+    by Scenario.base_substitutions().  If the index is absent from model.indexes,
+    the value is silently lost and evaluation raises PlaceholderValueNotProvided.
+    The check in Model.__init__ must catch this at construction time.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Single")
+    class _Single(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            b: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            a = Index("a_factor", 0.2)  # concrete — NOT returned in Outputs or Expose
+            b = Index("b", a.node * 2.0)
+            return _Single.Outputs(b=b)
+
+    with pytest.raises(ValueError, match="a_factor"):
+        _Single()
+
+
+def test_inline_abstract_index_not_in_outputs_raises():
+    """Single model: Index(name, None) in a formula but absent from Inputs/Outputs raises."""
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("SingleAbstract")
+    class _SingleAbstract(Model):
+        @inputs
+        class Inputs:
+            pass  # 'x' intentionally omitted from Inputs
+
+        @outputs
+        class Outputs:
+            result: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            x = Index("x_abstract", None)  # abstract placeholder, NOT in Inputs
+            result = Index("result", x.node + 1.0)
+            return _SingleAbstract.Outputs(result=result)
+
+    with pytest.raises(ValueError, match="x_abstract"):
+        _SingleAbstract()
+
+
+def test_orphan_check_visited_guard_diamond_dependency():
+    """BFS visited-guard (line inside the while loop) is exercised by a diamond dependency.
+
+    Two declared outputs both depend on the same intermediate formula node.
+    The BFS adds that node to to_visit twice (once from each output); the
+    second pop must hit the ``if node in visited: continue`` guard.
+    The shared dependency itself has an orphaned concrete-valued input,
+    so the check fires and names it correctly.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Diamond")
+    class _Diamond(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out_a: Index
+            out_b: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            # shared concrete-valued index (orphaned — not in Outputs)
+            k = Index("k_shared", 0.5)
+            # two outputs that both depend on k
+            out_a = Index("out_a", k.node * 1.0)
+            out_b = Index("out_b", k.node * 2.0)
+            return _Diamond.Outputs(out_a=out_a, out_b=out_b)
+
+    with pytest.raises(ValueError, match="k_shared"):
+        _Diamond()
+
+
+def test_orphan_check_visited_guard_formula_diamond():
+    """BFS ``if node in visited: continue`` guard (L916) is hit by a formula diamond.
+
+    When an uncovered formula node M is a transitive dependency of two separate
+    formula nodes A and B, and A is itself a dependency of B, M is appended to
+    ``to_visit`` twice before it is processed.  On the second pop the visited
+    guard fires.
+
+    Graph:  out.node = A + B
+                A = shared + 0  (shares node with the first dep of out)
+                B = A * 1       (also depends on A)
+    → ``_iter_node_deps(out)`` returns [A, B]; processing B appends A again.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("FormulaTriangle")
+    class _Tri(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            k = Index("k_tri", 0.5)  # orphaned concrete index
+            shared = k.node + 0.0  # uncovered formula node A
+            dep_b = shared * 1.0  # uncovered formula node B, depends on A
+            out = Index("out", shared + dep_b)  # out depends on both A and B
+            return _Tri.Outputs(out=out)
+
+    with pytest.raises(ValueError, match="k_tri"):
+        _Tri()

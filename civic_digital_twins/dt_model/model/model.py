@@ -694,6 +694,36 @@ class Model:
                 if caller_frame is not None:
                     _check_inputs_contract(caller_frame, concrete_cls, self.inputs)
 
+                # Dropped-index check: any graph.placeholder or
+                # graph.timeseries_placeholder node that is reachable from the
+                # model's internally-built formula nodes but not itself covered
+                # by a declared index will never receive a value at evaluation time.
+                # This catches both sub-model concrete indexes and inline
+                # Index(name, scalar) / TimeseriesIndex(name, array) created
+                # inside compute() but not surfaced via Inputs/Outputs/Expose.
+                # Formula-backed input nodes are excluded from the traversal
+                # boundary: their placeholder dependencies belong to the model
+                # that built them (the parent or a sibling sub-model).
+                _input_formula_nodes: frozenset[graph.Node] = frozenset(
+                    idx.node
+                    for idx in self.inputs
+                    if not isinstance(idx.node, (graph.placeholder, graph.timeseries_placeholder))
+                )
+                _orphaned = _find_orphaned_placeholder_nodes(self.indexes, _input_formula_nodes)
+                if _orphaned:
+                    _names = ", ".join(repr(n.name) for n in _orphaned)
+                    raise ValueError(
+                        f"{concrete_cls.__name__}: the following indexes appear in "
+                        f"the model's formulas but are not declared in Inputs, Outputs, or Expose: "
+                        f"{_names}. "
+                        "Without a declaration the model cannot inject their values at "
+                        "evaluation time and will fail with a missing-value error. "
+                        "Add each index to Inputs (if it is supplied from outside the "
+                        "model), Outputs or Expose (if it is computed inside), or "
+                        "replace it with ConstIndex / ConstTimeseriesIndex if its "
+                        "value is fixed and should never be overridden."
+                    )
+
                 for idx in self.abstract_indexes():
                     if idx not in self.inputs:
                         idx_name = getattr(idx, "name", repr(idx))
@@ -818,6 +848,86 @@ def _collect_submodel_node_functions(instance_dict: dict[str, Any]) -> dict[grap
                 if isinstance(item, Model):
                     claimed.update(item._node_functions)
     return claimed
+
+
+def _find_orphaned_placeholder_nodes(
+    indexes: list[GenericIndex],
+    input_formula_nodes: frozenset["graph.Node"],
+) -> list["graph.Node"]:
+    """Find placeholder nodes reachable from *indexes* but not covered by any index.
+
+    Traverses the computation graph **backward** from the model's internally-
+    built formula nodes (outputs and expose) using :func:`_iter_node_deps`.
+    Any :class:`~engine.frontend.graph.placeholder` or
+    :class:`~engine.frontend.graph.timeseries_placeholder` node that is
+    reachable but whose identity is *not* among ``{idx.node for idx in indexes}``
+    is returned as **orphaned**.
+
+    The traversal is bounded by two stopping conditions:
+
+    * **Covered nodes** — nodes that already have a declared index in
+      *indexes* (they receive their values via
+      :meth:`~simulation.scenario.Scenario.base_substitutions`).
+    * **Formula-backed input nodes** (*input_formula_nodes*) — formula nodes
+      that were built by *another* model and passed to this one as inputs.
+      These nodes' placeholder dependencies belong to that other model;
+      traversing into them would produce false positives.
+
+    An orphaned placeholder node is always a latent bug:
+
+    * If it was created by a concrete-valued ``Index(name, 0.2)``, the value
+      is stored only in the ``Index`` object and is injected by
+      :meth:`~simulation.scenario.Scenario.base_substitutions`, which
+      iterates ``model.indexes``.  A node absent from ``model.indexes`` is
+      never injected → ``PlaceholderValueNotProvided``.
+    * If it was created by an abstract ``Index(name, None)``, it is absent
+      from :meth:`~.model.Model.abstract_indexes` and therefore unknown to
+      the ensemble; evaluation fails for the same reason.
+
+    Parameters
+    ----------
+    indexes:
+        The model's declared indexes (``model.indexes``).
+    input_formula_nodes:
+        Formula-backed ``.node`` values from the model's declared inputs.  The
+        BFS stops when it reaches any of these nodes (their dependencies were
+        built by a different model and are that model's responsibility).
+
+    Returns
+    -------
+    list[graph.Node]
+        Orphaned placeholder nodes in discovery order.  Empty when every
+        reachable placeholder is covered by a declared index.
+    """
+    covered: set[graph.Node] = {idx.node for idx in indexes}
+    # Start only from formula-backed nodes that were *built by this model*:
+    # i.e., nodes that are covered but are NOT formula-backed inputs from another model.
+    internal_formula_starts: list[graph.Node] = [
+        node
+        for node in covered
+        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder)) and node not in input_formula_nodes
+    ]
+    visited: set[graph.Node] = set()
+    to_visit: list[graph.Node] = internal_formula_starts
+    orphaned: list[graph.Node] = []
+    while to_visit:
+        node = to_visit.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        for dep in _iter_node_deps(node):
+            if dep in visited or dep in covered or dep in input_formula_nodes:
+                continue  # already handled or belongs to another model
+            if isinstance(dep, (graph.placeholder, graph.timeseries_placeholder)):
+                # placeholder nodes with a default_value are self-contained:
+                # the executor falls back to that value when the node is absent
+                # from state.values, so they are not orphaned.
+                if isinstance(dep, graph.placeholder) and dep.default_value is not None:
+                    continue
+                orphaned.append(dep)  # uncovered placeholder — always a bug
+            else:
+                to_visit.append(dep)  # uncovered formula node — traverse further
+    return orphaned
 
 
 def _build_node_functions_map(

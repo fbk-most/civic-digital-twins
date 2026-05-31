@@ -106,6 +106,22 @@ class Scenario:
     ) -> None:
         self._model = model
         self._overrides: dict[GenericIndex, DomainValue] = dict(overrides or {})
+
+        # Membership check: every override key must belong to this model.
+        # GenericIndex.__eq__ is overloaded to return a new index node, so we
+        # must use identity (id()) rather than equality for containment checks.
+        model_index_ids = {id(i) for i in model.indexes}
+        foreign = [idx for idx in self._overrides if id(idx) not in model_index_ids]
+        if foreign:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in foreign)
+            raise ValueError(
+                f"Scenario for model {model.name!r}: {names} "
+                f"{'is' if len(foreign) == 1 else 'are'} not part of this model. "
+                "Overrides are matched by object identity — check that you are "
+                "passing index objects that were created as part of model "
+                f"{model.name!r}, not indexes from a different model or a copy."
+            )
+
         for idx, val in self._overrides.items():
             # Structural constants cannot be overridden.
             if isinstance(idx, (ConstIndex, ConstTimeseriesIndex)):

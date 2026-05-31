@@ -658,6 +658,27 @@ class Evaluation:
                 "Use Index(name, value) or Index(name, None) for sweep parameters."
             )
 
+        # Membership check: every parameters= key's node must appear in the plan's
+        # computation graph (i.e., in the linearised nodes across all regions).
+        # An index whose node is absent from the plan would contribute a PARAMETER axis
+        # to the result layout but would never influence any computation — a silent bug.
+        # Note: we check node identity in the plan rather than model.indexes membership
+        # because a valid use-case is passing an index that is only referenced in a
+        # selector formula (and therefore not declared in model.indexes but still
+        # present in the linearised graph).
+        all_plan_nodes = {n for r in plan.regions for n in r.nodes}
+        orphan_params = [idx for idx in parameters if idx.node not in all_plan_nodes]
+        if orphan_params:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in orphan_params)
+            raise ValueError(
+                f"parameters= for model {plan.model.name!r}: {names} "
+                f"{'is' if len(orphan_params) == 1 else 'are'} not part of this "
+                "model's computation. Passing "
+                f"{'it' if len(orphan_params) == 1 else 'them'} would add result "
+                "dimensions that have no effect on any output value. Check that "
+                "you are using index objects that belong to this model."
+            )
+
         k = len(parameter_axes)  # named PARAMETER axes
         m = len(array_params)  # anonymous PARAMETER axes
         n_params = k + m

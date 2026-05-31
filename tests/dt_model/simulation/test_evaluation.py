@@ -766,3 +766,43 @@ def test_parameter_axes_const_index_raises():
 
     with pytest.raises(ValueError, match="constant-node"):
         ev.evaluate(parameters={c: np.array([1.0, 2.0])})
+
+
+# ---------------------------------------------------------------------------
+# Foreign-index checks — parameters= keys not in model.indexes
+# ---------------------------------------------------------------------------
+
+
+def test_parameters_foreign_index_raises():
+    """evaluate() raises ValueError when a parameters= key's node is not in the computation graph."""
+    a = Index("a", 1.0)
+    foreign = Index("foreign", None)  # NOT in the model; node not in graph
+    result = Index("result", a.node * 1.0)
+    model = _make_model(a, result)
+    ev = Evaluation(Scenario(model))
+
+    with pytest.raises(ValueError, match="not part of this model's computation"):
+        ev.evaluate(parameters={foreign: np.array([1.0, 2.0])})
+
+
+def test_parameters_foreign_index_error_names_the_culprit():
+    """Error message includes the name of the foreign index."""
+    a = Index("a", 1.0)
+    foreign = Index("foreign_param", None)  # NOT in the model; node not in graph
+    model = _make_model(a)
+    ev = Evaluation(Scenario(model))
+
+    with pytest.raises(ValueError, match="foreign_param"):
+        ev.evaluate(parameters={foreign: np.array([1.0, 2.0])})
+
+
+def test_parameters_index_in_model_does_not_raise():
+    """evaluate() does not raise when all parameters= keys belong to the model."""
+    a = Index("a", None)  # abstract
+    result = Index("result", a.node * 2.0)
+    model = _make_model(a, result)
+    ev = Evaluation(Scenario(model))
+
+    # a is in the model — no error expected.
+    res = ev.evaluate(parameters={a: np.array([1.0, 2.0])})
+    np.testing.assert_array_almost_equal(res[result], [2.0, 4.0])

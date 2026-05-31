@@ -162,6 +162,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the distribution sampling budget, reducing Monte Carlo variance for models
   that retain distribution-backed indexes in the ensemble (closing #192).
   Default `n_samples_per_combo=1` preserves existing behaviour exactly.
+- `Scenario.__init__` now raises `ValueError` when an override key is not in
+  the model's `indexes` list.  Previously such overrides were silently dropped
+  by `base_substitutions()` (closing #195).
+- `Evaluation._execute_plan` now raises `ValueError` when a `parameters=` key's
+  node is not reachable in the plan's computation graph.  Previously such
+  parameters would allocate a PARAMETER axis in the result while having no
+  effect on the computation (closing #195).  Indexes referenced only in
+  selector formulas (not in `model.indexes`) remain valid `parameters=` keys.
+- `Model.__init__` now raises `ValueError` at construction time when any
+  `graph.placeholder` or `graph.timeseries_placeholder` node is reachable in
+  the computation graph from the model's internally-built formula outputs but
+  has no corresponding entry in the model's `indexes` list.  This catches both
+  the sub-model pattern (composite model omits sub-model concrete parameters
+  from `Expose`) and the single-model pattern (``Index(name, 0.2)`` used in a
+  formula but absent from `Outputs` / `Expose`).  Formula-backed input nodes
+  are excluded from the traversal boundary, so composed models where sub-model
+  output formulas are wired as inputs to sibling models are not affected.
+  `graph.placeholder` nodes with an explicit `default_value` are also exempt
+  (the executor already has a fallback).  `Scenario.base_substitutions()`
+  iterates `model.indexes` to inject concrete values; absent entries caused a
+  cryptic `PlaceholderValueNotProvided` deep inside the executor — now
+  surfaced early with a clear error message (closing #195).
 
 ### Changed
 
