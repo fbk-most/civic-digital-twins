@@ -40,7 +40,7 @@ def compute_field(model, ensemble, tt, ee):
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
     result = Evaluation(model).evaluate(
-        ensemble=ensemble, parameters={model.pv_tourists: tt, model.pv_excursionists: ee}
+        ensemble=ensemble, parameters={model.inputs.pv_tourists: tt, model.inputs.pv_excursionists: ee}
     )
 
     field = np.ones((tt.size, ee.size))
@@ -124,11 +124,11 @@ def good_weather_scenarios():
     return CrossProductEnsemble(
         model,
         restrictions={
-            model.cv_weekday: ["monday"],
-            model.cv_season: ["high"],
-            model.cv_weather: ["good"],
+            model.inputs.cv_weekday: ["monday"],
+            model.inputs.cv_season: ["high"],
+            model.inputs.cv_weather: ["good"],
         },
-        exclude=model.inputs.pvs,
+        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
     )
 
 
@@ -174,8 +174,8 @@ def test_evaluate_axes_high_presence_is_unsustainable(good_weather_scenarios):
 
 def test_ensemble_based_evaluation(tourists, excursionists):
     """CrossProductEnsemble-based evaluation produces a valid sustainability field."""
-    scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
-    ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=5, exclude=model.inputs.pvs)
+    scenario: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "bad"]}
+    ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=5, exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
 
     field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
 
@@ -201,11 +201,11 @@ def test_fixed_ensemble():
     ensemble = CrossProductEnsemble(
         model,
         restrictions={
-            model.cv_weekday: ["monday"],
-            model.cv_season: ["high"],
-            model.cv_weather: ["good"],
+            model.inputs.cv_weekday: ["monday"],
+            model.inputs.cv_season: ["high"],
+            model.inputs.cv_weather: ["good"],
         },
-        exclude=model.inputs.pvs,
+        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
         rng=np.random.default_rng(4),
     )
     _, got, _ = compute_field(model, ensemble, tourists, excursionists)
@@ -264,8 +264,8 @@ def test_fixed_ensemble():
 
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
-    scenario: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "bad"]}
-    ens = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=model.inputs.pvs)
+    scenario: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "bad"]}
+    ens = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
@@ -293,27 +293,27 @@ def test_molveno_model_has_four_sub_models():
 def test_molveno_model_exposes_pvs():
     """MolvenoModel exposes pv_tourists and pv_excursionists as attributes."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.pv_tourists, ConditionalDistributionIndex)
-    assert isinstance(m.pv_excursionists, ConditionalDistributionIndex)
-    assert m.pv_tourists.name == "tourists"
-    assert m.pv_excursionists.name == "excursionists"
+    assert isinstance(m.inputs.pv_tourists, ConditionalDistributionIndex)
+    assert isinstance(m.inputs.pv_excursionists, ConditionalDistributionIndex)
+    assert m.inputs.pv_tourists.name == "tourists"
+    assert m.inputs.pv_excursionists.name == "excursionists"
 
 
 def test_molveno_model_exposes_context_variables():
     """MolvenoModel exposes the three context variables as attributes."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.cv_weekday, CategoricalIndex)
-    assert isinstance(m.cv_season, CategoricalIndex)
-    assert isinstance(m.cv_weather, CategoricalIndex)
-    assert m.cv_weekday.name == "weekday"
-    assert m.cv_season.name == "season"
-    assert m.cv_weather.name == "weather"
+    assert isinstance(m.inputs.cv_weekday, CategoricalIndex)
+    assert isinstance(m.inputs.cv_season, CategoricalIndex)
+    assert isinstance(m.inputs.cv_weather, CategoricalIndex)
+    assert m.inputs.cv_weekday.name == "weekday"
+    assert m.inputs.cv_season.name == "season"
+    assert m.inputs.cv_weather.name == "weather"
 
 
 def test_cv_probabilities_sum_to_one():
     """Each CategoricalIndex CV has outcomes summing to 1.0."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    for cv in (m.cv_weekday, m.cv_season, m.cv_weather):
+    for cv in (m.inputs.cv_weekday, m.inputs.cv_season, m.inputs.cv_weather):
         total = sum(cv.outcomes.values())
         assert abs(total - 1.0) < 1e-9, f"{cv.name}: outcomes sum to {total}"
 
@@ -321,31 +321,31 @@ def test_cv_probabilities_sum_to_one():
 def test_parking_model_inputs_wired_from_root():
     """ParkingModel presence inputs are the same objects as MolvenoModel attributes."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.parking.inputs.pv_tourists is m.pv_tourists
-    assert m.parking.inputs.pv_excursionists is m.pv_excursionists
-    assert m.parking.inputs.cv_weather is m.cv_weather
+    assert m.parking.inputs.pv_tourists is m.inputs.pv_tourists
+    assert m.parking.inputs.pv_excursionists is m.inputs.pv_excursionists
+    assert m.parking.inputs.cv_weather is m.inputs.cv_weather
 
 
 def test_beach_model_inputs_wired_from_root():
     """BeachModel presence inputs are the same objects as MolvenoModel attributes."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.beach.inputs.pv_tourists is m.pv_tourists
-    assert m.beach.inputs.pv_excursionists is m.pv_excursionists
-    assert m.beach.inputs.cv_weather is m.cv_weather
+    assert m.beach.inputs.pv_tourists is m.inputs.pv_tourists
+    assert m.beach.inputs.pv_excursionists is m.inputs.pv_excursionists
+    assert m.beach.inputs.cv_weather is m.inputs.cv_weather
 
 
 def test_accommodation_model_inputs_wired_from_root():
     """AccommodationModel.inputs.pv_tourists is the same object as MolvenoModel attribute."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.accommodation.inputs.pv_tourists is m.pv_tourists
+    assert m.accommodation.inputs.pv_tourists is m.inputs.pv_tourists
 
 
 def test_food_model_inputs_wired_from_root():
     """FoodModel presence inputs are the same objects as MolvenoModel attributes."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.food.inputs.pv_tourists is m.pv_tourists
-    assert m.food.inputs.pv_excursionists is m.pv_excursionists
-    assert m.food.inputs.cv_weather is m.cv_weather
+    assert m.food.inputs.pv_tourists is m.inputs.pv_tourists
+    assert m.food.inputs.pv_excursionists is m.inputs.pv_excursionists
+    assert m.food.inputs.cv_weather is m.inputs.cv_weather
 
 
 def test_concern_model_outputs_are_generic_indexes_only():
@@ -457,14 +457,14 @@ def test_molveno_model_construction_is_warning_free():
 
 def test_presence_cvs_in_root_indexes():
     """All three context variables appear in model.indexes."""
-    cv_ids = {id(model.cv_weekday), id(model.cv_season), id(model.cv_weather)}
+    cv_ids = {id(model.inputs.cv_weekday), id(model.inputs.cv_season), id(model.inputs.cv_weather)}
     root_ids = {id(idx) for idx in model.indexes}
     assert cv_ids <= root_ids
 
 
 def test_presence_pvs_in_root_indexes():
     """Both presence variables appear in model.indexes."""
-    pv_ids = {id(model.pv_tourists), id(model.pv_excursionists)}
+    pv_ids = {id(model.inputs.pv_tourists), id(model.inputs.pv_excursionists)}
     root_ids = {id(idx) for idx in model.indexes}
     assert pv_ids <= root_ids
 
@@ -517,20 +517,21 @@ def test_beach_rotation_factor_is_abstract():
 
 
 def test_molveno_model_cvs_list():
-    """model.cvs contains exactly the three context variables."""
-    assert len(model.inputs.cvs) == 3
-    cv_ids = {id(cv) for cv in model.inputs.cvs}
-    assert id(model.cv_weekday) in cv_ids
-    assert id(model.cv_season) in cv_ids
-    assert id(model.cv_weather) in cv_ids
+    """model.Inputs declares the three named context variables."""
+    assert isinstance(model.inputs.cv_weekday, CategoricalIndex)
+    assert isinstance(model.inputs.cv_season, CategoricalIndex)
+    assert isinstance(model.inputs.cv_weather, CategoricalIndex)
+    assert model.inputs.cv_weekday.name == "weekday"
+    assert model.inputs.cv_season.name == "season"
+    assert model.inputs.cv_weather.name == "weather"
 
 
 def test_molveno_model_pvs_list():
-    """model.pvs contains exactly the two presence variables."""
-    assert len(model.inputs.pvs) == 2
-    pv_ids = {id(pv) for pv in model.inputs.pvs}
-    assert id(model.pv_tourists) in pv_ids
-    assert id(model.pv_excursionists) in pv_ids
+    """model.Inputs declares the two named presence variables."""
+    assert isinstance(model.inputs.pv_tourists, ConditionalDistributionIndex)
+    assert isinstance(model.inputs.pv_excursionists, ConditionalDistributionIndex)
+    assert model.inputs.pv_tourists.name == "tourists"
+    assert model.inputs.pv_excursionists.name == "excursionists"
 
 
 def test_molveno_model_constraints_list():
@@ -556,10 +557,10 @@ def test_molveno_model_constraints_match_sub_model_attributes():
 def test_presence_transformation_indexes_in_root_indexes():
     """The four presence-transformation indexes appear in model.indexes."""
     pt_ids = {
-        id(model.expose.i_p_tourists_reduction_factor),
-        id(model.expose.i_p_excursionists_reduction_factor),
-        id(model.expose.i_p_tourists_saturation_level),
-        id(model.expose.i_p_excursionists_saturation_level),
+        id(model.inputs.i_p_tourists_reduction_factor),
+        id(model.inputs.i_p_excursionists_reduction_factor),
+        id(model.inputs.i_p_tourists_saturation_level),
+        id(model.inputs.i_p_excursionists_saturation_level),
     }
     root_ids = {id(idx) for idx in model.indexes}
     assert pt_ids <= root_ids
@@ -570,8 +571,8 @@ def test_presence_transformation_indexes_in_root_indexes():
 
 def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
-    situation: dict[CategoricalIndex, list[str]] = {model.cv_weather: ["good", "unsettled", "bad"]}
-    ensemble = CrossProductEnsemble(model, restrictions=situation, max_categorical_size=20, exclude=model.inputs.pvs)
+    situation: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "unsettled", "bad"]}
+    ensemble = CrossProductEnsemble(model, restrictions=situation, max_categorical_size=20, exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])

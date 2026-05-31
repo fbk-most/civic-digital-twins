@@ -87,7 +87,6 @@ from civic_digital_twins.dt_model import (
     Index,
     Model,
     define,
-    expose,
     graph,
     inputs,
     outputs,
@@ -353,25 +352,60 @@ class FoodModel(Model):
 class MolvenoModel(Model):
     """Root overtourism model that wires the four concern sub-models.
 
-    Supply the domain parameters via :meth:`default_inputs`, or override
-    individual fields with :func:`dataclasses.replace`::
+    All domain parameters are declared as ``Inputs``; supply defaults via
+    :meth:`default_inputs` or override individual fields with
+    :func:`dataclasses.replace`::
 
         m = MolvenoModel(inputs=MolvenoModel.default_inputs())
         m.inputs.cvs                        # list of CategoricalIndex (weekday, season, weather)
         m.inputs.pvs                        # list of ConditionalDistributionIndex
+        m.inputs.i_u_tourists_parking       # overridable parameter Index
         m.cv_weather                        # named alias set by compute()
-        m.parking.inputs.i_c_parking        # capacity DistributionIndex
         m.parking.outputs.i_u_parking       # usage formula Index
         m.parking.constraint                # Constraint object
     """
 
     @inputs
     class Inputs:
-        """CVs, PVs, and distribution-backed parameters of :class:`MolvenoModel`."""
+        """All domain parameters of :class:`MolvenoModel`."""
 
-        cvs: list[CategoricalIndex]
-        pvs: list[ConditionalDistributionIndex]
-        capacities: list[GenericIndex]
+        # Context variables
+        cv_weekday: CategoricalIndex
+        cv_season: CategoricalIndex
+        cv_weather: CategoricalIndex
+        # Presence distributions
+        pv_tourists: ConditionalDistributionIndex
+        pv_excursionists: ConditionalDistributionIndex
+        # Distribution-backed uncertainty parameters
+        i_c_parking: DistributionIndex
+        i_c_beach: DistributionIndex
+        i_c_accommodation: DistributionIndex
+        i_c_food: DistributionIndex
+        i_xo_tourists_beach: DistributionIndex
+        # Parking parameters
+        i_u_tourists_parking: Index
+        i_u_excursionists_parking: Index
+        i_xa_tourists_per_vehicle: Index
+        i_xa_excursionists_per_vehicle: Index
+        i_xo_tourists_parking: Index
+        i_xo_excursionists_parking: Index
+        # Beach parameters
+        i_u_tourists_beach: Index
+        i_u_excursionists_beach: Index
+        i_xo_excursionists_beach: Index
+        # Accommodation parameters
+        i_u_tourists_accommodation: Index
+        i_xa_tourists_accommodation: Index
+        # Food parameters
+        i_u_tourists_food: Index
+        i_u_excursionists_food: Index
+        i_xa_visitors_food: Index
+        i_xo_visitors_food: Index
+        # Presence-transformation parameters
+        i_p_tourists_reduction_factor: Index
+        i_p_excursionists_reduction_factor: Index
+        i_p_tourists_saturation_level: Index
+        i_p_excursionists_saturation_level: Index
 
     @outputs
     class Outputs:
@@ -379,19 +413,9 @@ class MolvenoModel(Model):
 
         usage_indexes: list[GenericIndex]
 
-    @expose
-    class Expose:
-        """Sub-model formula indexes (for evaluation state) and presence-transformation parameters."""
-
-        domain_indexes: list[GenericIndex]
-        i_p_tourists_reduction_factor: Index
-        i_p_excursionists_reduction_factor: Index
-        i_p_tourists_saturation_level: Index
-        i_p_excursionists_saturation_level: Index
-
     @classmethod
     def default_inputs(cls) -> Inputs:
-        """Return the default domain inputs: CVs, PVs, and distribution-backed parameters.
+        """Return the default domain inputs for all parameters.
 
         Pass to :class:`MolvenoModel` or override individual fields with
         :func:`dataclasses.replace`::
@@ -412,127 +436,106 @@ class MolvenoModel(Model):
             excursionist_presences_stats,
         )
         return cls.Inputs(
-            cvs=[cv_weekday, cv_season, cv_weather],
-            pvs=[pv_tourists, pv_excursionists],
-            capacities=[
-                DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0}),
-                DistributionIndex("beach capacity", stats.uniform, {"loc": 6000.0, "scale": 1000.0}),
-                DistributionIndex(
-                    "accommodation capacity",
-                    stats.lognorm,
-                    {"s": 0.125, "loc": 0.0, "scale": 5000.0},
-                ),
-                DistributionIndex(
-                    "food service capacity",
-                    stats.triang,
-                    {"loc": 3000.0, "scale": 1000.0, "c": 0.5},
-                ),
-                DistributionIndex(
-                    "tourists on beach rotation factor",
-                    stats.uniform,
-                    {"loc": 1.0, "scale": 2.0},
-                ),
-            ],
-        )
-
-    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
-        """Compose concern sub-models from inputs and return usage outputs."""
-        cv_weekday, cv_season, cv_weather = inputs.cvs
-        pv_tourists, pv_excursionists = inputs.pvs
-        i_c_parking, i_c_beach, i_c_accommodation, i_c_food, i_xo_tourists_beach = inputs.capacities
-
-        # Side effects — named attribute access used by evaluators and scenarios.
-        self.cv_weekday = cv_weekday
-        self.cv_season = cv_season
-        self.cv_weather = cv_weather
-        self.pv_tourists = pv_tourists
-        self.pv_excursionists = pv_excursionists
-
-        # ------------------------------------------------------------------
-        # Default i_* parameters
-        # ------------------------------------------------------------------
-
-        # Parking parameters
-        i_u_tourists_parking = Index("tourist parking usage factor", 0.02)
-        i_u_excursionists_parking = Index(
-            "excursionist parking usage factor",
-            graph.piecewise((0.55, cv_weather == "bad"), (0.80, True)),
-        )
-        i_xa_tourists_per_vehicle = Index("tourists per vehicle allocation factor", 2.5)
-        i_xa_excursionists_per_vehicle = Index("excursionists per vehicle allocation factor", 2.5)
-        i_xo_tourists_parking = Index("tourists in parking rotation factor", 1.02)
-        i_xo_excursionists_parking = Index("excursionists in parking rotation factor", 3.5)
-
-        # Beach parameters
-        i_u_tourists_beach = Index(
-            "tourist beach usage factor",
-            graph.piecewise((0.25, cv_weather == "bad"), (0.50, True)),
-        )
-        i_u_excursionists_beach = Index(
-            "excursionist beach usage factor",
-            graph.piecewise((0.35, cv_weather == "bad"), (0.80, True)),
-        )
-        i_xo_excursionists_beach = Index("excursionists on beach rotation factor", 1.02)
-
-        # Accommodation parameters
-        i_u_tourists_accommodation = Index("tourist accommodation usage factor", 0.90)
-        i_xa_tourists_accommodation = Index("tourists per accommodation allocation factor", 1.05)
-
-        # Food parameters
-        i_u_tourists_food = Index("tourist food service usage factor", 0.20)
-        i_u_excursionists_food = Index(
-            "excursionist food service usage factor",
-            graph.piecewise((0.80, cv_weather == "bad"), (0.40, True)),
-        )
-        i_xa_visitors_food = Index("visitors in food service allocation factor", 0.9)
-        i_xo_visitors_food = Index("visitors in food service rotation factor", 2.0)
-
-        # Presence-transformation parameters (used in overtourism_molveno.py)
-        i_p_tourists_reduction_factor = Index("tourists reduction factor", 1.0)
-        i_p_excursionists_reduction_factor = Index("excursionists reduction factor", 1.0)
-        i_p_tourists_saturation_level = Index("tourists saturation level", 10000)
-        i_p_excursionists_saturation_level = Index("excursionists saturation level", 10000)
-
-        # ------------------------------------------------------------------
-        # Concern sub-models
-        # ------------------------------------------------------------------
-        parking = ParkingModel(inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
+            cv_weekday=cv_weekday,
+            cv_season=cv_season,
+            cv_weather=cv_weather,
             pv_tourists=pv_tourists,
             pv_excursionists=pv_excursionists,
-            cv_weather=cv_weather,
-            i_u_tourists_parking=i_u_tourists_parking,
-            i_u_excursionists_parking=i_u_excursionists_parking,
-            i_xa_tourists_per_vehicle=i_xa_tourists_per_vehicle,
-            i_xa_excursionists_per_vehicle=i_xa_excursionists_per_vehicle,
-            i_xo_tourists_parking=i_xo_tourists_parking,
-            i_xo_excursionists_parking=i_xo_excursionists_parking,
-            i_c_parking=i_c_parking,
+            # Distribution-backed uncertainty parameters
+            i_c_parking=DistributionIndex("parking capacity", stats.uniform, {"loc": 350.0, "scale": 100.0}),
+            i_c_beach=DistributionIndex("beach capacity", stats.uniform, {"loc": 6000.0, "scale": 1000.0}),
+            i_c_accommodation=DistributionIndex(
+                "accommodation capacity",
+                stats.lognorm,
+                {"s": 0.125, "loc": 0.0, "scale": 5000.0},
+            ),
+            i_c_food=DistributionIndex(
+                "food service capacity",
+                stats.triang,
+                {"loc": 3000.0, "scale": 1000.0, "c": 0.5},
+            ),
+            i_xo_tourists_beach=DistributionIndex(
+                "tourists on beach rotation factor",
+                stats.uniform,
+                {"loc": 1.0, "scale": 2.0},
+            ),
+            # Parking parameters
+            i_u_tourists_parking=Index("tourist parking usage factor", 0.02),
+            i_u_excursionists_parking=Index(
+                "excursionist parking usage factor",
+                graph.piecewise((0.55, cv_weather == "bad"), (0.80, True)),
+            ),
+            i_xa_tourists_per_vehicle=Index("tourists per vehicle allocation factor", 2.5),
+            i_xa_excursionists_per_vehicle=Index("excursionists per vehicle allocation factor", 2.5),
+            i_xo_tourists_parking=Index("tourists in parking rotation factor", 1.02),
+            i_xo_excursionists_parking=Index("excursionists in parking rotation factor", 3.5),
+            # Beach parameters
+            i_u_tourists_beach=Index(
+                "tourist beach usage factor",
+                graph.piecewise((0.25, cv_weather == "bad"), (0.50, True)),
+            ),
+            i_u_excursionists_beach=Index(
+                "excursionist beach usage factor",
+                graph.piecewise((0.35, cv_weather == "bad"), (0.80, True)),
+            ),
+            i_xo_excursionists_beach=Index("excursionists on beach rotation factor", 1.02),
+            # Accommodation parameters
+            i_u_tourists_accommodation=Index("tourist accommodation usage factor", 0.90),
+            i_xa_tourists_accommodation=Index("tourists per accommodation allocation factor", 1.05),
+            # Food parameters
+            i_u_tourists_food=Index("tourist food service usage factor", 0.20),
+            i_u_excursionists_food=Index(
+                "excursionist food service usage factor",
+                graph.piecewise((0.80, cv_weather == "bad"), (0.40, True)),
+            ),
+            i_xa_visitors_food=Index("visitors in food service allocation factor", 0.9),
+            i_xo_visitors_food=Index("visitors in food service rotation factor", 2.0),
+            # Presence-transformation parameters
+            i_p_tourists_reduction_factor=Index("tourists reduction factor", 1.0),
+            i_p_excursionists_reduction_factor=Index("excursionists reduction factor", 1.0),
+            i_p_tourists_saturation_level=Index("tourists saturation level", 10000),
+            i_p_excursionists_saturation_level=Index("excursionists saturation level", 10000),
+        )
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Wire concern sub-models from inputs."""
+        parking = ParkingModel(inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
+            pv_tourists=inputs.pv_tourists,
+            pv_excursionists=inputs.pv_excursionists,
+            cv_weather=inputs.cv_weather,
+            i_u_tourists_parking=inputs.i_u_tourists_parking,
+            i_u_excursionists_parking=inputs.i_u_excursionists_parking,
+            i_xa_tourists_per_vehicle=inputs.i_xa_tourists_per_vehicle,
+            i_xa_excursionists_per_vehicle=inputs.i_xa_excursionists_per_vehicle,
+            i_xo_tourists_parking=inputs.i_xo_tourists_parking,
+            i_xo_excursionists_parking=inputs.i_xo_excursionists_parking,
+            i_c_parking=inputs.i_c_parking,
         ))
         beach = BeachModel(inputs=BeachModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=pv_tourists,
-            pv_excursionists=pv_excursionists,
-            cv_weather=cv_weather,
-            i_u_tourists_beach=i_u_tourists_beach,
-            i_u_excursionists_beach=i_u_excursionists_beach,
-            i_xo_tourists_beach=i_xo_tourists_beach,
-            i_xo_excursionists_beach=i_xo_excursionists_beach,
-            i_c_beach=i_c_beach,
+            pv_tourists=inputs.pv_tourists,
+            pv_excursionists=inputs.pv_excursionists,
+            cv_weather=inputs.cv_weather,
+            i_u_tourists_beach=inputs.i_u_tourists_beach,
+            i_u_excursionists_beach=inputs.i_u_excursionists_beach,
+            i_xo_tourists_beach=inputs.i_xo_tourists_beach,
+            i_xo_excursionists_beach=inputs.i_xo_excursionists_beach,
+            i_c_beach=inputs.i_c_beach,
         ))
         accommodation = AccommodationModel(inputs=AccommodationModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=pv_tourists,
-            i_u_tourists_accommodation=i_u_tourists_accommodation,
-            i_xa_tourists_accommodation=i_xa_tourists_accommodation,
-            i_c_accommodation=i_c_accommodation,
+            pv_tourists=inputs.pv_tourists,
+            i_u_tourists_accommodation=inputs.i_u_tourists_accommodation,
+            i_xa_tourists_accommodation=inputs.i_xa_tourists_accommodation,
+            i_c_accommodation=inputs.i_c_accommodation,
         ))
         food = FoodModel(inputs=FoodModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=pv_tourists,
-            pv_excursionists=pv_excursionists,
-            cv_weather=cv_weather,
-            i_u_tourists_food=i_u_tourists_food,
-            i_u_excursionists_food=i_u_excursionists_food,
-            i_xa_visitors_food=i_xa_visitors_food,
-            i_xo_visitors_food=i_xo_visitors_food,
-            i_c_food=i_c_food,
+            pv_tourists=inputs.pv_tourists,
+            pv_excursionists=inputs.pv_excursionists,
+            cv_weather=inputs.cv_weather,
+            i_u_tourists_food=inputs.i_u_tourists_food,
+            i_u_excursionists_food=inputs.i_u_excursionists_food,
+            i_xa_visitors_food=inputs.i_xa_visitors_food,
+            i_xo_visitors_food=inputs.i_xo_visitors_food,
+            i_c_food=inputs.i_c_food,
         ))
 
         self.constraints = [
@@ -546,23 +549,7 @@ class MolvenoModel(Model):
         self.accommodation = accommodation
         self.food = food
 
-        domain_indexes = (
-            list(parking.indexes)
-            + list(beach.indexes)
-            + list(accommodation.indexes)
-            + list(food.indexes)
-        )
-
-        return (
-            MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints]),
-            MolvenoModel.Expose(
-                domain_indexes=domain_indexes,
-                i_p_tourists_reduction_factor=i_p_tourists_reduction_factor,
-                i_p_excursionists_reduction_factor=i_p_excursionists_reduction_factor,
-                i_p_tourists_saturation_level=i_p_tourists_saturation_level,
-                i_p_excursionists_saturation_level=i_p_excursionists_saturation_level,
-            ),
-        )
+        return MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints])
 
 
 # ---------------------------------------------------------------------------
@@ -771,8 +758,8 @@ def compute_sustainability_field(
     """
     field = np.ones(
         (
-            result.parameter_values[model.pv_tourists].size,
-            result.parameter_values[model.pv_excursionists].size,
+            result.parameter_values[model.inputs.pv_tourists].size,
+            result.parameter_values[model.inputs.pv_excursionists].size,
         )
     )
     field_elements: dict = {}
@@ -969,10 +956,10 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         sampling_ensemble = CrossProductEnsemble(
             type(scenario)(model),
             max_categorical_size=config.ensemble_size,
-            exclude=model.inputs.pvs,
+            exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
         )
         pv_samples = sample_across(
-            sampling_ensemble, [model.pv_tourists, model.pv_excursionists], total=self._target_presence_samples
+            sampling_ensemble, [model.inputs.pv_tourists, model.inputs.pv_excursionists], total=self._target_presence_samples
         )
         return tt, ee, pv_samples
 
@@ -1006,12 +993,12 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         """
         model = self._model
         field, field_elements = compute_sustainability_field(model, result)
-        rf_t = float(np.mean(result[model.expose.i_p_tourists_reduction_factor]))
-        sl_t = float(np.mean(result[model.expose.i_p_tourists_saturation_level]))
-        rf_e = float(np.mean(result[model.expose.i_p_excursionists_reduction_factor]))
-        sl_e = float(np.mean(result[model.expose.i_p_excursionists_saturation_level]))
-        sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.pv_tourists]]
-        sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.pv_excursionists]]
+        rf_t = float(np.mean(result[model.inputs.i_p_tourists_reduction_factor]))
+        sl_t = float(np.mean(result[model.inputs.i_p_tourists_saturation_level]))
+        rf_e = float(np.mean(result[model.inputs.i_p_excursionists_reduction_factor]))
+        sl_e = float(np.mean(result[model.inputs.i_p_excursionists_saturation_level]))
+        sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.inputs.pv_tourists]]
+        sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.inputs.pv_excursionists]]
         output = MolvenoOutput(
             field=field,
             field_elements=field_elements,
@@ -1056,11 +1043,11 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         ensemble = CrossProductEnsemble(
             scenario,
             max_categorical_size=config.ensemble_size,
-            exclude=model.inputs.pvs,
+            exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
         )
         result = Evaluation(scenario).evaluate(
             ensemble=ensemble,
-            parameters={model.pv_tourists: tt, model.pv_excursionists: ee},
+            parameters={model.inputs.pv_tourists: tt, model.inputs.pv_excursionists: ee},
         )
         return self._build_output(result, tt, ee, pv_samples)
 
@@ -1098,12 +1085,12 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         ensemble = CrossProductEnsemble(
             scenario,
             max_categorical_size=config.ensemble_size,
-            exclude=model.inputs.pvs,
+            exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
         )
         future = _get_default_executor().submit(
             Evaluation(scenario).evaluate,
             ensemble=ensemble,
-            parameters={model.pv_tourists: tt, model.pv_excursionists: ee},
+            parameters={model.inputs.pv_tourists: tt, model.inputs.pv_excursionists: ee},
         )
 
         def _post(result: EvaluationResult) -> MolvenoOutput:
@@ -1131,8 +1118,9 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         """
         model = self._model
         schema: dict[str, dict[str, Any]] = {}
-        for cv in model.inputs.cvs:
-            schema[cv.name] = {"type": "categorical", "support": list(cv.support)}
-        for cap in model.inputs.capacities:
-            schema[cap.name] = {"type": "distribution"}
+        for idx in model.inputs:
+            if isinstance(idx, CategoricalIndex):
+                schema[idx.name] = {"type": "categorical", "support": list(idx.support)}
+            elif isinstance(idx, DistributionIndex):
+                schema[idx.name] = {"type": "distribution"}
         return schema
