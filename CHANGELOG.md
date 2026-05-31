@@ -22,10 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for subclasses that define `__init__` directly; composite models that cannot
   use `compute()` opt out with `legacy=True`.  Exported from
   `civic_digital_twins.dt_model`.  Closes #190.
-- The four Molveno concern sub-models (`ParkingModel`, `BeachModel`,
-  `AccommodationModel`, `FoodModel`) and the three Bologna sub-models
-  (`InflowModel`, `TrafficModel`, `EmissionsModel`) are migrated to
-  `@define` + `compute()`.
+- All example models migrated to `@define` + `compute()`. `BolognaModel` gains
+  `default_inputs() → Inputs` and `default_fns() → Functions` classmethods;
+  callers use `BolognaModel(inputs=BolognaModel.default_inputs(),
+  fns=BolognaModel.default_fns())` with `dataclasses.replace()` for
+  per-scenario overrides.  `MolvenoModel` exposes all domain parameters as
+  named `Inputs` fields (CVs, PVs, distribution-backed uncertainty
+  parameters, per-concern formula parameters, presence-transformation
+  parameters); `default_inputs()` supplies the defaults; `compute()` is pure
+  wiring with no local index construction.
+- `@define` auto-constructs `Inputs()` when the declared `Inputs` class has
+  no fields, so `Model()` can be called with no arguments in that case.
 - `@functions` decorator — declare the custom functions a `Model` subclass
   requires as part of its typed signature.  Each annotated field is a required
   `Functor`; pass the completed `Functions` instance to `super().__init__()` at
