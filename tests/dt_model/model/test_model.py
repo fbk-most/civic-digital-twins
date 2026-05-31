@@ -1125,7 +1125,6 @@ def test_orphan_check_visited_guard_diamond_dependency():
     The shared dependency itself has an orphaned concrete-valued input,
     so the check fires and names it correctly.
     """
-    from civic_digital_twins.dt_model import graph as _graph
     from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
 
     @define("Diamond")
