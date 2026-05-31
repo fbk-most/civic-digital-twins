@@ -1114,3 +1114,74 @@ def test_inline_abstract_index_not_in_outputs_raises():
 
     with pytest.raises(ValueError, match="x_abstract"):
         _SingleAbstract()
+
+
+def test_orphan_check_visited_guard_diamond_dependency():
+    """BFS visited-guard (line inside the while loop) is exercised by a diamond dependency.
+
+    Two declared outputs both depend on the same intermediate formula node.
+    The BFS adds that node to to_visit twice (once from each output); the
+    second pop must hit the ``if node in visited: continue`` guard.
+    The shared dependency itself has an orphaned concrete-valued input,
+    so the check fires and names it correctly.
+    """
+    from civic_digital_twins.dt_model import graph as _graph
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Diamond")
+    class _Diamond(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out_a: Index
+            out_b: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            # shared concrete-valued index (orphaned — not in Outputs)
+            k = Index("k_shared", 0.5)
+            # two outputs that both depend on k
+            out_a = Index("out_a", k.node * 1.0)
+            out_b = Index("out_b", k.node * 2.0)
+            return _Diamond.Outputs(out_a=out_a, out_b=out_b)
+
+    with pytest.raises(ValueError, match="k_shared"):
+        _Diamond()
+
+
+def test_orphan_check_visited_guard_formula_diamond():
+    """BFS ``if node in visited: continue`` guard (L916) is hit by a formula diamond.
+
+    When an uncovered formula node M is a transitive dependency of two separate
+    formula nodes A and B, and A is itself a dependency of B, M is appended to
+    ``to_visit`` twice before it is processed.  On the second pop the visited
+    guard fires.
+
+    Graph:  out.node = A + B
+                A = shared + 0  (shares node with the first dep of out)
+                B = A * 1       (also depends on A)
+    → ``_iter_node_deps(out)`` returns [A, B]; processing B appends A again.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("FormulaTriangle")
+    class _Tri(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            k = Index("k_tri", 0.5)  # orphaned concrete index
+            shared = k.node + 0.0  # uncovered formula node A
+            dep_b = shared * 1.0  # uncovered formula node B, depends on A
+            out = Index("out", shared + dep_b)  # out depends on both A and B
+            return _Tri.Outputs(out=out)
+
+    with pytest.raises(ValueError, match="k_tri"):
+        _Tri()
