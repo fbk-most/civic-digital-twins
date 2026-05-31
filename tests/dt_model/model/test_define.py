@@ -78,6 +78,7 @@ def test_define_raises_if_expose_declared_but_missing_from_return():
 
 def test_define_get_type_hints_fallback():
     """@define falls back to raw __annotations__ when get_type_hints() fails."""
+
     # Use a string annotation that cannot be resolved to trigger the except branch.
     # The decorator should still succeed (falling back to raw annotations, which
     # yields no 'return' hint), so no Expose-consistency error fires either.

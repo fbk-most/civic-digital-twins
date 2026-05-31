@@ -175,7 +175,12 @@ def test_evaluate_axes_high_presence_is_unsustainable(good_weather_scenarios):
 def test_ensemble_based_evaluation(tourists, excursionists):
     """CrossProductEnsemble-based evaluation produces a valid sustainability field."""
     scenario: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "bad"]}
-    ensemble = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=5, exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
+    ensemble = CrossProductEnsemble(
+        model,
+        restrictions=scenario,
+        max_categorical_size=5,
+        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
+    )
 
     field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
 
@@ -265,7 +270,12 @@ def test_fixed_ensemble():
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
     scenario: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "bad"]}
-    ens = CrossProductEnsemble(model, restrictions=scenario, max_categorical_size=10, exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
+    ens = CrossProductEnsemble(
+        model,
+        restrictions=scenario,
+        max_categorical_size=10,
+        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
+    )
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
 
@@ -572,7 +582,12 @@ def test_presence_transformation_indexes_in_root_indexes():
 def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
     situation: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "unsettled", "bad"]}
-    ensemble = CrossProductEnsemble(model, restrictions=situation, max_categorical_size=20, exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
+    ensemble = CrossProductEnsemble(
+        model,
+        restrictions=situation,
+        max_categorical_size=20,
+        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
+    )
 
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])

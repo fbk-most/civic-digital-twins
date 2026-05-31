@@ -572,9 +572,7 @@ class BolognaModel(Model):
             )
         """
         return cls.Inputs(
-            i_p_start_time=Index(
-                "start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds()
-            ),
+            i_p_start_time=Index("start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
             i_p_end_time=Index("end time", (pd.Timestamp("19:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
             i_p_cost=[Index(f"cost euro {e}", 5.00 - e * 0.25) for e in range(7)],
             i_p_fraction_exempted=Index("exempted vehicles %", 0.15),
@@ -605,21 +603,23 @@ class BolognaModel(Model):
         ts_inflow = ConstTimeseriesIndex("inflow", vehicle_inflow)
         ts_starting = ConstTimeseriesIndex("staring", vehicle_starting)
 
-        _inflow = InflowModel(inputs=InflowModel.Inputs(  # type: ignore[call-arg]
-            ts_inflow=ts_inflow,
-            ts_starting=ts_starting,
-            ts=ts,
-            i_p_start_time=inputs.i_p_start_time,
-            i_p_end_time=inputs.i_p_end_time,
-            i_p_cost=inputs.i_p_cost,
-            i_p_fraction_exempted=inputs.i_p_fraction_exempted,
-            i_b_p50_cost=inputs.i_b_p50_cost,
-            i_b_p50_anticipating=inputs.i_b_p50_anticipating,
-            i_b_p50_anticipation=inputs.i_b_p50_anticipation,
-            i_b_p50_postponing=inputs.i_b_p50_postponing,
-            i_b_p50_postponement=inputs.i_b_p50_postponement,
-            i_b_starting_modified_factor=inputs.i_b_starting_modified_factor,
-        ))
+        _inflow = InflowModel(
+            inputs=InflowModel.Inputs(  # type: ignore[call-arg]
+                ts_inflow=ts_inflow,
+                ts_starting=ts_starting,
+                ts=ts,
+                i_p_start_time=inputs.i_p_start_time,
+                i_p_end_time=inputs.i_p_end_time,
+                i_p_cost=inputs.i_p_cost,
+                i_p_fraction_exempted=inputs.i_p_fraction_exempted,
+                i_b_p50_cost=inputs.i_b_p50_cost,
+                i_b_p50_anticipating=inputs.i_b_p50_anticipating,
+                i_b_p50_anticipation=inputs.i_b_p50_anticipation,
+                i_b_p50_postponing=inputs.i_b_p50_postponing,
+                i_b_p50_postponement=inputs.i_b_p50_postponement,
+                i_b_starting_modified_factor=inputs.i_b_starting_modified_factor,
+            )
+        )
 
         _traffic = TrafficModel(  # type: ignore[call-arg]
             inputs=TrafficModel.Inputs(
@@ -631,14 +631,16 @@ class BolognaModel(Model):
             fns=TrafficModel.Functions(ts_solve=fns.ts_solve),
         )
 
-        _emissions = EmissionsModel(inputs=EmissionsModel.Inputs(  # type: ignore[call-arg]
-            ts=ts,
-            i_p_start_time=inputs.i_p_start_time,
-            i_p_end_time=inputs.i_p_end_time,
-            traffic=_traffic.outputs.traffic,
-            modified_traffic=_traffic.outputs.modified_traffic,
-            modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
-        ))
+        _emissions = EmissionsModel(
+            inputs=EmissionsModel.Inputs(  # type: ignore[call-arg]
+                ts=ts,
+                i_p_start_time=inputs.i_p_start_time,
+                i_p_end_time=inputs.i_p_end_time,
+                traffic=_traffic.outputs.traffic,
+                modified_traffic=_traffic.outputs.modified_traffic,
+                modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
+            )
+        )
 
         return (
             BolognaModel.Outputs(

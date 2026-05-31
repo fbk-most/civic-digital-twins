@@ -499,44 +499,52 @@ class MolvenoModel(Model):
 
     def compute(self, inputs: Inputs) -> Outputs:
         """Wire concern sub-models from inputs."""
-        parking = ParkingModel(inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=inputs.pv_tourists,
-            pv_excursionists=inputs.pv_excursionists,
-            cv_weather=inputs.cv_weather,
-            i_u_tourists_parking=inputs.i_u_tourists_parking,
-            i_u_excursionists_parking=inputs.i_u_excursionists_parking,
-            i_xa_tourists_per_vehicle=inputs.i_xa_tourists_per_vehicle,
-            i_xa_excursionists_per_vehicle=inputs.i_xa_excursionists_per_vehicle,
-            i_xo_tourists_parking=inputs.i_xo_tourists_parking,
-            i_xo_excursionists_parking=inputs.i_xo_excursionists_parking,
-            i_c_parking=inputs.i_c_parking,
-        ))
-        beach = BeachModel(inputs=BeachModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=inputs.pv_tourists,
-            pv_excursionists=inputs.pv_excursionists,
-            cv_weather=inputs.cv_weather,
-            i_u_tourists_beach=inputs.i_u_tourists_beach,
-            i_u_excursionists_beach=inputs.i_u_excursionists_beach,
-            i_xo_tourists_beach=inputs.i_xo_tourists_beach,
-            i_xo_excursionists_beach=inputs.i_xo_excursionists_beach,
-            i_c_beach=inputs.i_c_beach,
-        ))
-        accommodation = AccommodationModel(inputs=AccommodationModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=inputs.pv_tourists,
-            i_u_tourists_accommodation=inputs.i_u_tourists_accommodation,
-            i_xa_tourists_accommodation=inputs.i_xa_tourists_accommodation,
-            i_c_accommodation=inputs.i_c_accommodation,
-        ))
-        food = FoodModel(inputs=FoodModel.Inputs(  # type: ignore[call-arg]
-            pv_tourists=inputs.pv_tourists,
-            pv_excursionists=inputs.pv_excursionists,
-            cv_weather=inputs.cv_weather,
-            i_u_tourists_food=inputs.i_u_tourists_food,
-            i_u_excursionists_food=inputs.i_u_excursionists_food,
-            i_xa_visitors_food=inputs.i_xa_visitors_food,
-            i_xo_visitors_food=inputs.i_xo_visitors_food,
-            i_c_food=inputs.i_c_food,
-        ))
+        parking = ParkingModel(
+            inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
+                pv_tourists=inputs.pv_tourists,
+                pv_excursionists=inputs.pv_excursionists,
+                cv_weather=inputs.cv_weather,
+                i_u_tourists_parking=inputs.i_u_tourists_parking,
+                i_u_excursionists_parking=inputs.i_u_excursionists_parking,
+                i_xa_tourists_per_vehicle=inputs.i_xa_tourists_per_vehicle,
+                i_xa_excursionists_per_vehicle=inputs.i_xa_excursionists_per_vehicle,
+                i_xo_tourists_parking=inputs.i_xo_tourists_parking,
+                i_xo_excursionists_parking=inputs.i_xo_excursionists_parking,
+                i_c_parking=inputs.i_c_parking,
+            )
+        )
+        beach = BeachModel(
+            inputs=BeachModel.Inputs(  # type: ignore[call-arg]
+                pv_tourists=inputs.pv_tourists,
+                pv_excursionists=inputs.pv_excursionists,
+                cv_weather=inputs.cv_weather,
+                i_u_tourists_beach=inputs.i_u_tourists_beach,
+                i_u_excursionists_beach=inputs.i_u_excursionists_beach,
+                i_xo_tourists_beach=inputs.i_xo_tourists_beach,
+                i_xo_excursionists_beach=inputs.i_xo_excursionists_beach,
+                i_c_beach=inputs.i_c_beach,
+            )
+        )
+        accommodation = AccommodationModel(
+            inputs=AccommodationModel.Inputs(  # type: ignore[call-arg]
+                pv_tourists=inputs.pv_tourists,
+                i_u_tourists_accommodation=inputs.i_u_tourists_accommodation,
+                i_xa_tourists_accommodation=inputs.i_xa_tourists_accommodation,
+                i_c_accommodation=inputs.i_c_accommodation,
+            )
+        )
+        food = FoodModel(
+            inputs=FoodModel.Inputs(  # type: ignore[call-arg]
+                pv_tourists=inputs.pv_tourists,
+                pv_excursionists=inputs.pv_excursionists,
+                cv_weather=inputs.cv_weather,
+                i_u_tourists_food=inputs.i_u_tourists_food,
+                i_u_excursionists_food=inputs.i_u_excursionists_food,
+                i_xa_visitors_food=inputs.i_xa_visitors_food,
+                i_xo_visitors_food=inputs.i_xo_visitors_food,
+                i_c_food=inputs.i_c_food,
+            )
+        )
 
         self.constraints = [
             parking.constraint,
@@ -959,7 +967,9 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
             exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
         )
         pv_samples = sample_across(
-            sampling_ensemble, [model.inputs.pv_tourists, model.inputs.pv_excursionists], total=self._target_presence_samples
+            sampling_ensemble,
+            [model.inputs.pv_tourists, model.inputs.pv_excursionists],
+            total=self._target_presence_samples,
         )
         return tt, ee, pv_samples
 
@@ -998,7 +1008,9 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         rf_e = float(np.mean(result[model.inputs.i_p_excursionists_reduction_factor]))
         sl_e = float(np.mean(result[model.inputs.i_p_excursionists_saturation_level]))
         sample_tourists = [_presence_transformation(s, rf_t, sl_t) for s in pv_samples[model.inputs.pv_tourists]]
-        sample_excursionists = [_presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.inputs.pv_excursionists]]
+        sample_excursionists = [
+            _presence_transformation(s, rf_e, sl_e) for s in pv_samples[model.inputs.pv_excursionists]
+        ]
         output = MolvenoOutput(
             field=field,
             field_elements=field_elements,

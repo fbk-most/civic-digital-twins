@@ -339,26 +339,15 @@ def define(name: str) -> Any:
     def decorator(cls: type) -> type:
         # Validate class structure at decoration time.
         if "compute" not in cls.__dict__:
-            raise TypeError(
-                f"@define({name!r}) requires {cls.__name__} to define a compute() method."
-            )
+            raise TypeError(f"@define({name!r}) requires {cls.__name__} to define a compute() method.")
         if "__init__" in cls.__dict__:
-            raise TypeError(
-                f"@define class {cls.__name__} must not define __init__. "
-                f"Implement compute() instead."
-            )
+            raise TypeError(f"@define class {cls.__name__} must not define __init__. Implement compute() instead.")
 
         # Detect @functions inner class via its role marker.
-        has_functions = (
-            "Functions" in cls.__dict__
-            and getattr(cls.__dict__["Functions"], "_is_functions", False)
-        )
+        has_functions = "Functions" in cls.__dict__ and getattr(cls.__dict__["Functions"], "_is_functions", False)
 
         # Detect @expose Expose inner class declared directly on this class.
-        has_expose_cls = (
-            "Expose" in cls.__dict__
-            and getattr(cls.__dict__["Expose"], "_is_expose", False)
-        )
+        has_expose_cls = "Expose" in cls.__dict__ and getattr(cls.__dict__["Expose"], "_is_expose", False)
 
         # Resolve compute()'s return annotation.  Using typing.get_type_hints()
         # rather than .__annotations__ handles `from __future__ import annotations`,
@@ -400,6 +389,7 @@ def define(name: str) -> Any:
 
         # Use distinct names to avoid Pyright reportRedeclaration in the if/else.
         if has_functions:
+
             def _init_with_fns(self: Any, inputs: Any = None, *, fns: Any) -> None:  # type: ignore[misc]
                 if _inputs_is_empty and inputs is None and _inputs_cls is not None:
                     inputs = _inputs_cls()  # type: ignore[operator]
@@ -412,6 +402,7 @@ def define(name: str) -> Any:
 
             cls.__init__ = _init_with_fns  # type: ignore[assignment]
         else:
+
             def _init_no_fns(self: Any, inputs: Any = None) -> None:
                 if _inputs_is_empty and inputs is None and _inputs_cls is not None:
                     inputs = _inputs_cls()  # type: ignore[operator]
