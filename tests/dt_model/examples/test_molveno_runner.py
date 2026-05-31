@@ -32,7 +32,7 @@ _ENSEMBLE_SIZE = 3
 @pytest.fixture(scope="module")
 def model() -> MolvenoModel:
     """Shared MolvenoModel instance (graph construction is the expensive part)."""
-    return MolvenoModel()
+    return MolvenoModel(inputs=MolvenoModel.default_inputs())
 
 
 @pytest.fixture(scope="module")
@@ -318,16 +318,22 @@ def test_structure_returns_non_empty_dict(evaluator: MolvenoEvaluator) -> None:
 def test_structure_contains_categorical_cvs(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
     """structure() must include all three categorical context variables."""
     schema = evaluator.input_schema()
-    for cv in model.cvs:
+    for cv in (model.inputs.cv_weekday, model.inputs.cv_season, model.inputs.cv_weather):
         assert cv.name in schema, f"Missing CV {cv.name!r} in structure()"
         assert schema[cv.name]["type"] == "categorical"
         assert "support" in schema[cv.name]
 
 
 def test_structure_contains_capacity_parameters(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
-    """structure() must include all capacity parameters."""
+    """structure() must include all distribution-backed parameters."""
     schema = evaluator.input_schema()
-    for cap in model.capacities:
+    for cap in (
+        model.inputs.i_c_parking,
+        model.inputs.i_c_beach,
+        model.inputs.i_c_accommodation,
+        model.inputs.i_c_food,
+        model.inputs.i_xo_tourists_beach,
+    ):
         assert cap.name in schema, f"Missing capacity {cap.name!r} in structure()"
         assert schema[cap.name]["type"] == "distribution"
 
@@ -343,7 +349,7 @@ def test_evaluate_with_str_override(
     config: EvaluationConfig,
 ) -> None:
     """evaluate() must work with a str override on a CategoricalIndex."""
-    scenario = Scenario(model, overrides={model.cv_weather: "good"})
+    scenario = Scenario(model, overrides={model.inputs.cv_weather: "good"})
     out = evaluator.evaluate(scenario, config)
     assert isinstance(out, MolvenoOutput)
     assert out.field.shape == (_T_SAMPLE + 1, _E_SAMPLE + 1)
@@ -355,7 +361,7 @@ def test_evaluate_with_dict_override(
     config: EvaluationConfig,
 ) -> None:
     """evaluate() must work with a dict override on a CategoricalIndex."""
-    scenario = Scenario(model, overrides={model.cv_weather: {"good": 0.7, "unsettled": 0.3}})
+    scenario = Scenario(model, overrides={model.inputs.cv_weather: {"good": 0.7, "unsettled": 0.3}})
     out = evaluator.evaluate(scenario, config)
     assert isinstance(out, MolvenoOutput)
     assert out.field.shape == (_T_SAMPLE + 1, _E_SAMPLE + 1)

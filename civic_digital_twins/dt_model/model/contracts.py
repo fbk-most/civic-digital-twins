@@ -1,8 +1,8 @@
 """Contract decorators for :class:`~.model.Model` subclasses.
 
-``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace the bare
-``@dataclass`` convention with purpose-specific decorators that make intent
-explicit and validate field types at construction time.
+``@define``, ``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace
+the bare ``@dataclass`` convention with purpose-specific decorators that make
+intent explicit and validate field types at construction time.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import sys
+import typing
 from collections.abc import Iterator
 from typing import Any, Literal
 
 from .index import GenericIndex
 
-__all__ = ["expose", "functions", "inputs", "outputs"]
+__all__ = ["define", "expose", "functions", "inputs", "outputs"]
 
 _MISSING = object()
 
@@ -66,12 +68,12 @@ def functions(
             class Functions:
                 ts_solve: Functor     # required explicit function
 
-            def __init__(self, inp: Inputs, *, fns: Functions) -> None:
+            def __init__(self, inputs: Inputs, *, fns: Functions) -> None:
                 traffic = TimeseriesIndex(
                     "traffic",
-                    graph.function_call("ts_solve", inp.ts_inflow.node),
+                    graph.function_call("ts_solve", inputs.ts_inflow.node),
                 )
-                super().__init__("Traffic", inputs=inp, functions=fns)
+                super().__init__("Traffic", inputs=inputs, functions=fns)
 
         model = TrafficModel(
             TrafficModel.Inputs(ts_inflow=ts_inflow),
@@ -81,15 +83,15 @@ def functions(
     Promote an implicit function from a parent::
 
         class MobilityModel(Model):
-            def __init__(self, inp: TrafficModel.Inputs) -> None:
+            def __init__(self, inputs: TrafficModel.Inputs) -> None:
                 self.traffic = TrafficModel(
-                    inp,
+                    inputs,
                     fns=TrafficModel.Functions(
                         ts_solve=NumpyBackend.adapt(_ts_solve),
                         smooth=NumpyBackend.adapt(_smooth),   # implicit, goes into _extra
                     ),
                 )
-                super().__init__("Mobility", inputs=inp)
+                super().__init__("Mobility", inputs=inputs)
     """
 
     def decorator(cls: type) -> type:
@@ -219,9 +221,9 @@ Examples
         class Outputs:
             traffic: TimeseriesIndex
 
-        def __init__(self, inp: Inputs) -> None:
+        def __init__(self, inputs: Inputs) -> None:
             ...
-            super().__init__("MyModel", inputs=inp, outputs=...)
+            super().__init__("MyModel", inputs=inputs, outputs=...)
 """
 
 outputs = _make_io_decorator("_is_outputs")
@@ -247,3 +249,173 @@ mapping strings to them.
 Passing a plain ``@dataclass`` instance as ``expose=`` to
 :class:`~.model.Model` is deprecated; use ``@expose`` instead.
 """
+
+
+# ---------------------------------------------------------------------------
+# @define
+# ---------------------------------------------------------------------------
+
+
+def define(name: str) -> Any:
+    """Declare a leaf :class:`~.model.Model` subclass via a ``compute()`` method.
+
+    Generates a typed ``__init__(self, inputs: Inputs)`` (plus ``fns: Functions``
+    when a ``@functions`` inner class is declared) and wires the result of
+    :meth:`compute` into ``super().__init__()`` automatically.
+
+    Parameters
+    ----------
+    name:
+        Human-readable model name forwarded to
+        :class:`~.model.Model.__init__`.
+
+    Usage
+    -----
+    Leaf model without ``Expose``::
+
+        @define("Parking")
+        class ParkingModel(Model):
+
+            @inputs
+            class Inputs:
+                pv_tourists: ConditionalDistributionIndex
+
+            @outputs
+            class Outputs:
+                i_u_parking: Index
+
+            def compute(self, inputs: Inputs) -> Outputs:
+                i_u_parking = Index("parking_usage", inputs.pv_tourists * ...)
+                return ParkingModel.Outputs(i_u_parking=i_u_parking)
+
+    With ``@functions`` and ``Expose``::
+
+        @define("Traffic")
+        class TrafficModel(Model):
+
+            @inputs
+            class Inputs:
+                ts_inflow: TimeseriesIndex
+
+            @functions
+            class Functions:
+                ts_solve: Functor
+
+            @outputs
+            class Outputs:
+                ts_traffic: TimeseriesIndex
+
+            @expose
+            class Expose:
+                ts_raw: TimeseriesIndex
+
+            def compute(self, inputs: Inputs, *, fns: Functions) -> tuple[Outputs, Expose]:
+                ts_raw     = TimeseriesIndex("raw", graph.function_call("ts_solve", inputs.ts_inflow))
+                ts_traffic = TimeseriesIndex("traffic", ts_raw * ...)
+                return (
+                    TrafficModel.Outputs(ts_traffic=ts_traffic),
+                    TrafficModel.Expose(ts_raw=ts_raw),
+                )
+
+    Composite / root models that assign sub-model attributes before calling
+    ``super().__init__()`` can remain on the direct-``__init__`` path by
+    declaring ``legacy=True``::
+
+        class CompositeModel(Model, legacy=True):
+            def __init__(self) -> None:
+                self.leaf = LeafModel(...)
+                ...
+                super().__init__("composite", ...)
+
+    Raises
+    ------
+    TypeError
+        At decoration time if ``compute()`` is absent, if both ``compute``
+        and ``__init__`` are defined, or if an ``@expose Expose`` class is
+        declared but the ``compute`` return annotation does not include
+        ``Expose``.
+    """
+
+    def decorator(cls: type) -> type:
+        # Validate class structure at decoration time.
+        if "compute" not in cls.__dict__:
+            raise TypeError(f"@define({name!r}) requires {cls.__name__} to define a compute() method.")
+        if "__init__" in cls.__dict__:
+            raise TypeError(f"@define class {cls.__name__} must not define __init__. Implement compute() instead.")
+
+        # Detect @functions inner class via its role marker.
+        has_functions = "Functions" in cls.__dict__ and getattr(cls.__dict__["Functions"], "_is_functions", False)
+
+        # Detect @expose Expose inner class declared directly on this class.
+        has_expose_cls = "Expose" in cls.__dict__ and getattr(cls.__dict__["Expose"], "_is_expose", False)
+
+        # Resolve compute()'s return annotation.  Using typing.get_type_hints()
+        # rather than .__annotations__ handles `from __future__ import annotations`,
+        # which otherwise stores all annotations as strings.
+        try:
+            hints = typing.get_type_hints(
+                cls.compute,
+                globalns=vars(sys.modules[cls.__module__]),
+                localns=vars(cls),
+            )
+        except Exception:
+            hints = getattr(cls.compute, "__annotations__", {})
+
+        return_hint = hints.get("return", None)
+        returns_expose = return_hint is not None and getattr(return_hint, "__origin__", None) is tuple
+
+        # Consistency check: @expose declared → must appear in return annotation.
+        if has_expose_cls and not returns_expose:
+            raise TypeError(
+                f"@define class {cls.__name__} declares an @expose Expose inner class "
+                f"but compute() return annotation is not tuple[Outputs, Expose]. "
+                f"Update the return annotation to include Expose, or remove the Expose declaration."
+            )
+
+        # Capture for closure so the generated __init__ uses the right class in
+        # super() even if the @define class is later subclassed.
+        _cls = cls
+        _name = name
+        _returns_expose = returns_expose
+
+        # If Inputs has no declared fields it can be auto-constructed, so
+        # make the `inputs` parameter optional (default None → Inputs()).
+        _inputs_cls = cls.__dict__.get("Inputs")
+        _inputs_is_empty = (
+            _inputs_cls is not None
+            and dataclasses.is_dataclass(_inputs_cls)
+            and len(dataclasses.fields(_inputs_cls)) == 0  # type: ignore[arg-type]
+        )
+
+        # Use distinct names to avoid Pyright reportRedeclaration in the if/else.
+        if has_functions:
+
+            def _init_with_fns(self: Any, inputs: Any = None, *, fns: Any) -> None:  # type: ignore[misc]
+                if _inputs_is_empty and inputs is None and _inputs_cls is not None:
+                    inputs = _inputs_cls()  # type: ignore[operator]
+                if _returns_expose:
+                    out, exp = self.compute(inputs, fns=fns)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp, functions=fns)  # type: ignore[misc]
+                else:
+                    out = self.compute(inputs, fns=fns)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, functions=fns)  # type: ignore[misc]
+
+            cls.__init__ = _init_with_fns  # type: ignore[assignment]
+        else:
+
+            def _init_no_fns(self: Any, inputs: Any = None) -> None:
+                if _inputs_is_empty and inputs is None and _inputs_cls is not None:
+                    inputs = _inputs_cls()  # type: ignore[operator]
+                if _returns_expose:
+                    out, exp = self.compute(inputs)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp)  # type: ignore[misc]
+                else:
+                    out = self.compute(inputs)
+                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out)  # type: ignore[misc]
+
+            cls.__init__ = _init_no_fns  # type: ignore[assignment]
+
+        cls._is_model_decorated = True
+        return cls
+
+    return decorator

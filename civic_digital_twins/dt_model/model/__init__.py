@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from .axis import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
-from .contracts import expose, functions, inputs, outputs
+from .contracts import define, expose, functions, inputs, outputs
 from .index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -22,6 +22,7 @@ from .model_variant import ModelVariant
 __all__ = [
     "AbstractIndexNotInInputsWarning",
     "Axis",
+    "define",
     "expose",
     "functions",
     "inputs",

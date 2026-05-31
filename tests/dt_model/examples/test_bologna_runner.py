@@ -30,7 +30,7 @@ _EXPOSE_NAMES = (
 @pytest.fixture(scope="module")
 def model() -> BolognaModel:
     """Shared BolognaModel — graph construction is the expensive part."""
-    return BolognaModel(**BolognaModel.default_inputs())
+    return BolognaModel(inputs=BolognaModel.default_inputs(), fns=BolognaModel.default_fns())
 
 
 @pytest.fixture(scope="module")
