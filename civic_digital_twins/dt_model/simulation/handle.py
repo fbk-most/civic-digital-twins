@@ -49,8 +49,10 @@ def _merge_results(
 
     Both results must have been produced by the same plan and with the same
     PARAMETER axes.  The merge concatenates node values along the single
-    ENSEMBLE axis and renormalises weights to a uniform distribution over
-    the combined scenario count.
+    ENSEMBLE axis and combines weights as a size-proportional mixture:
+    each scenario's weight is scaled by ``S_i / (S1 + S2)`` so that the
+    merged weights still sum to 1 and non-uniform weight schemes (e.g.
+    :class:`~simulation.ensemble.CrossProductEnsemble`) are preserved.
 
     Parameters
     ----------
@@ -159,8 +161,12 @@ def _merge_results(
         merged_ens_axis: S1 + S2,
     }
 
-    # Uniform weights renormalised over the combined ensemble.
-    merged_weights = np.full(S1 + S2, 1.0 / (S1 + S2))
+    # Size-proportional mixture: each partial result contributes weight
+    # proportional to its scenario count, preserving non-uniform schemes.
+    w1 = r1._factorized_weights[ax1]
+    w2 = r2._factorized_weights[ax2]
+    alpha = S1 / (S1 + S2)
+    merged_weights = np.concatenate([w1 * alpha, w2 * (1.0 - alpha)])
     merged_factorized_weights: dict[Axis, np.ndarray] = {merged_ens_axis: merged_weights}
 
     merged_state = executor.State(merged_values)

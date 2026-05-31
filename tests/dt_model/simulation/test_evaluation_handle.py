@@ -148,6 +148,37 @@ def test_extend_weights_renormalized() -> None:
     np.testing.assert_allclose(w, np.full(50, 1.0 / 50))
 
 
+def test_merge_preserves_nonuniform_weights() -> None:
+    """_merge_results uses size-proportional mixture, preserving non-uniform weights.
+
+    merged[i] = w1[i] * S1/(S1+S2)  for i in r1
+    merged[j] = w2[j] * S2/(S1+S2)  for j in r2
+    """
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    S1, S2 = 4, 2
+    ax1 = Axis("ens_a", ENSEMBLE)
+    ax2 = Axis("ens_b", ENSEMBLE)
+    w1 = np.array([0.4, 0.4, 0.1, 0.1])  # non-uniform, sums to 1
+    w2 = np.array([0.7, 0.3])             # non-uniform, sums to 1
+
+    def _make(ax, sz, w):
+        values = {idx.node: np.zeros(sz) for idx in plan.nodes_of_interest}
+        state = _executor.State(values)
+        return EvaluationResult(state, {ax: 0}, {}, axis_sizes={ax: sz}, factorized_weights={ax: w})
+
+    r1 = _make(ax1, S1, w1)
+    r2 = _make(ax2, S2, w2)
+    merged = _merge_results(r1, r2, plan)
+
+    alpha = S1 / (S1 + S2)
+    expected = np.concatenate([w1 * alpha, w2 * (1.0 - alpha)])
+    np.testing.assert_allclose(merged.weights, expected)
+    np.testing.assert_allclose(merged.weights.sum(), 1.0)
+
+
 def test_extend_zero_is_noop() -> None:
     """extend(0) is a no-op — result unchanged."""
     _, model = _make_simple()
