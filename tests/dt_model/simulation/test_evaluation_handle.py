@@ -244,6 +244,41 @@ def test_extend_constant_node_stays_singleton() -> None:
 
 
 # ---------------------------------------------------------------------------
+# extend() with ensemble_size=1 — stochastic singleton regression (#186)
+# ---------------------------------------------------------------------------
+
+
+def test_extend_with_ensemble_size_1_stochastic() -> None:
+    """extend(1) on a size-1 handle must not raise for stochastic nodes (issue #186).
+
+    When ensemble_size=1 every stochastic node produces a shape-(1,) array.
+    _merge_results must not treat that as a broadcast constant and assert
+    equality — the two draws will almost surely differ.
+    """
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    handle = ev.evaluate_incremental(1, rng=np.random.default_rng(0))
+    # This must not raise AssertionError.
+    result = handle.extend(1)
+    assert result[model.outputs.y].shape == (2,)
+    assert result[model.inputs.x].shape == (2,)
+
+
+def test_extend_single_sample_preserves_both_draws() -> None:
+    """After extend(1) on a size-1 handle, both stochastic draws are in the result."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    rng = np.random.default_rng(42)
+    handle = ev.evaluate_incremental(1, rng=rng)
+    first_draw = handle.result[model.inputs.x].copy()
+    handle.extend(1)
+    merged_x = handle.result[model.inputs.x]
+    assert merged_x.shape == (2,)
+    # The first draw must still be present in the merged array.
+    np.testing.assert_array_equal(merged_x[0:1], first_draw)
+
+
+# ---------------------------------------------------------------------------
 # extra_parameters raises NotImplementedError
 # ---------------------------------------------------------------------------
 

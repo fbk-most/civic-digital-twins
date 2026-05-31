@@ -66,8 +66,7 @@ def _merge_results(
     Returns
     -------
     EvaluationResult
-        A new result whose node arrays are concatenated along the ENSEMBLE axis
-        (or kept as singletons when both inputs are singleton on that axis).
+        A new result whose node arrays are concatenated along the ENSEMBLE axis.
 
     Raises
     ------
@@ -134,25 +133,16 @@ def _merge_results(
         while v2.ndim <= ens_pos:
             v2 = v2[np.newaxis]  # pragma: no cover
 
-        if v1.shape[ens_pos] == 1 and v2.shape[ens_pos] == 1:
-            # Node does not vary along ENSEMBLE in either batch — it is constant
-            # (e.g. a parameter-only or fully-concrete node).  Both arrays must
-            # be equal since they come from the same deterministic computation.
-            if __debug__ and not np.array_equal(v1, v2):
-                raise AssertionError(  # pragma: no cover
-                    f"_merge_results: singleton node {getattr(node, 'name', repr(node))!r} "
-                    f"has different values in r1 ({v1!r}) and r2 ({v2!r}). "
-                    "This indicates a non-deterministic computation or mismatched plans."
-                )
+        if v1.shape[ens_pos] == 1 and v2.shape[ens_pos] == 1 and np.array_equal(v1, v2):
             merged_values[node] = v1
         else:
             # Expand singleton dims before concatenation so shapes match.
             if v1.shape[ens_pos] == 1:
-                bcast = v1.shape[:ens_pos] + (S1,) + v1.shape[ens_pos + 1 :]  # pragma: no cover
-                v1 = np.broadcast_to(v1, bcast).copy()  # pragma: no cover
+                bcast = v1.shape[:ens_pos] + (S1,) + v1.shape[ens_pos + 1 :]
+                v1 = np.broadcast_to(v1, bcast).copy()
             if v2.shape[ens_pos] == 1:
-                bcast = v2.shape[:ens_pos] + (S2,) + v2.shape[ens_pos + 1 :]  # pragma: no cover
-                v2 = np.broadcast_to(v2, bcast).copy()  # pragma: no cover
+                bcast = v2.shape[:ens_pos] + (S2,) + v2.shape[ens_pos + 1 :]
+                v2 = np.broadcast_to(v2, bcast).copy()
             merged_values[node] = np.concatenate([v1, v2], axis=ens_pos)
 
     # --- Build merged axis metadata ---
