@@ -148,3 +148,49 @@ def test_define_with_functions_and_expose():
     result = Evaluation(m).evaluate(backend=NumpyBackend)
     assert float(result[y_idx]) == pytest.approx(6.0)
     assert m.expose.z is z_idx
+
+
+def test_define_empty_inputs_no_functions():
+    """@define auto-constructs Inputs() when Inputs has no fields and no Functions."""
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            """Return a constant output."""
+            return M.Outputs(y=Index("y", 1.0))
+
+    m = M()  # no inputs argument — Inputs() is auto-constructed
+    assert m.outputs.y is not None
+
+
+def test_define_empty_inputs_with_functions():
+    """@define auto-constructs Inputs() when Inputs has no fields and Functions is declared."""
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @functions
+        class Functions:
+            f: Any
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs, *, fns: Functions) -> Outputs:
+            """Return a constant output."""
+            return M.Outputs(y=Index("y", 1.0))
+
+    m = M(fns=M.Functions(f=NumpyBackend.adapt(lambda: None)))  # type: ignore[call-arg]
+    assert m.outputs.y is not None
