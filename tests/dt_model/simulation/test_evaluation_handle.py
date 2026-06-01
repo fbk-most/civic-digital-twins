@@ -517,17 +517,54 @@ def _make_fake_result(
     return EvaluationResult(state, axis_layout, {}, axis_sizes=axis_sizes, factorized_weights=factorized_weights)
 
 
-def test_merge_results_multi_axis_raises() -> None:
-    """_merge_results raises NotImplementedError when either result has multiple ENSEMBLE axes."""
+def test_merge_results_multi_axis_no_name_raises() -> None:
+    """_merge_results raises ValueError for multi-axis results when merge_axis_name is absent."""
     _, model = _make_simple()
     ev = Evaluation(model)
     plan = ev.build_plan()
     ax1 = Axis("ens1", ENSEMBLE)
     ax2 = Axis("ens2", ENSEMBLE)
     r_multi = _make_fake_result(plan, (ax1, ax2), (2, 3))
-    r_single = _make_fake_result(plan, (Axis("ens", ENSEMBLE),), (5,))
-    with pytest.raises(NotImplementedError, match="multiple ENSEMBLE axes"):
-        _merge_results(r_multi, r_single, plan)
+    r_multi2 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (4, 3))
+    with pytest.raises(ValueError, match="multiple ENSEMBLE axes"):
+        _merge_results(r_multi, r_multi2, plan)
+
+
+def test_merge_results_multi_axis_concat() -> None:
+    """_merge_results concatenates correctly along the named ENSEMBLE axis."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    r1 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (2, 3))
+    r2 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (4, 3))
+    merged = _merge_results(r1, r2, plan, merge_axis_name="ens1")
+
+    merged_ens1 = next(ax for ax in merged._axis_sizes if ax.name == "ens1")
+    merged_ens2 = next(ax for ax in merged._axis_sizes if ax.name == "ens2")
+    assert merged._axis_sizes[merged_ens1] == 6
+    assert merged._axis_sizes[merged_ens2] == 3
+
+    for noi in plan.nodes_of_interest:
+        assert np.asarray(merged._state.values[noi.node]).shape == (6, 3)
+
+    # Growing axis: proportional mixture; fixed axis: unchanged weights from r1.
+    alpha = 2 / 6
+    expected_ens1_w = np.concatenate([np.full(2, 1.0 / 2) * alpha, np.full(4, 1.0 / 4) * (1 - alpha)])
+    np.testing.assert_allclose(merged._factorized_weights[merged_ens1], expected_ens1_w)
+    np.testing.assert_allclose(merged._factorized_weights[merged_ens2], np.full(3, 1.0 / 3))
+
+
+def test_merge_results_multi_axis_fixed_mismatch_raises() -> None:
+    """_merge_results raises ValueError when the fixed ENSEMBLE axis sizes differ."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    r1 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (2, 3))
+    r2 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (4, 5))
+    with pytest.raises(ValueError, match="fixed ENSEMBLE axis"):
+        _merge_results(r1, r2, plan, merge_axis_name="ens1")
 
 
 def test_merge_results_parameter_layout_mismatch_raises() -> None:

@@ -96,15 +96,18 @@ def _merge_results(
     r1: EvaluationResult,
     r2: EvaluationResult,
     plan: EvaluationPlan,
+    *,
+    merge_axis_name: str | None = None,
 ) -> EvaluationResult:
     """Merge two :class:`~simulation.evaluation.EvaluationResult` instances.
 
     Both results must have been produced by the same plan and with the same
-    PARAMETER axes.  The merge concatenates node values along the single
-    ENSEMBLE axis and combines weights as a size-proportional mixture:
-    each scenario's weight is scaled by ``S_i / (S1 + S2)`` so that the
-    merged weights still sum to 1 and non-uniform weight schemes (e.g.
+    PARAMETER axes.  The merge concatenates node values along one ENSEMBLE
+    axis and combines that axis's weights as a size-proportional mixture so
+    that non-uniform weight schemes (e.g.
     :class:`~simulation.ensemble.CrossProductEnsemble`) are preserved.
+    All other ENSEMBLE axes and their factorised weights pass through
+    unchanged from *r1*.
 
     Parameters
     ----------
@@ -116,49 +119,81 @@ def _merge_results(
     plan:
         The shared evaluation plan.  Used to enumerate the nodes of interest
         that must appear in the merged state.
+    merge_axis_name:
+        Name of the ENSEMBLE axis to grow.  Required when either result has
+        more than one ENSEMBLE axis; ignored (but validated) for single-axis
+        results.
 
     Returns
     -------
     EvaluationResult
-        A new result whose node arrays are concatenated along the ENSEMBLE axis.
+        A new result whose node arrays are concatenated along the chosen
+        ENSEMBLE axis (or kept as singletons when both inputs are singleton
+        on that axis).
 
     Raises
     ------
     ValueError
-        If either result has no ENSEMBLE axis, if their ENSEMBLE axes are at
-        different positions, or if the PARAMETER axis layouts are incompatible.
-    NotImplementedError
-        If either result has more than one ENSEMBLE axis (multi-axis merging is
-        not supported in v0.10.0).
+        If either result has no ENSEMBLE axis, if *merge_axis_name* is absent
+        when multiple ENSEMBLE axes are present, if the named axis is missing
+        or at different positions in the two results, if the fixed ENSEMBLE
+        axes differ, or if the PARAMETER axis layouts are incompatible.
     """
-    # --- Locate the single ENSEMBLE axis in each result ---
+    # --- Collect ENSEMBLE axes ---
     ens_1 = [(ax, pos) for ax, pos in r1._axis_layout.items() if ax.role == ENSEMBLE]
     ens_2 = [(ax, pos) for ax, pos in r2._axis_layout.items() if ax.role == ENSEMBLE]
 
     if not ens_1 or not ens_2:
         raise ValueError(
-            "_merge_results requires both results to have exactly one ENSEMBLE axis; "
+            "_merge_results requires both results to have at least one ENSEMBLE axis; "
             f"got {len(ens_1)} in r1 and {len(ens_2)} in r2."
         )
-    if len(ens_1) != 1 or len(ens_2) != 1:
-        raise NotImplementedError(
-            "Merging results with multiple ENSEMBLE axes is not supported in v0.10.0. "
-            "Use a single-axis DistributionEnsemble."
-        )
 
-    ax1, ens_pos = ens_1[0]
-    ax2, ens_pos2 = ens_2[0]
-    if ens_pos != ens_pos2:
-        raise ValueError(  # pragma: no cover
-            f"ENSEMBLE axis position mismatch: r1 has ensemble at dim {ens_pos}, r2 has it at dim {ens_pos2}."
-        )
+    # --- Identify the growing axis ---
+    if len(ens_1) == 1 and len(ens_2) == 1:
+        grow_ax_1, ens_pos = ens_1[0]
+        grow_ax_2, ens_pos2 = ens_2[0]
+        if ens_pos != ens_pos2:
+            raise ValueError(  # pragma: no cover
+                f"ENSEMBLE axis position mismatch: r1 at dim {ens_pos}, r2 at dim {ens_pos2}."
+            )
+    else:
+        if merge_axis_name is None:
+            names = sorted(ax.name for ax, _ in ens_1)
+            raise ValueError(
+                f"_merge_results: both results have multiple ENSEMBLE axes {names}; "
+                "specify merge_axis_name= to indicate which axis to grow."
+            )
+        grow_entry_1 = next(((ax, pos) for ax, pos in ens_1 if ax.name == merge_axis_name), None)
+        grow_entry_2 = next(((ax, pos) for ax, pos in ens_2 if ax.name == merge_axis_name), None)
+        if grow_entry_1 is None:
+            raise ValueError(f"_merge_results: no ENSEMBLE axis named {merge_axis_name!r} in r1.")
+        if grow_entry_2 is None:
+            raise ValueError(f"_merge_results: no ENSEMBLE axis named {merge_axis_name!r} in r2.")
+        grow_ax_1, ens_pos = grow_entry_1
+        grow_ax_2, ens_pos2 = grow_entry_2
+        if ens_pos != ens_pos2:
+            raise ValueError(
+                f"Growing ENSEMBLE axis {merge_axis_name!r} is at dim {ens_pos} in r1 "
+                f"but dim {ens_pos2} in r2."
+            )
+        # Validate the fixed ENSEMBLE axes match by name, position, and size.
+        def _fixed_ens_sig(
+            axes: list[tuple[Axis, int]], sizes: dict[Axis, int]
+        ) -> frozenset[tuple[str, int, int]]:
+            return frozenset(
+                (ax.name, pos, sizes[ax]) for ax, pos in axes if ax.name != merge_axis_name
+            )
 
-    S1: int = r1._axis_sizes[ax1]
-    S2: int = r2._axis_sizes[ax2]
+        if _fixed_ens_sig(ens_1, r1._axis_sizes) != _fixed_ens_sig(ens_2, r2._axis_sizes):
+            raise ValueError(
+                "_merge_results: fixed ENSEMBLE axis layouts differ between r1 and r2."
+            )
+
+    S1: int = r1._axis_sizes[grow_ax_1]
+    S2: int = r2._axis_sizes[grow_ax_2]
 
     # --- Validate that PARAMETER axes are compatible ---
-    # Both results must come from the same plan executed with identical parameters.
-    # Axis equality is identity-based, so we compare by (name, role, position, size).
     def _param_sig(layout: dict[Axis, int], sizes: dict[Axis, int]) -> frozenset[tuple[str, object, int, int]]:
         return frozenset((ax.name, ax.role, pos, sizes[ax]) for ax, pos in layout.items() if ax.role != ENSEMBLE)
 
@@ -168,7 +203,7 @@ def _merge_results(
             "Ensure both were built from the same plan with the same 'parameters=' dict."
         )
 
-    # --- Merge node values along the ENSEMBLE axis ---
+    # --- Merge node values along the growing ENSEMBLE axis ---
     merged_values: dict[graph.Node, np.ndarray] = {}
     for idx in plan.nodes_of_interest:
         node = idx.node
@@ -181,7 +216,6 @@ def _merge_results(
         v1 = np.asarray(r1._state.values[node])
         v2 = np.asarray(r2._state.values[node])
 
-        # Ensure both arrays are at least (ens_pos + 1)-dimensional.
         while v1.ndim <= ens_pos:
             v1 = v1[np.newaxis]  # pragma: no cover
         while v2.ndim <= ens_pos:
@@ -190,7 +224,6 @@ def _merge_results(
         if v1.shape[ens_pos] == 1 and v2.shape[ens_pos] == 1 and np.array_equal(v1, v2):
             merged_values[node] = v1
         else:
-            # Expand singleton dims before concatenation so shapes match.
             if v1.shape[ens_pos] == 1:
                 bcast = v1.shape[:ens_pos] + (S1,) + v1.shape[ens_pos + 1 :]
                 v1 = np.broadcast_to(v1, bcast).copy()
@@ -200,26 +233,27 @@ def _merge_results(
             merged_values[node] = np.concatenate([v1, v2], axis=ens_pos)
 
     # --- Build merged axis metadata ---
-    # Create a fresh Axis object for the combined ensemble dimension
-    # (Axis equality is identity-based; we must not reuse ax1 or ax2 as dict keys
-    # since their sizes differ from the merged size).
-    merged_ens_axis = Axis("_ensemble", ENSEMBLE)
+    # Fresh Axis object for the grown dimension (identity-based keys; old object
+    # would carry a stale size and must not be reused).
+    merged_grow_ax = Axis(grow_ax_1.name, ENSEMBLE)
     merged_axis_layout: dict[Axis, int] = {
-        **{ax: pos for ax, pos in r1._axis_layout.items() if ax.role != ENSEMBLE},
-        merged_ens_axis: ens_pos,
+        **{ax: pos for ax, pos in r1._axis_layout.items() if ax is not grow_ax_1},
+        merged_grow_ax: ens_pos,
     }
     merged_axis_sizes: dict[Axis, int] = {
-        **{ax: sz for ax, sz in r1._axis_sizes.items() if ax.role != ENSEMBLE},
-        merged_ens_axis: S1 + S2,
+        **{ax: sz for ax, sz in r1._axis_sizes.items() if ax is not grow_ax_1},
+        merged_grow_ax: S1 + S2,
     }
 
-    # Size-proportional mixture: each partial result contributes weight
-    # proportional to its scenario count, preserving non-uniform schemes.
-    w1 = r1._factorized_weights[ax1]
-    w2 = r2._factorized_weights[ax2]
+    # Size-proportional mixture for the growing axis; fixed ENSEMBLE axes
+    # keep their factorised weights from r1 unchanged.
+    w1 = r1._factorized_weights[grow_ax_1]
+    w2 = r2._factorized_weights[grow_ax_2]
     alpha = S1 / (S1 + S2)
-    merged_weights = np.concatenate([w1 * alpha, w2 * (1.0 - alpha)])
-    merged_factorized_weights: dict[Axis, np.ndarray] = {merged_ens_axis: merged_weights}
+    merged_factorized_weights: dict[Axis, np.ndarray] = {
+        **{ax: w for ax, w in r1._factorized_weights.items() if ax is not grow_ax_1},
+        merged_grow_ax: np.concatenate([w1 * alpha, w2 * (1.0 - alpha)]),
+    }
 
     merged_state = executor.State(merged_values)
     return EvaluationResult(
