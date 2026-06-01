@@ -1049,7 +1049,7 @@ class Evaluation:
         EvaluationHandle
             Incremental handle wrapping the first result.
         """
-        from .handle import EvaluationHandle, _replay_from_dist  # local import avoids circular dependency
+        from .handle import EvaluationHandle  # local import avoids circular dependency
 
         parameters = parameters or {}
         if rng is None:
@@ -1059,7 +1059,7 @@ class Evaluation:
         dist_ensemble = DistributionEnsemble(self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters))
         # Draw samples once and freeze them so parameter-extension can reuse the
         # same scenarios without advancing the RNG a second time.
-        ensemble = _replay_from_dist(dist_ensemble)
+        ensemble = dist_ensemble.draw_batch(initial_ensemble_size, rng)
         result = self.execute_plan(
             plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
         )
@@ -1071,6 +1071,7 @@ class Evaluation:
             parameters=parameters,
             parameter_axes=parameter_axes,
             ensemble=ensemble,
+            ensemble_recipe=dist_ensemble,
             functions=functions,
             backend=backend,
         )
@@ -1130,7 +1131,7 @@ class Evaluation:
             :meth:`~simulation.handle.AsyncEvaluationHandle.poll` to check
             without blocking.
         """
-        from .handle import AsyncEvaluationHandle, _replay_from_dist  # local import avoids circular dependency
+        from .handle import AsyncEvaluationHandle  # local import avoids circular dependency
 
         parameters = parameters or {}
         if rng is None:
@@ -1138,9 +1139,9 @@ class Evaluation:
 
         plan = self.build_plan(nodes_of_interest, strategy=strategy)
         dist_ensemble = DistributionEnsemble(self._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters))
-        # Draw samples in the main thread before submitting so the frozen replay
+        # Draw samples in the main thread before submitting so the frozen batch
         # can be shared safely with the background thread.
-        ensemble = _replay_from_dist(dist_ensemble)
+        ensemble = dist_ensemble.draw_batch(initial_ensemble_size, rng)
         _exec = pool or _get_default_executor()
         future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
             self.execute_plan,
@@ -1159,6 +1160,7 @@ class Evaluation:
             parameters=parameters,
             parameter_axes=parameter_axes,
             ensemble=ensemble,
+            ensemble_recipe=dist_ensemble,
             functions=functions,
             backend=backend,
         )

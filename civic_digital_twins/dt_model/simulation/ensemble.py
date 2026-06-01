@@ -131,6 +131,53 @@ class AxisEnsemble(Protocol):
         ...  # pragma: no cover
 
 
+class FrozenEnsemble:
+    """An :class:`AxisEnsemble` backed by pre-computed sample arrays — no RNG draws.
+
+    A frozen ensemble holds the samples already drawn for a single ENSEMBLE
+    axis so the plan can be re-executed over the *same* scenarios (e.g. when
+    extending the PARAMETER grid) without advancing any random generator.
+    Produced by :meth:`DistributionEnsemble.draw_batch`; held by
+    :class:`~simulation.handle.EvaluationHandle` as the accumulated sample set.
+    """
+
+    def __init__(
+        self,
+        axis: Axis,
+        weights: np.ndarray,
+        cached_assignments: dict[GenericIndex, np.ndarray],
+    ) -> None:
+        self._axis = axis
+        self._weights = weights
+        self._cached_assignments = cached_assignments
+
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        """Single ENSEMBLE axis carrying the frozen samples."""
+        return (self._axis,)
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        """Factorized weight vector for the frozen samples, shape ``(size,)``."""
+        return (self._weights,)
+
+    def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
+        """Return the cached batched samples for every abstract index."""
+        return self._cached_assignments
+
+    def concat(self, other: "FrozenEnsemble") -> "FrozenEnsemble":
+        """Return a new frozen ensemble with concatenated samples and proportional weights."""
+        S1 = self._weights.size
+        S2 = other._weights.size
+        alpha = S1 / (S1 + S2)
+        merged_weights = np.concatenate([self._weights * alpha, other._weights * (1.0 - alpha)])
+        merged_assignments = {
+            idx: np.concatenate([self._cached_assignments[idx], other._cached_assignments[idx]])
+            for idx in self._cached_assignments
+        }
+        return FrozenEnsemble(Axis("_ensemble", ENSEMBLE), merged_weights, merged_assignments)
+
+
 class PartitionedEnsemble:
     """Ensemble that distributes abstract indexes across multiple named ENSEMBLE axes.
 
@@ -450,6 +497,35 @@ class DistributionEnsemble:
                     raw = dist.rvs(size=self._size)
                 result[idx] = np.asarray(raw)  # shape (S,)
         return result
+
+    def draw_batch(self, size: int, rng: np.random.Generator) -> FrozenEnsemble:
+        """Draw *size* fresh samples and return them as a :class:`FrozenEnsemble`.
+
+        The caller (e.g. :class:`~simulation.handle.EvaluationHandle`) owns *rng*
+        and passes it in so the ensemble remains stateless — it never stores *rng*
+        and calling this method multiple times with the same *rng* will advance it
+        reproducibly.
+
+        Parameters
+        ----------
+        size:
+            Number of new Monte Carlo samples to draw.
+        rng:
+            Caller-owned :class:`numpy.random.Generator`.  Advanced in-place.
+
+        Returns
+        -------
+        FrozenEnsemble
+            Frozen batch whose samples are identical to what
+            ``DistributionEnsemble(self._scenario, size, rng=rng,
+            exclude=self._exclude)`` would produce.
+        """
+        new_dist = DistributionEnsemble(self._scenario, size, rng=rng, exclude=self._exclude)
+        return FrozenEnsemble(
+            new_dist.ensemble_axes[0],
+            new_dist.ensemble_weights[0],
+            dict(new_dist.assignments()),
+        )
 
     # ------------------------------------------------------------------
     # Legacy iterable interface (backward compatible)

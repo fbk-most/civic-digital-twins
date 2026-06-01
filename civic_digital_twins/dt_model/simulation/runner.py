@@ -1138,6 +1138,13 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         state = self.extract_resume_state(output)
         evaluation = Evaluation(scenario)
         plan = evaluation.build_plan()
+        # Rebuild the sampler recipe from the (public) scenario so the resumed
+        # handle can draw further samples.  draw_batch() takes the per-call size,
+        # so the recipe's nominal size is immaterial; exclude the parameter
+        # indexes exactly as evaluate_incremental() does.
+        ensemble_recipe = DistributionEnsemble(
+            scenario, config.ensemble_size, exclude=frozenset(state.parameters)
+        )
         return EvaluationHandle(
             evaluation=evaluation,
             plan=plan,
@@ -1145,6 +1152,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             rng=rng if rng is not None else np.random.default_rng(),
             parameters=state.parameters,
             parameter_axes=state.parameter_axes,
+            ensemble_recipe=ensemble_recipe,
             functions=state.functions,
             backend=state.backend,
         )

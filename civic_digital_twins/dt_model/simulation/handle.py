@@ -21,7 +21,6 @@ constructing these classes directly.
 from __future__ import annotations
 
 import concurrent.futures
-from collections.abc import Mapping
 
 import numpy as np
 
@@ -35,61 +34,11 @@ from ..model.index import GenericIndex
 #   handle.py → evaluation.py  (module-level imports below are fine because
 #                                evaluation.py does not import handle.py at
 #                                module level)
+from .ensemble import DistributionEnsemble, FrozenEnsemble
 from .evaluation import Evaluation, EvaluationResult
 from .plan import EvaluationPlan
 
 __all__ = ["AsyncEvaluationHandle", "EvaluationHandle"]
-
-
-class _ReplayEnsemble:
-    """AxisEnsemble backed by pre-computed (frozen) sample arrays — no RNG draws.
-
-    Returned by :func:`_replay_from` and stored on :class:`EvaluationHandle` so
-    that parameter-grid extension can re-run the plan over the *same* scenarios
-    without advancing the RNG a second time.
-    """
-
-    def __init__(
-        self,
-        axis: Axis,
-        weights: np.ndarray,
-        cached_assignments: dict[GenericIndex, np.ndarray],
-    ) -> None:
-        self._axis = axis
-        self._weights = weights
-        self._cached_assignments = cached_assignments
-
-    @property
-    def ensemble_axes(self) -> tuple[Axis, ...]:
-        return (self._axis,)
-
-    @property
-    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
-        return (self._weights,)
-
-    def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
-        return self._cached_assignments
-
-    def concat(self, other: _ReplayEnsemble) -> _ReplayEnsemble:
-        """Return a new replay ensemble with concatenated samples and proportional weights."""
-        S1 = self._weights.size
-        S2 = other._weights.size
-        alpha = S1 / (S1 + S2)
-        merged_weights = np.concatenate([self._weights * alpha, other._weights * (1.0 - alpha)])
-        merged_assignments = {
-            idx: np.concatenate([self._cached_assignments[idx], other._cached_assignments[idx]])
-            for idx in self._cached_assignments
-        }
-        return _ReplayEnsemble(Axis("_ensemble", ENSEMBLE), merged_weights, merged_assignments)
-
-
-def _replay_from_dist(dist_ensemble: object) -> _ReplayEnsemble:
-    """Draw samples from *dist_ensemble* once and wrap them in a :class:`_ReplayEnsemble`."""
-    return _ReplayEnsemble(
-        dist_ensemble.ensemble_axes[0],  # type: ignore[union-attr]
-        dist_ensemble.ensemble_weights[0],  # type: ignore[union-attr]
-        dict(dist_ensemble.assignments()),  # type: ignore[union-attr]
-    )
 
 
 def _merge_results(
@@ -468,6 +417,12 @@ class EvaluationHandle:
         Frozen replay of the initial ensemble's sample draws, used by
         :meth:`extend` when *extra_parameters* is supplied.  ``None`` when
         the handle was constructed without an ensemble (e.g. in tests).
+    ensemble_recipe:
+        The live :class:`~simulation.ensemble.DistributionEnsemble` that was
+        used to draw the initial samples.  Stored so that
+        :meth:`_extend_ensemble_axis` can ask it to draw more samples without
+        re-importing the type or reaching into private evaluation state.
+        ``None`` when the handle was constructed without an ensemble.
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -483,7 +438,8 @@ class EvaluationHandle:
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
         parameter_axes: dict[str, np.ndarray] | None = None,
-        ensemble: _ReplayEnsemble | None = None,
+        ensemble: FrozenEnsemble | None = None,
+        ensemble_recipe: DistributionEnsemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> None:
@@ -494,6 +450,7 @@ class EvaluationHandle:
         self._parameters = parameters
         self._parameter_axes = parameter_axes
         self._ensemble = ensemble
+        self._ensemble_recipe = ensemble_recipe
         self._functions = functions
         self._backend = backend
 
@@ -520,12 +477,11 @@ class EvaluationHandle:
 
     def _extend_ensemble_axis(self, ensemble_size: int) -> None:
         """Draw *ensemble_size* new scenarios and merge along the ENSEMBLE axis."""
-        from .ensemble import DistributionEnsemble
-
-        new_dist = DistributionEnsemble(
-            self._evaluation._scenario, ensemble_size, rng=self._rng, exclude=frozenset(self._parameters)
+        assert self._ensemble_recipe is not None, (
+            "EvaluationHandle._extend_ensemble_axis() requires an ensemble_recipe. "
+            "Obtain the handle via evaluate_incremental() to enable ensemble extension."
         )
-        new_replay = _replay_from_dist(new_dist)
+        new_replay = self._ensemble_recipe.draw_batch(ensemble_size, self._rng)
         new_result = self._evaluation.execute_plan(
             self._plan, new_replay,
             parameters=self._parameters, parameter_axes=self._parameter_axes,
@@ -662,6 +618,9 @@ class AsyncEvaluationHandle(EvaluationHandle):
     ensemble:
         Frozen replay of the initial ensemble's sample draws (see
         :class:`EvaluationHandle`).
+    ensemble_recipe:
+        The live ensemble used to draw the initial samples (see
+        :class:`EvaluationHandle`).
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -677,7 +636,8 @@ class AsyncEvaluationHandle(EvaluationHandle):
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
         parameter_axes: dict[str, np.ndarray] | None,
-        ensemble: _ReplayEnsemble | None,
+        ensemble: FrozenEnsemble | None,
+        ensemble_recipe: DistributionEnsemble | None,
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> None:
@@ -689,6 +649,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
             parameters=parameters,
             parameter_axes=parameter_axes,
             ensemble=ensemble,
+            ensemble_recipe=ensemble_recipe,
             functions=functions,
             backend=backend,
         )
