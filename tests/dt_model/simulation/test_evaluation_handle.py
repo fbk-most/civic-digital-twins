@@ -288,7 +288,7 @@ def test_extend_with_ensemble_size_1_stochastic() -> None:
     """
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(1, rng=np.random.default_rng(0))
+    handle = EvaluationHandle.evaluate(ev, 1, rng=np.random.default_rng(0))
     # This must not raise AssertionError.
     result = handle.extend(1)
     assert result[model.outputs.y].shape == (2,)
@@ -300,7 +300,7 @@ def test_extend_single_sample_preserves_both_draws() -> None:
     _, model = _make_simple()
     ev = Evaluation(model)
     rng = np.random.default_rng(42)
-    handle = ev.evaluate_incremental(1, rng=rng)
+    handle = EvaluationHandle.evaluate(ev, 1, rng=rng)
     first_draw = handle.result[model.inputs.x].copy()
     handle.extend(1)
     merged_x = handle.result[model.inputs.x]
@@ -310,16 +310,144 @@ def test_extend_single_sample_preserves_both_draws() -> None:
 
 
 # ---------------------------------------------------------------------------
-# extra_parameters raises NotImplementedError
+# extra_parameters — parameter-grid extension
 # ---------------------------------------------------------------------------
 
 
-def test_extend_extra_parameters_raises() -> None:
-    """extend(extra_parameters=...) raises NotImplementedError in v0.10.0."""
+def _make_param_handle(
+    param_vals: np.ndarray,
+    ensemble_size: int,
+    seed: int = 0,
+) -> tuple[Index, "_SimpleParamModel", Evaluation, "EvaluationHandle"]:  # type: ignore[name-defined]
+    """Helper: model with one distribution index and one sweep parameter."""
+    import dataclasses
+    from scipy import stats
+
+    x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
+    speed = Index("speed", 1.0)
+
+    class _SPM(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            speed: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index, s: Index) -> None:
+            y = Index("y", x.node + s.node)
+            super().__init__("SPM", inputs=_SPM.Inputs(x=x, speed=s), outputs=_SPM.Outputs(y=y))
+
+    model = _SPM(x2, speed)
+    ev = Evaluation(model)
+    params: dict[GenericIndex, np.ndarray] = {speed: param_vals}
+    handle = ev.evaluate_incremental(ensemble_size, parameters=params, rng=np.random.default_rng(seed))
+    return speed, model, ev, handle
+
+
+def test_extend_extra_parameters_param_only() -> None:
+    """extend(extra_parameters=) extends the PARAMETER axis, keeping the same ensemble."""
+    speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0, 3.0]), ensemble_size=20)
+    arr = handle.result[model.outputs.y]
+    assert arr.shape == (3, 20)
+
+    handle.extend(extra_parameters={speed: np.array([4.0, 5.0])})
+    arr2 = handle.result[model.outputs.y]
+    assert arr2.shape == (5, 20)
+
+
+def test_extend_extra_parameters_combined() -> None:
+    """extend(N, extra_parameters=) grows both axes simultaneously."""
+    speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0, 3.0]), ensemble_size=20)
+    handle.extend(10, extra_parameters={speed: np.array([4.0, 5.0])})
+    arr = handle.result[model.outputs.y]
+    assert arr.shape == (5, 30)
+
+
+def test_extend_extra_parameters_reproducible() -> None:
+    """extend(extra_parameters=) matches a single evaluate_incremental with all params."""
+    from scipy import stats
+
+    x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
+
+    import dataclasses
+
+    speed = Index("speed", 1.0)
+
+    class _SPM(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            speed: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index, s: Index) -> None:
+            y = Index("y", x.node + s.node)
+            super().__init__("SPM", inputs=_SPM.Inputs(x=x, speed=s), outputs=_SPM.Outputs(y=y))
+
+    model = _SPM(x2, speed)
+    ev = Evaluation(model)
+    all_vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    seed = 77
+
+    # Incremental path: 3 values + extend with 2 more.
+    h_inc = ev.evaluate_incremental(30, parameters={speed: all_vals[:3]}, rng=np.random.default_rng(seed))
+    h_inc.extend(extra_parameters={speed: all_vals[3:]})
+    inc_arr = h_inc.result[model.outputs.y]
+
+    # Direct path: all 5 values at once, same seed.
+    h_dir = ev.evaluate_incremental(30, parameters={speed: all_vals}, rng=np.random.default_rng(seed))
+    dir_arr = h_dir.result[model.outputs.y]
+
+    assert inc_arr.shape == dir_arr.shape == (5, 30)
+    np.testing.assert_array_equal(inc_arr, dir_arr)
+
+
+def test_extend_extra_parameters_multiple_params() -> None:
+    """extend(extra_parameters=) with multiple keys extends each axis in turn."""
+    import dataclasses
+    from scipy import stats
+
+    x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
+    speed = Index("speed", 1.0)
+    temp = Index("temp", 10.0)
+
+    class _TwoParam(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            speed: Index
+            temp: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index, s: Index, t: Index) -> None:
+            y = Index("y", x.node + s.node + t.node)
+            super().__init__("TP", inputs=_TwoParam.Inputs(x=x, speed=s, temp=t), outputs=_TwoParam.Outputs(y=y))
+
+    model = _TwoParam(x2, speed, temp)
+    ev = Evaluation(model)
+    params: dict[GenericIndex, np.ndarray] = {speed: np.array([1.0, 2.0]), temp: np.array([10.0, 20.0])}
+    handle = ev.evaluate_incremental(15, parameters=params, rng=np.random.default_rng(0))
+    assert handle.result[model.outputs.y].shape == (2, 2, 15)
+
+    handle.extend(extra_parameters={speed: np.array([3.0, 4.0]), temp: np.array([30.0])})
+    assert handle.result[model.outputs.y].shape == (4, 3, 15)
+
+
+def test_extend_extra_parameters_unknown_index_raises() -> None:
+    """extend(extra_parameters=) raises ValueError for an index not in the original parameters."""
     x, model = _make_simple()
     ev = Evaluation(model)
     handle = ev.evaluate_incremental(20)
-    with pytest.raises(NotImplementedError, match="extra_parameters"):
+    with pytest.raises(ValueError, match="not in the original parameters"):
         handle.extend(extra_parameters={x: np.array([1.0])})
 
 

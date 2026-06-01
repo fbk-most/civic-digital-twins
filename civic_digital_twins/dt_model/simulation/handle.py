@@ -21,12 +21,13 @@ constructing these classes directly.
 from __future__ import annotations
 
 import concurrent.futures
+from collections.abc import Mapping
 
 import numpy as np
 
 from ..engine.frontend import graph
 from ..engine.numpybackend import executor
-from ..model.axis import ENSEMBLE, Axis
+from ..model.axis import ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 
 # Imported at runtime to avoid circular imports:
@@ -38,6 +39,57 @@ from .evaluation import Evaluation, EvaluationResult
 from .plan import EvaluationPlan
 
 __all__ = ["AsyncEvaluationHandle", "EvaluationHandle"]
+
+
+class _ReplayEnsemble:
+    """AxisEnsemble backed by pre-computed (frozen) sample arrays — no RNG draws.
+
+    Returned by :func:`_replay_from` and stored on :class:`EvaluationHandle` so
+    that parameter-grid extension can re-run the plan over the *same* scenarios
+    without advancing the RNG a second time.
+    """
+
+    def __init__(
+        self,
+        axis: Axis,
+        weights: np.ndarray,
+        cached_assignments: dict[GenericIndex, np.ndarray],
+    ) -> None:
+        self._axis = axis
+        self._weights = weights
+        self._cached_assignments = cached_assignments
+
+    @property
+    def ensemble_axes(self) -> tuple[Axis, ...]:
+        return (self._axis,)
+
+    @property
+    def ensemble_weights(self) -> tuple[np.ndarray, ...]:
+        return (self._weights,)
+
+    def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
+        return self._cached_assignments
+
+    def concat(self, other: _ReplayEnsemble) -> _ReplayEnsemble:
+        """Return a new replay ensemble with concatenated samples and proportional weights."""
+        S1 = self._weights.size
+        S2 = other._weights.size
+        alpha = S1 / (S1 + S2)
+        merged_weights = np.concatenate([self._weights * alpha, other._weights * (1.0 - alpha)])
+        merged_assignments = {
+            idx: np.concatenate([self._cached_assignments[idx], other._cached_assignments[idx]])
+            for idx in self._cached_assignments
+        }
+        return _ReplayEnsemble(Axis("_ensemble", ENSEMBLE), merged_weights, merged_assignments)
+
+
+def _replay_from_dist(dist_ensemble: object) -> _ReplayEnsemble:
+    """Draw samples from *dist_ensemble* once and wrap them in a :class:`_ReplayEnsemble`."""
+    return _ReplayEnsemble(
+        dist_ensemble.ensemble_axes[0],  # type: ignore[union-attr]
+        dist_ensemble.ensemble_weights[0],  # type: ignore[union-attr]
+        dict(dist_ensemble.assignments()),  # type: ignore[union-attr]
+    )
 
 
 def _merge_results(
@@ -180,6 +232,157 @@ def _merge_results(
     )
 
 
+def _merge_results_param_extend(
+    r1: EvaluationResult,
+    r2: EvaluationResult,
+    plan: EvaluationPlan,
+    param_idx: GenericIndex,
+) -> EvaluationResult:
+    """Merge two results by extending the PARAMETER axis for *param_idx*.
+
+    Both results must have been produced by the **same ensemble** (identical
+    ENSEMBLE axis size and position) and the same fixed PARAMETER axes.
+    *r1*'s PARAMETER axis for *param_idx* has size ``P1``; *r2*'s has size
+    ``P2``.  The merged result has size ``P1 + P2``.
+
+    Parameters
+    ----------
+    r1:
+        The accumulated result with the original parameter values.
+    r2:
+        The result evaluated at the extra parameter values using the same
+        ensemble as *r1*.
+    plan:
+        The shared evaluation plan.
+    param_idx:
+        The index whose PARAMETER axis is being extended.
+
+    Returns
+    -------
+    EvaluationResult
+        A new result with node arrays concatenated along *param_idx*'s axis.
+
+    Raises
+    ------
+    ValueError
+        If either result lacks an ENSEMBLE axis, if the ENSEMBLE sizes differ,
+        if *param_idx* has no PARAMETER axis in *r1*, or if the fixed
+        PARAMETER axes do not match.
+    """
+    param_name: str = getattr(param_idx, "name", repr(param_idx))
+
+    # --- Validate ENSEMBLE axes ---
+    ens_1 = [(ax, pos) for ax, pos in r1._axis_layout.items() if ax.role == ENSEMBLE]
+    ens_2 = [(ax, pos) for ax, pos in r2._axis_layout.items() if ax.role == ENSEMBLE]
+    if len(ens_1) != 1 or len(ens_2) != 1:
+        raise ValueError(
+            "_merge_results_param_extend requires exactly one ENSEMBLE axis in each result; "
+            f"got {len(ens_1)} in r1 and {len(ens_2)} in r2."
+        )
+    ax_ens, ens_pos = ens_1[0]
+    _, ens_pos2 = ens_2[0]
+    if ens_pos != ens_pos2:
+        raise ValueError(
+            f"ENSEMBLE axis position mismatch: r1 at dim {ens_pos}, r2 at dim {ens_pos2}."
+        )
+    S = r1._axis_sizes[ax_ens]
+    S2_check = r2._axis_sizes[ens_2[0][0]]
+    if S != S2_check:
+        raise ValueError(
+            f"_merge_results_param_extend requires identical ENSEMBLE sizes; got {S} vs {S2_check}. "
+            "Both results must be produced by the same ensemble."
+        )
+
+    # --- Locate the growing PARAMETER axis in r1 ---
+    grow_ax_1: Axis | None = next(
+        (ax for ax, _ in r1._axis_layout.items() if ax.role == PARAMETER and ax.name == param_name),
+        None,
+    )
+    if grow_ax_1 is None:
+        raise ValueError(
+            f"_merge_results_param_extend: no PARAMETER axis named {param_name!r} in r1. "
+            "extra_parameters must contain indexes already present in the initial parameters= dict."
+        )
+    param_pos = r1._axis_layout[grow_ax_1]
+    P1 = r1._axis_sizes[grow_ax_1]
+
+    grow_ax_2: Axis | None = next(
+        (ax for ax, _ in r2._axis_layout.items() if ax.role == PARAMETER and ax.name == param_name),
+        None,
+    )
+    if grow_ax_2 is None:
+        raise ValueError(
+            f"_merge_results_param_extend: no PARAMETER axis named {param_name!r} in r2."
+        )
+    P2 = r2._axis_sizes[grow_ax_2]
+
+    # --- Validate fixed PARAMETER axes ---
+    def _fixed_sig(layout: dict[Axis, int], sizes: dict[Axis, int]) -> frozenset[tuple[str, int, int]]:
+        return frozenset(
+            (ax.name, pos, sizes[ax])
+            for ax, pos in layout.items()
+            if ax.role == PARAMETER and ax.name != param_name
+        )
+
+    if _fixed_sig(r1._axis_layout, r1._axis_sizes) != _fixed_sig(r2._axis_layout, r2._axis_sizes):
+        raise ValueError(
+            "_merge_results_param_extend: fixed PARAMETER axis layouts differ between r1 and r2."
+        )
+
+    # --- Concatenate node arrays along the growing PARAMETER axis ---
+    merged_values: dict[graph.Node, np.ndarray] = {}
+    for noi in plan.nodes_of_interest:
+        node = noi.node
+        v1 = np.asarray(r1._state.values[node])
+        v2 = np.asarray(r2._state.values[node])
+
+        # Ensure both arrays are at least (param_pos + 1)-dimensional.
+        while v1.ndim <= param_pos:
+            v1 = v1[np.newaxis]  # pragma: no cover
+        while v2.ndim <= param_pos:
+            v2 = v2[np.newaxis]  # pragma: no cover
+
+        if v1.shape[param_pos] == 1 and v2.shape[param_pos] == 1:
+            # Node is constant across the PARAMETER axis (e.g. ensemble-only
+            # inputs that don't vary with the swept parameter).  Keep singleton.
+            merged_values[node] = v1
+        else:
+            merged_values[node] = np.concatenate([v1, v2], axis=param_pos)
+
+    # --- Build merged axis metadata ---
+    # Fresh Axis identity for the grown dimension (old object would carry stale size).
+    merged_grow_ax = Axis(param_name, PARAMETER)
+    merged_axis_layout: dict[Axis, int] = {}
+    merged_axis_sizes: dict[Axis, int] = {}
+    for ax, pos in r1._axis_layout.items():
+        if ax is grow_ax_1:
+            merged_axis_layout[merged_grow_ax] = pos
+            merged_axis_sizes[merged_grow_ax] = P1 + P2
+        else:
+            merged_axis_layout[ax] = pos
+            merged_axis_sizes[ax] = r1._axis_sizes[ax]
+
+    # Factorised weights: ENSEMBLE axis unchanged.
+    merged_factorized_weights: dict[Axis, np.ndarray] = dict(r1._factorized_weights)
+
+    # Concatenate the growing parameter's value array.
+    merged_parameter_arrays: dict[GenericIndex, np.ndarray] = dict(r1._parameter_arrays)
+    if param_idx in r1._parameter_arrays and param_idx in r2._parameter_arrays:
+        merged_parameter_arrays[param_idx] = np.concatenate(
+            [r1._parameter_arrays[param_idx], r2._parameter_arrays[param_idx]]
+        )
+
+    merged_state = executor.State(merged_values)
+    return EvaluationResult(
+        merged_state,
+        merged_axis_layout,
+        merged_parameter_arrays,
+        axis_sizes=merged_axis_sizes,
+        factorized_weights=merged_factorized_weights,
+        named_axis_values=r1._named_axis_values or None,
+    )
+
+
 class EvaluationHandle:
     """Incremental evaluation handle for growing an ensemble in steps.
 
@@ -227,6 +430,10 @@ class EvaluationHandle:
     parameter_axes:
         Named PARAMETER axes dict passed to the initial execution (from
         ``parameter_axes=``).  ``None`` when correlated axes were not used.
+    ensemble:
+        Frozen replay of the initial ensemble's sample draws, used by
+        :meth:`extend` when *extra_parameters* is supplied.  ``None`` when
+        the handle was constructed without an ensemble (e.g. in tests).
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -242,6 +449,7 @@ class EvaluationHandle:
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
         parameter_axes: dict[str, np.ndarray] | None = None,
+        ensemble: _ReplayEnsemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> None:
@@ -251,6 +459,7 @@ class EvaluationHandle:
         self._rng = rng
         self._parameters = parameters
         self._parameter_axes = parameter_axes
+        self._ensemble = ensemble
         self._functions = functions
         self._backend = backend
 
@@ -271,19 +480,62 @@ class EvaluationHandle:
             raise RuntimeError("result is not yet available.")
         return self._result
 
+    # ------------------------------------------------------------------
+    # Private helpers — one primitive operation each
+    # ------------------------------------------------------------------
+
+    def _extend_ensemble_axis(self, ensemble_size: int) -> None:
+        """Draw *ensemble_size* new scenarios and merge along the ENSEMBLE axis."""
+        from .ensemble import DistributionEnsemble
+
+        new_dist = DistributionEnsemble(
+            self._evaluation._scenario, ensemble_size, rng=self._rng, exclude=frozenset(self._parameters)
+        )
+        new_replay = _replay_from_dist(new_dist)
+        new_result = self._evaluation.execute_plan(
+            self._plan, new_replay,
+            parameters=self._parameters, parameter_axes=self._parameter_axes,
+            functions=self._functions, backend=self._backend,
+        )
+        assert self._result is not None
+        self._result = _merge_results(self._result, new_result, self._plan)
+        if self._ensemble is not None:
+            self._ensemble = self._ensemble.concat(new_replay)
+
+    def _extend_param_axis(self, param_idx: GenericIndex, extra_vals: np.ndarray) -> None:
+        """Re-run the stored ensemble at *extra_vals* and merge along the PARAMETER axis."""
+        assert self._result is not None
+        assert self._ensemble is not None
+        r_extra = self._evaluation.execute_plan(
+            self._plan, self._ensemble,
+            parameters={**self._parameters, param_idx: extra_vals},
+            parameter_axes=self._parameter_axes,
+            functions=self._functions, backend=self._backend,
+        )
+        self._result = _merge_results_param_extend(self._result, r_extra, self._plan, param_idx)
+        self._parameters = {
+            **self._parameters,
+            param_idx: np.concatenate([self._parameters[param_idx], extra_vals]),
+        }
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def extend(
         self,
         ensemble_size: int = 0,
         *,
         extra_parameters: dict[GenericIndex, np.ndarray] | None = None,
     ) -> EvaluationResult:
-        """Grow the ensemble by *ensemble_size* additional samples and merge.
+        """Grow the ensemble and/or the PARAMETER grid and merge.
 
-        Draws ``ensemble_size`` new scenarios from
-        :class:`~simulation.ensemble.DistributionEnsemble` using the shared RNG
-        (see class-level note for the ensemble-type constraint), executes the
-        plan, and merges the result via :func:`_merge_results`.  The merged
-        result replaces :attr:`result`.
+        *ensemble_size* draws additional Monte Carlo samples via
+        :class:`~simulation.ensemble.DistributionEnsemble` and merges along
+        the ENSEMBLE axis.  *extra_parameters* re-runs the plan over new
+        parameter values using the **same** sample draws and merges along the
+        PARAMETER axis.  Both may be supplied together; multiple entries in
+        *extra_parameters* are processed one axis at a time.
 
         Parameters
         ----------
@@ -291,10 +543,10 @@ class EvaluationHandle:
             Number of new Monte Carlo scenarios to evaluate.  When ``<= 0``
             and *extra_parameters* is ``None``, this is a no-op.
         extra_parameters:
-            Not yet implemented in v0.10.0; raises :exc:`NotImplementedError`
-            when provided.  PARAMETER-grid extension (evaluating at additional
-            parameter values) requires a different merging strategy and is
-            deferred to a future release.
+            Dict ``{idx: extra_array, ...}`` extending the PARAMETER sweep for
+            each *idx*.  Every key must already be present in the
+            ``parameters=`` dict passed to
+            :meth:`~simulation.evaluation.Evaluation.evaluate_incremental`.
 
         Returns
         -------
@@ -304,17 +556,14 @@ class EvaluationHandle:
 
         Raises
         ------
-        NotImplementedError
-            When *extra_parameters* is not ``None`` (deferred in v0.10.0).
+        ValueError
+            If any key in *extra_parameters* is not in the original
+            ``parameters=`` dict.
+        RuntimeError
+            If the handle has no stored ensemble (constructed without one).
         """
-        if extra_parameters is not None:
-            raise NotImplementedError(
-                "Parameter-grid extension (extra_parameters) is not yet implemented "
-                "in v0.10.0. PARAMETER-grid extension requires a different merging "
-                "strategy and is deferred to a future release."
-            )
-        if ensemble_size <= 0:
-            return self._result  # type: ignore[return-value]  # None only on async path before resolve
+        if extra_parameters is None and ensemble_size <= 0:
+            return self._result  # type: ignore[return-value]
 
         assert self._result is not None, (
             "EvaluationHandle.extend() called with _result=None — "
@@ -322,20 +571,26 @@ class EvaluationHandle:
             "AsyncEvaluationHandle.extend() failed to call _resolve() first."
         )
 
-        from .ensemble import DistributionEnsemble
+        if extra_parameters is not None:
+            bad = [k for k in extra_parameters if k not in self._parameters]
+            if bad:
+                names = ", ".join(repr(getattr(k, "name", repr(k))) for k in bad)
+                raise ValueError(
+                    f"extend(extra_parameters=): {names} not in the original parameters= dict. "
+                    "Only existing parameter axes can be extended."
+                )
+            if self._ensemble is None:
+                raise RuntimeError(
+                    "EvaluationHandle has no stored ensemble; extra_parameters extension is unavailable. "
+                    "Obtain the handle via evaluate_incremental() to enable this feature."
+                )
 
-        new_ensemble = DistributionEnsemble(
-            self._evaluation._scenario, ensemble_size, rng=self._rng, exclude=frozenset(self._parameters)
-        )
-        new_result = self._evaluation.execute_plan(
-            self._plan,
-            new_ensemble,
-            parameters=self._parameters,
-            parameter_axes=self._parameter_axes,
-            functions=self._functions,
-            backend=self._backend,
-        )
-        self._result = _merge_results(self._result, new_result, self._plan)
+        if ensemble_size > 0:
+            self._extend_ensemble_axis(ensemble_size)
+        if extra_parameters is not None:
+            for idx, vals in extra_parameters.items():
+                self._extend_param_axis(idx, np.asarray(vals))
+
         return self._result
 
 
@@ -370,6 +625,9 @@ class AsyncEvaluationHandle(EvaluationHandle):
         The PARAMETER axis dict passed to the initial execution.
     parameter_axes:
         Named PARAMETER axes dict passed to the initial execution.
+    ensemble:
+        Frozen replay of the initial ensemble's sample draws (see
+        :class:`EvaluationHandle`).
     functions:
         Optional user-defined functions passed through to the executor.
     backend:
@@ -385,6 +643,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
         rng: np.random.Generator,
         parameters: dict[GenericIndex, np.ndarray],
         parameter_axes: dict[str, np.ndarray] | None,
+        ensemble: _ReplayEnsemble | None,
         functions: dict[str, executor.Functor] | None,
         backend: type[executor.NumpyBackend],
     ) -> None:
@@ -395,6 +654,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
             rng=rng,
             parameters=parameters,
             parameter_axes=parameter_axes,
+            ensemble=ensemble,
             functions=functions,
             backend=backend,
         )
@@ -489,8 +749,6 @@ class AsyncEvaluationHandle(EvaluationHandle):
         ------
         RuntimeError
             If the background evaluation has not yet completed.
-        NotImplementedError
-            When *extra_parameters* is not ``None`` (deferred in v0.10.0).
         """
         if not self._future.done():
             raise RuntimeError(
