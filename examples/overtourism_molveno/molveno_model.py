@@ -93,7 +93,7 @@ from civic_digital_twins.dt_model import (
     sample_across,
 )
 from civic_digital_twins.dt_model.model.index import Distribution
-from civic_digital_twins.dt_model.simulation.evaluation import _get_default_executor
+from civic_digital_twins.dt_model.simulation.handle import _get_default_executor
 from civic_digital_twins.dt_model.simulation.runner import (
     EvaluationConfig,
     ModelEvaluator,
@@ -1070,7 +1070,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         (parameter grids, ensembles, presence samples) synchronously on the
         calling thread, then submits only the
         :meth:`~dt_model.Evaluation.evaluate` call to the shared
-        :func:`~dt_model.simulation.evaluation._get_default_executor` thread
+        :func:`~dt_model.simulation.handle._get_default_executor` thread
         pool.  The :class:`~dt_model.simulation.runner.ModelRunHandle`
         post-processor closure completes the rest of the work once the result
         is available.
