@@ -3,10 +3,12 @@
 
 from .ensemble import (
     AxisEnsemble,
+    BatchDrawable,
     CrossProductEnsemble,
     DistributionEnsemble,
     Ensemble,
     EnsembleAxisSpec,
+    FrozenEnsemble,
     PartitionedEnsemble,
     WeightedScenario,
     sample_across,
@@ -20,6 +22,7 @@ from .scenario import Scenario
 __all__ = [
     "AsyncEvaluationHandle",
     "AxisEnsemble",
+    "BatchDrawable",
     "CrossProductEnsemble",
     "DistributionEnsemble",
     "Ensemble",
@@ -29,6 +32,7 @@ __all__ = [
     "EvaluationHandle",
     "EvaluationPlan",
     "EvaluationResult",
+    "FrozenEnsemble",
     "IncompatibleResultError",
     "ModelEvaluator",
     "ModelOutput",
