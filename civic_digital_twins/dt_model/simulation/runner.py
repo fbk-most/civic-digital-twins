@@ -39,7 +39,7 @@ from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .ensemble import DistributionEnsemble
 from .evaluation import Evaluation, EvaluationResult
-from .handle import EvaluationHandle
+from .handle import AsyncEvaluationHandle, EvaluationHandle
 from .scenario import Scenario
 
 __all__ = [
@@ -98,7 +98,7 @@ class EvaluationConfig:
     ensemble_size : int
         Total number of Monte Carlo samples drawn in one blocking
         :meth:`ModelEvaluator.evaluate` call.  Equivalent to
-        :meth:`~simulation.evaluation.Evaluation.evaluate_incremental`'s
+        :meth:`~simulation.handle.EvaluationHandle.from_evaluation`'s
         ``initial_ensemble_size`` parameter.  Also used as the increment
         size when :meth:`ModelEvaluator.resume` extends a saved evaluation.
     """
@@ -621,8 +621,8 @@ class ModelRunHandle(Generic[OutputT]):
 
     The future is obtained from either
     :attr:`~simulation.handle.AsyncEvaluationHandle.future` (Bologna, tier 3
-    via :meth:`~simulation.evaluation.Evaluation.submit_evaluate`) or
-    :func:`~dt_model.simulation.evaluation._get_default_executor` with
+    via :meth:`AsyncEvaluationHandle.from_evaluation`) or
+    :func:`~dt_model.simulation.handle._get_default_executor` with
     :meth:`~simulation.evaluation.Evaluation.evaluate` as the submitted
     callable (Molveno, thread-pool submit of the engine call).
 
@@ -952,7 +952,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         """Submit an engine-level async evaluation and return a handle immediately.
 
         Concrete tier-3 default.  Calls
-        :meth:`~simulation.evaluation.Evaluation.submit_evaluate` with
+        :meth:`AsyncEvaluationHandle.from_evaluation` with
         :attr:`eval_functions` and :attr:`eval_backend`, then wraps the
         result in a :class:`ModelRunHandle` whose post-processor is
         :meth:`post_process`.
@@ -972,7 +972,8 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         ModelRunHandle[OutputT]
             Handle whose :meth:`~ModelRunHandle.get` returns the output.
         """
-        async_handle = Evaluation(scenario).submit_evaluate(
+        async_handle = AsyncEvaluationHandle.from_evaluation(
+            Evaluation(scenario),
             config.ensemble_size,
             functions=self.eval_functions,
             backend=self.eval_backend,
@@ -1141,10 +1142,8 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         # Rebuild the sampler recipe from the (public) scenario so the resumed
         # handle can draw further samples.  draw_batch() takes the per-call size,
         # so the recipe's nominal size is immaterial; exclude the parameter
-        # indexes exactly as evaluate_incremental() does.
-        ensemble_recipe = DistributionEnsemble(
-            scenario, config.ensemble_size, exclude=frozenset(state.parameters)
-        )
+        # indexes exactly as EvaluationHandle.from_evaluation() does.
+        ensemble_recipe = DistributionEnsemble(scenario, config.ensemble_size, exclude=frozenset(state.parameters))
         return EvaluationHandle(
             evaluation=evaluation,
             plan=plan,

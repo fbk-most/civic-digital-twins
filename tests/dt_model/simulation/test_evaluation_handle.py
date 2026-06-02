@@ -75,7 +75,7 @@ def test_evaluate_incremental_returns_handle() -> None:
     """evaluate_incremental returns an EvaluationHandle."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(50)
+    handle = EvaluationHandle.from_evaluation(ev, 50)
     assert isinstance(handle, EvaluationHandle)
 
 
@@ -83,7 +83,7 @@ def test_handle_result_is_evaluation_result() -> None:
     """handle.result is an EvaluationResult with the correct shape."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(50)
+    handle = EvaluationHandle.from_evaluation(ev, 50)
     result = handle.result
     arr = result[model.outputs.y]
     # shape should be (50,) — one ENSEMBLE axis of size 50
@@ -94,7 +94,7 @@ def test_handle_result_weights_sum_to_one() -> None:
     """Initial result weights are uniform and sum to 1."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(40)
+    handle = EvaluationHandle.from_evaluation(ev, 40)
     w = handle.result.weights
     assert w.shape == (40,)
     np.testing.assert_allclose(w.sum(), 1.0)
@@ -107,8 +107,8 @@ def test_evaluate_incremental_reproducible_with_seed() -> None:
     ev = Evaluation(model)
     rng1 = np.random.default_rng(42)
     rng2 = np.random.default_rng(42)
-    h1 = ev.evaluate_incremental(30, rng=rng1)
-    h2 = ev.evaluate_incremental(30, rng=rng2)
+    h1 = EvaluationHandle.from_evaluation(ev, 30, rng=rng1)
+    h2 = EvaluationHandle.from_evaluation(ev, 30, rng=rng2)
     np.testing.assert_array_equal(h1.result[model.outputs.y], h2.result[model.outputs.y])
 
 
@@ -121,7 +121,7 @@ def test_extend_increases_ensemble_size() -> None:
     """extend(n) grows the ensemble from S to S+n scenarios."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(30)
+    handle = EvaluationHandle.from_evaluation(ev, 30)
     result = handle.extend(20)
     arr = result[model.outputs.y]
     assert arr.shape == (50,)
@@ -131,7 +131,7 @@ def test_extend_updates_handle_result() -> None:
     """handle.result is updated after extend()."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(30)
+    handle = EvaluationHandle.from_evaluation(ev, 30)
     extended = handle.extend(20)
     assert handle.result is extended
 
@@ -140,7 +140,7 @@ def test_extend_weights_renormalized() -> None:
     """After extend(), weights are uniform over the combined ensemble."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(30)
+    handle = EvaluationHandle.from_evaluation(ev, 30)
     handle.extend(20)
     w = handle.result.weights
     assert w.shape == (50,)
@@ -162,7 +162,7 @@ def test_merge_preserves_nonuniform_weights() -> None:
     ax1 = Axis("ens_a", ENSEMBLE)
     ax2 = Axis("ens_b", ENSEMBLE)
     w1 = np.array([0.4, 0.4, 0.1, 0.1])  # non-uniform, sums to 1
-    w2 = np.array([0.7, 0.3])             # non-uniform, sums to 1
+    w2 = np.array([0.7, 0.3])  # non-uniform, sums to 1
 
     def _make(ax, sz, w):
         values = {idx.node: np.zeros(sz) for idx in plan.nodes_of_interest}
@@ -183,7 +183,7 @@ def test_extend_zero_is_noop() -> None:
     """extend(0) is a no-op — result unchanged."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(30)
+    handle = EvaluationHandle.from_evaluation(ev, 30)
     before = handle.result
     returned = handle.extend(0)
     assert returned is before
@@ -194,7 +194,7 @@ def test_extend_negative_is_noop() -> None:
     """extend(-1) is also a no-op."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(30)
+    handle = EvaluationHandle.from_evaluation(ev, 30)
     before = handle.result
     returned = handle.extend(-1)
     assert returned is before
@@ -204,7 +204,7 @@ def test_multiple_extends_accumulate() -> None:
     """Multiple extend() calls accumulate scenarios correctly."""
     _, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(10)
+    handle = EvaluationHandle.from_evaluation(ev, 10)
     handle.extend(10)
     handle.extend(10)
     arr = handle.result[model.outputs.y]
@@ -223,12 +223,12 @@ def test_incremental_matches_direct_evaluation() -> None:
     ev = Evaluation(model)
 
     # --- Incremental: 30 then 20 ---
-    h = ev.evaluate_incremental(30, rng=np.random.default_rng(99))
+    h = EvaluationHandle.from_evaluation(ev, 30, rng=np.random.default_rng(99))
     h.extend(20)
     incremental_arr = h.result[model.outputs.y]
 
     # --- Direct: 50 at once from the same seed ---
-    direct = ev.evaluate_incremental(50, rng=np.random.default_rng(99))
+    direct = EvaluationHandle.from_evaluation(ev, 50, rng=np.random.default_rng(99))
     direct_arr = direct.result[model.outputs.y]
 
     assert incremental_arr.shape == direct_arr.shape == (50,)
@@ -240,10 +240,10 @@ def test_extend_reproducible_sequence() -> None:
     _, model = _make_simple()
     ev = Evaluation(model)
 
-    h1 = ev.evaluate_incremental(20, rng=np.random.default_rng(7))
+    h1 = EvaluationHandle.from_evaluation(ev, 20, rng=np.random.default_rng(7))
     h1.extend(30)
 
-    h2 = ev.evaluate_incremental(20, rng=np.random.default_rng(7))
+    h2 = EvaluationHandle.from_evaluation(ev, 20, rng=np.random.default_rng(7))
     h2.extend(30)
 
     np.testing.assert_array_equal(h1.result[model.outputs.y], h2.result[model.outputs.y])
@@ -258,7 +258,7 @@ def test_extend_constant_node_stays_singleton() -> None:
     """Constant nodes (no ensemble dependency) remain singletons after merge."""
     model = _ConstModel()
     # ConstModel has no abstract indexes — we must pass it via evaluate(), not
-    # evaluate_incremental (which tries to build a DistributionEnsemble).
+    # EvaluationHandle.from_evaluation (which tries to build a DistributionEnsemble).
     # Instead, test _merge_results directly with a manually built plan + results.
     ev = Evaluation(model)
     plan = ev.build_plan()
@@ -321,6 +321,7 @@ def _make_param_handle(
 ) -> tuple[Index, "_SimpleParamModel", Evaluation, "EvaluationHandle"]:  # type: ignore[name-defined]
     """Helper: model with one distribution index and one sweep parameter."""
     import dataclasses
+
     from scipy import stats
 
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
@@ -343,7 +344,7 @@ def _make_param_handle(
     model = _SPM(x2, speed)
     ev = Evaluation(model)
     params: dict[GenericIndex, np.ndarray] = {speed: param_vals}
-    handle = ev.evaluate_incremental(ensemble_size, parameters=params, rng=np.random.default_rng(seed))
+    handle = EvaluationHandle.from_evaluation(ev, ensemble_size, parameters=params, rng=np.random.default_rng(seed))
     return speed, model, ev, handle
 
 
@@ -396,12 +397,12 @@ def test_extend_extra_parameters_reproducible() -> None:
     seed = 77
 
     # Incremental path: 3 values + extend with 2 more.
-    h_inc = ev.evaluate_incremental(30, parameters={speed: all_vals[:3]}, rng=np.random.default_rng(seed))
+    h_inc = EvaluationHandle.from_evaluation(ev, 30, parameters={speed: all_vals[:3]}, rng=np.random.default_rng(seed))
     h_inc.extend(extra_parameters={speed: all_vals[3:]})
     inc_arr = h_inc.result[model.outputs.y]
 
     # Direct path: all 5 values at once, same seed.
-    h_dir = ev.evaluate_incremental(30, parameters={speed: all_vals}, rng=np.random.default_rng(seed))
+    h_dir = EvaluationHandle.from_evaluation(ev, 30, parameters={speed: all_vals}, rng=np.random.default_rng(seed))
     dir_arr = h_dir.result[model.outputs.y]
 
     assert inc_arr.shape == dir_arr.shape == (5, 30)
@@ -411,6 +412,7 @@ def test_extend_extra_parameters_reproducible() -> None:
 def test_extend_extra_parameters_multiple_params() -> None:
     """extend(extra_parameters=) with multiple keys extends each axis in turn."""
     import dataclasses
+
     from scipy import stats
 
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
@@ -435,7 +437,7 @@ def test_extend_extra_parameters_multiple_params() -> None:
     model = _TwoParam(x2, speed, temp)
     ev = Evaluation(model)
     params: dict[GenericIndex, np.ndarray] = {speed: np.array([1.0, 2.0]), temp: np.array([10.0, 20.0])}
-    handle = ev.evaluate_incremental(15, parameters=params, rng=np.random.default_rng(0))
+    handle = EvaluationHandle.from_evaluation(ev, 15, parameters=params, rng=np.random.default_rng(0))
     assert handle.result[model.outputs.y].shape == (2, 2, 15)
 
     handle.extend(extra_parameters={speed: np.array([3.0, 4.0]), temp: np.array([30.0])})
@@ -446,7 +448,7 @@ def test_extend_extra_parameters_unknown_index_raises() -> None:
     """extend(extra_parameters=) raises ValueError for an index not in the original parameters."""
     x, model = _make_simple()
     ev = Evaluation(model)
-    handle = ev.evaluate_incremental(20)
+    handle = EvaluationHandle.from_evaluation(ev, 20)
     with pytest.raises(ValueError, match="not in the original parameters"):
         handle.extend(extra_parameters={x: np.array([1.0])})
 
@@ -484,7 +486,7 @@ def test_evaluate_incremental_with_parameters() -> None:
     ev2 = Evaluation(pm)
 
     params: dict[GenericIndex, np.ndarray] = {speed: np.array([1.0, 2.0, 3.0])}
-    handle = ev2.evaluate_incremental(20, parameters=params)
+    handle = EvaluationHandle.from_evaluation(ev2, 20, parameters=params)
     arr = handle.result[pm.outputs.y]
     # shape: (3, 20) — 3 PARAMETER values × 20 ensemble scenarios
     assert arr.shape == (3, 20)

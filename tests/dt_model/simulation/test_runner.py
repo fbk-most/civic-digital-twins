@@ -423,14 +423,14 @@ class TestAsyncEvaluationHandleFutureProperty:
     def test_future_property_returns_future(self) -> None:
         """AsyncEvaluationHandle.future returns a concurrent.futures.Future."""
         _, model = _make_simple_model()
-        handle = Evaluation(Scenario(model)).submit_evaluate(10)
+        handle = AsyncEvaluationHandle.from_evaluation(Evaluation(Scenario(model)), 10)
         assert isinstance(handle, AsyncEvaluationHandle)
         assert isinstance(handle.future, concurrent.futures.Future)
 
     def test_future_property_is_same_object_used_by_get(self) -> None:
         """The future returned by .future resolves to the same EvaluationResult as .get()."""
         _, model = _make_simple_model()
-        handle = Evaluation(Scenario(model)).submit_evaluate(10)
+        handle = AsyncEvaluationHandle.from_evaluation(Evaluation(Scenario(model)), 10)
         result_via_future = handle.future.result()
         result_via_get = handle.get()
         assert result_via_future is result_via_get
@@ -438,7 +438,7 @@ class TestAsyncEvaluationHandleFutureProperty:
     def test_future_property_is_done_after_get(self) -> None:
         """After .get() resolves, handle.future.done() is True."""
         _, model = _make_simple_model()
-        handle = Evaluation(Scenario(model)).submit_evaluate(10)
+        handle = AsyncEvaluationHandle.from_evaluation(Evaluation(Scenario(model)), 10)
         handle.get()
         assert handle.future.done() is True
 

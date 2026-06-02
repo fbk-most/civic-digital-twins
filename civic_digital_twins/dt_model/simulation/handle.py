@@ -12,15 +12,15 @@ background thread and the handle exposes :meth:`~AsyncEvaluationHandle.poll` and
 Once the future resolves, :meth:`~AsyncEvaluationHandle.extend` works identically
 to the synchronous base class.
 
-Obtain instances via
-:meth:`~simulation.evaluation.Evaluation.evaluate_incremental` (synchronous) or
-:meth:`~simulation.evaluation.Evaluation.submit_evaluate` (asynchronous) rather than
-constructing these classes directly.
+Obtain instances via :meth:`EvaluationHandle.from_evaluation` (synchronous) or
+:meth:`AsyncEvaluationHandle.from_evaluation` (asynchronous) rather than constructing
+these classes directly.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
+from typing import Any
 
 import numpy as np
 
@@ -28,15 +28,28 @@ from ..engine.frontend import graph
 from ..engine.numpybackend import executor
 from ..model.axis import ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
-
-# Imported at runtime to avoid circular imports:
-#   evaluation.py → handle.py  (local import inside evaluate_incremental)
-#   handle.py → evaluation.py  (module-level imports below are fine because
-#                                evaluation.py does not import handle.py at
-#                                module level)
-from .ensemble import BatchDrawable, FrozenEnsemble
+from .ensemble import BatchDrawable, DistributionEnsemble, FrozenEnsemble
 from .evaluation import Evaluation, EvaluationResult
 from .plan import EvaluationPlan
+
+# ---------------------------------------------------------------------------
+# Module-level thread-pool executor (shared across all async evaluations)
+# ---------------------------------------------------------------------------
+
+# Allocated lazily on first use so that importing this module does not spawn
+# threads for callers who never use async evaluation.
+# Uses a ThreadPoolExecutor: the GIL is released during NumPy computation, so
+# the main thread remains responsive while evaluation runs in the background.
+_default_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_default_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Return (and lazily create) the module-level default ThreadPoolExecutor."""
+    global _default_executor
+    if _default_executor is None:
+        _default_executor = concurrent.futures.ThreadPoolExecutor()
+    return _default_executor
+
 
 __all__ = ["AsyncEvaluationHandle", "EvaluationHandle"]
 
@@ -123,21 +136,15 @@ def _merge_results(
         grow_ax_2, ens_pos2 = grow_entry_2
         if ens_pos != ens_pos2:
             raise ValueError(
-                f"Growing ENSEMBLE axis {merge_axis_name!r} is at dim {ens_pos} in r1 "
-                f"but dim {ens_pos2} in r2."
-            )
-        # Validate the fixed ENSEMBLE axes match by name, position, and size.
-        def _fixed_ens_sig(
-            axes: list[tuple[Axis, int]], sizes: dict[Axis, int]
-        ) -> frozenset[tuple[str, int, int]]:
-            return frozenset(
-                (ax.name, pos, sizes[ax]) for ax, pos in axes if ax.name != merge_axis_name
+                f"Growing ENSEMBLE axis {merge_axis_name!r} is at dim {ens_pos} in r1 but dim {ens_pos2} in r2."
             )
 
+        # Validate the fixed ENSEMBLE axes match by name, position, and size.
+        def _fixed_ens_sig(axes: list[tuple[Axis, int]], sizes: dict[Axis, int]) -> frozenset[tuple[str, int, int]]:
+            return frozenset((ax.name, pos, sizes[ax]) for ax, pos in axes if ax.name != merge_axis_name)
+
         if _fixed_ens_sig(ens_1, r1._axis_sizes) != _fixed_ens_sig(ens_2, r2._axis_sizes):
-            raise ValueError(
-                "_merge_results: fixed ENSEMBLE axis layouts differ between r1 and r2."
-            )
+            raise ValueError("_merge_results: fixed ENSEMBLE axis layouts differ between r1 and r2.")
 
     S1: int = r1._axis_sizes[grow_ax_1]
     S2: int = r2._axis_sizes[grow_ax_2]
@@ -265,9 +272,7 @@ def _merge_results_param_extend(
     ax_ens, ens_pos = ens_1[0]
     _, ens_pos2 = ens_2[0]
     if ens_pos != ens_pos2:
-        raise ValueError(
-            f"ENSEMBLE axis position mismatch: r1 at dim {ens_pos}, r2 at dim {ens_pos2}."
-        )
+        raise ValueError(f"ENSEMBLE axis position mismatch: r1 at dim {ens_pos}, r2 at dim {ens_pos2}.")
     S = r1._axis_sizes[ax_ens]
     S2_check = r2._axis_sizes[ens_2[0][0]]
     if S != S2_check:
@@ -294,23 +299,17 @@ def _merge_results_param_extend(
         None,
     )
     if grow_ax_2 is None:
-        raise ValueError(
-            f"_merge_results_param_extend: no PARAMETER axis named {param_name!r} in r2."
-        )
+        raise ValueError(f"_merge_results_param_extend: no PARAMETER axis named {param_name!r} in r2.")
     P2 = r2._axis_sizes[grow_ax_2]
 
     # --- Validate fixed PARAMETER axes ---
     def _fixed_sig(layout: dict[Axis, int], sizes: dict[Axis, int]) -> frozenset[tuple[str, int, int]]:
         return frozenset(
-            (ax.name, pos, sizes[ax])
-            for ax, pos in layout.items()
-            if ax.role == PARAMETER and ax.name != param_name
+            (ax.name, pos, sizes[ax]) for ax, pos in layout.items() if ax.role == PARAMETER and ax.name != param_name
         )
 
     if _fixed_sig(r1._axis_layout, r1._axis_sizes) != _fixed_sig(r2._axis_layout, r2._axis_sizes):
-        raise ValueError(
-            "_merge_results_param_extend: fixed PARAMETER axis layouts differ between r1 and r2."
-        )
+        raise ValueError("_merge_results_param_extend: fixed PARAMETER axis layouts differ between r1 and r2.")
 
     # --- Concatenate node arrays along the growing PARAMETER axis ---
     merged_values: dict[graph.Node, np.ndarray] = {}
@@ -387,8 +386,7 @@ class EvaluationHandle:
         :class:`~simulation.ensemble.CrossProductEnsemble`, and
         :class:`~simulation.ensemble.PartitionedEnsemble` all do.
 
-    Obtain an instance via
-    :meth:`~simulation.evaluation.Evaluation.evaluate_incremental` rather than
+    Obtain an instance via :meth:`EvaluationHandle.from_evaluation` rather than
     constructing this class directly.
 
     Parameters
@@ -467,6 +465,88 @@ class EvaluationHandle:
         return self._result
 
     # ------------------------------------------------------------------
+    # Factory
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_evaluation(
+        cls,
+        evaluation: Evaluation,
+        initial_ensemble_size: int,
+        nodes_of_interest: list[GenericIndex] | None = None,
+        *,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
+        strategy: str = "monolithic",
+        rng: np.random.Generator | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
+    ) -> "EvaluationHandle":
+        """Build a plan, run an initial ensemble, and return an incremental handle.
+
+        The returned :class:`EvaluationHandle` holds the first result and can be
+        extended with additional Monte Carlo samples via :meth:`extend` without
+        discarding prior results.
+
+        All sample draws (initial and extended) share the same
+        :class:`numpy.random.Generator`, making the full sequence reproducible
+        from a single seed.
+
+        Parameters
+        ----------
+        evaluation:
+            The :class:`~simulation.evaluation.Evaluation` to run.
+        initial_ensemble_size:
+            Number of scenarios in the first evaluation batch.
+        nodes_of_interest:
+            Indexes to evaluate.  Defaults to all indexes in the model.
+        parameters:
+            PARAMETER axes for multi-dimensional evaluation.
+        parameter_axes:
+            Named PARAMETER axes for correlated sweeps.
+        strategy:
+            Plan build strategy (``"monolithic"`` or ``"regional"``).
+        rng:
+            Random number generator for reproducibility.  When ``None``, a
+            fresh :func:`numpy.random.default_rng` is created automatically.
+        functions:
+            Optional user-defined functions passed to the executor.
+        backend:
+            The computation backend (currently only ``NumpyBackend``).
+
+        Returns
+        -------
+        EvaluationHandle
+            Incremental handle wrapping the first result.
+        """
+        parameters = parameters or {}
+        if rng is None:
+            rng = np.random.default_rng()
+
+        plan = evaluation.build_plan(nodes_of_interest, strategy=strategy)
+        dist_ensemble = DistributionEnsemble(
+            evaluation._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
+        )
+        # Draw samples once and freeze them so parameter-extension can reuse the
+        # same scenarios without advancing the RNG a second time.
+        ensemble = dist_ensemble.draw_batch(initial_ensemble_size, rng)
+        result = evaluation.execute_plan(
+            plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
+        )
+        return cls(
+            evaluation=evaluation,
+            plan=plan,
+            result=result,
+            rng=rng,
+            parameters=parameters,
+            parameter_axes=parameter_axes,
+            ensemble=ensemble,
+            ensemble_recipe=dist_ensemble,
+            functions=functions,
+            backend=backend,
+        )
+
+    # ------------------------------------------------------------------
     # Private helpers — one primitive operation each
     # ------------------------------------------------------------------
 
@@ -485,7 +565,7 @@ class EvaluationHandle:
         """
         assert self._ensemble_recipe is not None, (
             "EvaluationHandle._extend_ensemble_axis() requires an ensemble_recipe. "
-            "Obtain the handle via evaluate_incremental() to enable ensemble extension."
+            "Obtain the handle via EvaluationHandle.from_evaluation() to enable ensemble extension."
         )
         new_batch = self._ensemble_recipe.draw_batch(ensemble_size, self._rng, axis=axis)
         if axis is not None and self._ensemble is not None and len(self._ensemble.ensemble_axes) > 1:
@@ -495,9 +575,12 @@ class EvaluationHandle:
         else:
             execution_ensemble = new_batch
         new_result = self._evaluation.execute_plan(
-            self._plan, execution_ensemble,
-            parameters=self._parameters, parameter_axes=self._parameter_axes,
-            functions=self._functions, backend=self._backend,
+            self._plan,
+            execution_ensemble,
+            parameters=self._parameters,
+            parameter_axes=self._parameter_axes,
+            functions=self._functions,
+            backend=self._backend,
         )
         assert self._result is not None
         self._result = _merge_results(self._result, new_result, self._plan, merge_axis_name=axis)
@@ -512,10 +595,12 @@ class EvaluationHandle:
         assert self._result is not None
         assert self._ensemble is not None
         r_extra = self._evaluation.execute_plan(
-            self._plan, self._ensemble,
+            self._plan,
+            self._ensemble,
             parameters={**self._parameters, param_idx: extra_vals},
             parameter_axes=self._parameter_axes,
-            functions=self._functions, backend=self._backend,
+            functions=self._functions,
+            backend=self._backend,
         )
         self._result = _merge_results_param_extend(self._result, r_extra, self._plan, param_idx)
         self._parameters = {
@@ -591,7 +676,10 @@ class EvaluationHandle:
             Explicit multi-axis ENSEMBLE extension dict ``{axis_name: N}``.
             Mutually exclusive with *ensemble_size* > 0.
         extra_parameters:
-            PARAMETER extension dict ``{idx: extra_array}``.
+            Dict ``{idx: extra_array, ...}`` extending the PARAMETER sweep for
+            each *idx*.  Every key must already be present in the
+            ``parameters=`` dict passed to
+            :meth:`EvaluationHandle.from_evaluation`.
 
         Returns
         -------
@@ -663,8 +751,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
     :class:`~simulation.ensemble.BatchDrawable` contract that the
     *ensemble_recipe* must satisfy.
 
-    Obtain an instance via
-    :meth:`~simulation.evaluation.Evaluation.submit_evaluate` rather than
+    Obtain an instance via :meth:`AsyncEvaluationHandle.from_evaluation` rather than
     constructing this class directly.
 
     Parameters
@@ -721,6 +808,103 @@ class AsyncEvaluationHandle(EvaluationHandle):
             backend=backend,
         )
         self._future = future
+
+    # ------------------------------------------------------------------
+    # Factory
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_evaluation(
+        cls,
+        evaluation: Evaluation,
+        initial_ensemble_size: int,
+        nodes_of_interest: list[GenericIndex] | None = None,
+        *,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
+        strategy: str = "monolithic",
+        rng: np.random.Generator | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
+        pool: concurrent.futures.Executor | None = None,
+    ) -> "AsyncEvaluationHandle":
+        """Submit an evaluation to a background thread and return immediately.
+
+        Mirrors :meth:`EvaluationHandle.from_evaluation` but runs the initial
+        :meth:`~simulation.evaluation.Evaluation.execute_plan` call on a thread
+        from *pool* (or the module-level default
+        :class:`~concurrent.futures.ThreadPoolExecutor`) so that the caller is
+        not blocked.  The returned handle can be polled for status or awaited
+        for its result.
+
+        Once the future resolves, :meth:`extend` works identically to
+        :class:`EvaluationHandle`.
+
+        Parameters
+        ----------
+        evaluation:
+            The :class:`~simulation.evaluation.Evaluation` to run.
+        initial_ensemble_size:
+            Number of scenarios in the first evaluation batch.
+        nodes_of_interest:
+            Indexes to evaluate.  Defaults to all indexes in the model.
+        parameters:
+            PARAMETER axes for multi-dimensional evaluation.
+        parameter_axes:
+            Named PARAMETER axes for correlated sweeps.
+        strategy:
+            Plan build strategy (``"monolithic"`` or ``"regional"``).
+        rng:
+            Random number generator for reproducibility.  When ``None``, a
+            fresh :func:`numpy.random.default_rng` is created automatically.
+        functions:
+            Optional user-defined functions passed to the executor.
+        backend:
+            The computation backend (currently only ``NumpyBackend``).
+        pool:
+            :class:`concurrent.futures.Executor` to submit the work to.
+            Defaults to a module-level :class:`~concurrent.futures.ThreadPoolExecutor`
+            shared across calls (created lazily on first use).
+
+        Returns
+        -------
+        AsyncEvaluationHandle
+            Handle wrapping the in-flight future.  Call :meth:`get` to block
+            for the result or :meth:`poll` to check without blocking.
+        """
+        parameters = parameters or {}
+        if rng is None:
+            rng = np.random.default_rng()
+
+        plan = evaluation.build_plan(nodes_of_interest, strategy=strategy)
+        dist_ensemble = DistributionEnsemble(
+            evaluation._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
+        )
+        # Draw samples in the main thread before submitting so the frozen batch
+        # can be shared safely with the background thread.
+        ensemble = dist_ensemble.draw_batch(initial_ensemble_size, rng)
+        _exec = pool or _get_default_executor()
+        future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
+            evaluation.execute_plan,
+            plan,
+            ensemble,
+            parameters=parameters,
+            parameter_axes=parameter_axes,
+            functions=functions,
+            backend=backend,
+        )
+        return cls(
+            future=future,
+            evaluation=evaluation,
+            plan=plan,
+            rng=rng,
+            parameters=parameters,
+            parameter_axes=parameter_axes,
+            ensemble=ensemble,
+            ensemble_recipe=dist_ensemble,
+            functions=functions,
+            backend=backend,
+        )
 
     # ------------------------------------------------------------------
     # Internal

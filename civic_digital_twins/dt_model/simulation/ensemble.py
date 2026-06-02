@@ -578,8 +578,8 @@ class DistributionEnsemble:
         ``parameters=`` at :meth:`~evaluation.Evaluation.evaluate` time) and
         must not be sampled by this ensemble.  These indexes are silently
         skipped in both the constructor validation and :meth:`assignments`.
-        Callers of :meth:`~evaluation.Evaluation.evaluate_incremental` and
-        :meth:`~evaluation.Evaluation.submit_evaluate` should not set this
+        Callers of :meth:`EvaluationHandle.from_evaluation` and
+        :meth:`AsyncEvaluationHandle.from_evaluation` should not set this
         directly; it is managed automatically from the ``parameters=`` dict.
 
     Raises

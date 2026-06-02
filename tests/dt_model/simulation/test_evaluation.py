@@ -17,6 +17,7 @@ from civic_digital_twins.dt_model.model.index import ConstIndex, GenericIndex, I
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
@@ -744,7 +745,8 @@ def test_evaluate_incremental_named_axis_values_preserved_after_extend():
     ev = Evaluation(Scenario(model))
 
     base_arr = np.array([1.0, 2.0, 3.0])
-    handle = ev.evaluate_incremental(
+    handle = EvaluationHandle.from_evaluation(
+        ev,
         initial_ensemble_size=10,
         parameter_axes={"base": base_arr},
         parameters={cost: lambda base: base * 2.0},
