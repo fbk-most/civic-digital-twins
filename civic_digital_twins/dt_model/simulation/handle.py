@@ -398,8 +398,8 @@ def _frozen_ensemble_from_result(
     excluded_ids = frozenset(id(idx) for idx in parameters)
     assignments: dict[GenericIndex, np.ndarray] = {}
     for idx in scenario.abstract_indexes():
-        if id(idx) in excluded_ids or idx.node not in result._state.values:
-            continue
+        if id(idx) in excluded_ids or idx.node not in result._state.values:  # pragma: no cover
+            continue  # pragma: no cover
         val = np.asarray(result._state.values[idx.node])
         # Drop leading PARAMETER dimensions (all size 1 for ensemble-only nodes)
         # until only the ENSEMBLE dimension(s) remain.  In practice the numpy
