@@ -808,3 +808,37 @@ def test_parameters_index_in_model_does_not_raise():
     # a is in the model — no error expected.
     res = ev.evaluate(parameters={a: np.array([1.0, 2.0])})
     np.testing.assert_array_almost_equal(res[result], [2.0, 4.0])
+
+
+# ---------------------------------------------------------------------------
+# EvaluationResult.full_shape — no-axis path
+# ---------------------------------------------------------------------------
+
+
+def test_evaluation_result_full_shape_no_axes():
+    """EvaluationResult.full_shape returns () when there are no ENSEMBLE or PARAMETER axes."""
+    # A constant-only model with no abstract indexes and evaluated with
+    # ensemble=None produces an EvaluationResult with no axes.
+    I_a = Index("a", 3.0)
+    I_b = Index("b", 4.0)
+    I_result = Index("result", I_a.node + I_b.node)
+    model = _make_model(I_a, I_b, I_result)
+    ev = Evaluation(Scenario(model))
+    result = ev.execute_plan(ev.build_plan(), ensemble=None)
+    assert result.full_shape == ()
+
+
+def test_evaluation_result_full_shape_with_axes():
+    """EvaluationResult.full_shape returns the axis-layout shape when axes are present."""
+    from scipy import stats  # noqa: PLC0415
+
+    from civic_digital_twins.dt_model.model.index import DistributionIndex  # noqa: PLC0415
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble  # noqa: PLC0415
+
+    I_x = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    I_result = Index("result", I_x.node * 2.0)
+    model = _make_model(I_x, I_result)
+    ev = Evaluation(Scenario(model))
+    ens = DistributionEnsemble(Scenario(model), 7)
+    result = ev.evaluate(ensemble=ens)
+    assert result.full_shape == (7,)

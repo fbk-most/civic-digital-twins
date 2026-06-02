@@ -735,3 +735,198 @@ class TestResume:
         handle = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
         extended = handle.extend(ensemble_size=5)
         assert extended is handle.result
+
+
+# ---------------------------------------------------------------------------
+# _encode_array / _decode_array — object dtype path
+# ---------------------------------------------------------------------------
+
+
+class TestEncodeDecodeArrayObjectDtype:
+    """Unit tests for _encode_array / _decode_array with object-dtype arrays."""
+
+    def test_encode_array_object_dtype(self) -> None:
+        """_encode_array uses json encoding for object-dtype arrays."""
+        from civic_digital_twins.dt_model.simulation.runner import _encode_array  # noqa: PLC0415
+
+        arr = np.array(["good", "bad", "good"], dtype=object)
+        encoded = _encode_array(arr)
+        assert encoded["encoding"] == "json"
+        assert encoded["dtype"] == "object"
+
+    def test_decode_array_object_dtype(self) -> None:
+        """_decode_array reconstructs an object-dtype array from a json-encoded dict."""
+        from civic_digital_twins.dt_model.simulation.runner import _decode_array, _encode_array  # noqa: PLC0415
+
+        arr = np.array(["good", "bad"], dtype=object)
+        encoded = _encode_array(arr)
+        decoded = _decode_array(encoded)
+        assert decoded.dtype == object
+        np.testing.assert_array_equal(decoded, arr)
+
+
+# ---------------------------------------------------------------------------
+# ModelOutput.to_snapshot — version stamp
+# ---------------------------------------------------------------------------
+
+
+class TestModelOutputSnapshot:
+    """Unit tests for ModelOutput.to_snapshot()."""
+
+    def test_model_output_snapshot_contains_version(self) -> None:
+        """to_snapshot() stamps 'dt_model_version' and includes serialised fields."""
+        out = _StubOutput(42)
+        snap = out.to_snapshot()
+        assert "dt_model_version" in snap
+        assert snap["value"] == 42
+
+
+# ---------------------------------------------------------------------------
+# ModelOutput._serialize — dataclass branch
+# ---------------------------------------------------------------------------
+
+
+class TestModelOutputSerializeDataclass:
+    """Unit tests for the dataclass branch of ModelOutput._serialize and _deserialize."""
+
+    def _make_dataclass_output(self) -> Any:
+        """Return a concrete dataclass ModelOutput subclass with array and dict-of-array fields."""
+
+        @dataclasses.dataclass(eq=False)
+        class _DataclassOutput(ModelOutput):
+            arr: np.ndarray
+            dict_arr: dict
+
+            def __post_init__(self) -> None:
+                super().__init__()
+
+        return _DataclassOutput
+
+    def test_serialize_encodes_ndarray_field(self) -> None:
+        """_serialize encodes ndarray fields using _encode_array."""
+        cls = self._make_dataclass_output()
+        obj = cls.__new__(cls)
+        ModelOutput.__init__(obj)
+        obj.arr = np.array([1.0, 2.0])
+        obj.dict_arr = {"a": np.array([3.0])}
+        serialised = obj._serialize()
+        # ndarray field should be encoded as a dict with "data", "dtype", "shape".
+        assert isinstance(serialised["arr"], dict)
+        assert "dtype" in serialised["arr"]
+        # dict-of-array field should have each value encoded.
+        assert isinstance(serialised["dict_arr"]["a"], dict)
+        assert "dtype" in serialised["dict_arr"]["a"]
+
+    def test_deserialize_decodes_ndarray_field(self) -> None:
+        """_deserialize decodes encoded array fields back to ndarray."""
+        cls = self._make_dataclass_output()
+        obj = cls.__new__(cls)
+        ModelOutput.__init__(obj)
+        obj.arr = np.array([1.0, 2.0])
+        obj.dict_arr = {"a": np.array([3.0])}
+        serialised = obj._serialize()
+
+        # Reconstruct from serialised form.
+        obj2 = cls.__new__(cls)
+        ModelOutput.__init__(obj2)
+        obj2._deserialize(serialised)
+        np.testing.assert_array_equal(obj2.arr, obj.arr)
+        np.testing.assert_array_equal(obj2.dict_arr["a"], obj.dict_arr["a"])
+
+    def test_serialize_plain_value_field(self) -> None:
+        """_serialize stores plain non-array fields as-is (covers the else branch)."""
+
+        @dataclasses.dataclass(eq=False)
+        class _PlainOutput(ModelOutput):
+            name: str
+            count: int
+
+            def __post_init__(self) -> None:
+                super().__init__()
+
+        obj = _PlainOutput.__new__(_PlainOutput)
+        ModelOutput.__init__(obj)
+        obj.name = "test"
+        obj.count = 42
+        serialised = obj._serialize()
+        assert serialised["name"] == "test"
+        assert serialised["count"] == 42
+
+
+# ---------------------------------------------------------------------------
+# _decode_result round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestDecodeResultRoundtrip:
+    """Unit tests for _encode_result / _decode_result round-trip."""
+
+    def test_decode_result_roundtrip(self) -> None:
+        """_encode_result → _decode_result preserves the array shape for all indexes."""
+        from civic_digital_twins.dt_model.simulation.runner import _decode_result  # noqa: PLC0415
+
+        x, model = _make_simple_model()
+        result = _make_result_from(model, size=15)
+        encoded = _encode_result(result, model.indexes)
+        decoded = _decode_result(encoded, model.indexes)
+        # Output y should have shape (15,) after decoding.
+        assert decoded[model.outputs.y].shape == result[model.outputs.y].shape
+
+
+# ---------------------------------------------------------------------------
+# ModelEvaluator default evaluate() / run_async() / extract_resume_state() templates
+# ---------------------------------------------------------------------------
+
+
+class _DefaultTemplateEvaluator(ModelEvaluator[_SimpleModel, _StubOutput]):
+    """Evaluator that uses the default evaluate() template (does not override evaluate)."""
+
+    def post_process(self, scenario: Scenario, result: EvaluationResult) -> _StubOutput:
+        """Return a stub output wrapping the ensemble size."""
+        return _StubOutput(42, include_resume=False)
+
+    def input_schema(self) -> dict:
+        """Return a minimal schema."""
+        return {}
+
+
+class TestModelEvaluatorDefaultTemplate:
+    """Verify the default evaluate() / run_async() / attach_resume / extract_resume_state."""
+
+    def test_evaluate_calls_post_process_and_attach_resume(self) -> None:
+        """Default evaluate() calls post_process and attach_resume, returning a resumable output."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=5))
+        assert isinstance(output, _StubOutput)
+        # attach_resume stores the result on output even though include_resume=False in post_process.
+        assert output.is_resumable
+
+    def test_run_async_calls_post_process_and_attach_resume(self) -> None:
+        """Default run_async() returns a handle whose get() calls post_process and attach_resume."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        handle = evaluator.run_async(Scenario(model), EvaluationConfig(ensemble_size=5))
+        output = handle.get()
+        assert isinstance(output, _StubOutput)
+        assert output.is_resumable
+
+    def test_attach_resume_stores_serialized_result(self) -> None:
+        """attach_resume encodes the result and marks the output as resumable."""
+        x, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        result = _make_result_from(model, size=10)
+        out = _StubOutput(7, include_resume=False)
+        assert not out.is_resumable
+        evaluator.attach_resume(out, result)
+        assert out.is_resumable
+
+    def test_extract_resume_state_returns_resume_state(self) -> None:
+        """extract_resume_state decodes the stored result and returns a ResumeState."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=5))
+        assert output.is_resumable
+        state = evaluator.extract_resume_state(output)
+        assert isinstance(state, ResumeState)
+        assert isinstance(state.result, EvaluationResult)

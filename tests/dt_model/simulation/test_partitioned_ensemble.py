@@ -367,3 +367,97 @@ def test_partitioned_ensemble_rejects_wrong_type():
     """PartitionedEnsemble raises TypeError when passed something other than Scenario/Model."""
     with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
         PartitionedEnsemble("not a model", axes=[])  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# draw_batch
+# ---------------------------------------------------------------------------
+
+
+def test_draw_batch_single_axis_auto_infers_axis():
+    """draw_batch on a single-axis PartitionedEnsemble auto-infers the axis name."""
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    i_a = _dist_index("a")
+    i_b = _dist_index("b")
+    model = _make_model(i_a, i_b)
+    ens = PartitionedEnsemble(
+        Scenario(model),
+        axes=[EnsembleAxisSpec("unc", indexes=[i_a, i_b], size=5)],
+        rng=np.random.default_rng(0),
+    )
+    batch = ens.draw_batch(3, np.random.default_rng(1))
+    assert isinstance(batch, FrozenEnsemble)
+    assert batch.ensemble_weights[0].shape == (3,)
+    assignments = batch.assignments()
+    assert i_a in assignments
+    assert i_b in assignments
+
+
+def test_draw_batch_multi_axis_requires_axis():
+    """draw_batch raises ValueError when axis=None and the ensemble has more than one axis."""
+    i_a = _dist_index("a")
+    i_b = _dist_index("b")
+    model = _make_model(i_a, i_b)
+    ens = PartitionedEnsemble(
+        model,
+        axes=[
+            EnsembleAxisSpec("unc_a", indexes=[i_a], size=4),
+            EnsembleAxisSpec("unc_b", indexes=[i_b], size=6),
+        ],
+        rng=np.random.default_rng(0),
+    )
+    with pytest.raises(ValueError, match="specify axis="):
+        ens.draw_batch(3, np.random.default_rng(1))
+
+
+def test_draw_batch_explicit_axis_on_multi_axis():
+    """draw_batch with an explicit axis name extends only the named axis."""
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    i_a = _dist_index("a")
+    i_b = _dist_index("b")
+    model = _make_model(i_a, i_b)
+    ens = PartitionedEnsemble(
+        model,
+        axes=[
+            EnsembleAxisSpec("unc_a", indexes=[i_a], size=4),
+            EnsembleAxisSpec("unc_b", indexes=[i_b], size=6),
+        ],
+        rng=np.random.default_rng(0),
+    )
+    batch = ens.draw_batch(3, np.random.default_rng(1), axis="unc_a")
+    assert isinstance(batch, FrozenEnsemble)
+    assert batch.ensemble_weights[0].shape == (3,)
+    assignments = batch.assignments()
+    assert i_a in assignments
+
+
+def test_draw_batch_unknown_axis_raises():
+    """draw_batch raises ValueError when the requested axis name does not exist."""
+    i_a = _dist_index("a")
+    model = _make_model(i_a)
+    ens = PartitionedEnsemble(
+        model,
+        axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=4)],
+        rng=np.random.default_rng(0),
+    )
+    with pytest.raises(ValueError, match="no axis named"):
+        ens.draw_batch(3, np.random.default_rng(1), axis="nonexistent")
+
+
+def test_draw_batch_categorical_index_in_spec():
+    """draw_batch samples CategoricalIndex correctly when it appears in an axis spec."""
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    i_cat = CategoricalIndex("mode", {"bike": 0.6, "train": 0.4})
+    model = _make_model(i_cat)
+    ens = PartitionedEnsemble(
+        model,
+        axes=[EnsembleAxisSpec("unc", indexes=[i_cat], size=5)],
+        rng=np.random.default_rng(0),
+    )
+    batch = ens.draw_batch(4, np.random.default_rng(1))
+    assert isinstance(batch, FrozenEnsemble)
+    assert batch.ensemble_weights[0].shape == (4,)
+    assert i_cat in batch.assignments()

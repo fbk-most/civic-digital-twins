@@ -603,3 +603,72 @@ def test_cross_product_ensemble_accepts_scenario():
     scenario = Scenario(model)
     ens = CrossProductEnsemble(scenario)
     assert len(ens.ensemble_axes) == 1
+
+
+# ---------------------------------------------------------------------------
+# draw_batch
+# ---------------------------------------------------------------------------
+
+
+def test_cpe_draw_batch_returns_frozen_ensemble():
+    """draw_batch returns a FrozenEnsemble with one ENSEMBLE axis and the requested size."""
+    from scipy import stats  # noqa: PLC0415
+
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    model = _simple_model(cap)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=2, rng=np.random.default_rng(0))
+    batch = ens.draw_batch(3, np.random.default_rng(1))
+    assert isinstance(batch, FrozenEnsemble)
+    assert len(batch.ensemble_axes) == 1
+    # No categorical combos → 1 combo; draw_batch with size=3 → n_samples_per_combo=3 → 3 rows.
+    assert batch.ensemble_weights[0].shape == (3,)
+
+
+def test_cpe_draw_batch_axis_not_none_raises():
+    """draw_batch raises ValueError when axis= is not None."""
+    from scipy import stats  # noqa: PLC0415
+
+    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    model = _simple_model(cap)
+    ens = CrossProductEnsemble(Scenario(model), rng=np.random.default_rng(0))
+    with pytest.raises(ValueError, match="single ENSEMBLE axis"):
+        ens.draw_batch(3, np.random.default_rng(1), axis="unc")
+
+
+def test_cpe_no_rng_with_distributions():
+    """CrossProductEnsemble with no rng samples distribution indexes deterministically."""
+    from scipy import stats  # noqa: PLC0415
+
+    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    model = _simple_model(cap)
+    ens = CrossProductEnsemble(Scenario(model))  # no rng argument
+    a = ens.assignments()
+    # 1 combo × n_samples_per_combo=1 → shape (1,)
+    assert a[cap].shape == (1,)
+
+
+def test_cpe_exclude_skips_index():
+    """CrossProductEnsemble with exclude= skips the excluded index (covers the continue branch)."""
+    from scipy import stats  # noqa: PLC0415
+
+    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    speed = DistributionIndex("speed", stats.norm, {"loc": 1.0, "scale": 0.1})
+    model = _simple_model(cap, speed)
+    # Exclude 'speed' so the CrossProductEnsemble skips it.
+    ens = CrossProductEnsemble(Scenario(model), exclude=[speed], rng=np.random.default_rng(0))
+    a = ens.assignments()
+    # speed is excluded → not in assignments; cap is present.
+    assert cap in a
+    assert speed not in a
+
+
+def test_cat_samples_no_rng_monte_carlo():
+    """_cat_samples with rng=None falls back to np.random.choice for MC sampling."""
+    # max_categorical_size=2 < len(values)=5 triggers the MC branch; rng=None uses np.random.choice.
+    season = CategoricalIndex("season", {"s1": 0.2, "s2": 0.2, "s3": 0.2, "s4": 0.2, "s5": 0.2})
+    model = _simple_model(season)
+    # rng=None means _cat_samples uses np.random.choice
+    ens = CrossProductEnsemble(model, max_categorical_size=2, rng=None)
+    assert ens.assignments()[season].shape == (2,)

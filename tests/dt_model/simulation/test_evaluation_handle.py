@@ -2,6 +2,7 @@
 """Tests for EvaluationHandle (incremental evaluation) — Step 3 of engine-control.md."""
 
 import dataclasses
+from typing import Any
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, EvaluationResult
 from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle, _merge_results
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Minimal model fixtures
@@ -318,8 +320,8 @@ def _make_param_handle(
     param_vals: np.ndarray,
     ensemble_size: int,
     seed: int = 0,
-) -> tuple[Index, "_SimpleParamModel", Evaluation, "EvaluationHandle"]:  # type: ignore[name-defined]
-    """Helper: model with one distribution index and one sweep parameter."""
+) -> tuple[Index, Any, Evaluation, EvaluationHandle]:
+    """Build a test model with one distribution index and one PARAMETER sweep."""
     import dataclasses
 
     from scipy import stats
@@ -618,3 +620,450 @@ def test_evaluation_handle_result_raises_when_none() -> None:
     )
     with pytest.raises(RuntimeError, match="not yet available"):
         _ = handle.result
+
+
+# ---------------------------------------------------------------------------
+# FrozenEnsemble / BatchDrawable behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_frozen_ensemble_draw_batch_raises() -> None:
+    """FrozenEnsemble.draw_batch raises TypeError with a descriptive message."""
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    ax = Axis("_ensemble", ENSEMBLE)
+    fe = FrozenEnsemble((ax,), (np.array([0.5, 0.5]),), {})
+    with pytest.raises(TypeError, match="cannot draw new samples"):
+        fe.draw_batch(5, np.random.default_rng())
+
+
+def test_distribution_ensemble_draw_batch_axis_raises() -> None:
+    """DistributionEnsemble.draw_batch raises ValueError when axis= is not None."""
+    x, model = _make_simple()
+    de = DistributionEnsemble(model, 10, rng=np.random.default_rng(0))
+    with pytest.raises(ValueError, match="single ENSEMBLE axis"):
+        de.draw_batch(5, np.random.default_rng(), axis="unc")
+
+
+def test_frozen_ensemble_concat_along() -> None:
+    """FrozenEnsemble.concat_along appends samples along the named axis correctly."""
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    ax1 = Axis("unc", ENSEMBLE)
+    ax2 = Axis("default", ENSEMBLE)
+    idx_unc = Index("x_unc", 1.0)
+    idx_def = Index("x_def", 2.0)
+    # idx_unc has shape (2, 1): assigned to ax1 (axis 0, size 2), singleton on ax2.
+    # idx_def has shape (1, 3): singleton on ax1, assigned to ax2 (axis 1, size 3).
+    fe = FrozenEnsemble(
+        (ax1, ax2),
+        (np.array([0.5, 0.5]), np.array([1 / 3, 1 / 3, 1 / 3])),
+        {idx_unc: np.ones((2, 1)), idx_def: np.ones((1, 3))},
+    )
+    # other provides fresh ax1 samples (size 1); idx_unc shape (1,).
+    other = FrozenEnsemble(
+        (Axis("unc", ENSEMBLE),),
+        (np.array([1.0]),),
+        {idx_unc: np.array([99.0])},
+    )
+    merged = fe.concat_along("unc", other)
+    # unc axis grows from 2 → 3; default axis stays at 3.
+    assert merged.ensemble_weights[0].size == 3
+    # idx_unc was (2,1) → concat along ax0 with (1,1) → (3,1)
+    assert list(merged._cached_assignments[idx_unc].shape) == [3, 1]
+    # idx_def is singleton at ax0 (shape[0]==1) → carried forward unchanged.
+    assert list(merged._cached_assignments[idx_def].shape) == [1, 3]
+
+
+def test_frozen_ensemble_with_replaced_axis() -> None:
+    """FrozenEnsemble.with_replaced_axis replaces one axis with fresh samples."""
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble  # noqa: PLC0415
+
+    ax1 = Axis("unc", ENSEMBLE)
+    ax2 = Axis("default", ENSEMBLE)
+    idx_unc = Index("x_unc", 1.0)
+    idx_def = Index("x_def", 2.0)
+    # idx_unc has shape (2, 1): assigned to ax1 (axis 0, size 2), singleton on ax2.
+    # idx_def has shape (1, 3): singleton on ax1, assigned to ax2 (axis 1, size 3).
+    fe = FrozenEnsemble(
+        (ax1, ax2),
+        (np.array([0.5, 0.5]), np.array([1 / 3, 1 / 3, 1 / 3])),
+        {idx_unc: np.ones((2, 1)), idx_def: np.ones((1, 3))},
+    )
+    other = FrozenEnsemble(
+        (Axis("unc", ENSEMBLE),),
+        (np.array([1.0]),),
+        {idx_unc: np.array([42.0])},
+    )
+    replaced = fe.with_replaced_axis("unc", other)
+    # unc axis replaced by new size=1; default axis stays at 3.
+    assert replaced.ensemble_weights[0].shape == (1,)
+    # idx_unc: other has shape (1,) → reshaped to (1, 1) for the 2-axis result.
+    assert replaced._cached_assignments[idx_unc].shape == (1, 1)
+    # idx_def: singleton at ax0, carried forward unchanged.
+    assert replaced._cached_assignments[idx_def].shape == (1, 3)
+
+
+# ---------------------------------------------------------------------------
+# _merge_results error paths for missing named axis
+# ---------------------------------------------------------------------------
+
+
+def test_merge_results_missing_named_axis_in_r1() -> None:
+    """_merge_results raises ValueError when merge_axis_name is not in r1."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    r1 = _make_fake_result(plan, (Axis("ens_a", ENSEMBLE), Axis("ens_b", ENSEMBLE)), (2, 3))
+    r2 = _make_fake_result(plan, (Axis("ens_a", ENSEMBLE), Axis("ens_b", ENSEMBLE)), (4, 3))
+    with pytest.raises(ValueError, match="no ENSEMBLE axis named 'nonexistent' in r1"):
+        _merge_results(r1, r2, plan, merge_axis_name="nonexistent")
+
+
+def test_merge_results_missing_named_axis_in_r2() -> None:
+    """_merge_results raises ValueError when merge_axis_name is not in r2."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    r1 = _make_fake_result(plan, (Axis("ens_a", ENSEMBLE), Axis("ens_b", ENSEMBLE)), (2, 3))
+    # r2 only has "ens_a", so "ens_b" is absent in r2.
+    r2 = _make_fake_result(plan, (Axis("ens_a", ENSEMBLE),), (4,))
+    with pytest.raises(ValueError, match="no ENSEMBLE axis named 'ens_b' in r2"):
+        _merge_results(r1, r2, plan, merge_axis_name="ens_b")
+
+
+# ---------------------------------------------------------------------------
+# _merge_results_param_extend error paths
+# ---------------------------------------------------------------------------
+
+
+def test_merge_results_param_extend_multi_ensemble_raises() -> None:
+    """_merge_results_param_extend raises ValueError when a result has multiple ENSEMBLE axes."""
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=10)
+    plan = ev.build_plan()
+    r1 = handle.result
+
+    # Build a result with two ENSEMBLE axes.
+    ax_a = Axis("ens_a", ENSEMBLE)
+    ax_b = Axis("ens_b", ENSEMBLE)
+    r2_multi = _make_fake_result(plan, (ax_a, ax_b), (2, 3))
+    with pytest.raises(ValueError, match="exactly one ENSEMBLE axis"):
+        _merge_results_param_extend(r2_multi, r1, plan, speed)
+
+
+def test_merge_results_param_extend_ensemble_size_mismatch_raises() -> None:
+    """_merge_results_param_extend raises ValueError when ENSEMBLE sizes differ."""
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=10)
+    plan = ev.build_plan()
+    r1 = handle.result
+
+    # Build r2 with a different ensemble size (10+1=11 vs 10).
+    r2 = ev.execute_plan(
+        plan,
+        DistributionEnsemble(model, 11, rng=np.random.default_rng(99)),
+        parameters={speed: np.array([1.0, 2.0])},
+    )
+    with pytest.raises(ValueError, match="identical ENSEMBLE sizes"):
+        _merge_results_param_extend(r1, r2, plan, speed)
+
+
+def test_merge_results_param_extend_missing_param_axis_raises() -> None:
+    """_merge_results_param_extend raises ValueError when r1 has no PARAMETER axis for param_idx."""
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    x, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    # Both results have only one ENSEMBLE axis and no PARAMETER axis for speed.
+    ens = DistributionEnsemble(model, 5, rng=np.random.default_rng(0))
+    r1 = ev.execute_plan(plan, ens)
+    r2 = ev.execute_plan(plan, ens)
+
+    # speed is not a PARAMETER axis in r1 → raises.
+    speed = Index("speed", 1.0)
+    with pytest.raises(ValueError, match="no PARAMETER axis named"):
+        _merge_results_param_extend(r1, r2, plan, speed)
+
+
+# ---------------------------------------------------------------------------
+# EvaluationHandle.extend() validation paths
+# ---------------------------------------------------------------------------
+
+
+def test_extend_ensemble_size_and_extra_ensemble_mutually_exclusive() -> None:
+    """extend() raises ValueError when both ensemble_size > 0 and extra_ensemble are supplied."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    handle = EvaluationHandle.from_evaluation(ev, 20)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        handle.extend(10, extra_ensemble={"_ensemble": 5})
+
+
+def test_extend_extra_parameters_no_stored_ensemble_raises() -> None:
+    """extend(extra_parameters=) raises RuntimeError when the handle has no stored ensemble."""
+    speed, model, ev, _ = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=10)
+    plan = ev.build_plan()
+    ens = DistributionEnsemble(model, 10, rng=np.random.default_rng(0))
+    r = ev.execute_plan(plan, ens, parameters={speed: np.array([1.0, 2.0])})
+    # Construct a handle with ensemble=None so the stored-ensemble check triggers.
+    handle = EvaluationHandle(
+        evaluation=ev,
+        plan=plan,
+        result=r,
+        rng=np.random.default_rng(),
+        parameters={speed: np.array([1.0, 2.0])},
+        ensemble=None,  # explicitly no stored ensemble
+        functions=None,
+        backend=_executor.NumpyBackend,
+    )
+    with pytest.raises(RuntimeError, match="no stored ensemble"):
+        handle.extend(extra_parameters={speed: np.array([3.0])})
+
+
+# ---------------------------------------------------------------------------
+# _merge_results — growing axis at different positions raises
+# ---------------------------------------------------------------------------
+
+
+def test_merge_results_growing_axis_at_different_position_raises() -> None:
+    """_merge_results raises ValueError when the named growing axis is at different positions."""
+    _, model = _make_simple()
+    ev = Evaluation(model)
+    plan = ev.build_plan()
+
+    # r1: (ens1 at dim 0, ens2 at dim 1)  r2: (ens2 at dim 0, ens1 at dim 1)
+    ax_e1_r1 = Axis("ens1", ENSEMBLE)
+    ax_e2_r1 = Axis("ens2", ENSEMBLE)
+    ax_e1_r2 = Axis("ens1", ENSEMBLE)
+    ax_e2_r2 = Axis("ens2", ENSEMBLE)
+
+    values_r1: dict = {}
+    values_r2: dict = {}
+    for idx in plan.nodes_of_interest:
+        values_r1[idx.node] = np.zeros((2, 3))
+        values_r2[idx.node] = np.zeros((3, 2))
+
+    from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
+
+    r1 = EvaluationResult(
+        _ex.State(values_r1),
+        {ax_e1_r1: 0, ax_e2_r1: 1},
+        {},
+        axis_sizes={ax_e1_r1: 2, ax_e2_r1: 3},
+        factorized_weights={ax_e1_r1: np.full(2, 0.5), ax_e2_r1: np.full(3, 1 / 3)},
+    )
+    r2 = EvaluationResult(
+        _ex.State(values_r2),
+        {ax_e2_r2: 0, ax_e1_r2: 1},
+        {},
+        axis_sizes={ax_e2_r2: 3, ax_e1_r2: 2},
+        factorized_weights={ax_e2_r2: np.full(3, 1 / 3), ax_e1_r2: np.full(2, 0.5)},
+    )
+    # ens1 is at dim 0 in r1 but dim 1 in r2.
+    with pytest.raises(ValueError, match="dim 0 in r1 but dim 1 in r2"):
+        _merge_results(r1, r2, plan, merge_axis_name="ens1")
+
+
+# ---------------------------------------------------------------------------
+# _merge_results_param_extend — additional error paths
+# ---------------------------------------------------------------------------
+
+
+def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
+    """_merge_results_param_extend raises ValueError when r2 lacks the growing PARAMETER axis."""
+    from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
+    from civic_digital_twins.dt_model.model.axis import PARAMETER  # noqa: PLC0415
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=5)
+    plan = ev.build_plan()
+    r1 = handle.result
+
+    # Build r2 with the ENSEMBLE axis at the same position as r1 but WITHOUT the speed PARAMETER axis.
+    # r1 has PARAMETER(speed) at dim 0, ENSEMBLE at dim 1 → r2 needs ENSEMBLE at dim 1 too.
+    ax_fake_param = Axis("speed2_fake", PARAMETER)
+    ax_ens = Axis("_ensemble", ENSEMBLE)
+    values: dict = {}
+    for idx in plan.nodes_of_interest:
+        values[idx.node] = np.zeros((2, 5))
+    r2 = EvaluationResult(
+        _ex.State(values),
+        {ax_fake_param: 0, ax_ens: 1},  # ENSEMBLE at dim 1, matching r1
+        {},
+        axis_sizes={ax_fake_param: 2, ax_ens: 5},
+        factorized_weights={ax_fake_param: np.full(2, 0.5), ax_ens: np.full(5, 0.2)},
+    )
+    # r2 has no PARAMETER axis named "speed" → raises
+    with pytest.raises(ValueError, match="no PARAMETER axis named"):
+        _merge_results_param_extend(r1, r2, plan, speed)
+
+
+def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
+    """_merge_results_param_extend raises ValueError when ENSEMBLE axis positions differ."""
+    from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
+    from civic_digital_twins.dt_model.model.axis import PARAMETER  # noqa: PLC0415
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=5)
+    plan = ev.build_plan()
+    r1 = handle.result
+    # r1: PARAMETER(speed) at dim 0, ENSEMBLE at dim 1 → ens_pos=1
+
+    # Build r2 with ENSEMBLE at dim 0 (position mismatch vs r1's dim 1).
+    ax_param = Axis("speed", PARAMETER)
+    ax_ens = Axis("_ensemble", ENSEMBLE)
+    values: dict = {}
+    for idx in plan.nodes_of_interest:
+        values[idx.node] = np.zeros((5, 2))  # shape (5_ens, 2_param)
+    r2 = EvaluationResult(
+        _ex.State(values),
+        {ax_ens: 0, ax_param: 1},  # ENSEMBLE at dim 0, PARAMETER at dim 1
+        {},
+        axis_sizes={ax_ens: 5, ax_param: 2},
+        factorized_weights={ax_ens: np.full(5, 0.2), ax_param: np.full(2, 0.5)},
+    )
+    with pytest.raises(ValueError, match="ENSEMBLE axis position mismatch"):
+        _merge_results_param_extend(r1, r2, plan, speed)
+
+
+def test_merge_results_param_extend_fixed_param_layout_differs_raises() -> None:
+    """_merge_results_param_extend raises ValueError when fixed PARAMETER axis layouts differ."""
+    import dataclasses  # noqa: PLC0415
+
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    # Build a model with two parameter indexes: speed and temp.
+    x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
+    speed2 = Index("speed2", 1.0)
+    temp2 = Index("temp2", 10.0)
+
+    class _TwoP(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            speed: Index
+            temp: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index, s: Index, t: Index) -> None:
+            y = Index("y", x.node + s.node + t.node)
+            super().__init__("TP2", inputs=_TwoP.Inputs(x=x, speed=s, temp=t), outputs=_TwoP.Outputs(y=y))
+
+    model2 = _TwoP(x2, speed2, temp2)
+    ev2 = Evaluation(model2)
+    plan2 = ev2.build_plan()
+    ens = DistributionEnsemble(model2, 5, rng=np.random.default_rng(0))
+
+    # r1 has speed2(2) × temp2(2) × ens(5)
+    r1 = ev2.execute_plan(
+        plan2,
+        ens,
+        parameters={speed2: np.array([1.0, 2.0]), temp2: np.array([10.0, 20.0])},
+    )
+    # r2 has speed2(3) × temp2(3) × ens(5) — fixed axis temp2 has different size.
+    r2 = ev2.execute_plan(
+        plan2,
+        ens,
+        parameters={speed2: np.array([3.0, 4.0, 5.0]), temp2: np.array([30.0, 40.0, 50.0])},
+    )
+    with pytest.raises(ValueError, match="fixed PARAMETER axis layouts differ"):
+        _merge_results_param_extend(r1, r2, plan2, speed2)
+
+
+# ---------------------------------------------------------------------------
+# PartitionedEnsemble-backed EvaluationHandle — extend via extra_ensemble
+# ---------------------------------------------------------------------------
+
+
+def _make_pe_handle() -> tuple[Any, Any, Evaluation, EvaluationHandle]:
+    """Build a 2-index model and a PartitionedEnsemble-backed EvaluationHandle."""
+    from civic_digital_twins.dt_model.simulation.ensemble import (  # noqa: PLC0415
+        EnsembleAxisSpec,
+        FrozenEnsemble,
+        PartitionedEnsemble,
+    )
+
+    a = DistributionIndex("a", stats.norm, {"loc": 0.0, "scale": 1.0})
+    b = DistributionIndex("b", stats.norm, {"loc": 1.0, "scale": 0.5})
+
+    class _ABModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            a: Index
+            b: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, _a: Index, _b: Index) -> None:
+            y = Index("y", _a.node + _b.node)
+            super().__init__("ABModel", inputs=_ABModel.Inputs(a=_a, b=_b), outputs=_ABModel.Outputs(y=y))
+
+    model = _ABModel(a, b)
+    scenario = Scenario(model)
+    ev = Evaluation(scenario)
+    plan = ev.build_plan()
+
+    pe = PartitionedEnsemble(
+        scenario,
+        axes=[EnsembleAxisSpec("unc_a", indexes=[a], size=3)],
+        default_axis=EnsembleAxisSpec("unc_b", indexes=[], size=4),
+        rng=np.random.default_rng(0),
+    )
+    assignments = dict(pe.assignments())
+    multi_frozen = FrozenEnsemble(
+        pe.ensemble_axes,
+        pe.ensemble_weights,
+        {a: assignments[a], b: assignments[b]},
+    )
+    result = ev.execute_plan(plan, multi_frozen)
+
+    handle = EvaluationHandle(
+        evaluation=ev,
+        plan=plan,
+        result=result,
+        rng=np.random.default_rng(42),
+        parameters={},
+        ensemble=multi_frozen,
+        ensemble_recipe=pe,
+        functions=None,
+        backend=_executor.NumpyBackend,
+    )
+    return a, b, ev, handle
+
+
+def test_extend_extra_ensemble_grows_named_axis() -> None:
+    """extend(extra_ensemble=) grows the named axis and updates the result shape."""
+    a, b, ev, handle = _make_pe_handle()
+    model = ev._scenario.model
+    # Initial shape: (3, 4) for axes unc_a × unc_b
+    assert handle.result[model.outputs.y].shape == (3, 4)
+
+    handle.extend(extra_ensemble={"unc_a": 2})
+    # unc_a grows from 3 → 5; unc_b stays at 4.
+    assert handle.result[model.outputs.y].shape == (5, 4)
+
+
+def test_extend_extra_ensemble_updates_frozen_ensemble() -> None:
+    """extend(extra_ensemble=) updates the stored frozen ensemble for unc_a axis."""
+    a, b, ev, handle = _make_pe_handle()
+    assert handle._ensemble is not None
+    initial_size = handle._ensemble.ensemble_weights[0].size
+    assert initial_size == 3
+
+    handle.extend(extra_ensemble={"unc_a": 2})
+    # unc_a weights should now have size 5.
+    assert handle._ensemble is not None
+    new_size = handle._ensemble.ensemble_weights[0].size
+    assert new_size == 5

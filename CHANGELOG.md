@@ -78,19 +78,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EvaluationHandle` — builds a plan, runs the first batch, and returns a
   handle for checkpoint-style ensemble extension without discarding prior
   results (closing #168).
-- `EvaluationHandle` in `simulation/handle.py` — incremental handle;
-  `extend(n)` draws *n* additional scenarios from `DistributionEnsemble`
-  using a shared `rng`, executes the plan, and merges via `_merge_results`.
-  Two calls with the same seed are guaranteed to produce the same sequence as
-  one call of the combined size.
+- `EvaluationHandle` in `simulation/handle.py` — incremental handle.
+  `extend(ensemble_size=N)` draws *N* new Monte Carlo samples via the stored
+  `BatchDrawable` recipe, executes the plan, and merges via `_merge_results`.
+  `extend(extra_ensemble={"axis": N})` extends a named ENSEMBLE axis of a
+  multi-axis recipe (e.g. `PartitionedEnsemble`) by *N* samples
+  (closing #175).  `extend(extra_parameters={idx: vals})` re-runs the stored
+  frozen ensemble at new parameter values and merges along the PARAMETER axis
+  (closing #174).  All three forms can be combined in one call.  Two calls
+  from the same seed reproduce the same sequence as one call of the combined
+  size.
+- `FrozenEnsemble` — public class in `simulation/ensemble.py` holding
+  pre-drawn sample arrays for one or more ENSEMBLE axes.  Produced by
+  `BatchDrawable.draw_batch`; held by `EvaluationHandle` as the accumulated
+  sample store.  Supports multi-axis ensembles via `concat_along` and
+  `with_replaced_axis`.
+- `BatchDrawable` — `@runtime_checkable` protocol in `simulation/ensemble.py`;
+  `draw_batch(size, rng, *, axis=None) → FrozenEnsemble` implemented by
+  `DistributionEnsemble`, `CrossProductEnsemble`, and `PartitionedEnsemble`
+  (closing #199).  Decouples `EvaluationHandle` from any concrete ensemble
+  type: any `BatchDrawable` recipe can serve as the extension sampler.
 - `AsyncEvaluationHandle(EvaluationHandle)` in `simulation/handle.py` —
   non-blocking variant backed by `concurrent.futures.Future`; exposes
   `poll() → (bool, EvaluationResult | None)` and `get() → EvaluationResult`;
   `extend()` delegates to the base class once the future resolves
-  (closing #169). `AsyncEvaluationHandle.from_evaluation(evaluation, initial_ensemble_size, ..., pool=)`
-  — submits the initial `execute_plan` call to a `concurrent.futures.Executor`
-  (defaults to a lazily-created module-level `ThreadPoolExecutor`) and returns
-  an `AsyncEvaluationHandle` immediately.
+  (closing #169).  `AsyncEvaluationHandle.from_evaluation(evaluation,
+  initial_ensemble_size, ..., pool=)` — submits the initial `execute_plan`
+  call to a `concurrent.futures.Executor` (defaults to a lazily-created
+  module-level `ThreadPoolExecutor`) and returns an `AsyncEvaluationHandle`
+  immediately.
 - `CategoricalIndex` selector can be passed as a `parameters=` axis to
   `Evaluation.evaluate()` to sweep over variant outcomes deterministically
   (no ensemble required), including in combination with numeric PARAMETER axes
@@ -126,8 +142,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
   for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
 - `parameter_axes=` kwarg on `Evaluation.evaluate()`, `execute_plan()`,
-  `EvaluationHandle.from_evaluation()`, and `AsyncEvaluationHandle.from_evaluation()` — declares named PARAMETER
-  axes for correlated parameter sweeps (closing #154).  Maps axis name to a 1-D
+  `EvaluationHandle.from_evaluation()`, and
+  `AsyncEvaluationHandle.from_evaluation()` — declares named PARAMETER axes
+  for correlated parameter sweeps (closing #154).  Maps axis name to a 1-D
   numpy array.  Callable values in `parameters=` are now supported: each
   callable receives axis arrays by name from its signature and computes the
   substitution value for the corresponding model index (e.g.
@@ -213,7 +230,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
   `Scenario(model)` instead.  These constructors now auto-wrap the model in a
   base `Scenario` and emit `DeprecationWarning`.  The canonical chain is
-  `Model → Scenario → {DistributionEnsemble | CrossProductEnsemble | PartitionedEnsemble} + Evaluation`.
+  `Model → Scenario → {DistributionEnsemble | CrossProductEnsemble |
+  PartitionedEnsemble} + Evaluation`.
 - Mutable index setters `ConstIndex.v`, `ConstTimeseriesIndex.values`,
   `TimeseriesIndex.values`, and `DistributionIndex.params` — vary index values
   via `Scenario(model, overrides={idx: new_value})` instead.  All setters emit
@@ -226,6 +244,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graph.AxisOp` — abstract base class for the removed axis management nodes.
 - `graph.NpAxis` — numpy axis type alias; was an implementation detail of the
   former integer-axis interface.
+
+### Fixed
+
+- `_merge_results` — size-proportional weight mixing now correctly preserves
+  non-uniform weight schemes (e.g. `CrossProductEnsemble`).  Previously the
+  merged weights were recomputed as uniform over the combined ensemble,
+  discarding the original per-scenario weights (closing #176).
 
 ## [0.9.0] - 2026-05-02
 

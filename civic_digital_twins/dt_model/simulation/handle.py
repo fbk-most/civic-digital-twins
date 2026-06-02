@@ -481,7 +481,7 @@ class EvaluationHandle:
         rng: np.random.Generator | None = None,
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
-    ) -> "EvaluationHandle":
+    ) -> EvaluationHandle:
         """Build a plan, run an initial ensemble, and return an incremental handle.
 
         The returned :class:`EvaluationHandle` holds the first result and can be
@@ -827,7 +827,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
         functions: dict[str, executor.Functor] | None = None,
         backend: type[executor.NumpyBackend] = executor.NumpyBackend,
         pool: concurrent.futures.Executor | None = None,
-    ) -> "AsyncEvaluationHandle":
+    ) -> AsyncEvaluationHandle:
         """Submit an evaluation to a background thread and return immediately.
 
         Mirrors :meth:`EvaluationHandle.from_evaluation` but runs the initial
@@ -1002,6 +1002,4 @@ class AsyncEvaluationHandle(EvaluationHandle):
                 "AsyncEvaluationHandle: cannot extend before the evaluation completes. Call .get() or .poll() first."
             )
         self._resolve()  # populate self._result before super().extend() reads it
-        return super().extend(
-            ensemble_size, extra_ensemble=extra_ensemble, extra_parameters=extra_parameters
-        )
+        return super().extend(ensemble_size, extra_ensemble=extra_ensemble, extra_parameters=extra_parameters)

@@ -2,6 +2,8 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -177,7 +179,7 @@ class FrozenEnsemble:
         """Return the cached batched samples for every abstract index."""
         return self._cached_assignments
 
-    def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> "FrozenEnsemble":
+    def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
         """Not supported — :class:`FrozenEnsemble` is immutable.
 
         Use the live ensemble recipe (:class:`DistributionEnsemble`,
@@ -190,7 +192,7 @@ class FrozenEnsemble:
             "Use the live ensemble recipe to draw more samples."
         )
 
-    def concat(self, other: "FrozenEnsemble") -> "FrozenEnsemble":
+    def concat(self, other: FrozenEnsemble) -> FrozenEnsemble:
         """Return a new single-axis frozen ensemble concatenating *other*'s samples.
 
         Both *self* and *other* must be single-axis.  Use :meth:`concat_along`
@@ -214,7 +216,7 @@ class FrozenEnsemble:
             merged_assignments,
         )
 
-    def concat_along(self, axis_name: str, other: "FrozenEnsemble") -> "FrozenEnsemble":
+    def concat_along(self, axis_name: str, other: FrozenEnsemble) -> FrozenEnsemble:
         """Extend the named axis by appending *other* (single-axis) into this ensemble.
 
         Indexes assigned to *axis_name* (shape > 1 at that dimension) are
@@ -249,7 +251,7 @@ class FrozenEnsemble:
                 merged_assignments[gidx] = arr
         return FrozenEnsemble(new_axes, new_weights, merged_assignments)
 
-    def with_replaced_axis(self, axis_name: str, other: "FrozenEnsemble") -> "FrozenEnsemble":
+    def with_replaced_axis(self, axis_name: str, other: FrozenEnsemble) -> FrozenEnsemble:
         """Return a copy with the named axis replaced by *other*'s samples.
 
         Used when extending one axis of a multi-axis ensemble: *other*
@@ -296,9 +298,7 @@ class BatchDrawable(Protocol):
     call returns and must not accumulate internal state across calls.
     """
 
-    def draw_batch(
-        self, size: int, rng: np.random.Generator, *, axis: str | None = None
-    ) -> FrozenEnsemble:
+    def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
         """Draw *size* new samples and return them as a :class:`FrozenEnsemble`.
 
         Parameters
@@ -481,9 +481,7 @@ class PartitionedEnsemble:
 
         return result
 
-    def draw_batch(
-        self, size: int, rng: np.random.Generator, *, axis: str | None = None
-    ) -> FrozenEnsemble:
+    def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
         """Draw *size* new samples for the named ENSEMBLE axis.
 
         Returns a **single-axis** :class:`FrozenEnsemble` carrying fresh samples
@@ -693,9 +691,7 @@ class DistributionEnsemble:
                 result[idx] = np.asarray(raw)  # shape (S,)
         return result
 
-    def draw_batch(
-        self, size: int, rng: np.random.Generator, *, axis: str | None = None
-    ) -> FrozenEnsemble:
+    def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
         """Draw *size* fresh samples and return them as a :class:`FrozenEnsemble`.
 
         The caller (e.g. :class:`~simulation.handle.EvaluationHandle`) owns *rng*
@@ -726,9 +722,7 @@ class DistributionEnsemble:
             If *axis* is not ``None``.
         """
         if axis is not None:
-            raise ValueError(
-                f"DistributionEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}."
-            )
+            raise ValueError(f"DistributionEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}.")
         new_dist = DistributionEnsemble(self._scenario, size, rng=rng, exclude=self._exclude)
         return FrozenEnsemble(
             (new_dist.ensemble_axes[0],),
@@ -1092,9 +1086,7 @@ class CrossProductEnsemble:
         """Return the total number of scenarios."""
         return self.size
 
-    def draw_batch(
-        self, size: int, rng: np.random.Generator, *, axis: str | None = None
-    ) -> FrozenEnsemble:
+    def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
         """Draw *size* additional samples per categorical combination.
 
         Reconstructs the cross-product with the same scenario, restrictions,
@@ -1117,9 +1109,7 @@ class CrossProductEnsemble:
             If *axis* is not ``None``.
         """
         if axis is not None:
-            raise ValueError(
-                f"CrossProductEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}."
-            )
+            raise ValueError(f"CrossProductEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}.")
         new_cpe = CrossProductEnsemble(
             self._scenario,
             restrictions=self._init_restrictions,
