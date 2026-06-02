@@ -12,8 +12,8 @@ background thread and the handle exposes :meth:`~AsyncEvaluationHandle.poll` and
 Once the future resolves, :meth:`~AsyncEvaluationHandle.extend` works identically
 to the synchronous base class.
 
-Obtain instances via :meth:`EvaluationHandle.from_evaluation` (synchronous) or
-:meth:`AsyncEvaluationHandle.from_evaluation` (asynchronous) rather than constructing
+Obtain instances via :meth:`EvaluationHandle.evaluate` (synchronous) or
+:meth:`AsyncEvaluationHandle.evaluate` (asynchronous) rather than constructing
 these classes directly.
 """
 
@@ -31,6 +31,7 @@ from ..model.index import GenericIndex
 from .ensemble import BatchDrawable, DistributionEnsemble, FrozenEnsemble
 from .evaluation import Evaluation, EvaluationResult
 from .plan import EvaluationPlan
+from .scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Module-level thread-pool executor (shared across all async evaluations)
@@ -349,10 +350,15 @@ def _merge_results_param_extend(
 
     # Concatenate the growing parameter's value array.
     merged_parameter_arrays: dict[GenericIndex, np.ndarray] = dict(r1._parameter_arrays)
-    if param_idx in r1._parameter_arrays and param_idx in r2._parameter_arrays:
-        merged_parameter_arrays[param_idx] = np.concatenate(
-            [r1._parameter_arrays[param_idx], r2._parameter_arrays[param_idx]]
+    if param_idx not in r1._parameter_arrays or param_idx not in r2._parameter_arrays:  # pragma: no cover
+        raise ValueError(  # pragma: no cover
+            f"_merge_results_param_extend: parameter index {param_name!r} is not tracked in "
+            "parameter_arrays.  PARAMETER axis extension requires indexes supplied via "
+            "parameters=, not parameter_axes=."
         )
+    merged_parameter_arrays[param_idx] = np.concatenate(
+        [r1._parameter_arrays[param_idx], r2._parameter_arrays[param_idx]]
+    )
 
     merged_state = executor.State(merged_values)
     return EvaluationResult(
@@ -363,6 +369,47 @@ def _merge_results_param_extend(
         factorized_weights=merged_factorized_weights,
         named_axis_values=r1._named_axis_values or None,
     )
+
+
+def _frozen_ensemble_from_result(
+    result: EvaluationResult,
+    scenario: Scenario,
+    parameters: dict[GenericIndex, np.ndarray],
+) -> FrozenEnsemble:
+    """Reconstruct a :class:`FrozenEnsemble` from a materialised :class:`EvaluationResult`.
+
+    Extracts the abstract (ensemble-assigned) index values from the result's
+    state dict.  These nodes are singleton on all PARAMETER dimensions and
+    full-sized on the ENSEMBLE dimension(s), so they faithfully replay the
+    original random draws when fed back into :meth:`~evaluation.Evaluation.execute_plan`.
+
+    Used by :meth:`EvaluationHandle._extend_param_axis` when no frozen sample
+    snapshot is available (e.g. on handles produced by
+    :meth:`~simulation.runner.ModelEvaluator.resume`).
+    """
+    ens_entries = sorted(
+        ((ax, pos) for ax, pos in result._axis_layout.items() if ax.role == ENSEMBLE),
+        key=lambda t: t[1],
+    )
+    axes = tuple(ax for ax, _ in ens_entries)
+    weights = tuple(result._factorized_weights[ax] for ax in axes)
+    n_ens_dims = len(axes)
+
+    excluded_ids = frozenset(id(idx) for idx in parameters)
+    assignments: dict[GenericIndex, np.ndarray] = {}
+    for idx in scenario.abstract_indexes():
+        if id(idx) in excluded_ids or idx.node not in result._state.values:
+            continue
+        val = np.asarray(result._state.values[idx.node])
+        # Drop leading PARAMETER dimensions (all size 1 for ensemble-only nodes)
+        # until only the ENSEMBLE dimension(s) remain.  In practice the numpy
+        # executor stores abstract-index nodes at their original assignment shape
+        # so this loop is never entered; it is a safety net for alternative
+        # executor implementations.
+        while val.ndim > n_ens_dims:
+            val = val[0]  # pragma: no cover
+        assignments[idx] = val
+    return FrozenEnsemble(axes, weights, assignments)
 
 
 class EvaluationHandle:
@@ -386,7 +433,7 @@ class EvaluationHandle:
         :class:`~simulation.ensemble.CrossProductEnsemble`, and
         :class:`~simulation.ensemble.PartitionedEnsemble` all do.
 
-    Obtain an instance via :meth:`EvaluationHandle.from_evaluation` rather than
+    Obtain an instance via :meth:`EvaluationHandle.evaluate` rather than
     constructing this class directly.
 
     Parameters
@@ -469,12 +516,13 @@ class EvaluationHandle:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_evaluation(
+    def evaluate(
         cls,
         evaluation: Evaluation,
         initial_ensemble_size: int,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
+        ensemble_recipe: BatchDrawable | None = None,
         parameters: dict[GenericIndex, Any] | None = None,
         parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
@@ -497,9 +545,23 @@ class EvaluationHandle:
         evaluation:
             The :class:`~simulation.evaluation.Evaluation` to run.
         initial_ensemble_size:
-            Number of scenarios in the first evaluation batch.
+            Number of scenarios in the first evaluation batch.  Passed to
+            :meth:`~simulation.ensemble.BatchDrawable.draw_batch` as *size*.
+            For :class:`~simulation.ensemble.DistributionEnsemble` this is the
+            total number of Monte Carlo samples; for
+            :class:`~simulation.ensemble.CrossProductEnsemble` it is the number
+            of samples per categorical combination.
         nodes_of_interest:
             Indexes to evaluate.  Defaults to all indexes in the model.
+        ensemble_recipe:
+            The :class:`~simulation.ensemble.BatchDrawable` ensemble to use for
+            sampling.  When ``None`` (default) a fresh
+            :class:`~simulation.ensemble.DistributionEnsemble` is built
+            automatically from *evaluation*'s scenario.  Supply a
+            :class:`~simulation.ensemble.CrossProductEnsemble` or single-axis
+            :class:`~simulation.ensemble.PartitionedEnsemble` here to use those
+            sampling strategies for both the initial batch and all future
+            :meth:`extend` calls.
         parameters:
             PARAMETER axes for multi-dimensional evaluation.
         parameter_axes:
@@ -524,12 +586,13 @@ class EvaluationHandle:
             rng = np.random.default_rng()
 
         plan = evaluation.build_plan(nodes_of_interest, strategy=strategy)
-        dist_ensemble = DistributionEnsemble(
-            evaluation._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
-        )
+        if ensemble_recipe is None:
+            ensemble_recipe = DistributionEnsemble(
+                evaluation._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
+            )
         # Draw samples once and freeze them so parameter-extension can reuse the
         # same scenarios without advancing the RNG a second time.
-        ensemble = dist_ensemble.draw_batch(initial_ensemble_size, rng)
+        ensemble = ensemble_recipe.draw_batch(initial_ensemble_size, rng)
         result = evaluation.execute_plan(
             plan, ensemble, parameters=parameters, parameter_axes=parameter_axes, functions=functions, backend=backend
         )
@@ -541,7 +604,7 @@ class EvaluationHandle:
             parameters=parameters,
             parameter_axes=parameter_axes,
             ensemble=ensemble,
-            ensemble_recipe=dist_ensemble,
+            ensemble_recipe=ensemble_recipe,
             functions=functions,
             backend=backend,
         )
@@ -563,10 +626,11 @@ class EvaluationHandle:
             :class:`~simulation.ensemble.PartitionedEnsemble`): name of the
             ENSEMBLE axis to grow.  ``None`` for single-axis ensembles.
         """
-        assert self._ensemble_recipe is not None, (
-            "EvaluationHandle._extend_ensemble_axis() requires an ensemble_recipe. "
-            "Obtain the handle via EvaluationHandle.from_evaluation() to enable ensemble extension."
-        )
+        if self._ensemble_recipe is None:
+            raise RuntimeError(
+                "EvaluationHandle._extend_ensemble_axis() requires an ensemble_recipe. "
+                "Obtain the handle via EvaluationHandle.evaluate() to enable ensemble extension."
+            )
         new_batch = self._ensemble_recipe.draw_batch(ensemble_size, self._rng, axis=axis)
         if axis is not None and self._ensemble is not None and len(self._ensemble.ensemble_axes) > 1:
             # Multi-axis: pair fresh samples for the target axis with the existing
@@ -593,10 +657,18 @@ class EvaluationHandle:
     def _extend_param_axis(self, param_idx: GenericIndex, extra_vals: np.ndarray) -> None:
         """Re-run the stored ensemble at *extra_vals* and merge along the PARAMETER axis."""
         assert self._result is not None
-        assert self._ensemble is not None
+        # Use the stored frozen snapshot when available; otherwise reconstruct one
+        # from the materialised result state (e.g. on resumed handles).  Both
+        # paths produce the same abstract-index values because ensemble-only nodes
+        # are singleton on all PARAMETER dimensions and full-sized on ENSEMBLE.
+        ensemble = (
+            self._ensemble
+            if self._ensemble is not None
+            else _frozen_ensemble_from_result(self._result, self._evaluation._scenario, self._parameters)
+        )
         r_extra = self._evaluation.execute_plan(
             self._plan,
-            self._ensemble,
+            ensemble,
             parameters={**self._parameters, param_idx: extra_vals},
             parameter_axes=self._parameter_axes,
             functions=self._functions,
@@ -648,11 +720,22 @@ class EvaluationHandle:
         ``extra_parameters={idx: extra_array, ...}`` re-runs the plan over
         new parameter values using the **same** frozen sample draws and merges
         along each PARAMETER axis.  Every key must already be present in the
-        ``parameters=`` dict passed to
-        :meth:`~simulation.evaluation.Evaluation.evaluate_incremental`.
+        ``parameters=`` dict passed to :meth:`EvaluationHandle.evaluate`.
         Multiple entries are processed one axis at a time::
 
             handle.extend(extra_parameters={x1: np.array([0.9, 1.0])})
+
+        .. note::
+
+            PARAMETER extension requires a single ENSEMBLE axis.  Handles
+            backed by multi-axis :class:`~simulation.ensemble.PartitionedEnsemble`
+            recipes will raise :class:`ValueError` from
+            :func:`_merge_results_param_extend`.
+
+            When no frozen sample snapshot is stored (e.g. on handles produced
+            by :meth:`~simulation.runner.ModelEvaluator.resume`), the abstract
+            index values are reconstructed from the materialised result state
+            so the common-random-numbers guarantee is preserved.
 
         Combined
         --------
@@ -679,7 +762,7 @@ class EvaluationHandle:
             Dict ``{idx: extra_array, ...}`` extending the PARAMETER sweep for
             each *idx*.  Every key must already be present in the
             ``parameters=`` dict passed to
-            :meth:`EvaluationHandle.from_evaluation`.
+            :meth:`EvaluationHandle.evaluate`.
 
         Returns
         -------
@@ -721,11 +804,6 @@ class EvaluationHandle:
                     f"extend(extra_parameters=): {names} not in the original parameters= dict. "
                     "Only existing parameter axes can be extended."
                 )
-            if self._ensemble is None:
-                raise RuntimeError(
-                    "EvaluationHandle has no stored ensemble; extra_parameters extension is unavailable. "
-                    "Obtain the handle via evaluate_incremental() to enable this feature."
-                )
 
         if ensemble_size > 0:
             self._extend_ensemble_axis(ensemble_size, axis=None)
@@ -751,7 +829,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
     :class:`~simulation.ensemble.BatchDrawable` contract that the
     *ensemble_recipe* must satisfy.
 
-    Obtain an instance via :meth:`AsyncEvaluationHandle.from_evaluation` rather than
+    Obtain an instance via :meth:`AsyncEvaluationHandle.evaluate` rather than
     constructing this class directly.
 
     Parameters
@@ -814,12 +892,13 @@ class AsyncEvaluationHandle(EvaluationHandle):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_evaluation(
+    def evaluate(
         cls,
         evaluation: Evaluation,
         initial_ensemble_size: int,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
+        ensemble_recipe: BatchDrawable | None = None,
         parameters: dict[GenericIndex, Any] | None = None,
         parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
@@ -830,7 +909,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
     ) -> AsyncEvaluationHandle:
         """Submit an evaluation to a background thread and return immediately.
 
-        Mirrors :meth:`EvaluationHandle.from_evaluation` but runs the initial
+        Mirrors :meth:`EvaluationHandle.evaluate` but runs the initial
         :meth:`~simulation.evaluation.Evaluation.execute_plan` call on a thread
         from *pool* (or the module-level default
         :class:`~concurrent.futures.ThreadPoolExecutor`) so that the caller is
@@ -848,6 +927,9 @@ class AsyncEvaluationHandle(EvaluationHandle):
             Number of scenarios in the first evaluation batch.
         nodes_of_interest:
             Indexes to evaluate.  Defaults to all indexes in the model.
+        ensemble_recipe:
+            Optional :class:`~simulation.ensemble.BatchDrawable` recipe; see
+            :meth:`EvaluationHandle.evaluate` for details.
         parameters:
             PARAMETER axes for multi-dimensional evaluation.
         parameter_axes:
@@ -877,12 +959,13 @@ class AsyncEvaluationHandle(EvaluationHandle):
             rng = np.random.default_rng()
 
         plan = evaluation.build_plan(nodes_of_interest, strategy=strategy)
-        dist_ensemble = DistributionEnsemble(
-            evaluation._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
-        )
+        if ensemble_recipe is None:
+            ensemble_recipe = DistributionEnsemble(
+                evaluation._scenario, initial_ensemble_size, rng=rng, exclude=frozenset(parameters)
+            )
         # Draw samples in the main thread before submitting so the frozen batch
         # can be shared safely with the background thread.
-        ensemble = dist_ensemble.draw_batch(initial_ensemble_size, rng)
+        ensemble = ensemble_recipe.draw_batch(initial_ensemble_size, rng)
         _exec = pool or _get_default_executor()
         future: concurrent.futures.Future[EvaluationResult] = _exec.submit(
             evaluation.execute_plan,
@@ -901,7 +984,7 @@ class AsyncEvaluationHandle(EvaluationHandle):
             parameters=parameters,
             parameter_axes=parameter_axes,
             ensemble=ensemble,
-            ensemble_recipe=dist_ensemble,
+            ensemble_recipe=ensemble_recipe,
             functions=functions,
             backend=backend,
         )

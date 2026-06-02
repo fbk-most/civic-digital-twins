@@ -98,7 +98,7 @@ class EvaluationConfig:
     ensemble_size : int
         Total number of Monte Carlo samples drawn in one blocking
         :meth:`ModelEvaluator.evaluate` call.  Equivalent to
-        :meth:`~simulation.handle.EvaluationHandle.from_evaluation`'s
+        :meth:`~simulation.handle.EvaluationHandle.evaluate`'s
         ``initial_ensemble_size`` parameter.  Also used as the increment
         size when :meth:`ModelEvaluator.resume` extends a saved evaluation.
     """
@@ -621,7 +621,7 @@ class ModelRunHandle(Generic[OutputT]):
 
     The future is obtained from either
     :attr:`~simulation.handle.AsyncEvaluationHandle.future` (Bologna, tier 3
-    via :meth:`AsyncEvaluationHandle.from_evaluation`) or
+    via :meth:`AsyncEvaluationHandle.evaluate`) or
     :func:`~dt_model.simulation.handle._get_default_executor` with
     :meth:`~simulation.evaluation.Evaluation.evaluate` as the submitted
     callable (Molveno, thread-pool submit of the engine call).
@@ -952,7 +952,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         """Submit an engine-level async evaluation and return a handle immediately.
 
         Concrete tier-3 default.  Calls
-        :meth:`AsyncEvaluationHandle.from_evaluation` with
+        :meth:`AsyncEvaluationHandle.evaluate` with
         :attr:`eval_functions` and :attr:`eval_backend`, then wraps the
         result in a :class:`ModelRunHandle` whose post-processor is
         :meth:`post_process`.
@@ -972,7 +972,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         ModelRunHandle[OutputT]
             Handle whose :meth:`~ModelRunHandle.get` returns the output.
         """
-        async_handle = AsyncEvaluationHandle.from_evaluation(
+        async_handle = AsyncEvaluationHandle.evaluate(
             Evaluation(scenario),
             config.ensemble_size,
             functions=self.eval_functions,
@@ -1124,6 +1124,16 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             :meth:`~simulation.handle.EvaluationHandle.extend` to draw
             additional Monte Carlo samples.
 
+        .. note::
+
+            The resumed handle rebuilds its ensemble recipe from
+            :class:`~simulation.ensemble.DistributionEnsemble` using the
+            public *scenario* argument, but does **not** restore the frozen
+            sample snapshot (``_ensemble``).  When
+            ``extend(extra_parameters=…)`` is called, the abstract index
+            values are reconstructed from the saved result state so that the
+            common-random-numbers guarantee is preserved.
+
         Raises
         ------
         IncompatibleResultError
@@ -1142,7 +1152,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         # Rebuild the sampler recipe from the (public) scenario so the resumed
         # handle can draw further samples.  draw_batch() takes the per-call size,
         # so the recipe's nominal size is immaterial; exclude the parameter
-        # indexes exactly as EvaluationHandle.from_evaluation() does.
+        # indexes exactly as EvaluationHandle.evaluate() does.
         ensemble_recipe = DistributionEnsemble(scenario, config.ensemble_size, exclude=frozenset(state.parameters))
         return EvaluationHandle(
             evaluation=evaluation,

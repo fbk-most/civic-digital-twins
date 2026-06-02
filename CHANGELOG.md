@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   region, per-branch guarded regions (evaluated only for matching scenarios via
   `np.take` slice + `np.put_along_axis` scatter-back), and a merge region
   (closing #136).
-- `EvaluationHandle.from_evaluation(evaluation, initial_ensemble_size, ...)` →
+- `EvaluationHandle.evaluate(evaluation, initial_ensemble_size, ...)` →
   `EvaluationHandle` — builds a plan, runs the first batch, and returns a
   handle for checkpoint-style ensemble extension without discarding prior
   results (closing #168).
@@ -102,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-blocking variant backed by `concurrent.futures.Future`; exposes
   `poll() → (bool, EvaluationResult | None)` and `get() → EvaluationResult`;
   `extend()` delegates to the base class once the future resolves
-  (closing #169).  `AsyncEvaluationHandle.from_evaluation(evaluation,
+  (closing #169).  `AsyncEvaluationHandle.evaluate(evaluation,
   initial_ensemble_size, ..., pool=)` — submits the initial `execute_plan`
   call to a `concurrent.futures.Executor` (defaults to a lazily-created
   module-level `ThreadPoolExecutor`) and returns an `AsyncEvaluationHandle`
@@ -142,8 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
   for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
 - `parameter_axes=` kwarg on `Evaluation.evaluate()`, `execute_plan()`,
-  `EvaluationHandle.from_evaluation()`, and
-  `AsyncEvaluationHandle.from_evaluation()` — declares named PARAMETER axes
+  `EvaluationHandle.evaluate()`, and
+  `AsyncEvaluationHandle.evaluate()` — declares named PARAMETER axes
   for correlated parameter sweeps (closing #154).  Maps axis name to a 1-D
   numpy array.  Callable values in `parameters=` are now supported: each
   callable receives axis arrays by name from its signature and computes the

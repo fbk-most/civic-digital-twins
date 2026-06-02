@@ -745,7 +745,7 @@ def test_evaluate_incremental_named_axis_values_preserved_after_extend():
     ev = Evaluation(Scenario(model))
 
     base_arr = np.array([1.0, 2.0, 3.0])
-    handle = EvaluationHandle.from_evaluation(
+    handle = EvaluationHandle.evaluate(
         ev,
         initial_ensemble_size=10,
         parameter_axes={"base": base_arr},
