@@ -559,3 +559,76 @@ def test_scenario_override_index_in_model_does_not_raise():
     # Both a and b are in the model — no error expected.
     scenario = Scenario(model, overrides={a: 10.0, b: 20.0})
     assert scenario.overrides == {a: 10.0, b: 20.0}
+
+
+# ---------------------------------------------------------------------------
+# CategoricalIndex: list[str] override
+# ---------------------------------------------------------------------------
+
+
+def test_categorical_list_override_restricts_and_renormalises():
+    """list[str] override restricts to subset and renormalises original probabilities."""
+    # Model: good=0.3, unsettled=0.5, bad=0.2
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["good", "unsettled"]})  # type: ignore[dict-item]
+    # Renormalised: total=0.8, good=0.375, unsettled=0.625
+    outcomes = scenario.effective_outcomes(cat)
+    assert outcomes == pytest.approx({"good": 0.375, "unsettled": 0.625})
+
+
+def test_categorical_list_override_stored_as_dict():
+    """list[str] override is stored internally as a dict[str, float]."""
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["good", "unsettled"]})  # type: ignore[dict-item]
+    stored = scenario.overrides[cat]
+    assert isinstance(stored, dict)
+    assert set(stored.keys()) == {"good", "unsettled"}
+
+
+def test_categorical_list_override_single_value():
+    """list[str] with one element gives weight 1.0 for that element."""
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["bad"]})  # type: ignore[dict-item]
+    outcomes = scenario.effective_outcomes(cat)
+    assert outcomes == pytest.approx({"bad": 1.0})
+
+
+def test_categorical_list_override_empty_raises():
+    """Empty list[str] override raises ValueError."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="must not be empty"):
+        Scenario(model, overrides={cat: []})  # type: ignore[dict-item]
+
+
+def test_categorical_list_override_unknown_outcome_raises():
+    """list[str] with unknown outcome raises ValueError."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="outside its support"):
+        Scenario(model, overrides={cat: ["good", "unknown"]})  # type: ignore[dict-item]
+
+
+def test_categorical_list_override_in_cross_product_ensemble():
+    """CrossProductEnsemble respects list[str] override from Scenario."""
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["good", "unsettled"]})  # type: ignore[dict-item]
+    ens = CrossProductEnsemble(scenario)
+    assert ens.size == 2
+    assigned = set(ens.assignments()[cat].tolist())
+    assert assigned == {"good", "unsettled"}
+    weights = ens.ensemble_weights[0]
+    weight_by_value = {str(v): float(w) for v, w in zip(ens.assignments()[cat], weights)}
+    assert weight_by_value == pytest.approx({"good": 0.375, "unsettled": 0.625})
+
+
+def test_cross_product_ensemble_restrictions_deprecated():
+    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    model = _make_model(cat)
+    with pytest.warns(DeprecationWarning, match="restrictions="):
+        CrossProductEnsemble(model, restrictions={cat: ["good"]})

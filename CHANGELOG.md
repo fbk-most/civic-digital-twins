@@ -201,6 +201,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iterates `model.indexes` to inject concrete values; absent entries caused a
   cryptic `PlaceholderValueNotProvided` deep inside the executor — now
   surfaced early with a clear error message (closing #195).
+- `Scenario` accepts `list[str]` overrides for `CategoricalIndex` (closes #187).  Passing a
+  list restricts sampling to that subset and renormalises the model's original probabilities
+  over the listed outcomes at construction time (validated: unknown outcomes or an empty list
+  raise `ValueError`).  The renormalised distribution is stored internally as `dict[str, float]`
+  so all existing downstream code works unchanged.  `DomainValue` now includes `list[str]`.
 
 ### Changed
 
@@ -227,6 +232,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
   emits a `DeprecationWarning` on construction and will be removed in a future
   release (closing #162).
+- `CrossProductEnsemble.restrictions=` — use `Scenario(model, overrides={idx: [...]})` instead.
+  Emits `DeprecationWarning` at construction time.
 - `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
   `Scenario(model)` instead.  These constructors now auto-wrap the model in a
   base `Scenario` and emit `DeprecationWarning`.  The canonical chain is

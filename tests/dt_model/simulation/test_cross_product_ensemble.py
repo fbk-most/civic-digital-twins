@@ -672,3 +672,16 @@ def test_cat_samples_no_rng_monte_carlo():
     # rng=None means _cat_samples uses np.random.choice
     ens = CrossProductEnsemble(model, max_categorical_size=2, rng=None)
     assert ens.assignments()[season].shape == (2,)
+
+
+# ---------------------------------------------------------------------------
+# Deprecation warnings
+# ---------------------------------------------------------------------------
+
+
+def test_cpe_restrictions_deprecated():
+    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    model = _simple_model(season)
+    with pytest.warns(DeprecationWarning, match="restrictions="):
+        CrossProductEnsemble(model, restrictions={season: ["summer"]})

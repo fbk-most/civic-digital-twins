@@ -902,6 +902,10 @@ class CrossProductEnsemble:
     scenario_or_model:
         Model whose abstract indexes are enumerated / sampled.
     restrictions:
+        .. deprecated::
+            Use a ``list[str]`` override in :class:`~simulation.scenario.Scenario` instead:
+            ``Scenario(model, overrides={idx: ["a", "b"]})`` restricts to that subset and
+            renormalises the original probabilities automatically.
         Maps a categorical index to the subset of support values to use
         instead of its full support.  Omitted or absent entries use the full
         support.
@@ -957,6 +961,15 @@ class CrossProductEnsemble:
             )
         if n_samples_per_combo < 1:
             raise ValueError(f"n_samples_per_combo must be >= 1; got {n_samples_per_combo}.")
+        if restrictions is not None:
+            warnings.warn(
+                "CrossProductEnsemble.restrictions= is deprecated and will be removed in a future version. "
+                "Use a list[str] override in Scenario instead: "
+                "Scenario(model, overrides={idx: [...]}) restricts to that subset and renormalises "
+                "the original probabilities automatically.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if restrictions is None:
             restrictions = {}
         excluded_ids = {id(idx) for idx in (exclude or [])}

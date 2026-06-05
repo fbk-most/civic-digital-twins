@@ -186,12 +186,13 @@ uses `.constraints`.  For a production model with multiple sub-models see
 ```python
 from civic_digital_twins.dt_model import CrossProductEnsemble, Scenario
 
-scenario: dict[CategoricalIndex, list[str]] = {
+scenario_overrides = {
     CV_season:  ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }
 
-ensemble = CrossProductEnsemble(Scenario(model), restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
+scenario_obj = Scenario(model, overrides=scenario_overrides)
+ensemble = CrossProductEnsemble(scenario_obj, max_categorical_size=10, exclude=model.pvs)
 # 2 × 3 = 6 scenarios (all CV combinations enumerated)
 ```
 
@@ -202,10 +203,11 @@ materialises the results into a single batched ENSEMBLE axis — here
 includes one sample of every distribution-backed non-excluded abstract index
 (here: `I_C_beach`).
 
-The `restrictions` parameter projects each categorical to a subset of its
-support.  The `exclude` parameter marks PARAMETER-axis indexes (presence
-variables) so they are not included in the ensemble cross-product.
-`max_categorical_size` controls random sampling when a categorical's support
+Passing a `list[str]` override in `Scenario` restricts each categorical to the
+listed subset and renormalises the original model probabilities over those
+outcomes automatically.  The `exclude` parameter marks PARAMETER-axis indexes
+(presence variables) so they are not included in the ensemble cross-product.
+`max_categorical_size` controls random sampling when a categorical’s support
 exceeds the size threshold; for the small finite CVs above every value is
 enumerated and `max_categorical_size` is unused.
 
@@ -220,7 +222,7 @@ from civic_digital_twins.dt_model import Evaluation, Scenario
 
 visitors_axis = np.linspace(0, 20_000, 201)
 
-result = Evaluation(Scenario(model)).evaluate(
+result = Evaluation(scenario_obj).evaluate(
     ensemble=ensemble,
     parameters={PV_visitors: visitors_axis},
 )

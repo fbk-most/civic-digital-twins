@@ -54,18 +54,20 @@ class Scenario:
 
     .. code-block:: text
 
-        Index type                   │ float  str  ndarray  Distribution  dict[str,float]
-        ─────────────────────────────┼───────────────────────────────────────────────────
-        Index                        │  ✓     ✗      ✗         ✗              ✗
-        TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗
-        ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗
-        DistributionIndex            │  ✗     ✗      ✗         ✓              ✗
-        ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗
-        CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**
-        ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗
+        Index type                   │ float  str  ndarray  Distribution  dict[str,float]  list[str]
+        ─────────────────────────────┼──────────────────────────────────────────────────────────────
+        Index                        │  ✓     ✗      ✗         ✗              ✗               ✗
+        TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗               ✗
+        ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗               ✗
+        DistributionIndex            │  ✗     ✗      ✗         ✓              ✗               ✗
+        ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗               ✗
+        CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**             ✓***
+        ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗               ✗
 
         * str must be in idx.support
         ** dict keys must be a non-empty subset of idx.support, positive probs summing to 1.0
+        *** list must be a non-empty subset of idx.support; original model probabilities are
+            renormalised over the listed outcomes and stored as dict[str, float]
 
         Method behaviour for accepted overrides:
 
@@ -85,6 +87,7 @@ class Scenario:
         CategoricalIndex, no override   │ present           —              —                       idx.outcomes
         CategoricalIndex, str           │ absent            asarray(str)   —                       {str: 1.0}
         CategoricalIndex, dict          │ present           —              —                       override dict
+        CategoricalIndex, list          │ present           —              —                       renormalized dict
         CondCategorical, no override    │ present           —              —                       None
         CondCategorical, str            │ absent            asarray(str)   —                       {str: 1.0}
 
@@ -165,6 +168,19 @@ class Scenario:
                         raise ValueError(
                             f"Override {val!r} is not in the support of CategoricalIndex {idx.name!r}: {idx.support!r}."
                         )
+                elif isinstance(val, list):
+                    # list[str]: restrict to subset and renormalise original model probabilities.
+                    if not val:
+                        raise ValueError(f"Override list for CategoricalIndex {idx.name!r} must not be empty.")
+                    unknown = [v for v in val if v not in idx.support]
+                    if unknown:
+                        raise ValueError(
+                            f"Override list for CategoricalIndex {idx.name!r} contains outcomes "
+                            f"outside its support {sorted(idx.support)!r}: {sorted(unknown)!r}."
+                        )
+                    # Renormalise original model probabilities over the restricted subset.
+                    total = sum(idx.outcomes[v] for v in val)
+                    self._overrides[idx] = {v: idx.outcomes[v] / total for v in val}
                 elif isinstance(val, dict):
                     keys, support = set(val.keys()), set(idx.support)
                     if not keys:
@@ -188,8 +204,9 @@ class Scenario:
                         )
                 else:
                     raise TypeError(
-                        f"Override for CategoricalIndex {idx.name!r} must be a str (concrete outcome) or "
-                        f"dict[str, float] (new probabilities); got {type(val).__name__!r}."
+                        f"Override for CategoricalIndex {idx.name!r} must be a str (concrete outcome), "
+                        f"list[str] (restriction subset — renormalises original probabilities), or "
+                        f"dict[str, float] (explicit new probabilities); got {type(val).__name__!r}."
                     )
                 continue
 

@@ -50,7 +50,7 @@ class Distribution(Protocol):
         ...  # pragma: no cover
 
 
-DomainValue = float | np.ndarray | Distribution | str | dict[str, float]
+DomainValue = float | np.ndarray | Distribution | str | dict[str, float] | list[str]
 """A concrete value assignable to an Index at scenario-evaluation time.
 
 Covers all kinds of domain-level assignment:
@@ -61,6 +61,9 @@ Covers all kinds of domain-level assignment:
 - ``str`` — a categorical outcome pin (for :class:`CategoricalIndex` and
   :class:`ConditionalCategoricalIndex`).
 - ``dict[str, float]`` — a probability weight map (for :class:`CategoricalIndex`).
+- ``list[str]`` — a restriction list (for :class:`CategoricalIndex` only);
+  renormalises the original probabilities over the listed subset at
+  :class:`~simulation.scenario.Scenario` construction time.
 """
 
 
