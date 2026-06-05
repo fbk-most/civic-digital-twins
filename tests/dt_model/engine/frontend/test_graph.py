@@ -564,7 +564,7 @@ def test_repr():
     assert str(y) == f"n{y.id} = graph.project_using_mean(node=n{a.id}, axis=Axis('time', role='DOMAIN'), name='')"
 
     z = graph.function_call("jarjar", x, y, u)
-    assert str(z) == f"n{z.id} = graph.function_call(name='jarjar', n{x.id}, n{y.id}, n{u.id})"
+    assert str(z) == f"n{z.id} = graph.function_call('jarjar', n{x.id}, n{y.id}, n{u.id})"
 
 
 def test_maybe_set_name():

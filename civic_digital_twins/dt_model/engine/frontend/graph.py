@@ -1260,7 +1260,7 @@ class function_call[T](Node[T]):
         """Return a round-trippable SSA representation of the node."""
         arg_reprs = [f"n{arg.id}" for arg in self.args]
         kwarg_reprs = [f"{k}=n{v.id}" for k, v in self.kwargs.items()]
-        all_args = ", ".join([f"name={repr(self.name)}"] + arg_reprs + kwarg_reprs)
+        all_args = ", ".join([repr(self.name)] + arg_reprs + kwarg_reprs)
         return f"n{self.id} = graph.function_call({all_args})"
 
 
