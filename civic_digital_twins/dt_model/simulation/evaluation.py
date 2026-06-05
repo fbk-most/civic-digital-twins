@@ -4,7 +4,7 @@
 import inspect
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, assert_never
 
 import numpy as np
 
@@ -286,9 +286,7 @@ class Evaluation:
             model = scenario_or_model
             scenario = Scenario(model)
         else:
-            raise TypeError(
-                f"Evaluation() expects a Scenario, Model, or ModelVariant; got {type(scenario_or_model).__name__!r}."
-            )
+            assert_never(scenario_or_model)
         self._scenario = scenario
         self.model: Model | ModelVariant = model
 
@@ -767,15 +765,110 @@ class Evaluation:
         n_full = n_params + n_ensemble
         n_total = n_full + extra_ts
 
-        # Validate ensemble cardinality when guarded regions are present.
-        # This check must come before the coverage validation so that a regional
-        # plan with no ensemble raises NotImplementedError (not ValueError).
-        has_guarded = any(r.guard is not None for r in plan.regions)
-        if has_guarded and n_ensemble != 1:
-            raise NotImplementedError(
-                "Regional execution with a multi-axis or absent ensemble is not yet "
-                "supported. Use strategy='monolithic' or a single-axis ensemble."
-            )
+        # Guarded regions operate over the full leading evaluation layout:
+        # (*PARAMETER, *ENSEMBLE).  The helpers below gather/scatter arbitrary
+        # leading-axis coordinates, so selectors may vary along PARAMETER axes
+        # and ensembles may span multiple ENSEMBLE axes.
+        leading_axes = tuple(ax for ax, pos in sorted(axis_layout.items(), key=lambda item: item[1]) if pos < n_full)
+        leading_shape = tuple(axis_sizes[ax] for ax in leading_axes)
+        n_leading = int(np.prod(leading_shape, dtype=np.int64)) if leading_shape else 1
+
+        def _has_domain_axis(node: graph.Node) -> bool:
+            return any(ax.role == DOMAIN for ax in node.output_axes)
+
+        def _normalise_leading(node: graph.Node, value: Any) -> np.ndarray:
+            """Return *value* with explicit leading singleton axes when needed."""
+            arr = np.asarray(value)
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return arr
+            has_domain = _has_domain_axis(node)
+            # A raw DOMAIN-only value, e.g. a timeseries constant with shape (T,),
+            # has no explicit PARAMETER/ENSEMBLE dimensions yet.  Prepend them
+            # even when T accidentally equals a leading-axis size.
+            if has_domain and arr.ndim == len(node.output_axes):
+                return arr.reshape((1,) * n_full + arr.shape)
+            if arr.ndim >= n_full and all(arr.shape[i] in {1, leading_shape[i]} for i in range(n_full)):
+                return arr
+            return arr.reshape((1,) * n_full + arr.shape)
+
+        def _broadcast_to_leading(node: graph.Node, value: Any) -> np.ndarray:
+            """Broadcast *value* to ``leading_shape + trailing_shape``."""
+            arr = _normalise_leading(node, value)
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return arr
+            target = tuple(leading_shape[i] if arr.shape[i] == 1 else arr.shape[i] for i in range(n_full))
+            return np.broadcast_to(arr, target + arr.shape[n_full:])
+
+        def _leading_mask(selector_node: graph.Node, selector_value: Any, branch_key: str) -> np.ndarray:
+            """Return a boolean mask over the full ``(*PARAMETER, *ENSEMBLE)`` layout."""
+            sel = _broadcast_to_leading(selector_node, selector_value)
+            if n_full == 0:
+                mask = np.asarray(sel == branch_key)
+                if mask.shape != ():
+                    if any(dim > 1 for dim in mask.shape):
+                        raise NotImplementedError(
+                            "Regional execution does not support selectors with non-singleton DOMAIN axes."
+                        )
+                    mask = mask.reshape(())
+                return mask
+            trailing = sel.shape[n_full:]
+            if trailing:
+                if any(dim > 1 for dim in trailing):
+                    raise NotImplementedError(
+                        "Regional execution does not support selectors with non-singleton DOMAIN axes."
+                    )
+                sel = sel.reshape(sel.shape[:n_full])
+            return np.broadcast_to(sel == branch_key, leading_shape)
+
+        def _gather_leading(node: graph.Node, value: Any, flat_idx: np.ndarray) -> np.ndarray:
+            """Gather selected leading-axis coordinates into a branch-local first axis."""
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return np.asarray(value)
+            arr = _broadcast_to_leading(node, value)
+            flat = arr.reshape((n_leading,) + arr.shape[n_full:])
+            return np.take(flat, flat_idx, axis=0)
+
+        def _branch_fill_value(dtype: np.dtype) -> tuple[np.dtype, Any]:
+            """Return an output dtype and inactive-branch fill value for *dtype*."""
+            if dtype.kind in {"f", "c"}:
+                return dtype, np.nan
+            if dtype.kind == "b":
+                return dtype, False
+            if dtype.kind in {"i", "u"}:
+                return dtype, 0
+            return np.dtype(object), None
+
+        def _scatter_leading(node: graph.Node, value: Any, flat_idx: np.ndarray) -> np.ndarray:
+            """Scatter a branch-local value back into the full leading layout."""
+            arr = np.asarray(value)
+            if n_full == 0:
+                return arr
+            k = int(flat_idx.size)
+            if arr.ndim == 0:
+                arr = np.broadcast_to(arr, (k,)).copy()
+            elif arr.shape[0] == 1 and k != 1:
+                arr = np.broadcast_to(arr, (k,) + arr.shape[1:]).copy()
+            elif arr.shape[0] != k:
+                # DOMAIN-only values produced inside the branch (shape (T,)) are
+                # invariant across selected leading coordinates.
+                if _has_domain_axis(node):
+                    arr = np.broadcast_to(arr, (k,) + arr.shape).copy()
+                else:
+                    raise ValueError(
+                        f"Regional scatter for node {getattr(node, 'name', repr(node))!r}: "
+                        f"branch result first dimension {arr.shape[0]} does not match selected size {k}."
+                    )
+            if extra_ts and not _has_domain_axis(node) and arr.ndim == 1:
+                arr = arr.reshape(arr.shape + (1,))
+            out_dtype, fill_value = _branch_fill_value(arr.dtype)
+            full_flat = np.full((n_leading,) + arr.shape[1:], fill_value, dtype=out_dtype)
+            full_flat[flat_idx] = arr.astype(out_dtype, copy=False)
+            return full_flat.reshape(leading_shape + arr.shape[1:])
+
+        def _empty_branch_value() -> np.ndarray:
+            """Create a broadcast-compatible inactive value for an unselected branch."""
+            trailing = (1,) if extra_ts else ()
+            return np.full(leading_shape + trailing, np.nan, dtype=float)
 
         # Coverage validation (D_valid): every abstract index must have a value source.
         # We check only abstract indexes (value=None or Distribution-backed) — NOT
@@ -802,9 +895,6 @@ class Evaluation:
             names_str = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in overlapping)
             raise ValueError(f"The following indexes appear in both parameters= and Scenario.overrides: {names_str}")
 
-        # Total scenario count (used for scatter-back in guarded regions).
-        n_S: int = axis_sizes[list(ensemble.ensemble_axes)[0]] if (has_guarded and ensemble is not None) else 0
-
         state = executor.State(
             {**scenario_subs, **c_subs},
             functions=functions or {},
@@ -817,48 +907,32 @@ class Evaluation:
                 # Unconditional region — evaluate for all scenarios.
                 executor.evaluate_nodes(state, *region.nodes)
             else:
-                # Guarded region — evaluate only for the matching scenario subset.
+                # Guarded region — evaluate only for coordinates whose selector
+                # value matches this branch.  The mask spans the entire leading
+                # layout, so selectors may vary along PARAMETER and/or multiple
+                # ENSEMBLE axes.
                 guard = region.guard
-                sel_val = np.asarray(state.values[guard.selector_node])
-                # Guard: the selector must not vary along any PARAMETER axis.
-                # If it does, the 1-D scenario mask below would only reflect
-                # PARAMETER position 0, silently producing wrong results for
-                # every other PARAMETER combination.  Detect and reject early.
-                if n_params > 0 and any(sel_val.shape[i] > 1 for i in range(n_params)):
-                    raise NotImplementedError(
-                        "Regional execution is not supported when the variant selector "
-                        "depends on PARAMETER axes (selector shape "
-                        f"{sel_val.shape!r} has non-singleton PARAMETER dims). "
-                        "The scenario partition would differ per parameter combination, "
-                        "requiring per-parameter scatter/gather — not yet implemented. "
-                        "Use strategy='monolithic' instead."
-                    )
-                # sel_val shape: (1,)*n_params + (S,) + (1,)*extra_ts
-                # Extract 1-D boolean mask over the S axis.
-                s_idx: tuple[int | slice, ...] = (0,) * n_params + (slice(None),) + (0,) * extra_ts
-                mask_1d: np.ndarray = sel_val[s_idx] == guard.branch_key  # shape (S,)
-                branch_idx: np.ndarray = np.where(mask_1d)[0]
+                sel_val = state.values[guard.selector_node]
+                mask = _leading_mask(guard.selector_node, sel_val, guard.branch_key)
+                flat_mask = np.asarray(mask).reshape(-1)
+                branch_idx = np.flatnonzero(flat_mask)
 
-                if len(branch_idx) == 0:
-                    # No scenarios fall into this branch. Pre-initialize branch
-                    # nodes to NaN arrays so the merge region's np.select can
-                    # reference them (branch conditions are all False, so NaN
-                    # values are never selected, but the arrays must exist).
-                    nan_shape = (1,) * n_params + (n_S,) + (1,) * extra_ts
+                if branch_idx.size == 0:
+                    # No coordinates fall into this branch.  Pre-initialize
+                    # missing branch nodes with broadcast-compatible inactive
+                    # arrays so merge-region np.select can still reference them.
                     for node in region.nodes:
                         if node not in state.values:
-                            state.values[node] = np.full(nan_shape, np.nan, dtype=float)
+                            state.values[node] = _empty_branch_value()
                             substituted_nodes.add(node)  # prevent spurious shape-norm
                     continue
 
-                # Build a branch-local state:
-                # - inherits all values already computed in the main state
-                # - overrides ENSEMBLE subs for abstract indexes local to this branch
-                branch_values: dict[graph.Node, np.ndarray] = dict(state.values)
-                branch_region_nodes = set(region.nodes)
-                for ens_node, ens_arr in ens_subs.items():
-                    if ens_node in branch_region_nodes:
-                        branch_values[ens_node] = np.take(ens_arr, branch_idx, axis=n_params)
+                # Build a branch-local state by gathering every already-known
+                # value to the matching leading coordinates.  Constants and
+                # structural variant_selector sentinels are carried unchanged.
+                branch_values: dict[graph.Node, np.ndarray] = {
+                    node: _gather_leading(node, value, branch_idx) for node, value in state.values.items()
+                }
 
                 branch_state = executor.State(
                     branch_values,
@@ -867,28 +941,12 @@ class Evaluation:
                 )
                 executor.evaluate_nodes(branch_state, *region.nodes)
 
-                # Scatter branch results back into the main state as full-S arrays,
-                # with NaN at positions that do not belong to this branch.
+                # Scatter branch results back into full leading-shape arrays,
+                # filling inactive coordinates with branch-neutral placeholders.
                 for node in region.nodes:
                     if node not in branch_state.values or node in state.values:
                         continue
-                    val_k = np.asarray(branch_state.values[node])
-                    # Constant nodes (no dependency on ensemble subs) evaluate to
-                    # scalars (ndim=0) or small arrays (ndim<=n_params).  Expand
-                    # them so the scatter indexing logic below can assume at least
-                    # n_params+1 dimensions with the ensemble axis at position n_params.
-                    if val_k.ndim <= n_params:
-                        leading = (1,) * (n_params + 1 - val_k.ndim)
-                        val_k = val_k.reshape(leading + val_k.shape)
-                        # Broadcast the singleton ensemble dim to len(branch_idx).
-                        bcast_shape = val_k.shape[:n_params] + (len(branch_idx),) + val_k.shape[n_params + 1 :]
-                        val_k = np.broadcast_to(val_k, bcast_shape).copy()
-                    full_shape = list(val_k.shape)
-                    full_shape[n_params] = n_S
-                    full_val = np.full(full_shape, np.nan, dtype=float)
-                    idx_expand = branch_idx.reshape((1,) * n_params + (-1,) + (1,) * (val_k.ndim - n_params - 1))
-                    np.put_along_axis(full_val, np.broadcast_to(idx_expand, val_k.shape), val_k, axis=n_params)
-                    state.values[node] = full_val
+                    state.values[node] = _scatter_leading(node, branch_state.values[node], branch_idx)
                     substituted_nodes.add(node)  # mark as correctly shaped; skip shape-norm
 
         # All nodes in topological order (for touched-set computation).

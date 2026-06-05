@@ -76,9 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on `Evaluation` builds a plan once; `execute_plan(plan, ensemble, *,
   parameters, ...)` reuses it across multiple calls.  The `"regional"` strategy
   partitions the graph at `variant_selector` boundaries: a shared pre-selector
-  region, per-branch guarded regions (evaluated only for matching scenarios via
-  `np.take` slice + `np.put_along_axis` scatter-back), and a merge region
-  (closing #136).
+  region, per-branch guarded regions (evaluated only for matching leading-axis
+  coordinates via gather/scatter over the flattened leading layout), and a merge
+  region.  The guard mask spans the full `(*PARAMETER, *ENSEMBLE)` shape, so
+  selectors that vary along PARAMETER axes and multi-axis ensembles
+  (`PartitionedEnsemble`, `CrossProductEnsemble`) are supported
+  (closing #136, #178, #179).
 - `EvaluationHandle.evaluate(evaluation, initial_ensemble_size, ...)` →
   `EvaluationHandle` — builds a plan, runs the first batch, and returns a
   handle for checkpoint-style ensemble extension without discarding prior

@@ -13,9 +13,17 @@ from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble, WeightedScenario
+from civic_digital_twins.dt_model.simulation.ensemble import (
+    CrossProductEnsemble,
+    DistributionEnsemble,
+    EnsembleAxisSpec,
+    FrozenEnsemble,
+    PartitionedEnsemble,
+    WeightedScenario,
+)
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.plan import EvaluationPlan, Region, RegionGuard
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Shared model fixtures (same as test_model_variant_evaluation.py)
@@ -360,14 +368,8 @@ def test_regional_plan_with_parameter_axis_mixed_matches_monolithic():
 # ---------------------------------------------------------------------------
 
 
-def test_regional_raises_for_parameter_varying_selector():
-    """Regional execution must raise when the selector varies along a PARAMETER axis.
-
-    A selector derived from a PARAMETER index produces a scenario partition
-    that differs per parameter combination.  Silently using only position-0
-    of the PARAMETER axis for the mask would give wrong results, so the
-    executor rejects the case with NotImplementedError.
-    """
+def test_regional_parameter_varying_selector_matches_monolithic():
+    """Regional execution supports selectors that vary along a PARAMETER axis."""
     presence = Index("presence", None)
     selector = ModelVariant.guards_to_selector([("train", presence.node > 150.0), ("bike", True)])
     cap = Index("capacity", 100.0)
@@ -377,16 +379,106 @@ def test_regional_raises_for_parameter_varying_selector():
         selector=selector,
     )
     ev = Evaluation(mv)
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    # One dummy scenario (no ENSEMBLE abstract indexes; presence is PARAMETER-only).
-    dummy_ens = _LegacyEnsembleAdapter([(1.0, {})], [])
     xs = np.array([100.0, 200.0, 300.0])
 
-    with pytest.raises(NotImplementedError, match="PARAMETER axes"):
-        ev.execute_plan(regional_plan, dummy_ens, parameters={presence: xs})
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, ensemble=None, parameters={presence: xs})
+    monolithic_result = ev.evaluate(ensemble=None, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs})
+
+    np.testing.assert_allclose(regional_result[mv.outputs.throughput], monolithic_result[mv.outputs.throughput])
+    np.testing.assert_allclose(regional_result[mv.outputs.throughput].ravel(), np.array([100.0, 1000.0, 1000.0]))
+
+
+# ---------------------------------------------------------------------------
+# execute_plan with no leading axes (deterministic, leading_shape = ())
+# ---------------------------------------------------------------------------
+
+
+def test_regional_deterministic_no_leading_axes():
+    """Regional execution with no PARAMETER and no ENSEMBLE axes (leading_shape = ()).
+
+    Pinning the CategoricalIndex selector to a concrete branch via a Scenario
+    override eliminates all leading axes.  The guard mask is a scalar boolean
+    and scatter is a no-op.
+    """
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    mv = _make_mv(mode)
+    scenario = Scenario(mv, overrides={mode: "train"})
+    ev = Evaluation(scenario)
+
+    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    regional_result = ev.execute_plan(regional_plan, ensemble=None)
+    monolithic_result = ev.evaluate(ensemble=None, nodes_of_interest=[mv.outputs.throughput])
+
+    # Selector is pinned to "train"; train throughput = capacity * 10.
+    np.testing.assert_allclose(
+        regional_result[mv.outputs.throughput], monolithic_result[mv.outputs.throughput]
+    )
+    assert float(np.asarray(regional_result[mv.outputs.throughput])) == pytest.approx(
+        _CAPACITY_VALUE * 10.0
+    )
+
+
+# ---------------------------------------------------------------------------
+# execute_plan with multi-axis / cross-product ensembles + regional plan
+# ---------------------------------------------------------------------------
+
+
+def _frozen_from_axis_ensemble(ensemble: PartitionedEnsemble) -> FrozenEnsemble:
+    """Materialise a multi-axis ensemble once so monolithic and regional share samples."""
+    return FrozenEnsemble(
+        ensemble.ensemble_axes,
+        ensemble.ensemble_weights,
+        dict(ensemble.assignments()),
+    )
+
+
+def test_regional_plan_with_cross_product_ensemble_matches_monolithic():
+    """Regional execution works with CrossProductEnsemble."""
+    from scipy import stats as _stats
+
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    presence = DistributionIndex("presence", _stats.uniform, {"loc": 100.0, "scale": 10.0})
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        selector=mode,
+    )
+    ensemble = CrossProductEnsemble(Scenario(mv), n_samples_per_combo=4, rng=np.random.default_rng(7))
+    ev = Evaluation(mv)
+
+    monolithic = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), ensemble)
+    regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), ensemble)
+
+    np.testing.assert_allclose(regional[mv.outputs.throughput], monolithic[mv.outputs.throughput])
+
+
+def test_regional_plan_with_partitioned_ensemble_matches_monolithic():
+    """Regional execution masks over all ENSEMBLE axes of a PartitionedEnsemble."""
+    from scipy import stats as _stats
+
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    presence = DistributionIndex("presence", _stats.uniform, {"loc": 100.0, "scale": 10.0})
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        selector=mode,
+    )
+    recipe = PartitionedEnsemble(
+        Scenario(mv),
+        axes=[
+            EnsembleAxisSpec("mode_axis", [mode], size=6),
+            EnsembleAxisSpec("presence_axis", [presence], size=5),
+        ],
+        rng=np.random.default_rng(11),
+    )
+    ensemble = _frozen_from_axis_ensemble(recipe)
+    ev = Evaluation(mv)
+
+    monolithic = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), ensemble)
+    regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), ensemble)
+
+    np.testing.assert_allclose(regional[mv.outputs.throughput], monolithic[mv.outputs.throughput])
 
 
 # ---------------------------------------------------------------------------
@@ -424,13 +516,13 @@ def test_monolithic_plan_still_works_after_regional_changes():
 # ---------------------------------------------------------------------------
 
 
-def test_regional_execute_plan_no_ensemble_raises():
-    """execute_plan with a regional plan and no ensemble raises NotImplementedError."""
+def test_regional_execute_plan_uncovered_selector_raises():
+    """Regional execution without an ensemble still requires selector coverage."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
     ev = Evaluation(mv)
     plan = ev.build_plan(strategy="regional")
-    with pytest.raises(NotImplementedError, match="multi-axis or absent ensemble"):
+    with pytest.raises(ValueError, match="abstract indexes"):
         ev.execute_plan(plan, ensemble=None)
 
 
@@ -470,7 +562,7 @@ def test_regional_branch_local_abstract_index_correctness():
     back to the full scenario array.  The test verifies the regional result
     equals the monolithic baseline element-wise.
     """
-    cap_bike, cap_train, mv = _make_mv_branch_local()
+    _, _, mv = _make_mv_branch_local()
     ev = Evaluation(mv)
     rng = np.random.default_rng(42)
 
