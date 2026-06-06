@@ -184,14 +184,19 @@ uses `.constraints`.  For a production model with multiple sub-models see
 ## 5 — Ensemble
 
 ```python
-from civic_digital_twins.dt_model import CrossProductEnsemble, Scenario
+from civic_digital_twins.dt_model import CrossProductEnsemble, DomainValue, GenericIndex, Scenario
 
-scenario: dict[CategoricalIndex, list[str]] = {
+scenario_overrides: dict[GenericIndex, DomainValue] = {
     CV_season:  ["low", "high"],
     CV_weather: ["good", "unsettled", "bad"],
 }
 
-ensemble = CrossProductEnsemble(Scenario(model), restrictions=scenario, max_categorical_size=10, exclude=model.pvs)
+scenario_obj = Scenario(
+    model,
+    overrides=scenario_overrides,
+    parameter_axes=model.pvs,
+)
+ensemble = CrossProductEnsemble(scenario_obj, max_categorical_size=10)
 # 2 × 3 = 6 scenarios (all CV combinations enumerated)
 ```
 
@@ -199,12 +204,14 @@ ensemble = CrossProductEnsemble(Scenario(model), restrictions=scenario, max_cate
 abstract indexes, enumerates all combinations of categorical CV values, and
 materialises the results into a single batched ENSEMBLE axis — here
 2 × 3 = 6 scenarios, one per (season, weather) pair.  Each scenario also
-includes one sample of every distribution-backed non-excluded abstract index
+includes one sample of every distribution-backed non-parameter abstract index
 (here: `I_C_beach`).
 
-The `restrictions` parameter projects each categorical to a subset of its
-support.  The `exclude` parameter marks PARAMETER-axis indexes (presence
-variables) so they are not included in the ensemble cross-product.
+`Scenario(model, overrides={…: [...]})` restricts each categorical to a
+subset of its support and renormalises the probabilities.  Presence-variable
+indexes declared as ``parameter_axes`` on the :class:`~dt_model.Scenario`
+are automatically excluded from the ensemble cross-product and swept over
+the grid in step 6 instead.
 `max_categorical_size` controls random sampling when a categorical's support
 exceeds the size threshold; for the small finite CVs above every value is
 enumerated and `max_categorical_size` is unused.
@@ -220,7 +227,7 @@ from civic_digital_twins.dt_model import Evaluation, Scenario
 
 visitors_axis = np.linspace(0, 20_000, 201)
 
-result = Evaluation(Scenario(model)).evaluate(
+result = Evaluation(scenario_obj).evaluate(
     ensemble=ensemble,
     parameters={PV_visitors: visitors_axis},
 )

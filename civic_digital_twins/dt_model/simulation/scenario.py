@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 
 from ..engine.frontend import graph
@@ -46,6 +48,15 @@ class Scenario:
         Overrides shadow the index's own ``value`` when :meth:`base_substitutions`
         is called.  See the override compatibility table for which value types are
         accepted for each index kind.
+    parameter_axes:
+        Optional list of abstract indexes that will be supplied externally as
+        PARAMETER axes via ``parameters=`` to
+        :meth:`~simulation.evaluation.Evaluation.evaluate`.  These indexes are
+        excluded from the ensemble's sampling — they do not appear in
+        :meth:`abstract_indexes` and :class:`~simulation.ensemble.CrossProductEnsemble`
+        skips them automatically.
+        :meth:`~simulation.evaluation.Evaluation.evaluate` raises ``ValueError``
+        if any declared parameter axis is absent from ``parameters=``.
 
     Override compatibility
     ----------------------
@@ -54,18 +65,20 @@ class Scenario:
 
     .. code-block:: text
 
-        Index type                   │ float  str  ndarray  Distribution  dict[str,float]
-        ─────────────────────────────┼───────────────────────────────────────────────────
-        Index                        │  ✓     ✗      ✗         ✗              ✗
-        TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗
-        ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗
-        DistributionIndex            │  ✗     ✗      ✗         ✓              ✗
-        ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗
-        CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**
-        ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗
+        Index type                   │ float  str  ndarray  Distribution  dict[str,float]  list[str]
+        ─────────────────────────────┼──────────────────────────────────────────────────────────────
+        Index                        │  ✓     ✗      ✗         ✗              ✗               ✗
+        TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗               ✗
+        ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗               ✗
+        DistributionIndex            │  ✗     ✗      ✗         ✓              ✗               ✗
+        ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗               ✗
+        CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**             ✓***
+        ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗               ✗
 
         * str must be in idx.support
         ** dict keys must be a non-empty subset of idx.support, positive probs summing to 1.0
+        *** list must be a non-empty subset of idx.support; original model probabilities are
+            renormalised over the listed outcomes and stored as dict[str, float]
 
         Method behaviour for accepted overrides:
 
@@ -85,8 +98,13 @@ class Scenario:
         CategoricalIndex, no override   │ present           —              —                       idx.outcomes
         CategoricalIndex, str           │ absent            asarray(str)   —                       {str: 1.0}
         CategoricalIndex, dict          │ present           —              —                       override dict
+        CategoricalIndex, list          │ present           —              —                       renormalized dict
         CondCategorical, no override    │ present           —              —                       None
         CondCategorical, str            │ absent            asarray(str)   —                       {str: 1.0}
+
+        Indexes declared in ``parameter_axes`` are always absent from
+        :meth:`abstract_indexes` regardless of override type; they are
+        excluded before this table is consulted.
 
     Examples
     --------
@@ -103,6 +121,7 @@ class Scenario:
         self,
         model: Model | ModelVariant,
         overrides: dict[GenericIndex, DomainValue] | None = None,
+        parameter_axes: Iterable[GenericIndex] | None = None,
     ) -> None:
         self._model = model
         self._overrides: dict[GenericIndex, DomainValue] = dict(overrides or {})
@@ -120,6 +139,19 @@ class Scenario:
                 "Overrides are matched by object identity — check that you are "
                 "passing index objects that were created as part of model "
                 f"{model.name!r}, not indexes from a different model or a copy."
+            )
+
+        # parameter_axes membership check — same identity-based approach as overrides.
+        self._parameter_axes: list[GenericIndex] = list(parameter_axes or [])
+        foreign_params = [idx for idx in self._parameter_axes if id(idx) not in model_index_ids]
+        if foreign_params:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in foreign_params)
+            raise ValueError(
+                f"Scenario for model {model.name!r}: parameter_axes {names} "
+                f"{'is' if len(foreign_params) == 1 else 'are'} not part of this model. "
+                "parameter_axes are matched by object identity — check that you are "
+                "passing index objects that were created as part of model "
+                f"{model.name!r}."
             )
 
         for idx, val in self._overrides.items():
@@ -165,6 +197,19 @@ class Scenario:
                         raise ValueError(
                             f"Override {val!r} is not in the support of CategoricalIndex {idx.name!r}: {idx.support!r}."
                         )
+                elif isinstance(val, list):
+                    # list[str]: restrict to subset and renormalise original model probabilities.
+                    if not val:
+                        raise ValueError(f"Override list for CategoricalIndex {idx.name!r} must not be empty.")
+                    unknown = [v for v in val if v not in idx.support]
+                    if unknown:
+                        raise ValueError(
+                            f"Override list for CategoricalIndex {idx.name!r} contains outcomes "
+                            f"outside its support {sorted(idx.support)!r}: {sorted(unknown)!r}."
+                        )
+                    # Renormalise original model probabilities over the restricted subset.
+                    total = sum(idx.outcomes[v] for v in val)
+                    self._overrides[idx] = {v: idx.outcomes[v] / total for v in val}
                 elif isinstance(val, dict):
                     keys, support = set(val.keys()), set(idx.support)
                     if not keys:
@@ -188,8 +233,9 @@ class Scenario:
                         )
                 else:
                     raise TypeError(
-                        f"Override for CategoricalIndex {idx.name!r} must be a str (concrete outcome) or "
-                        f"dict[str, float] (new probabilities); got {type(val).__name__!r}."
+                        f"Override for CategoricalIndex {idx.name!r} must be a str (concrete outcome), "
+                        f"list[str] (restriction subset — renormalises original probabilities), or "
+                        f"dict[str, float] (explicit new probabilities); got {type(val).__name__!r}."
                     )
                 continue
 
@@ -240,6 +286,26 @@ class Scenario:
             when no overrides were given.
         """
         return dict(self._overrides)
+
+    @property
+    def parameter_axes(self) -> list[GenericIndex]:
+        """Indexes declared as PARAMETER axes for this scenario.
+
+        These indexes are excluded from ensemble sampling by
+        :class:`~simulation.ensemble.CrossProductEnsemble` and must be
+        supplied externally via ``parameters=`` to
+        :meth:`~simulation.evaluation.Evaluation.evaluate`.
+
+        :meth:`~simulation.evaluation.Evaluation.evaluate` enforces that
+        every entry here is covered by the ``parameters=`` dict.
+
+        Returns
+        -------
+        list[GenericIndex]
+            A copy of the parameter-axes list, or an empty list when none
+            were declared.
+        """
+        return list(self._parameter_axes)
 
     def effective_distribution(self, idx: GenericIndex) -> Distribution | None:
         """Return the effective :class:`~model.index.Distribution` for *idx*.
@@ -321,12 +387,16 @@ class Scenario:
         list[GenericIndex]
             Indexes that need to be sampled by an ensemble.
         """
+        parameter_axis_ids = {id(idx) for idx in self._parameter_axes}
         result: list[GenericIndex] = []
 
         for idx in self._model.abstract_indexes():
             override = self._overrides.get(idx)
             if override is not None and not isinstance(override, (Distribution, dict)):
                 # Concretely overridden (scalar or str) — handled by base_substitutions; skip.
+                continue
+            if id(idx) in parameter_axis_ids:
+                # Declared as a PARAMETER axis — supplied externally, not for the ensemble.
                 continue
             result.append(idx)
 

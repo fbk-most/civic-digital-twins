@@ -21,10 +21,12 @@ from civic_digital_twins.dt_model import (
     CrossProductEnsemble,
     Evaluation,
     ModelContractWarning,
+    Scenario,
 )
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
 
 model = MolvenoModel(inputs=MolvenoModel.default_inputs())
+_pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,7 +41,7 @@ def compute_field(model, ensemble, tt, ee):
     - ``field_elements`` maps each Constraint to a ``(tt.size, ee.size)`` array
     - ``result`` is the :class:`~dt_model.simulation.evaluation.EvaluationResult`
     """
-    result = Evaluation(model).evaluate(
+    result = Evaluation(Scenario(model, parameter_axes=_pvs)).evaluate(
         ensemble=ensemble, parameters={model.inputs.pv_tourists: tt, model.inputs.pv_excursionists: ee}
     )
 
@@ -122,13 +124,15 @@ def excursionists():
 def good_weather_scenarios():
     """Single-member ensemble: good weather, monday, high season."""
     return CrossProductEnsemble(
-        model,
-        restrictions={
-            model.inputs.cv_weekday: ["monday"],
-            model.inputs.cv_season: ["high"],
-            model.inputs.cv_weather: ["good"],
-        },
-        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
+        Scenario(
+            model,
+            overrides={
+                model.inputs.cv_weekday: ["monday"],
+                model.inputs.cv_season: ["high"],
+                model.inputs.cv_weather: ["good"],
+            },
+            parameter_axes=_pvs,
+        ),
     )
 
 
@@ -174,12 +178,9 @@ def test_evaluate_axes_high_presence_is_unsustainable(good_weather_scenarios):
 
 def test_ensemble_based_evaluation(tourists, excursionists):
     """CrossProductEnsemble-based evaluation produces a valid sustainability field."""
-    scenario: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "bad"]}
     ensemble = CrossProductEnsemble(
-        model,
-        restrictions=scenario,
+        Scenario(model, overrides={model.inputs.cv_weather: ["good", "bad"]}, parameter_axes=_pvs),
         max_categorical_size=5,
-        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
     )
 
     field, field_elements, _ = compute_field(model, ensemble, tourists, excursionists)
@@ -204,13 +205,15 @@ def test_fixed_ensemble():
 
     # Build single-member scenarios with distribution-backed index samples.
     ensemble = CrossProductEnsemble(
-        model,
-        restrictions={
-            model.inputs.cv_weekday: ["monday"],
-            model.inputs.cv_season: ["high"],
-            model.inputs.cv_weather: ["good"],
-        },
-        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
+        Scenario(
+            model,
+            overrides={
+                model.inputs.cv_weekday: ["monday"],
+                model.inputs.cv_season: ["high"],
+                model.inputs.cv_weather: ["good"],
+            },
+            parameter_axes=_pvs,
+        ),
         rng=np.random.default_rng(4),
     )
     _, got, _ = compute_field(model, ensemble, tourists, excursionists)
@@ -269,12 +272,9 @@ def test_fixed_ensemble():
 
 def test_multiple_ensemble_members():
     """Test with multiple ensemble members to catch shape issues."""
-    scenario: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "bad"]}
     ens = CrossProductEnsemble(
-        model,
-        restrictions=scenario,
+        Scenario(model, overrides={model.inputs.cv_weather: ["good", "bad"]}, parameter_axes=_pvs),
         max_categorical_size=10,
-        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
     )
     tourists = np.array([1000, 5000, 10000])
     excursionists = np.array([1000, 5000, 10000])
@@ -581,12 +581,9 @@ def test_presence_transformation_indexes_in_root_indexes():
 
 def test_bug_37():
     """Regression for https://github.com/fbk-most/dt-model/issues/37."""
-    situation: dict[CategoricalIndex, list[str]] = {model.inputs.cv_weather: ["good", "unsettled", "bad"]}
     ensemble = CrossProductEnsemble(
-        model,
-        restrictions=situation,
+        Scenario(model, overrides={model.inputs.cv_weather: ["good", "unsettled", "bad"]}, parameter_axes=_pvs),
         max_categorical_size=20,
-        exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
     )
 
     tourists = np.array([1000, 5000, 10000])

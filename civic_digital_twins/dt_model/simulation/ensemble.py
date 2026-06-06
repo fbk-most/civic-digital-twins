@@ -902,6 +902,10 @@ class CrossProductEnsemble:
     scenario_or_model:
         Model whose abstract indexes are enumerated / sampled.
     restrictions:
+        .. deprecated::
+            Use a ``list[str]`` override in :class:`~simulation.scenario.Scenario` instead:
+            ``Scenario(model, overrides={idx: ["a", "b"]})`` restricts to that subset and
+            renormalises the original probabilities automatically.
         Maps a categorical index to the subset of support values to use
         instead of its full support.  Omitted or absent entries use the full
         support.
@@ -915,6 +919,13 @@ class CrossProductEnsemble:
         ``|categorical cross-product| × n_samples_per_combo``.  Must be >= 1.
         Has no effect when all distribution-backed indexes are in *exclude*.
     exclude:
+        .. deprecated::
+            Declare parameter axes on the
+            :class:`~simulation.scenario.Scenario` instead:
+            ``Scenario(model, parameter_axes=[idx, ...])`` — the ensemble
+            reads :attr:`~simulation.scenario.Scenario.parameter_axes`
+            automatically and skips those indexes without any explicit
+            *exclude* argument.
         Indexes to exclude from ensemble enumeration / sampling.  Use this to
         mark PARAMETER-axis indexes (e.g. presence variables supplied as grid
         axes to :meth:`~simulation.evaluation.Evaluation.evaluate`) that should
@@ -957,9 +968,28 @@ class CrossProductEnsemble:
             )
         if n_samples_per_combo < 1:
             raise ValueError(f"n_samples_per_combo must be >= 1; got {n_samples_per_combo}.")
+        if restrictions is not None:
+            warnings.warn(
+                "CrossProductEnsemble.restrictions= is deprecated and will be removed in a future version. "
+                "Use a list[str] override in Scenario instead: "
+                "Scenario(model, overrides={idx: [...]}) restricts to that subset and renormalises "
+                "the original probabilities automatically.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if restrictions is None:
             restrictions = {}
+        if exclude is not None:
+            warnings.warn(
+                "CrossProductEnsemble.exclude= is deprecated and will be removed in a future version. "
+                "Declare parameter axes on the Scenario instead: "
+                "Scenario(model, overrides={...}, parameter_axes=[idx, ...]) and pass that Scenario to "
+                "CrossProductEnsemble — it will skip them automatically.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         excluded_ids = {id(idx) for idx in (exclude or [])}
+        excluded_ids |= {id(idx) for idx in scenario.parameter_axes}
 
         abstract = list(scenario.abstract_indexes())
 
@@ -968,7 +998,7 @@ class CrossProductEnsemble:
         dists_unordered: list[Index] = []
         for idx in abstract:
             if id(idx) in excluded_ids:
-                continue  # skip PARAMETER-axis indexes
+                continue  # skip PARAMETER-axis indexes (deprecated exclude= path)
             if isinstance(idx, CategoricalIndex | ConditionalCategoricalIndex):
                 cats_unordered.append(idx)
             elif isinstance(idx, ConditionalDistributionIndex):

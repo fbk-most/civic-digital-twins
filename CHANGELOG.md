@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Scenario` accepts `parameter_axes: list[GenericIndex]` (closing #165).  Indexes declared here
+  are excluded from `Scenario.abstract_indexes()` — `CrossProductEnsemble` skips them
+  automatically without any `exclude=` argument.  `Evaluation.evaluate()` raises `ValueError`
+  when a declared parameter axis is missing from `parameters=`, turning the previously silent
+  two-place duplication into a checked invariant.
 - `@define` decorator — declare a leaf `Model` subclass via a `compute()`
   method instead of a hand-written `__init__`.  `@define("Name")` generates
   `__init__(self, inputs: Inputs)` (plus `fns: Functions` when a `@functions`
@@ -201,6 +206,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iterates `model.indexes` to inject concrete values; absent entries caused a
   cryptic `PlaceholderValueNotProvided` deep inside the executor — now
   surfaced early with a clear error message (closing #195).
+- `Scenario` accepts `list[str]` overrides for `CategoricalIndex` (closes #187).  Passing a
+  list restricts sampling to that subset and renormalises the model's original probabilities
+  over the listed outcomes at construction time (validated: unknown outcomes or an empty list
+  raise `ValueError`).  The renormalised distribution is stored internally as `dict[str, float]`
+  so all existing downstream code works unchanged.  `DomainValue` now includes `list[str]`.
 
 ### Changed
 
@@ -227,6 +237,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
   emits a `DeprecationWarning` on construction and will be removed in a future
   release (closing #162).
+- `CrossProductEnsemble.restrictions=` — use `Scenario(model, overrides={idx: [...]})` instead.
+  Emits `DeprecationWarning` at construction time.
+- `CrossProductEnsemble.exclude=` — declare parameter axes on the `Scenario` instead:
+  `Scenario(model, parameter_axes=[idx, ...])`.  Emits `DeprecationWarning` at construction time.
 - `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
   `Scenario(model)` instead.  These constructors now auto-wrap the model in a
   base `Scenario` and emit `DeprecationWarning`.  The canonical chain is

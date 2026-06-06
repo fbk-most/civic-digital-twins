@@ -672,3 +672,41 @@ def test_cat_samples_no_rng_monte_carlo():
     # rng=None means _cat_samples uses np.random.choice
     ens = CrossProductEnsemble(model, max_categorical_size=2, rng=None)
     assert ens.assignments()[season].shape == (2,)
+
+
+# ---------------------------------------------------------------------------
+# Scenario.parameter_axes auto-exclusion
+# ---------------------------------------------------------------------------
+
+
+def test_cpe_parameter_axes_auto_excluded():
+    """CrossProductEnsemble auto-excludes indexes listed in Scenario.parameter_axes."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    pv = Index("presence", None)
+    model = _simple_model(season, pv)
+    ens = CrossProductEnsemble(Scenario(model, parameter_axes=[pv]))
+    a = ens.assignments()
+    assert season in a
+    assert pv not in a
+
+
+# ---------------------------------------------------------------------------
+# Deprecation warnings
+# ---------------------------------------------------------------------------
+
+
+def test_cpe_restrictions_deprecated():
+    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    model = _simple_model(season)
+    with pytest.warns(DeprecationWarning, match="restrictions="):
+        CrossProductEnsemble(model, restrictions={season: ["summer"]})
+
+
+def test_cpe_exclude_deprecated():
+    """CrossProductEnsemble.exclude= emits DeprecationWarning."""
+    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
+    pv = Index("presence", None)
+    model = _simple_model(season, pv)
+    with pytest.warns(DeprecationWarning, match="exclude="):
+        CrossProductEnsemble(Scenario(model), exclude=[pv])

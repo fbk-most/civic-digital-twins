@@ -235,6 +235,71 @@ def test_categorical_rejects_wrong_type():
         Scenario(model, overrides={mode: 42.0})  # type: ignore[dict-item]
 
 
+# ---------------------------------------------------------------------------
+# CategoricalIndex: list[str] override
+# ---------------------------------------------------------------------------
+
+
+def test_categorical_list_override_restricts_and_renormalises():
+    """list[str] override restricts to subset and renormalises original probabilities."""
+    # Model: good=0.3, unsettled=0.5, bad=0.2
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["good", "unsettled"]})  # type: ignore[dict-item]
+    # Renormalised: total=0.8, good=0.375, unsettled=0.625
+    outcomes = scenario.effective_outcomes(cat)
+    assert outcomes == pytest.approx({"good": 0.375, "unsettled": 0.625})
+
+
+def test_categorical_list_override_stored_as_dict():
+    """list[str] override is stored internally as a dict[str, float]."""
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["good", "unsettled"]})  # type: ignore[dict-item]
+    stored = scenario.overrides[cat]
+    assert isinstance(stored, dict)
+    assert set(stored.keys()) == {"good", "unsettled"}
+
+
+def test_categorical_list_override_single_value():
+    """list[str] with one element gives weight 1.0 for that element."""
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["bad"]})  # type: ignore[dict-item]
+    outcomes = scenario.effective_outcomes(cat)
+    assert outcomes == pytest.approx({"bad": 1.0})
+
+
+def test_categorical_list_override_empty_raises():
+    """Empty list[str] override raises ValueError."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="must not be empty"):
+        Scenario(model, overrides={cat: []})  # type: ignore[dict-item]
+
+
+def test_categorical_list_override_unknown_outcome_raises():
+    """list[str] with unknown outcome raises ValueError."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    model = _make_model(cat)
+    with pytest.raises(ValueError, match="outside its support"):
+        Scenario(model, overrides={cat: ["good", "unknown"]})  # type: ignore[dict-item]
+
+
+def test_categorical_list_override_in_cross_product_ensemble():
+    """CrossProductEnsemble respects list[str] override from Scenario."""
+    cat = CategoricalIndex("weather", {"good": 0.3, "unsettled": 0.5, "bad": 0.2})
+    model = _make_model(cat)
+    scenario = Scenario(model, overrides={cat: ["good", "unsettled"]})  # type: ignore[dict-item]
+    ens = CrossProductEnsemble(scenario)
+    assert ens.size == 2
+    assigned = set(ens.assignments()[cat].tolist())
+    assert assigned == {"good", "unsettled"}
+    weights = ens.ensemble_weights[0]
+    weight_by_value = {str(v): float(w) for v, w in zip(ens.assignments()[cat], weights)}
+    assert weight_by_value == pytest.approx({"good": 0.375, "unsettled": 0.625})
+
+
 def test_conditional_categorical_concrete_pin():
     """ConditionalCategoricalIndex overridden with a valid str becomes concrete."""
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
@@ -559,3 +624,98 @@ def test_scenario_override_index_in_model_does_not_raise():
     # Both a and b are in the model — no error expected.
     scenario = Scenario(model, overrides={a: 10.0, b: 20.0})
     assert scenario.overrides == {a: 10.0, b: 20.0}
+
+
+# ---------------------------------------------------------------------------
+# CrossProductEnsemble deprecation warnings
+# ---------------------------------------------------------------------------
+
+
+def test_cross_product_ensemble_restrictions_deprecated():
+    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    model = _make_model(cat)
+    with pytest.warns(DeprecationWarning, match="restrictions="):
+        CrossProductEnsemble(model, restrictions={cat: ["good"]})
+
+
+def test_cross_product_ensemble_exclude_deprecated():
+    """CrossProductEnsemble.exclude= emits DeprecationWarning."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    pv = ConditionalDistributionIndex(
+        "presence",
+        parents=[cat],
+        factory=lambda weather: stats.norm(loc=100.0, scale=10.0),
+    )
+    model = _make_model(cat, pv)
+    with pytest.warns(DeprecationWarning, match="exclude="):
+        CrossProductEnsemble(Scenario(model), exclude=[pv])
+
+
+# ---------------------------------------------------------------------------
+# CrossProductEnsemble: Scenario.parameter_axes auto-exclusion
+# ---------------------------------------------------------------------------
+
+
+def test_cross_product_ensemble_skips_parameter_axes_index():
+    """CrossProductEnsemble automatically skips indexes listed in Scenario.parameter_axes."""
+    import warnings  # noqa: PLC0415
+
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    pv = ConditionalDistributionIndex(
+        "presence",
+        parents=[cat],
+        factory=lambda weather: stats.norm(loc=100.0, scale=10.0),
+    )
+    model = _make_model(cat, pv)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        ens = CrossProductEnsemble(Scenario(model, parameter_axes=[pv]))
+    assert pv not in ens.assignments()
+    assert cat in ens.assignments()
+
+
+def test_cross_product_ensemble_parameter_axes_no_warning():
+    """CrossProductEnsemble does not emit DeprecationWarning for Scenario.parameter_axes indexes."""
+    import warnings  # noqa: PLC0415
+
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    pv = ConditionalDistributionIndex(
+        "presence",
+        parents=[cat],
+        factory=lambda weather: stats.norm(loc=100.0, scale=10.0),
+    )
+    model = _make_model(cat, pv)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        CrossProductEnsemble(Scenario(model, parameter_axes=[pv]))
+    deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+    assert len(deprecation_warnings) == 0, f"Unexpected DeprecationWarning: {deprecation_warnings}"
+
+
+# ---------------------------------------------------------------------------
+# Scenario.parameter_axes validation
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_parameter_axes_foreign_index_raises():
+    """Scenario rejects a parameter_axes entry from a different model."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    pv = ConditionalDistributionIndex("presence", parents=[cat], factory=lambda weather: stats.norm())
+    _make_model(cat, pv)  # pv belongs to this model only
+    model_b = _make_model(cat)  # pv not in this model
+    with pytest.raises(ValueError, match="not part of this model"):
+        Scenario(model_b, parameter_axes=[pv])
+
+
+def test_evaluation_raises_when_parameter_axes_not_in_parameters():
+    """Evaluation.evaluate() raises ValueError when scenario.parameter_axes are absent from parameters=."""
+    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
+    pv = ConditionalDistributionIndex(
+        "presence", parents=[cat], factory=lambda weather: stats.norm(loc=100.0, scale=10.0)
+    )
+    model = _make_model(cat, pv)
+    scenario = Scenario(model, parameter_axes=[pv])
+    ens = CrossProductEnsemble(scenario)  # pv excluded from ensemble
+    with pytest.raises(ValueError, match="parameter_axes"):
+        Evaluation(scenario).evaluate(ensemble=ens)  # pv not in parameters=

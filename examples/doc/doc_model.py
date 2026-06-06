@@ -271,6 +271,7 @@ def _demo_18_19_overtourism() -> None:
         GenericIndex,
         Index,
         Model,
+        Scenario,
     )
 
     CV_weather = CategoricalIndex(
@@ -320,18 +321,21 @@ def _demo_18_19_overtourism() -> None:
     )
 
     # Block 18 — CrossProductEnsemble
-    ensemble = CrossProductEnsemble(
+    scenario = Scenario(
         model,
-        restrictions={CV_weather: ["good", "unsettled", "bad"]},
+        overrides={CV_weather: ["good", "unsettled", "bad"]},
+        parameter_axes=[PV_tourists, PV_excursionists],
+    )
+    ensemble = CrossProductEnsemble(
+        scenario,
         max_categorical_size=20,
-        exclude=model.pvs,
     )
 
     # Block 19 — Grid Evaluation with CrossProductEnsemble
     tt = np.linspace(0, 50_000, 101)  # tourist presence axis
     ee = np.linspace(0, 50_000, 101)  # excursionist presence axis
 
-    result = Evaluation(model).evaluate(
+    result = Evaluation(scenario).evaluate(
         ensemble=ensemble,
         parameters={PV_tourists: tt, PV_excursionists: ee},
     )
