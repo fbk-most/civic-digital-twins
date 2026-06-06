@@ -80,8 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coordinates via gather/scatter over the flattened leading layout), and a merge
   region.  The guard mask spans the full `(*PARAMETER, *ENSEMBLE)` shape, so
   selectors that vary along PARAMETER axes and multi-axis ensembles
-  (`PartitionedEnsemble`, `CrossProductEnsemble`) are supported
-  (closing #136, #178, #179).
+  (`PartitionedEnsemble`, `CrossProductEnsemble`) are supported.  Nested
+  `ModelVariant`s are supported via recursive partitioning: each nesting level
+  adds one guard to `Region.guards`, and the executor ANDs all guards into a
+  compound mask (closing #136, #177, #178, #179).
 - `EvaluationHandle.evaluate(evaluation, initial_ensemble_size, ...)` →
   `EvaluationHandle` — builds a plan, runs the first batch, and returns a
   handle for checkpoint-style ensemble extension without discarding prior
