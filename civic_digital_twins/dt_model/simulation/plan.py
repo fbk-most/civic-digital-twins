@@ -31,6 +31,7 @@ from ..engine.frontend import graph
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
+from .scenario import Scenario
 
 __all__ = [
     "EvaluationPlan",
@@ -124,3 +125,42 @@ class EvaluationPlan:
     nodes_of_interest: tuple[GenericIndex, ...]
     regions: tuple[Region, ...]
     dependencies: tuple[frozenset[int], ...]
+
+    def scoped_abstract_indexes(
+        self,
+        scenario: Scenario,
+    ) -> dict[tuple[RegionGuard, ...], frozenset[GenericIndex]]:
+        """Group scenario-abstract indexes by their region-scope guard chain.
+
+        Each scenario-abstract index whose :attr:`~model.index.GenericIndex.node`
+        appears in a :class:`Region`'s ``nodes`` tuple is assigned to that
+        region's :attr:`Region.guards` tuple as the bucket key.  Multiple
+        regions that share the same guard chain (e.g. a region's "shared"
+        and "merge" pair) are merged into a single entry.  Buckets with
+        no abstract indexes are dropped.
+
+        Parameters
+        ----------
+        scenario:
+            The scenario whose abstract indexes are grouped, seen from
+            the scenario's perspective (overrides and ``parameter_axes``
+            applied).
+
+        Returns
+        -------
+        dict[tuple[RegionGuard, ...], frozenset[GenericIndex]]
+            Mapping from guard chain (empty tuple for unconditional
+            regions) to the abstract indexes that belong to that scope.
+        """
+        node_to_idx: dict[graph.Node, GenericIndex] = {idx.node: idx for idx in scenario.abstract_indexes()}
+        buckets: dict[tuple[RegionGuard, ...], set[GenericIndex]] = {}
+        for region in self.regions:
+            bucket = {node_to_idx[node] for node in region.nodes if node in node_to_idx}
+            if not bucket:
+                continue
+            existing = buckets.get(region.guards)
+            if existing is not None:
+                existing |= bucket
+            else:
+                buckets[region.guards] = bucket
+        return {key: frozenset(value) for key, value in buckets.items()}

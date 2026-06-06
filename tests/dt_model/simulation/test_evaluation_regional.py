@@ -1355,3 +1355,251 @@ def test_nested_regional_selective_execution() -> None:
     np.testing.assert_allclose(arr[n_b : n_b + n_s], np.sqrt(x_arr[n_b : n_b + n_s]), rtol=1e-12)
     # car+loose → x**2
     np.testing.assert_allclose(arr[n_b + n_s :], x_arr[n_b + n_s :] ** 2, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# EvaluationPlan.scoped_abstract_indexes(scenario) — branch-scope API
+#
+# Pins the contract for #137: group scenario-abstract indexes by the guard
+# chain of the region whose .nodes contain each index's .node.  Keys are
+# tuple[RegionGuard, ...] (empty tuple = unconditional).
+# ---------------------------------------------------------------------------
+
+
+def _make_branch_abstract_mv() -> tuple[CategoricalIndex, Index, Index, ModelVariant]:
+    """2-branch ModelVariant with a per-branch abstract Index in each variant.
+
+    Concrete capacity is shared by both branches; the only branch-specific
+    nodes are the per-branch ``weather`` placeholders.
+    """
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    cap = Index("capacity", _CAPACITY_VALUE)
+    weather_bike = Index("weather_bike", None)
+    weather_train = Index("weather_train", None)
+
+    class _BikeBranch(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            weather: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, weather: Index) -> None:
+            throughput = Index("throughput", capacity.node * weather.node)
+            super().__init__(
+                "BikeBranch",
+                inputs=_BikeBranch.Inputs(capacity=capacity, weather=weather),
+                outputs=_BikeBranch.Outputs(throughput=throughput),
+            )
+
+    class _TrainBranch(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            weather: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, weather: Index) -> None:
+            throughput = Index("throughput", capacity.node * weather.node)
+            super().__init__(
+                "TrainBranch",
+                inputs=_TrainBranch.Inputs(capacity=capacity, weather=weather),
+                outputs=_TrainBranch.Outputs(throughput=throughput),
+            )
+
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeBranch(cap, weather_bike), "train": _TrainBranch(cap, weather_train)},
+        selector=mode,
+    )
+    return mode, weather_bike, weather_train, mv
+
+
+def _make_nested_branch_abstract_mv() -> tuple[CategoricalIndex, CategoricalIndex, Index, Index, Index, ModelVariant]:
+    """Nested ModelVariant with an abstract Index in each scoped sub-region.
+
+    Expected scope buckets (5 distinct keys, after collapsing same-guards
+    regions and dropping empty buckets):
+
+      ()                                            : mode
+      ((mode, 'bike'),)                             : bike_w
+      ((mode, 'car'),)                              : policy
+      ((mode, 'car'), (policy, 'strict'))           : strict_w
+      ((mode, 'car'), (policy, 'loose'))            : loose_w
+    """
+    mode = CategoricalIndex("mode", {"bike": 1 / 3, "car": 2 / 3})
+    policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
+    cap = Index("capacity", _CAPACITY_VALUE)
+
+    bike_w = Index("bike_w", None)
+    strict_w = Index("strict_w", None)
+    loose_w = Index("loose_w", None)
+
+    class _BikeOuter(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            bike_w: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, bike_w: Index) -> None:
+            throughput = Index("throughput", capacity.node * bike_w.node)
+            super().__init__(
+                "BikeOuter",
+                inputs=_BikeOuter.Inputs(capacity=capacity, bike_w=bike_w),
+                outputs=_BikeOuter.Outputs(throughput=throughput),
+            )
+
+    class _StrictInner(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            strict_w: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, strict_w: Index) -> None:
+            throughput = Index("throughput", capacity.node * 2.0 * strict_w.node)
+            super().__init__(
+                "StrictInner",
+                inputs=_StrictInner.Inputs(capacity=capacity, strict_w=strict_w),
+                outputs=_StrictInner.Outputs(throughput=throughput),
+            )
+
+    class _LooseInner(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            loose_w: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, loose_w: Index) -> None:
+            throughput = Index("throughput", capacity.node * 3.0 * loose_w.node)
+            super().__init__(
+                "LooseInner",
+                inputs=_LooseInner.Inputs(capacity=capacity, loose_w=loose_w),
+                outputs=_LooseInner.Outputs(throughput=throughput),
+            )
+
+    inner_mv = ModelVariant(
+        "Policy",
+        {"strict": _StrictInner(cap, strict_w), "loose": _LooseInner(cap, loose_w)},
+        selector=policy,
+    )
+    outer_mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeOuter(cap, bike_w), "car": inner_mv},
+        selector=mode,
+    )
+    return mode, policy, bike_w, strict_w, loose_w, outer_mv
+
+
+def test_scoped_abstract_indexes_monolithic():
+    """Monolithic plan: a single () key holds every scenario-abstract index.
+
+    Establishes the base case: a no-variant plan has one unconditional
+    region and one bucket with the full abstract-index list.
+    """
+    x = Index("x", None)
+
+    class _M(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index) -> None:
+            y = Index("y", x.node)
+            super().__init__(
+                "_M",
+                inputs=_M.Inputs(x=x),
+                outputs=_M.Outputs(y=y),
+            )
+
+    m = _M(x)
+    scenario = Scenario(m)
+    plan = Evaluation(m).build_plan()
+
+    scoped = plan.scoped_abstract_indexes(scenario)
+
+    assert scoped == {(): frozenset({x})}
+
+
+def test_scoped_abstract_indexes_regional_single_level():
+    """Single-level regional: 3 keys, branch abstracts route to their branch.
+
+    Pins: branch-keyed entries use a *singleton tuple* guard; shared and
+    merge regions (both with guards=()) collapse into one () key; empty
+    buckets (if any) are not emitted.
+    """
+    mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+
+    scoped = plan.scoped_abstract_indexes(scenario)
+
+    bike_guard = (RegionGuard(mode.node, "bike"),)
+    train_guard = (RegionGuard(mode.node, "train"),)
+
+    assert set(scoped.keys()) == {(), bike_guard, train_guard}
+    assert scoped[()] == frozenset({mode})
+    assert scoped[bike_guard] == frozenset({weather_bike})
+    assert scoped[train_guard] == frozenset({weather_train})
+
+
+def test_scoped_abstract_indexes_regional_nested():
+    """Nested regional: keys are *tuples* of guards (length 0/1/2).
+
+    Pins the load-bearing design point distinguishing this proposal from
+    the issue sketch: a region can carry a multi-element guards chain, so
+    the dict key must be ``tuple[RegionGuard, ...]``, not ``str``.
+
+    Also pins that the *inner* selector (``policy``) lands at the
+    ``(mode=='car',)`` key, not at the outer-shared ``()`` key — i.e.
+    selector placement tracks the deepest scope where its node is needed.
+    """
+    mode, policy, bike_w, strict_w, loose_w, mv = _make_nested_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+
+    scoped = plan.scoped_abstract_indexes(scenario)
+
+    # Recover the actual RegionGuard instances from the plan so the test
+    # is independent of how those objects are constructed internally.
+    guard_by_branch_key: dict[str, RegionGuard] = {g.branch_key: g for region in plan.regions for g in region.guards}
+    bike_guard = (guard_by_branch_key["bike"],)
+    car_guard = (guard_by_branch_key["car"],)
+    strict_guard = (guard_by_branch_key["strict"],)
+    loose_guard = (guard_by_branch_key["loose"],)
+
+    expected_keys = {
+        (),
+        bike_guard,
+        car_guard,
+        car_guard + strict_guard,
+        car_guard + loose_guard,
+    }
+    assert set(scoped.keys()) == expected_keys
+
+    assert scoped[()] == frozenset({mode})
+    assert scoped[car_guard] == frozenset({policy})
+    assert scoped[bike_guard] == frozenset({bike_w})
+    assert scoped[car_guard + strict_guard] == frozenset({strict_w})
+    assert scoped[car_guard + loose_guard] == frozenset({loose_w})
