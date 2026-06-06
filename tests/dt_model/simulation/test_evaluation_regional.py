@@ -1804,3 +1804,170 @@ def test_scoped_sampling_end_to_end_matches_no_plan_mean() -> None:
     # The two means should agree; tolerance ~5.5 sigma on the
     # difference-of-means standard error (~0.18).
     assert abs(np.mean(throughput_no) - np.mean(throughput_with)) < 1.5
+
+
+def test_scoped_sampling_exclude_skips_bucket() -> None:
+    """An abstract index listed in ``exclude`` is dropped from the per-scope result.
+
+    The bucket containing only excluded indexes is skipped (the
+    ``if not active_indexes: continue`` branch in ``_scoped_assignments``).
+    Other buckets in the same plan are still sampled.
+    """
+    mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    ens = DistributionEnsemble(
+        Scenario(mv),
+        size=100,
+        rng=np.random.default_rng(0),
+        plan=plan,
+        exclude=frozenset({weather_bike}),
+    )
+    a = ens.assignments()
+    # mode is in the shared bucket — sampled at all positions.
+    assert a[mode].shape == (100,)
+    # weather_train is in its own bucket — sampled at train positions.
+    assert a[weather_train].shape == (100,)
+    assert 30 <= int(np.sum(~np.isnan(a[weather_train]))) <= 70
+    # weather_bike was excluded; its bucket is empty after filtering.
+    assert weather_bike not in a
+
+
+def test_scoped_sampling_no_rng() -> None:
+    """Per-scope sampling works without an rng (scipy's default is used).
+
+    Exercises the ``self._rng is None`` branch in ``_sample_with_default``.
+    """
+    mode, weather_bike, _, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    ens = DistributionEnsemble(Scenario(mv), size=200, plan=plan)
+    a = ens.assignments()
+    assert a[mode].shape == (200,)
+    # Real samples for weather_bike have mean ~0.5 (uniform[0, 1]).
+    bike_real = a[weather_bike][~np.isnan(a[weather_bike])]
+    assert 0.35 < float(np.mean(bike_real)) < 0.65
+
+
+def test_scoped_abstract_indexes_unions_same_guards_regions() -> None:
+    """Two regions with the same guards tuple union their abstract indexes.
+
+    build_plan currently never produces duplicate guard tuples, but the
+    union branch is the correct fallback if it ever does — abstract
+    indexes that live in regions with identical guards are all active
+    whenever the guards are satisfied.
+    """
+    x = Index("x", None)
+    y = Index("y", None)
+
+    class _M(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            y: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            z: Index
+
+        def __init__(self, x: Index, y: Index) -> None:
+            z = Index("z", x.node + y.node)
+            super().__init__(
+                "_M",
+                inputs=_M.Inputs(x=x, y=y),
+                outputs=_M.Outputs(z=z),
+            )
+
+    m = _M(x, y)
+    scenario = Scenario(m)
+    # x and y are disjoint, so the overlap check passes.  The two
+    # regions share guards=() and the union branch fires for the second.
+    plan = EvaluationPlan(
+        model=m,
+        nodes_of_interest=(x, y),
+        regions=(
+            Region(nodes=(x.node,), has_timeseries=False, guards=()),
+            Region(nodes=(y.node,), has_timeseries=False, guards=()),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+    assert plan.scoped_abstract_indexes(scenario) == {(): frozenset({x, y})}
+
+
+def test_scoped_sampling_pinned_selector_treats_guard_as_noop() -> None:
+    """A guard whose selector was pinned in the Scenario is treated as a no-op.
+
+    The plan was built from the unpinned model, so it has guards on the
+    selector.  When the Scenario pins the selector to a concrete value,
+    the selector is no longer in ``scenario.abstract_indexes()`` and
+    ``node_to_idx`` does not contain it.  ``_active_positions`` then
+    skips the guard (``continue``), leaving all positions active, and
+    the per-branch index is sampled at every position.
+    """
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    pinned_scenario = Scenario(mv, overrides={mode: "bike"})
+    ens = DistributionEnsemble(pinned_scenario, size=100, rng=np.random.default_rng(0), plan=plan)
+    a = ens.assignments()
+    # mode is pinned, so it is not in the abstract indexes and not in the result.
+    assert mode not in a
+    # weather_bike: every position is active (no-op guard), so no sentinels.
+    assert a[weather_bike].shape == (100,)
+    assert not np.any(np.isnan(a[weather_bike]))
+
+
+def test_scoped_sampling_defensive_wrong_order_plan_raises() -> None:
+    """A custom plan with regions in the wrong order triggers the defensive RuntimeError.
+
+    The build_plan invariant guarantees that the bucket order from
+    ``scoped_abstract_indexes`` is outer-to-inner — the shared
+    pre-selector region is processed first, so its bucket is populated
+    before any per-branch bucket uses it as a guard.  We construct a
+    custom plan that violates this invariant to verify the defensive
+    check fires.
+    """
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    scenario = Scenario(mv)
+    # Wrong order: per-branch region first (depends on mode), shared
+    # region second (where mode is actually sampled).
+    bike_guard = RegionGuard(selector_node=mode.node, branch_key="bike")
+    plan = EvaluationPlan(
+        model=mv,
+        nodes_of_interest=(mv.outputs.throughput,),
+        regions=(
+            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(bike_guard,)),
+            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+    with pytest.raises(RuntimeError, match="has not been sampled yet"):
+        DistributionEnsemble(scenario, size=100, rng=np.random.default_rng(0), plan=plan).assignments()
+
+
+def test_scoped_sampling_empty_active_positions() -> None:
+    """A guard whose branch_key never matches produces all-placeholder output.
+
+    Exercises the ``n_branch == 0`` branch in ``_sample_with_default``:
+    when no positions satisfy the guard, the per-scope path fills the
+    full output array with the placeholder (np.nan for
+    DistributionIndex).
+    """
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    scenario = Scenario(mv)
+    # mode's outcomes are {bike, train}, so a guard with branch_key="x"
+    # never matches.  The bucket for weather_bike is then empty.
+    unmatched_guard = RegionGuard(selector_node=mode.node, branch_key="x")
+    plan = EvaluationPlan(
+        model=mv,
+        nodes_of_interest=(mv.outputs.throughput,),
+        regions=(
+            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
+            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(unmatched_guard,)),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+    ens = DistributionEnsemble(scenario, size=100, rng=np.random.default_rng(0), plan=plan)
+    a = ens.assignments()
+    # mode is in the shared bucket, sampled at every position.
+    assert a[mode].shape == (100,)
+    # weather_bike: no positions match, so all positions are sentinels.
+    assert a[weather_bike].shape == (100,)
+    assert np.all(np.isnan(a[weather_bike]))
