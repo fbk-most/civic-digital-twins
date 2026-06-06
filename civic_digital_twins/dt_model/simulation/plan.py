@@ -151,13 +151,31 @@ class EvaluationPlan:
         dict[tuple[RegionGuard, ...], frozenset[GenericIndex]]
             Mapping from guard chain (empty tuple for unconditional
             regions) to the abstract indexes that belong to that scope.
+
+        Raises
+        ------
+        ValueError
+            If an abstract index's node appears in more than one region.
+            :meth:`~simulation.evaluation.Evaluation.build_plan` is expected
+            to partition region nodes disjointly; downstream per-scope
+            sampling in :class:`~simulation.ensemble.DistributionEnsemble`
+            requires this invariant.
         """
         node_to_idx: dict[graph.Node, GenericIndex] = {idx.node: idx for idx in scenario.abstract_indexes()}
         buckets: dict[tuple[RegionGuard, ...], set[GenericIndex]] = {}
+        seen: set[GenericIndex] = set()
         for region in self.regions:
             bucket = {node_to_idx[node] for node in region.nodes if node in node_to_idx}
             if not bucket:
                 continue
+            duplicates = bucket & seen
+            if duplicates:
+                names = ", ".join(sorted(getattr(idx, "name", repr(idx)) for idx in duplicates))
+                raise ValueError(
+                    f"Abstract indexes [{names}] appear in multiple regions of the plan; "
+                    f"build_plan should partition region nodes disjointly."
+                )
+            seen |= bucket
             existing = buckets.get(region.guards)
             if existing is not None:
                 existing |= bucket

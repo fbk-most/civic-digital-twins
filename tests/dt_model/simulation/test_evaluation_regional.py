@@ -1366,16 +1366,20 @@ def test_nested_regional_selective_execution() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_branch_abstract_mv() -> tuple[CategoricalIndex, Index, Index, ModelVariant]:
+def _make_branch_abstract_mv() -> tuple[CategoricalIndex, DistributionIndex, DistributionIndex, ModelVariant]:
     """2-branch ModelVariant with a per-branch abstract Index in each variant.
 
     Concrete capacity is shared by both branches; the only branch-specific
-    nodes are the per-branch ``weather`` placeholders.
+    nodes are the per-branch ``weather`` placeholders.  Used by both
+    ``scoped_abstract_indexes`` tests and ``DistributionEnsemble`` per-scope
+    sampling tests.
     """
+    from scipy import stats as _stats
+
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     cap = Index("capacity", _CAPACITY_VALUE)
-    weather_bike = Index("weather_bike", None)
-    weather_train = Index("weather_train", None)
+    weather_bike = DistributionIndex("weather_bike", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+    weather_train = DistributionIndex("weather_train", _stats.uniform, {"loc": 0.0, "scale": 1.0})
 
     class _BikeBranch(Model):
         @dataclasses.dataclass
@@ -1421,7 +1425,9 @@ def _make_branch_abstract_mv() -> tuple[CategoricalIndex, Index, Index, ModelVar
     return mode, weather_bike, weather_train, mv
 
 
-def _make_nested_branch_abstract_mv() -> tuple[CategoricalIndex, CategoricalIndex, Index, Index, Index, ModelVariant]:
+def _make_nested_branch_abstract_mv() -> tuple[
+    CategoricalIndex, CategoricalIndex, DistributionIndex, DistributionIndex, DistributionIndex, ModelVariant
+]:
     """Nested ModelVariant with an abstract Index in each scoped sub-region.
 
     Expected scope buckets (5 distinct keys, after collapsing same-guards
@@ -1433,13 +1439,15 @@ def _make_nested_branch_abstract_mv() -> tuple[CategoricalIndex, CategoricalInde
       ((mode, 'car'), (policy, 'strict'))           : strict_w
       ((mode, 'car'), (policy, 'loose'))            : loose_w
     """
+    from scipy import stats as _stats
+
     mode = CategoricalIndex("mode", {"bike": 1 / 3, "car": 2 / 3})
     policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
     cap = Index("capacity", _CAPACITY_VALUE)
 
-    bike_w = Index("bike_w", None)
-    strict_w = Index("strict_w", None)
-    loose_w = Index("loose_w", None)
+    bike_w = DistributionIndex("bike_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+    strict_w = DistributionIndex("strict_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+    loose_w = DistributionIndex("loose_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
 
     class _BikeOuter(Model):
         @dataclasses.dataclass
@@ -1603,3 +1611,196 @@ def test_scoped_abstract_indexes_regional_nested():
     assert scoped[bike_guard] == frozenset({bike_w})
     assert scoped[car_guard + strict_guard] == frozenset({strict_w})
     assert scoped[car_guard + loose_guard] == frozenset({loose_w})
+
+
+def test_scoped_abstract_indexes_raises_on_overlap():
+    """Raises when an abstract index's node appears in multiple regions.
+
+    build_plan currently guarantees disjointness, but the per-scope
+    allocation in DistributionEnsemble (issue #173) relies on this
+    invariant: an index's node must live in exactly one region for the
+    per-scope sampling to be well-defined.  We construct a synthetic
+    plan with overlapping regions to verify the defensive check fires.
+    """
+    x = Index("x", None)
+    y = Index("y", None)
+
+    class _M(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            y: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            z: Index
+
+        def __init__(self, x: Index, y: Index) -> None:
+            z = Index("z", x.node + y.node)
+            super().__init__(
+                "_M",
+                inputs=_M.Inputs(x=x, y=y),
+                outputs=_M.Outputs(z=z),
+            )
+
+    m = _M(x, y)
+    scenario = Scenario(m)
+    # Synthesise an EvaluationPlan where x.node appears in two regions.
+    plan = EvaluationPlan(
+        model=m,
+        nodes_of_interest=(x, y),
+        regions=(
+            Region(nodes=(x.node,), has_timeseries=False, guards=()),
+            Region(nodes=(x.node, y.node), has_timeseries=False, guards=()),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+
+    with pytest.raises(ValueError, match="appear in multiple regions"):
+        plan.scoped_abstract_indexes(scenario)
+
+
+# ---------------------------------------------------------------------------
+# DistributionEnsemble per-scope sampling (issue #173)
+#
+# When constructed with plan=, assignments() performs per-scope sampling:
+# indexes scoped to a particular region are sampled only at the scenario
+# positions where that region is active; unsampled slots are filled with
+# a semantically valid default (mean() for DistributionIndex, argmax
+# for CategoricalIndex).
+# ---------------------------------------------------------------------------
+
+
+def test_scoped_sampling_flat_branch_sample_count():
+    """Flat 2-branch MV: per-branch DistributionIndex sampled at branch positions.
+
+    p_bike = p_train = 0.5, size = 10_000.  Allow a 5-sigma binomial
+    tolerance (std = 50) on each branch's real-sample count.  Real
+    samples are detected by ``~np.isnan(arr)`` (the sentinel for
+    unsampled DistributionIndex slots is ``np.nan``).
+    """
+    mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=10_000, rng=rng, plan=plan)
+    a = ens.assignments()
+
+    # Shared: sampled at full size.
+    assert a[mode].shape == (10_000,)
+
+    # Per-branch: sentinel is np.nan; real samples are non-NaN.
+    bike_real = int(np.sum(~np.isnan(a[weather_bike])))
+    train_real = int(np.sum(~np.isnan(a[weather_train])))
+    assert 4750 <= bike_real <= 5250
+    assert 4750 <= train_real <= 5250
+    assert bike_real + train_real == 10_000  # every position is exactly one branch
+
+
+def test_scoped_sampling_nested_intersection():
+    """Nested MV: inner-strict DistributionIndex sampled at car AND strict positions.
+
+    Verifies the multi-pass / outer-to-inner invariant: positions for
+    the (mode=='car', policy=='strict') bucket are intersected across
+    all ancestor guards, not just the innermost.
+    """
+    mode, policy, bike_w, strict_w, loose_w, mv = _make_nested_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=30_000, rng=rng, plan=plan)
+    a = ens.assignments()
+
+    car_mask = a[mode] == "car"
+    strict_mask = car_mask & (a[policy] == "strict")
+    loose_mask = car_mask & (a[policy] == "loose")
+    bike_mask = a[mode] == "bike"
+
+    # Real-sample counts (non-NaN) must equal the position counts for
+    # the corresponding active scopes.
+    assert int(np.sum(~np.isnan(a[strict_w]))) == int(np.sum(strict_mask))
+    assert int(np.sum(~np.isnan(a[loose_w]))) == int(np.sum(loose_mask))
+    # bike_w is at the (mode=='bike',) bucket; its real-sample count
+    # equals the count of bike positions.
+    assert int(np.sum(~np.isnan(a[bike_w]))) == int(np.sum(bike_mask))
+
+
+def test_scoped_sampling_categorical_sentinel():
+    """Per-branch CategoricalIndex: non-active positions get the None sentinel.
+
+    For the nested fixture, policy lives at the (mode=='car',) bucket.
+    Non-car positions must be ``None``; car positions are real samples
+    from {"strict", "loose"}.  Filtering with ``arr != None`` recovers
+    the real samples.
+    """
+    mode, policy, _bike_w, _strict_w, _loose_w, mv = _make_nested_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=2000, rng=rng, plan=plan)
+    a = ens.assignments()
+
+    car_mask = a[mode] == "car"
+    non_car = ~car_mask
+    # All non-car positions: policy sentinel = None
+    policy_non_car = a[policy][non_car]
+    assert np.all(np.asarray(policy_non_car == None, dtype=bool))  # noqa: E711
+    # Car positions: real samples from {"strict", "loose"}
+    policy_car = np.asarray(a[policy][car_mask], dtype=object)
+    assert set(policy_car.tolist()) <= {"strict", "loose"}
+
+
+def test_scoped_sampling_draw_batch_propagates_plan():
+    """draw_batch must propagate self._plan so the plan-aware path is used."""
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=1000, rng=rng, plan=plan)
+
+    rng2 = np.random.default_rng(1)
+    batch = ens.draw_batch(500, rng2)
+    a = batch.assignments()
+
+    # The batch has its own size = 500; per-scope sampling is active.
+    assert a[mode].shape == (500,)
+    bike_real = int(np.sum(~np.isnan(a[weather_bike])))
+    # 50% of 500 = 250, allow binomial wiggle
+    assert 200 <= bike_real <= 300
+
+
+def test_scoped_sampling_end_to_end_matches_no_plan_mean() -> None:
+    """Per-scope and no-plan DistributionEnsemble produce statistically equivalent throughput means.
+
+    The per-scope path only samples per-branch DistributionIndex at
+    branch positions and fills the rest with sentinels (np.nan).  The
+    executor's region masking ensures the sentinels are never read, so
+    the per-scope throughput mean converges to the same analytical value
+    as the no-plan mean.
+
+    Both paths run with the same seed.  The means will not be *equal*
+    (the draw order and count differ), but they should agree within
+    statistical tolerance and both should match the analytical
+    expected value.
+    """
+    _, _, _, mv = _make_branch_abstract_mv()
+    ev = Evaluation(mv)
+    n = 50_000
+
+    rng_a = np.random.default_rng(42)
+    ens_no = DistributionEnsemble(Scenario(mv), size=n, rng=rng_a)
+    throughput_no = np.asarray(ev.execute_plan(ev.build_plan(), ens_no)[mv.outputs.throughput]).ravel()
+
+    rng_b = np.random.default_rng(42)
+    plan_reg = ev.build_plan(strategy="regional")
+    ens_with = DistributionEnsemble(Scenario(mv), size=n, rng=rng_b, plan=plan_reg)
+    throughput_with = np.asarray(ev.execute_plan(plan_reg, ens_with)[mv.outputs.throughput]).ravel()
+
+    # Analytical expected throughput: cap * E[weather] = 100 * 0.5 = 50.
+    expected = _CAPACITY_VALUE * 0.5
+
+    # Per-position std is cap * sqrt(1/12) ~= 28.87.  Std of the mean
+    # over n=50000 positions: ~0.129.  A tolerance of 1.0 is ~7.7
+    # sigma — comfortably above any plausible Monte Carlo noise.
+    assert abs(np.mean(throughput_no) - expected) < 1.0
+    assert abs(np.mean(throughput_with) - expected) < 1.0
+
+    # The two means should agree; tolerance ~5.5 sigma on the
+    # difference-of-means standard error (~0.18).
+    assert abs(np.mean(throughput_no) - np.mean(throughput_with)) < 1.5

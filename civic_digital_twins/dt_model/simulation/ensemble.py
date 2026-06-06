@@ -21,6 +21,7 @@ from ..model.index import (
 )
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
+from .plan import EvaluationPlan
 from .scenario import Scenario
 
 WeightedScenario = tuple[float, dict[GenericIndex, Any]]
@@ -579,13 +580,15 @@ class DistributionEnsemble:
         Callers of :meth:`EvaluationHandle.evaluate` and
         :meth:`AsyncEvaluationHandle.evaluate` should not set this
         directly; it is managed automatically from the ``parameters=`` dict.
-
-    Raises
-    ------
-    ValueError
-        If any abstract index of *model* (not in *exclude*) is neither
-        :class:`~model.index.Distribution`-backed nor a
-        :class:`~model.index.CategoricalIndex`.
+    plan:
+        Optional :class:`~simulation.plan.EvaluationPlan`.  When supplied
+        (and built with ``strategy="regional"``), :meth:`assignments`
+        performs *per-scope sampling* (see :meth:`_scoped_assignments`):
+        indexes scoped to a particular region are sampled only at the
+        scenario positions where that region is active.  This aligns the
+        Monte Carlo budget with branch selection probabilities.  When
+        ``None`` (default), the original "all indexes, all scenarios"
+        sampling is used.
 
     Notes
     -----
@@ -607,6 +610,7 @@ class DistributionEnsemble:
         rng: np.random.Generator | None = None,
         *,
         exclude: frozenset["GenericIndex"] | None = None,
+        plan: EvaluationPlan | None = None,
     ) -> None:
         import warnings
 
@@ -634,6 +638,7 @@ class DistributionEnsemble:
         self._rng = rng
         self._axis = Axis("_ensemble", ENSEMBLE)
         self._exclude: frozenset[GenericIndex] = exclude or frozenset()
+        self._plan: EvaluationPlan | None = plan
         # Validate that all abstract indexes can be sampled by this ensemble.
         # Indexes in `exclude` are covered by parameters= at evaluate time and
         # are skipped here. Abstract indexes that are neither Distribution-backed
@@ -674,7 +679,21 @@ class DistributionEnsemble:
         Scalar-valued :class:`~model.index.Distribution`-backed indexes yield
         float arrays; :class:`~model.index.CategoricalIndex` indexes yield
         object arrays of string keys.
+
+        When the ensemble is constructed with ``plan=``, sampling is
+        *per-scope* (see :meth:`_scoped_assignments`): indexes that are
+        active in only some regions are sampled only at the scenario
+        positions where those regions are active; unsampled slots are
+        filled with a sentinel (``np.nan`` for
+        :class:`~model.index.Distribution`-backed indexes, ``None`` for
+        :class:`~model.index.CategoricalIndex`).  The executor's region
+        masking ensures these slots are never read for regional plans;
+        downstream code that inspects assignments directly should
+        filter out sentinels (``~np.isnan(arr)`` for float arrays,
+        ``arr != None`` for object arrays) before statistical analysis.
         """
+        if self._plan is not None:
+            return self._scoped_assignments()
         abstract = [idx for idx in self._scenario.abstract_indexes() if idx not in self._exclude]
         result: dict[GenericIndex, np.ndarray] = {}
         for idx in abstract:
@@ -690,6 +709,109 @@ class DistributionEnsemble:
                     raw = dist.rvs(size=self._size)
                 result[idx] = np.asarray(raw)  # shape (S,)
         return result
+
+    def _scoped_assignments(self) -> dict[GenericIndex, np.ndarray]:
+        """Per-scope sampling: allocate each abstract index to its scope bucket.
+
+        Iterates the buckets from :meth:`EvaluationPlan.scoped_abstract_indexes`
+        in first-seen order — which is outer-to-inner by construction
+        (the outer shared region is the first region in the plan, so its
+        ``guards=()`` bucket is inserted first, then ``(outer_branch,)``
+        buckets, then ``(outer_branch, inner_branch)`` buckets, etc.).
+        Each bucket is sampled at the positions where every guard in the
+        chain matches the selector values already drawn in ancestor
+        buckets; unsampled slots are filled with a semantically valid
+        default.
+        """
+        plan = self._plan
+        assert plan is not None
+        scoped = plan.scoped_abstract_indexes(self._scenario)
+        node_to_idx: dict[Any, GenericIndex] = {idx.node: idx for idx in self._scenario.abstract_indexes()}
+        exclude = self._exclude
+        result: dict[GenericIndex, np.ndarray] = {}
+        for guards, indexes in scoped.items():
+            active_indexes = [idx for idx in indexes if idx not in exclude]
+            if not active_indexes:
+                continue
+            positions = self._active_positions(guards, node_to_idx, result)
+            for idx in active_indexes:
+                result[idx] = self._sample_with_default(idx, positions)
+        return result
+
+    def _active_positions(
+        self,
+        guards: tuple[Any, ...],
+        node_to_idx: dict[Any, GenericIndex],
+        result: dict[GenericIndex, np.ndarray],
+    ) -> np.ndarray:
+        """Return the scenario indices where every guard in *guards* matches.
+
+        Requires that each guard's selector is in ``result`` already —
+        i.e. its bucket was processed in an earlier (more outer) pass.
+        """
+        positions = np.arange(self._size)
+        for g in guards:
+            idx = node_to_idx.get(g.selector_node)
+            if idx is None:
+                # Selector not in scenario abstract (concretely overridden
+                # or supplied externally).  Best-effort: treat as no filter.
+                continue
+            if idx not in result:
+                raise RuntimeError(
+                    f"Selector {idx.name!r} for guard {g.branch_key!r} has not been "
+                    f"sampled yet; the bucket order from "
+                    f"EvaluationPlan.scoped_abstract_indexes is not outer-to-inner."
+                )
+            samples = result[idx]
+            positions = positions[samples[positions] == g.branch_key]
+        return positions
+
+    def _sample_with_default(self, idx: GenericIndex, positions: np.ndarray) -> np.ndarray:
+        """Sample ``len(positions)`` values for *idx* and fill the rest with a placeholder."""
+        n_branch = int(len(positions))
+        placeholder = self._placeholder_value(idx)
+        if isinstance(idx, CategoricalIndex):
+            samples = idx.sample(self._rng, size=n_branch) if n_branch > 0 else np.array([], dtype=object)
+            out = np.full(self._size, placeholder, dtype=object)
+            if n_branch > 0:
+                out[positions] = samples
+            return out
+        dist = self._scenario.effective_distribution(idx)
+        assert dist is not None
+        if n_branch > 0:
+            if self._rng is not None:
+                raw = dist.rvs(size=n_branch, random_state=self._rng)
+            else:
+                raw = dist.rvs(size=n_branch)
+            samples = np.asarray(raw)
+        else:
+            samples = np.array([], dtype=float)
+        out = np.full(self._size, placeholder)
+        if n_branch > 0:
+            out[positions] = samples
+        return out
+
+    def _placeholder_value(self, idx: GenericIndex) -> Any:
+        """Sentinel value used to fill unsampled slots.
+
+        * :class:`~model.index.CategoricalIndex` — ``None`` (object-dtype
+          sentinel).  Filter real samples with ``arr != None``.
+        * :class:`~model.index.Distribution`-backed indexes — ``np.nan``
+          (float-dtype sentinel).  Filter real samples with
+          ``~np.isnan(arr)``.
+
+        Sentinels are deliberately *not* type-safe defaults like
+        ``dist.mean()`` or ``argmax(outcomes)``: a downstream user
+        naively computing ``arr.mean()`` would get a silently biased
+        estimate with the latter, but a loud ``nan`` with the former
+        that forces them to filter.  The executor's region masking
+        ensures unsampled slots are never read for regional plans, so
+        the sentinels are "don't care" for execution — they exist
+        purely to inform downstream consumers.
+        """
+        if isinstance(idx, CategoricalIndex):
+            return None
+        return float("nan")
 
     def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
         """Draw *size* fresh samples and return them as a :class:`FrozenEnsemble`.
@@ -723,7 +845,13 @@ class DistributionEnsemble:
         """
         if axis is not None:
             raise ValueError(f"DistributionEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}.")
-        new_dist = DistributionEnsemble(self._scenario, size, rng=rng, exclude=self._exclude)
+        new_dist = DistributionEnsemble(
+            self._scenario,
+            size,
+            rng=rng,
+            exclude=self._exclude,
+            plan=self._plan,
+        )
         return FrozenEnsemble(
             (new_dist.ensemble_axes[0],),
             (new_dist.ensemble_weights[0],),
