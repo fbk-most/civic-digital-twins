@@ -321,11 +321,14 @@ def _demo_18_19_overtourism() -> None:
     )
 
     # Block 18 — CrossProductEnsemble
-    scenario = Scenario(model, overrides={CV_weather: ["good", "unsettled", "bad"]})
+    scenario = Scenario(
+        model,
+        overrides={CV_weather: ["good", "unsettled", "bad"]},
+        parameter_axes=[PV_tourists, PV_excursionists],
+    )
     ensemble = CrossProductEnsemble(
         scenario,
         max_categorical_size=20,
-        exclude=model.pvs,
     )
 
     # Block 19 — Grid Evaluation with CrossProductEnsemble

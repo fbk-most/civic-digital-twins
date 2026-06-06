@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Scenario` accepts `parameter_axes: list[GenericIndex]` (closing #165).  Indexes declared here
+  are excluded from `Scenario.abstract_indexes()` — `CrossProductEnsemble` skips them
+  automatically without any `exclude=` argument.  `Evaluation.evaluate()` raises `ValueError`
+  when a declared parameter axis is missing from `parameters=`, turning the previously silent
+  two-place duplication into a checked invariant.
 - `@define` decorator — declare a leaf `Model` subclass via a `compute()`
   method instead of a hand-written `__init__`.  `@define("Name")` generates
   `__init__(self, inputs: Inputs)` (plus `fns: Functions` when a `@functions`
@@ -234,6 +239,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release (closing #162).
 - `CrossProductEnsemble.restrictions=` — use `Scenario(model, overrides={idx: [...]})` instead.
   Emits `DeprecationWarning` at construction time.
+- `CrossProductEnsemble.exclude=` — declare parameter axes on the `Scenario` instead:
+  `Scenario(model, parameter_axes=[idx, ...])`.  Emits `DeprecationWarning` at construction time.
 - `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
   `Scenario(model)` instead.  These constructors now auto-wrap the model in a
   base `Scenario` and emit `DeprecationWarning`.  The canonical chain is

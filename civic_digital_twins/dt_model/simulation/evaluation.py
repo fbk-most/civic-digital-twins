@@ -1072,6 +1072,19 @@ class Evaluation:
 
         parameters = parameters or {}
 
+        # Enforce: scenario.parameter_axes must all be covered by parameters=.
+        if self._scenario.parameter_axes:
+            param_set_check = set(parameters.keys())
+            missing = [idx for idx in self._scenario.parameter_axes if idx not in param_set_check]
+            if missing:
+                names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in missing)
+                raise ValueError(
+                    f"Scenario declares {names} as parameter_axes but "
+                    f"{'it was' if len(missing) == 1 else 'they were'} not supplied in "
+                    "parameters=. Pass their values via "
+                    "Evaluation.evaluate(parameters={idx: values, ...})."
+                )
+
         if nodes_of_interest is None:
             nodes_of_interest = list(self.model.indexes)
 

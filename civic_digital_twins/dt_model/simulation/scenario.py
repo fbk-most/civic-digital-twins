@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 
 from ..engine.frontend import graph
@@ -46,6 +48,15 @@ class Scenario:
         Overrides shadow the index's own ``value`` when :meth:`base_substitutions`
         is called.  See the override compatibility table for which value types are
         accepted for each index kind.
+    parameter_axes:
+        Optional list of abstract indexes that will be supplied externally as
+        PARAMETER axes via ``parameters=`` to
+        :meth:`~simulation.evaluation.Evaluation.evaluate`.  These indexes are
+        excluded from the ensemble's sampling — they do not appear in
+        :meth:`abstract_indexes` and :class:`~simulation.ensemble.CrossProductEnsemble`
+        skips them automatically.
+        :meth:`~simulation.evaluation.Evaluation.evaluate` raises ``ValueError``
+        if any declared parameter axis is absent from ``parameters=``.
 
     Override compatibility
     ----------------------
@@ -91,6 +102,10 @@ class Scenario:
         CondCategorical, no override    │ present           —              —                       None
         CondCategorical, str            │ absent            asarray(str)   —                       {str: 1.0}
 
+        Indexes declared in ``parameter_axes`` are always absent from
+        :meth:`abstract_indexes` regardless of override type; they are
+        excluded before this table is consulted.
+
     Examples
     --------
     >>> from civic_digital_twins.dt_model import Index, Model, Scenario
@@ -106,6 +121,7 @@ class Scenario:
         self,
         model: Model | ModelVariant,
         overrides: dict[GenericIndex, DomainValue] | None = None,
+        parameter_axes: Iterable[GenericIndex] | None = None,
     ) -> None:
         self._model = model
         self._overrides: dict[GenericIndex, DomainValue] = dict(overrides or {})
@@ -123,6 +139,19 @@ class Scenario:
                 "Overrides are matched by object identity — check that you are "
                 "passing index objects that were created as part of model "
                 f"{model.name!r}, not indexes from a different model or a copy."
+            )
+
+        # parameter_axes membership check — same identity-based approach as overrides.
+        self._parameter_axes: list[GenericIndex] = list(parameter_axes or [])
+        foreign_params = [idx for idx in self._parameter_axes if id(idx) not in model_index_ids]
+        if foreign_params:
+            names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in foreign_params)
+            raise ValueError(
+                f"Scenario for model {model.name!r}: parameter_axes {names} "
+                f"{'is' if len(foreign_params) == 1 else 'are'} not part of this model. "
+                "parameter_axes are matched by object identity — check that you are "
+                "passing index objects that were created as part of model "
+                f"{model.name!r}."
             )
 
         for idx, val in self._overrides.items():
@@ -258,6 +287,26 @@ class Scenario:
         """
         return dict(self._overrides)
 
+    @property
+    def parameter_axes(self) -> list[GenericIndex]:
+        """Indexes declared as PARAMETER axes for this scenario.
+
+        These indexes are excluded from ensemble sampling by
+        :class:`~simulation.ensemble.CrossProductEnsemble` and must be
+        supplied externally via ``parameters=`` to
+        :meth:`~simulation.evaluation.Evaluation.evaluate`.
+
+        :meth:`~simulation.evaluation.Evaluation.evaluate` enforces that
+        every entry here is covered by the ``parameters=`` dict.
+
+        Returns
+        -------
+        list[GenericIndex]
+            A copy of the parameter-axes list, or an empty list when none
+            were declared.
+        """
+        return list(self._parameter_axes)
+
     def effective_distribution(self, idx: GenericIndex) -> Distribution | None:
         """Return the effective :class:`~model.index.Distribution` for *idx*.
 
@@ -338,12 +387,16 @@ class Scenario:
         list[GenericIndex]
             Indexes that need to be sampled by an ensemble.
         """
+        parameter_axis_ids = {id(idx) for idx in self._parameter_axes}
         result: list[GenericIndex] = []
 
         for idx in self._model.abstract_indexes():
             override = self._overrides.get(idx)
             if override is not None and not isinstance(override, (Distribution, dict)):
                 # Concretely overridden (scalar or str) — handled by base_substitutions; skip.
+                continue
+            if id(idx) in parameter_axis_ids:
+                # Declared as a PARAMETER axis — supplied externally, not for the ensemble.
                 continue
             result.append(idx)
 

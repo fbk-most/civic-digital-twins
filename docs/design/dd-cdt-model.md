@@ -706,22 +706,26 @@ objects can be used as dictionary keys, matching the convention of
 
 ### Step 2 — Ensemble (CV cross-product)
 
-`CrossProductEnsemble` enumerates the joint support of the model's
+`CrossProductEnsemble` enumerates the joint support of a `Scenario`'s
 `CategoricalIndex` instances into weighted scenarios.  Each categorical
 combination also draws `n_samples_per_combo` independent Monte-Carlo samples
-of every distribution-backed abstract index that is *not* listed in `exclude`
-(PVs are excluded because they are swept on the grid in step 3 instead).
+of every distribution-backed abstract index that is not a *parameter* index
+(indexes declared as `parameter_axes` on the `Scenario` are swept on the grid
+in step 3 instead).
 The default `n_samples_per_combo=1` gives one sample per combination; increase
 it to reduce variance when stochastic capacities are retained in the ensemble:
 
 ```python
 from civic_digital_twins.dt_model import CrossProductEnsemble, Scenario
 
-scenario = Scenario(model, overrides={CV_weather: ["good", "unsettled", "bad"]})
+scenario = Scenario(
+    model,
+    overrides={CV_weather: ["good", "unsettled", "bad"]},
+    parameter_axes=[PV_tourists, PV_excursionists],
+)
 ensemble = CrossProductEnsemble(
     scenario,
     max_categorical_size=20,
-    exclude=model.pvs,
 )
 ```
 

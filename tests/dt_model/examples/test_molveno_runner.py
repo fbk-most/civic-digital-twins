@@ -43,8 +43,8 @@ def evaluator(model: MolvenoModel) -> MolvenoEvaluator:
 
 @pytest.fixture(scope="module")
 def scenario(model: MolvenoModel) -> Scenario:
-    """Return a base scenario with no overrides."""
-    return Scenario(model)
+    """Return a base scenario with no overrides but the PVs declared as parameter_axes."""
+    return Scenario(model, parameter_axes=[model.inputs.pv_tourists, model.inputs.pv_excursionists])
 
 
 @pytest.fixture(scope="module")
@@ -349,7 +349,8 @@ def test_evaluate_with_str_override(
     config: EvaluationConfig,
 ) -> None:
     """evaluate() must work with a str override on a CategoricalIndex."""
-    scenario = Scenario(model, overrides={model.inputs.cv_weather: "good"})
+    pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
+    scenario = Scenario(model, overrides={model.inputs.cv_weather: "good"}, parameter_axes=pvs)
     out = evaluator.evaluate(scenario, config)
     assert isinstance(out, MolvenoOutput)
     assert out.field.shape == (_T_SAMPLE + 1, _E_SAMPLE + 1)
@@ -361,7 +362,12 @@ def test_evaluate_with_dict_override(
     config: EvaluationConfig,
 ) -> None:
     """evaluate() must work with a dict override on a CategoricalIndex."""
-    scenario = Scenario(model, overrides={model.inputs.cv_weather: {"good": 0.7, "unsettled": 0.3}})
+    pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
+    scenario = Scenario(
+        model,
+        overrides={model.inputs.cv_weather: {"good": 0.7, "unsettled": 0.3}},
+        parameter_axes=pvs,
+    )
     out = evaluator.evaluate(scenario, config)
     assert isinstance(out, MolvenoOutput)
     assert out.field.shape == (_T_SAMPLE + 1, _E_SAMPLE + 1)

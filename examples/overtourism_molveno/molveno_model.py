@@ -86,6 +86,7 @@ from civic_digital_twins.dt_model import (
     GenericIndex,
     Index,
     Model,
+    Scenario,
     define,
     graph,
     inputs,
@@ -938,7 +939,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         self._e_sample = e_sample
         self._target_presence_samples = target_presence_samples
 
-    def _pre_compute(self, scenario: Any, config: EvaluationConfig) -> tuple[np.ndarray, np.ndarray, dict]:
+    def _pre_compute(self, config: EvaluationConfig) -> tuple[np.ndarray, np.ndarray, dict]:
         """Pre-compute parameter axes and presence samples (no result dependency).
 
         Used by both :meth:`evaluate` and :meth:`run_async` to share the
@@ -946,8 +947,6 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
 
         Parameters
         ----------
-        scenario : Scenario
-            The scenario being evaluated.
         config : EvaluationConfig
             Evaluation parameters; ``ensemble_size`` controls the cross-product
             size for the sampling ensemble.
@@ -959,18 +958,15 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
             axes and ``pv_samples`` maps each presence index to its samples.
         """
         model = self._model
+        pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
         tt = np.linspace(0, self._t_max, self._t_sample + 1)
         ee = np.linspace(0, self._e_max, self._e_sample + 1)
+        sampling_scenario = Scenario(model, parameter_axes=pvs)
         sampling_ensemble = CrossProductEnsemble(
-            type(scenario)(model),
+            sampling_scenario,
             max_categorical_size=config.ensemble_size,
-            exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
         )
-        pv_samples = sample_across(
-            sampling_ensemble,
-            [model.inputs.pv_tourists, model.inputs.pv_excursionists],
-            total=self._target_presence_samples,
-        )
+        pv_samples = sample_across(sampling_ensemble, pvs, total=self._target_presence_samples)
         return tt, ee, pv_samples
 
     def _build_output(
@@ -1051,12 +1047,8 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
             parameter axes, and a resume payload.
         """
         model = self._model
-        tt, ee, pv_samples = self._pre_compute(scenario, config)
-        ensemble = CrossProductEnsemble(
-            scenario,
-            max_categorical_size=config.ensemble_size,
-            exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
-        )
+        tt, ee, pv_samples = self._pre_compute(config)
+        ensemble = CrossProductEnsemble(scenario, max_categorical_size=config.ensemble_size)
         result = Evaluation(scenario).evaluate(
             ensemble=ensemble,
             parameters={model.inputs.pv_tourists: tt, model.inputs.pv_excursionists: ee},
@@ -1092,17 +1084,12 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
             Handle whose :meth:`~dt_model.simulation.runner.ModelRunHandle.get`
             returns a :class:`MolvenoOutput`.
         """
-        model = self._model
-        tt, ee, pv_samples = self._pre_compute(scenario, config)
-        ensemble = CrossProductEnsemble(
-            scenario,
-            max_categorical_size=config.ensemble_size,
-            exclude=[model.inputs.pv_tourists, model.inputs.pv_excursionists],
-        )
+        tt, ee, pv_samples = self._pre_compute(config)
+        ensemble = CrossProductEnsemble(scenario, max_categorical_size=config.ensemble_size)
         future = _get_default_executor().submit(
             Evaluation(scenario).evaluate,
             ensemble=ensemble,
-            parameters={model.inputs.pv_tourists: tt, model.inputs.pv_excursionists: ee},
+            parameters={self._model.inputs.pv_tourists: tt, self._model.inputs.pv_excursionists: ee},
         )
 
         def _post(result: EvaluationResult) -> MolvenoOutput:
