@@ -4,7 +4,7 @@
 import inspect
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any, assert_never
+from typing import Any
 
 import numpy as np
 
@@ -286,7 +286,9 @@ class Evaluation:
             model = scenario_or_model
             scenario = Scenario(model)
         else:
-            assert_never(scenario_or_model)
+            raise TypeError(
+                f"Evaluation() expects a Scenario, Model, or ModelVariant; got {type(scenario_or_model).__name__!r}."
+            )
         self._scenario = scenario
         self.model: Model | ModelVariant = model
 
@@ -427,10 +429,7 @@ class Evaluation:
                 # Find all variant_selectors within this scope.
                 # Topological order is preserved because linearized_nodes was
                 # produced by linearize.forest; the last vs is the outermost.
-                vs_in_scope = [
-                    n for n in linearized_nodes
-                    if n in scope and isinstance(n, graph.variant_selector)
-                ]
+                vs_in_scope = [n for n in linearized_nodes if n in scope and isinstance(n, graph.variant_selector)]
 
                 if not vs_in_scope:
                     # Base case: no further variant structure.  One flat region.

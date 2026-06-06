@@ -412,12 +412,8 @@ def test_regional_deterministic_no_leading_axes():
     monolithic_result = ev.evaluate(ensemble=None, nodes_of_interest=[mv.outputs.throughput])
 
     # Selector is pinned to "train"; train throughput = capacity * 10.
-    np.testing.assert_allclose(
-        regional_result[mv.outputs.throughput], monolithic_result[mv.outputs.throughput]
-    )
-    assert float(np.asarray(regional_result[mv.outputs.throughput])) == pytest.approx(
-        _CAPACITY_VALUE * 10.0
-    )
+    np.testing.assert_allclose(regional_result[mv.outputs.throughput], monolithic_result[mv.outputs.throughput])
+    assert float(np.asarray(regional_result[mv.outputs.throughput])) == pytest.approx(_CAPACITY_VALUE * 10.0)
 
 
 # ---------------------------------------------------------------------------
@@ -912,9 +908,7 @@ def test_nested_regional_plan_correct_dependencies() -> None:
 # --- correctness tests -------------------------------------------------------
 
 
-def _nested_equal_weight_ensemble(
-    mode: CategoricalIndex, policy: CategoricalIndex
-) -> list[WeightedScenario]:
+def _nested_equal_weight_ensemble(mode: CategoricalIndex, policy: CategoricalIndex) -> list[WeightedScenario]:
     """Three equal-weight scenarios: bike, car+strict, car+loose."""
     return [
         (1 / 3, {mode: np.array(["bike"]), policy: np.array(["strict"])}),
@@ -1064,14 +1058,14 @@ class _NestedCorrelatedEnsemble:
         n_bike, n_strict, n_loose = self.N_BIKE, self.N_CAR_STRICT, self.N_CAR_LOOSE
         n_total = n_bike + n_strict + n_loose
         self._mode = np.array(["bike"] * n_bike + ["car"] * (n_strict + n_loose), dtype=object)
-        self._policy = np.array(
-            ["strict"] * n_bike + ["strict"] * n_strict + ["loose"] * n_loose, dtype=object
+        self._policy = np.array(["strict"] * n_bike + ["strict"] * n_strict + ["loose"] * n_loose, dtype=object)
+        self._x = np.concatenate(
+            [
+                rng.uniform(0.1, 2.0, n_bike),
+                rng.uniform(0.1, 2.0, n_strict),
+                rng.uniform(-2.0, -0.1, n_loose),
+            ]
         )
-        self._x = np.concatenate([
-            rng.uniform(0.1, 2.0, n_bike),
-            rng.uniform(0.1, 2.0, n_strict),
-            rng.uniform(-2.0, -0.1, n_loose),
-        ])
         self._mode_idx = mode_idx
         self._policy_idx = policy_idx
         self._x_idx = x_idx
