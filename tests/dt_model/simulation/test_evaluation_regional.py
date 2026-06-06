@@ -523,6 +523,237 @@ def test_regional_execute_plan_uncovered_selector_raises():
         ev.execute_plan(plan, ensemble=None)
 
 
+def test_regional_leading_mask_raises_for_array_selector_no_leading():
+    """_leading_mask raises NotImplementedError for non-singleton DOMAIN with n_full==0.
+
+    Covers the ``n_full == 0`` branch of ``_leading_mask`` where the mask has a
+    dimension > 1 (the non-singleton DOMAIN raise).
+
+    A ConstTimeseriesIndex with two time steps is used directly as the ModelVariant
+    selector node.  With no ensemble and no parameters (n_full=0) the full (2,) constant
+    array ends up as the selector value, making mask.shape=(2,).
+    """
+    from civic_digital_twins.dt_model.model.index import ConstTimeseriesIndex
+
+    const_sel = ConstTimeseriesIndex("mode_sel", np.array(["bike", "train"]))
+    cap_bike = Index("capacity", _CAPACITY_VALUE)
+    cap_train = Index("capacity", _CAPACITY_VALUE)
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        selector=const_sel.node,
+    )
+    ev = Evaluation(mv)
+    plan = ev.build_plan(strategy="regional")
+    with pytest.raises(NotImplementedError, match="non-singleton DOMAIN"):
+        ev.execute_plan(plan, ensemble=None)
+
+
+# Note: in _leading_mask, the n_full==0 singleton-mask reshape ((1,) -> ()) is a
+# defensive normalisation marked ``# pragma: no cover``.  It is only reachable
+# by a selector that evaluates to a (1,) array rather than a 0-d scalar, which
+# no supported index/selector construction produces (scalar selectors already
+# yield mask.shape == ()).  The non-singleton DOMAIN raise on the same path is
+# covered by test_regional_leading_mask_raises_for_array_selector_no_leading.
+
+
+# ---------------------------------------------------------------------------
+# Timeseries + regional: _normalise_leading domain-only reshape path and
+# _scatter_leading extra_ts trailing-reshape path
+# ---------------------------------------------------------------------------
+
+
+def _make_ts_mv() -> tuple[CategoricalIndex, "ModelVariant"]:
+    """Build a ModelVariant whose branches each have a timeseries AND a scalar output.
+
+    * ``ts_out``  — formula derived from a ``TimeseriesIndex``; carries a DOMAIN axis.
+    * ``throughput`` — formula derived only from ``capacity``; no DOMAIN axis.
+
+    Having both kinds of outputs in the same branch region ensures:
+    - ``_normalise_leading`` hits the domain-only reshape path (DOMAIN value with
+      no explicit leading axes) during gather.
+    - ``_scatter_leading`` hits the extra_ts trailing-reshape path for the scalar
+      (non-DOMAIN) output.
+    """
+    from civic_digital_twins.dt_model.model.index import TimeseriesIndex
+
+    T = 3
+    ts = TimeseriesIndex("ts_load", np.arange(float(T)))
+    cap_bike = Index("capacity", _CAPACITY_VALUE)
+    cap_train = Index("capacity", _CAPACITY_VALUE * 2.0)
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+
+    class _TSTransportModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            ts_load: GenericIndex
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+            ts_out: Index
+
+        def __init__(self, cap: Index, ts_load: GenericIndex) -> None:
+            thr = Index("throughput", cap.node * 1.0)
+            ts_o = Index("ts_out", ts_load.node * 1.0)
+            super().__init__(
+                "_TSTransport",
+                inputs=_TSTransportModel.Inputs(capacity=cap, ts_load=ts_load),
+                outputs=_TSTransportModel.Outputs(throughput=thr, ts_out=ts_o),
+            )
+
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _TSTransportModel(cap_bike, ts), "train": _TSTransportModel(cap_train, ts)},
+        selector=mode,
+    )
+    return mode, mv
+
+
+def test_regional_timeseries_branch_scatter_normalise():
+    """Regional execution with timeseries covers _normalise_leading and the extra_ts scatter path.
+
+    The branch regions contain both a timeseries formula node (ts_out, DOMAIN axis) and a
+    scalar formula node (throughput, no DOMAIN axis).  With an ensemble present (n_full=1,
+    extra_ts=1) the gather loop triggers the domain-only reshape path in _normalise_leading,
+    and the scatter loop triggers the extra_ts reshape path for the scalar throughput node.
+    Result correctness is verified by comparing regional to monolithic.
+    """
+    mode, mv = _make_ts_mv()
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(mv, size=40, rng=rng)
+
+    ev = Evaluation(mv)
+    plan_reg = ev.build_plan(strategy="regional")
+    plan_mono = ev.build_plan(strategy="monolithic")
+
+    rng2 = np.random.default_rng(0)
+    ens2 = DistributionEnsemble(mv, size=40, rng=rng2)
+
+    result_reg = ev.execute_plan(plan_reg, ens)
+    result_mono = ev.execute_plan(plan_mono, ens2)
+
+    np.testing.assert_allclose(
+        result_reg[mv.outputs.throughput],
+        result_mono[mv.outputs.throughput],
+    )
+
+
+# ---------------------------------------------------------------------------
+# _leading_mask trailing-DOMAIN path (n_full>0 branch): ConstTimeseriesIndex
+# selector with ensemble (n_full=1) so sel broadcasts to shape (S, T).
+# ---------------------------------------------------------------------------
+
+
+def _make_const_ts_selector_mv(keys: list[str]) -> "ModelVariant":
+    """Build a ModelVariant whose selector is a ConstTimeseriesIndex holding *keys*.
+
+    ConstTimeseriesIndex creates a timeseries_constant node — no Scenario needed.
+    With an ensemble (n_full=1) the selector broadcasts to shape (S, len(keys)).
+    Branch keys are "bike" / "train".
+    """
+    from civic_digital_twins.dt_model.model.index import ConstTimeseriesIndex
+
+    sel = ConstTimeseriesIndex("mode_sel", np.array(keys))
+    cap_bike = Index("capacity", _CAPACITY_VALUE)
+    cap_train = Index("capacity", _CAPACITY_VALUE)
+    return ModelVariant(
+        "Transport",
+        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        selector=sel.node,
+    )
+
+
+def test_regional_leading_mask_raises_for_timeseries_selector_with_ensemble():
+    """_leading_mask raises NotImplementedError for non-singleton DOMAIN with n_full>0.
+
+    Covers the ``n_full > 0`` branch of ``_leading_mask`` where a trailing
+    (DOMAIN) dimension is > 1 (the non-singleton DOMAIN raise).
+
+    selector = ConstTimeseriesIndex(["bike","train"]) → shape (2,);
+    with ensemble (n_full=1) → (S, 2); trailing dim 2 > 1 → NotImplementedError.
+    """
+    mv = _make_const_ts_selector_mv(["bike", "train"])
+    ev = Evaluation(mv)
+    ens = DistributionEnsemble(mv, size=10)
+    plan = ev.build_plan(strategy="regional")
+    with pytest.raises(NotImplementedError, match="non-singleton DOMAIN"):
+        ev.execute_plan(plan, ens)
+
+
+def test_regional_leading_mask_singleton_timeseries_selector_with_ensemble():
+    """_leading_mask reshapes a singleton trailing (1,) dim when n_full>0.
+
+    Covers the ``n_full > 0`` branch of ``_leading_mask`` where the trailing
+    (DOMAIN) dimension is exactly 1 and is reshaped away.
+
+    selector = ConstTimeseriesIndex(["bike"]) → shape (1,);
+    with ensemble (n_full=1) → (S, 1); trailing dim=1 → reshape to (S,).
+    All ensemble members fall in the "bike" branch; execution succeeds.
+
+    Uses graph-backed emissions (capacity.node * 0.0) so scatter runs and applies
+    the trailing (1,) reshape; avoids concrete scalar defaults that bypass scatter.
+    """
+    from civic_digital_twins.dt_model.model.index import ConstTimeseriesIndex
+
+    sel = ConstTimeseriesIndex("mode_sel", np.array(["bike"]))
+    cap_bike = Index("capacity", _CAPACITY_VALUE)
+    cap_train = Index("capacity", _CAPACITY_VALUE)
+
+    class _GraphBikeModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+            emissions: Index
+
+        def __init__(self, capacity: Index) -> None:
+            throughput = Index("throughput", capacity.node * 1.0)
+            emissions = Index("emissions", capacity.node * 0.0)
+            super().__init__(
+                "BikeModel",
+                inputs=_GraphBikeModel.Inputs(capacity=capacity),
+                outputs=_GraphBikeModel.Outputs(throughput=throughput, emissions=emissions),
+            )
+
+    class _GraphTrainModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+            emissions: Index
+
+        def __init__(self, capacity: Index) -> None:
+            throughput = Index("throughput", capacity.node * 10.0)
+            emissions = Index("emissions", capacity.node * 50.0)
+            super().__init__(
+                "TrainModel",
+                inputs=_GraphTrainModel.Inputs(capacity=capacity),
+                outputs=_GraphTrainModel.Outputs(throughput=throughput, emissions=emissions),
+            )
+
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _GraphBikeModel(cap_bike), "train": _GraphTrainModel(cap_train)},
+        selector=sel.node,
+    )
+    ev = Evaluation(mv)
+    ens = DistributionEnsemble(mv, size=10)
+    plan = ev.build_plan(strategy="regional")
+    result = ev.execute_plan(plan, ens)
+    # Verify both outputs are present. extra_ts=1 (selector is timeseries_constant)
+    # adds a trailing (1,) to nodes without DOMAIN axes, so shape is (S, 1).
+    assert result[mv.outputs.throughput].shape == (10, 1)
+    assert result[mv.outputs.emissions].shape == (10, 1)
+
+
 # ---------------------------------------------------------------------------
 # Branch-local abstract index (covers ens_node override path in _execute_plan)
 # ---------------------------------------------------------------------------

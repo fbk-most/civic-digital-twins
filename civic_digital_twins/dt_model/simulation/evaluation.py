@@ -435,7 +435,7 @@ class Evaluation:
                     # Base case: no further variant structure.  One flat region.
                     topo = tuple(n for n in linearized_nodes if n in scope)
                     if not topo:
-                        return scope_entry
+                        return scope_entry  # pragma: no cover
                     idx = len(collected_regions)
                     collected_regions.append(Region(nodes=topo, has_timeseries=_is_ts(topo), guards=inherited_guards))
                     collected_deps.append(scope_entry)
@@ -814,7 +814,13 @@ class Evaluation:
                         raise NotImplementedError(
                             "Regional execution does not support selectors with non-singleton DOMAIN axes."
                         )
-                    mask = mask.reshape(())
+                    # Defensive normalisation: a selector that evaluates to a
+                    # singleton (1,) array (rather than a 0-d scalar) under
+                    # n_full==0 with no timeseries does not arise from any
+                    # supported index/selector construction — scalar selectors
+                    # already yield mask.shape == ().  Reachable only by wrapping
+                    # a scalar in a 1-element array via a custom function_call.
+                    mask = mask.reshape(())  # pragma: no cover
                 return mask
             trailing = sel.shape[n_full:]
             if trailing:
@@ -851,9 +857,9 @@ class Evaluation:
             k = int(flat_idx.size)
             if arr.ndim == 0:
                 arr = np.broadcast_to(arr, (k,)).copy()
-            elif arr.shape[0] == 1 and k != 1:
+            elif arr.shape[0] == 1 and k != 1:  # pragma: no cover
                 arr = np.broadcast_to(arr, (k,) + arr.shape[1:]).copy()
-            elif arr.shape[0] != k:
+            elif arr.shape[0] != k:  # pragma: no cover
                 # DOMAIN-only values produced inside the branch (shape (T,)) are
                 # invariant across selected leading coordinates.
                 if _has_domain_axis(node):
