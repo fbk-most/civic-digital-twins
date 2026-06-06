@@ -12,9 +12,11 @@ regions:
 
 - ``"monolithic"`` — one region containing all linearised nodes.
 - ``"regional"`` — splits at :class:`~engine.frontend.graph.variant_selector`
-  boundaries; shared pre-selector nodes form one unconditional region, each
-  variant branch forms a guarded region, and the merge nodes form a final
-  unconditional region.
+  boundaries recursively.  At each nesting level: shared pre-selector nodes
+  form one region guarded by all ancestor guards, each variant branch recurses
+  with one additional guard appended, and the merge nodes form a final region
+  guarded by the ancestor guards.  Single-level and nested
+  :class:`~model.model_variant.ModelVariant` graphs are both supported.
 - In the limit, each :class:`~engine.frontend.graph.Node` could be its own
   region (the plan DAG mirrors the computation graph exactly).
 """
@@ -77,18 +79,16 @@ class Region:
         :class:`~engine.frontend.graph.timeseries_constant` or
         :class:`~engine.frontend.graph.timeseries_placeholder`; controls
         trailing-singleton injection during shape normalisation.
-    guard:
-        Execution guard, or ``None`` for an unconditional region (always
-        evaluated for all scenarios).  When a :class:`RegionGuard` is
-        present the region is evaluated only for the scenario subset where
-        :attr:`RegionGuard.selector_node` equals
-        :attr:`RegionGuard.branch_key`; results are then scattered back into
-        the full-scenario array before the merge region executes.
+    guards:
+        Ordered tuple of execution guards (outermost first), or ``()`` for an
+        unconditional region.  The executor evaluates the region only for
+        coordinates where *every* guard's selector equals its branch key (AND
+        of all masks).
     """
 
     nodes: tuple[graph.Node, ...]
     has_timeseries: bool
-    guard: RegionGuard | None = dataclasses.field(default=None)
+    guards: tuple[RegionGuard, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)

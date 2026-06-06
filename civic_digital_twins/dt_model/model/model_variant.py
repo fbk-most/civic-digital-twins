@@ -2,6 +2,8 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any
 
@@ -126,7 +128,7 @@ class ModelVariant:
     def __init__(
         self,
         name: str,
-        variants: Mapping[str, Model],
+        variants: Mapping[str, Model | ModelVariant],
         selector: str | CategoricalIndex | graph.Node,
     ) -> None:
         if not variants:
@@ -448,7 +450,7 @@ def _io_field_names(proxy: IOProxy[Any]) -> list[str]:
     return [key for key, _ in entries]
 
 
-def _validate_io_contract(variant_group_name: str, variants: Mapping[str, Model]) -> None:
+def _validate_io_contract(variant_group_name: str, variants: Mapping[str, Model | ModelVariant]) -> None:
     """Ensure all variants share identical ``outputs`` field names.
 
     Inputs may differ across variants — in runtime mode all variant graphs

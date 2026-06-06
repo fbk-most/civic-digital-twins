@@ -322,19 +322,13 @@ class Evaluation:
             ``"monolithic"`` (default)
                 One region containing all linearised nodes.  Always available.
             ``"regional"``
-                Split at :class:`~engine.frontend.graph.variant_selector`
-                boundaries into multiple regions: one unconditional shared
-                region for the pre-selector sub-graph, one guarded region per
-                variant branch, and one unconditional merge region.  Current
-                limitations: exactly one top-level
-                :class:`~engine.frontend.graph.variant_selector` (nested
-                variants require recursive partitioning); a single-axis
-                ensemble (multi-axis scenario masking requires tensor
-                fancy-indexing); and a selector that does not vary along any
-                PARAMETER axis (a PARAMETER-varying selector implies a
-                different scenario partition per parameter combination,
-                requiring per-parameter scatter/gather).  In all these cases
-                use ``strategy='monolithic'``.
+                Recursively split at
+                :class:`~engine.frontend.graph.variant_selector` boundaries.
+                At each nesting level: one shared region (pre-selector nodes,
+                guarded by all ancestor branch keys), one guarded region per
+                variant branch, and one merge region.  Both flat and nested
+                :class:`~model.model_variant.ModelVariant` graphs are
+                supported.
 
         Returns
         -------
@@ -346,10 +340,10 @@ class Evaluation:
         ------
         ValueError
             If *strategy* is not a recognised value.
-        NotImplementedError
-            If *strategy* is ``"regional"`` and the model contains more than
-            one :class:`~engine.frontend.graph.variant_selector` node (nested
-            variants require recursive partitioning, not yet supported).
+        ValueError
+            If *strategy* is ``"regional"`` and no
+            :class:`~engine.frontend.graph.variant_selector` node exists
+            (use ``strategy='monolithic'`` for plain models).
         """
         if nodes_of_interest is None:
             nodes_of_interest = list(self.model.indexes)
@@ -369,142 +363,151 @@ class Evaluation:
             )
         if strategy == "regional":
             # ---------------------------------------------------------------
-            # Regional partitioning — step-by-step
+            # Regional partitioning — recursive algorithm
             #
-            # Example model throughout:
+            # Single-level example (used in inline comments):
             #   mode  = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
             #   mv    = ModelVariant("Transport",
             #               {"bike": BikeModel(cap_bike),
             #                "train": TrainModel(cap_train)},
             #               selector=mode)
             #
-            # ModelVariant.__init__ builds exactly one variant_selector node
-            # (vs) and one exclusive_multi_clause_where node per output field
-            # (mcw_tp, mcw_em).  The graph looks like:
+            # ModelVariant.__init__ builds one variant_selector node (vs) and
+            # one exclusive_multi_clause_where node per output field (mcw).
             #
-            #   mode.node ──┬── eq_bike  (mode.node == "bike")
-            #               └── eq_train (mode.node == "train")
-            #
-            #   cap_bike.node  ──> tp_bike.node  ───┐
-            #   em_bike.node   ─────────────────────┤
-            #                                       ├──> vs
-            #   cap_train.node ──> tp_train.node  ──┤
-            #   em_train.node  ─────────────────────┘
-            #
-            #   vs, eq_bike, tp_bike.node, eq_train, tp_train.node
-            #                                       ──> mcw_tp
-            #   vs, eq_bike, em_bike.node, eq_train, em_train.node
-            #                                       ──> mcw_em
-            #
-            # vs carries three attributes used by this function:
+            # vs carries:
             #   vs.selector_node  = mode.node
             #   vs.branch_map     = {"bike":  [tp_bike.node,  em_bike.node],
             #                        "train": [tp_train.node, em_train.node]}
             #   vs.merge_nodes    = [mcw_tp, mcw_em]
+            #
+            # For nested ModelVariants, the "car" branch in the example above
+            # could itself be a ModelVariant("Policy", {"strict": ..., "loose":
+            # ...}, selector=policy).  In that case, linearize.forest produces
+            # inner_vs before outer_vs in topological order (outer_vs depends
+            # on inner_mcw which depends on inner_vs), so choosing the LAST
+            # variant_selector in topological order always picks the outermost.
             # ---------------------------------------------------------------
 
-            # Step 1 — locate the single variant_selector.
-            # linearize.forest already traversed the full graph; vs is the
-            # unique structural sentinel introduced by ModelVariant.
-            vs_nodes = [n for n in linearized_nodes if isinstance(n, graph.variant_selector)]
-            if not vs_nodes:
+            if not any(isinstance(n, graph.variant_selector) for n in linearized_nodes):
                 raise ValueError(
                     "build_plan(strategy='regional') requires a ModelVariant with a "
                     "runtime selector. No variant_selector found — use strategy='monolithic'."
                 )
-            if len(vs_nodes) > 1:
-                raise NotImplementedError(  # pragma: no cover
-                    f"build_plan(strategy='regional') supports exactly one top-level "
-                    f"variant_selector; found {len(vs_nodes)}. "
-                    "Nested variants will be supported in a future release."
-                )
-            vs = vs_nodes[0]
-
-            # Step 2 — collect condition nodes from the merge clauses.
-            # Each mcw node has clauses = [(eq_bike, tp_bike.node), ...]; the
-            # condition nodes (eq_bike, eq_train) depend only on mode.node and
-            # string constants, so they belong in the shared region.
-            #   all_cond_nodes = [eq_bike, eq_train, eq_bike, eq_train]
-            #                     ^- from mcw_tp -^  ^- from mcw_em -^
-            # (duplicates are harmless; forest() deduplicates via its visited set)
-            all_cond_nodes = [
-                cond
-                for mcw in vs.merge_nodes
-                if isinstance(mcw, graph.exclusive_multi_clause_where)
-                for cond, _ in mcw.clauses
-            ]
-            # Step 3 — shared region node set.
-            # forest(mode.node, eq_bike, eq_train) traverses backwards from each
-            # root and returns all transitive dependencies in topological order.
-            # Result: {mode.node, constant("bike"), constant("train"),
-            #          eq_bike, eq_train}
-            # (plus any upstream deps of mode.node, e.g. its placeholder node)
-            shared_node_set = set(linearize.forest(vs.selector_node, *all_cond_nodes))
-
-            # Step 4 — per-branch node sets.
-            # forest(*branch_outputs, boundary=shared_node_set) traverses
-            # backwards from each branch's output nodes but stops when it
-            # hits a node already in shared_node_set.
-            #   branch_map["bike"]  roots: [tp_bike.node, em_bike.node]
-            #   → traversal stops at mode.node (in shared) → adds:
-            #     {cap_bike.node, tp_bike.node, em_bike.node}
-            #   Subtract shared_node_set (boundary nodes can appear in both):
-            #     branch_node_sets["bike"]  = {cap_bike.node, tp_bike.node, em_bike.node}
-            #     branch_node_sets["train"] = {cap_train.node, tp_train.node, em_train.node}
-            branch_node_sets: dict[str, set[graph.Node]] = {}
-            for key, branch_outputs in vs.branch_map.items():
-                branch_ns = set(linearize.forest(*branch_outputs, boundary=shared_node_set))
-                branch_ns -= shared_node_set
-                branch_node_sets[key] = branch_ns
-
-            # Step 5 — merge region node set (complement).
-            # Everything in linearized_nodes that is neither shared nor a
-            # branch internal belongs to the merge region:
-            #   merge_node_set = {vs, constant(nan), mcw_tp, mcw_em}
-            # Note: constant(nan) is the default_value of each mcw and has no
-            # deps of its own, so forest() never places it in shared or any
-            # branch; the complement captures it here automatically.
-            already_assigned: set[graph.Node] = shared_node_set.copy()
-            for bns in branch_node_sets.values():
-                already_assigned |= bns
-            merge_node_set = set(linearized_nodes) - already_assigned
 
             def _is_ts(nodes: tuple[graph.Node, ...]) -> bool:
                 return any(isinstance(n, (graph.timeseries_constant, graph.timeseries_placeholder)) for n in nodes)
 
-            # Extract nodes in topological order for each region (preserving order from linearized_nodes).
-            shared_nodes_topo = tuple(n for n in linearized_nodes if n in shared_node_set)
-            merge_nodes_topo = tuple(n for n in linearized_nodes if n in merge_node_set)
+            collected_regions: list[Region] = []
+            collected_deps: list[frozenset[int]] = []
 
-            shared_region = Region(nodes=shared_nodes_topo, has_timeseries=_is_ts(shared_nodes_topo))
+            def _partition(
+                scope: set[graph.Node],
+                inherited_guards: tuple[RegionGuard, ...],
+                scope_entry: frozenset[int],
+            ) -> frozenset[int]:
+                """Recursively partition *scope* into regions.
 
-            branch_regions: list[Region] = []
-            for key in vs.branch_map:
-                bns = tuple(n for n in linearized_nodes if n in branch_node_sets[key])
-                branch_regions.append(
-                    Region(
-                        nodes=bns,
-                        has_timeseries=_is_ts(bns),
-                        guard=RegionGuard(selector_node=vs.selector_node, branch_key=key),
-                    )
+                Parameters
+                ----------
+                scope:
+                    Set of computation-graph nodes to partition at this level.
+                inherited_guards:
+                    Guard chain accumulated from outer nesting levels.  Every
+                    region emitted in this scope carries these guards.
+                scope_entry:
+                    Region indices that must complete before the first region
+                    in this scope can execute (i.e., the "input frontier").
+
+                Returns
+                -------
+                frozenset[int]
+                    The "output frontier" of this scope: the index of the merge
+                    region (or the single flat region in the base case).  Used
+                    by the caller to wire the parent merge's dependencies.
+                """
+                # Find all variant_selectors within this scope.
+                # Topological order is preserved because linearized_nodes was
+                # produced by linearize.forest; the last vs is the outermost.
+                vs_in_scope = [n for n in linearized_nodes if n in scope and isinstance(n, graph.variant_selector)]
+
+                if not vs_in_scope:
+                    # Base case: no further variant structure.  One flat region.
+                    topo = tuple(n for n in linearized_nodes if n in scope)
+                    if not topo:
+                        return scope_entry  # pragma: no cover
+                    idx = len(collected_regions)
+                    collected_regions.append(Region(nodes=topo, has_timeseries=_is_ts(topo), guards=inherited_guards))
+                    collected_deps.append(scope_entry)
+                    return frozenset({idx})
+
+                vs = vs_in_scope[-1]  # outermost = last in topological order
+
+                # Shared region: selector node + condition nodes from MCW clauses.
+                # These depend only on the selector placeholder and string constants,
+                # so they are safe to evaluate for all coordinates where
+                # inherited_guards hold (before the branch split).
+                cond_nodes = [
+                    cond
+                    for mcw in vs.merge_nodes
+                    if isinstance(mcw, graph.exclusive_multi_clause_where)
+                    for cond, _ in mcw.clauses
+                ]
+                shared_ns = set(linearize.forest(vs.selector_node, *cond_nodes)) & scope
+                shared_topo = tuple(n for n in linearized_nodes if n in shared_ns)
+
+                shared_idx = len(collected_regions)
+                collected_regions.append(
+                    Region(nodes=shared_topo, has_timeseries=_is_ts(shared_topo), guards=inherited_guards)
                 )
+                collected_deps.append(scope_entry)
 
-            merge_region = Region(nodes=merge_nodes_topo, has_timeseries=_is_ts(merge_nodes_topo))
+                branch_entry = scope_entry | {shared_idx}
+                scope_indices: set[int] = {shared_idx}
 
-            # Build the DAG: shared(0) → branches(1..N) → merge(N+1).
-            n_branches = len(branch_regions)
-            all_regions = (shared_region, *branch_regions, merge_region)
-            all_deps: tuple[frozenset[int], ...] = (
-                frozenset(),  # shared: no predecessors
-                *[frozenset({0}) for _ in branch_regions],  # each branch depends on shared
-                frozenset(range(n_branches + 1)),  # merge depends on shared + all branches
+                # Per-branch node sets: traverse from branch outputs back to the
+                # shared boundary, then subtract shared nodes (boundary nodes must
+                # not appear in both shared and branch regions).
+                branch_node_sets: dict[str, set[graph.Node]] = {}
+                for key, branch_outputs in vs.branch_map.items():
+                    bns = set(linearize.forest(*branch_outputs, boundary=shared_ns)) - shared_ns
+                    bns &= scope
+                    branch_node_sets[key] = bns
+
+                # Recurse into each branch with one additional guard.
+                for key in vs.branch_map:
+                    branch_guard = RegionGuard(selector_node=vs.selector_node, branch_key=key)
+                    frontier = _partition(
+                        scope=branch_node_sets[key],
+                        inherited_guards=(*inherited_guards, branch_guard),
+                        scope_entry=branch_entry,
+                    )
+                    scope_indices |= frontier
+
+                # Merge region: everything in scope not claimed by shared or branches.
+                # This includes vs itself and the mcw output nodes.
+                already = shared_ns | set().union(*branch_node_sets.values())
+                merge_ns = scope - already
+                merge_topo = tuple(n for n in linearized_nodes if n in merge_ns)
+
+                merge_idx = len(collected_regions)
+                collected_regions.append(
+                    Region(nodes=merge_topo, has_timeseries=_is_ts(merge_topo), guards=inherited_guards)
+                )
+                collected_deps.append(frozenset(scope_indices))
+                return frozenset({merge_idx})
+
+            _partition(
+                scope=set(linearized_nodes),
+                inherited_guards=(),
+                scope_entry=frozenset(),
             )
 
             return EvaluationPlan(
                 model=self.model,
                 nodes_of_interest=tuple(nodes_of_interest),
-                regions=all_regions,
-                dependencies=all_deps,
+                regions=tuple(collected_regions),
+                dependencies=tuple(collected_deps),
             )
         raise ValueError(f"Unknown strategy {strategy!r}. Expected 'monolithic' or 'regional'.")
 
@@ -767,15 +770,116 @@ class Evaluation:
         n_full = n_params + n_ensemble
         n_total = n_full + extra_ts
 
-        # Validate ensemble cardinality when guarded regions are present.
-        # This check must come before the coverage validation so that a regional
-        # plan with no ensemble raises NotImplementedError (not ValueError).
-        has_guarded = any(r.guard is not None for r in plan.regions)
-        if has_guarded and n_ensemble != 1:
-            raise NotImplementedError(
-                "Regional execution with a multi-axis or absent ensemble is not yet "
-                "supported. Use strategy='monolithic' or a single-axis ensemble."
-            )
+        # Guarded regions operate over the full leading evaluation layout:
+        # (*PARAMETER, *ENSEMBLE).  The helpers below gather/scatter arbitrary
+        # leading-axis coordinates, so selectors may vary along PARAMETER axes
+        # and ensembles may span multiple ENSEMBLE axes.
+        leading_axes = tuple(ax for ax, pos in sorted(axis_layout.items(), key=lambda item: item[1]) if pos < n_full)
+        leading_shape = tuple(axis_sizes[ax] for ax in leading_axes)
+        n_leading = int(np.prod(leading_shape, dtype=np.int64)) if leading_shape else 1
+
+        def _has_domain_axis(node: graph.Node) -> bool:
+            return any(ax.role == DOMAIN for ax in node.output_axes)
+
+        def _normalise_leading(node: graph.Node, value: Any) -> np.ndarray:
+            """Return *value* with explicit leading singleton axes when needed."""
+            arr = np.asarray(value)
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return arr
+            has_domain = _has_domain_axis(node)
+            # A raw DOMAIN-only value, e.g. a timeseries constant with shape (T,),
+            # has no explicit PARAMETER/ENSEMBLE dimensions yet.  Prepend them
+            # even when T accidentally equals a leading-axis size.
+            if has_domain and arr.ndim == len(node.output_axes):
+                return arr.reshape((1,) * n_full + arr.shape)
+            if arr.ndim >= n_full and all(arr.shape[i] in {1, leading_shape[i]} for i in range(n_full)):
+                return arr
+            return arr.reshape((1,) * n_full + arr.shape)
+
+        def _broadcast_to_leading(node: graph.Node, value: Any) -> np.ndarray:
+            """Broadcast *value* to ``leading_shape + trailing_shape``."""
+            arr = _normalise_leading(node, value)
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return arr
+            target = tuple(leading_shape[i] if arr.shape[i] == 1 else arr.shape[i] for i in range(n_full))
+            return np.broadcast_to(arr, target + arr.shape[n_full:])
+
+        def _leading_mask(selector_node: graph.Node, selector_value: Any, branch_key: str) -> np.ndarray:
+            """Return a boolean mask over the full ``(*PARAMETER, *ENSEMBLE)`` layout."""
+            sel = _broadcast_to_leading(selector_node, selector_value)
+            if n_full == 0:
+                mask = np.asarray(sel == branch_key)
+                if mask.shape != ():
+                    if any(dim > 1 for dim in mask.shape):
+                        raise NotImplementedError(
+                            "Regional execution does not support selectors with non-singleton DOMAIN axes."
+                        )
+                    # Defensive normalisation: a selector that evaluates to a
+                    # singleton (1,) array (rather than a 0-d scalar) under
+                    # n_full==0 with no timeseries does not arise from any
+                    # supported index/selector construction — scalar selectors
+                    # already yield mask.shape == ().  Reachable only by wrapping
+                    # a scalar in a 1-element array via a custom function_call.
+                    mask = mask.reshape(())  # pragma: no cover
+                return mask
+            trailing = sel.shape[n_full:]
+            if trailing:
+                if any(dim > 1 for dim in trailing):
+                    raise NotImplementedError(
+                        "Regional execution does not support selectors with non-singleton DOMAIN axes."
+                    )
+                sel = sel.reshape(sel.shape[:n_full])
+            return np.broadcast_to(sel == branch_key, leading_shape)
+
+        def _gather_leading(node: graph.Node, value: Any, flat_idx: np.ndarray) -> np.ndarray:
+            """Gather selected leading-axis coordinates into a branch-local first axis."""
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return np.asarray(value)
+            arr = _broadcast_to_leading(node, value)
+            flat = arr.reshape((n_leading,) + arr.shape[n_full:])
+            return np.take(flat, flat_idx, axis=0)
+
+        def _branch_fill_value(dtype: np.dtype) -> tuple[np.dtype, Any]:
+            """Return an output dtype and inactive-branch fill value for *dtype*."""
+            if dtype.kind in {"f", "c"}:
+                return dtype, np.nan
+            if dtype.kind == "b":
+                return dtype, False
+            if dtype.kind in {"i", "u"}:
+                return dtype, 0
+            return np.dtype(object), None
+
+        def _scatter_leading(node: graph.Node, value: Any, flat_idx: np.ndarray) -> np.ndarray:
+            """Scatter a branch-local value back into the full leading layout."""
+            arr = np.asarray(value)
+            if n_full == 0 or isinstance(node, graph.variant_selector):
+                return arr
+            k = int(flat_idx.size)
+            if arr.ndim == 0:
+                arr = np.broadcast_to(arr, (k,)).copy()
+            elif arr.shape[0] == 1 and k != 1:  # pragma: no cover
+                arr = np.broadcast_to(arr, (k,) + arr.shape[1:]).copy()
+            elif arr.shape[0] != k:  # pragma: no cover
+                # DOMAIN-only values produced inside the branch (shape (T,)) are
+                # invariant across selected leading coordinates.
+                if _has_domain_axis(node):
+                    arr = np.broadcast_to(arr, (k,) + arr.shape).copy()
+                else:
+                    raise ValueError(
+                        f"Regional scatter for node {getattr(node, 'name', repr(node))!r}: "
+                        f"branch result first dimension {arr.shape[0]} does not match selected size {k}."
+                    )
+            if extra_ts and not _has_domain_axis(node) and arr.ndim == 1:
+                arr = arr.reshape(arr.shape + (1,))
+            out_dtype, fill_value = _branch_fill_value(arr.dtype)
+            full_flat = np.full((n_leading,) + arr.shape[1:], fill_value, dtype=out_dtype)
+            full_flat[flat_idx] = arr.astype(out_dtype, copy=False)
+            return full_flat.reshape(leading_shape + arr.shape[1:])
+
+        def _empty_branch_value() -> np.ndarray:
+            """Create a broadcast-compatible inactive value for an unselected branch."""
+            trailing = (1,) if extra_ts else ()
+            return np.full(leading_shape + trailing, np.nan, dtype=float)
 
         # Coverage validation (D_valid): every abstract index must have a value source.
         # We check only abstract indexes (value=None or Distribution-backed) — NOT
@@ -802,9 +906,6 @@ class Evaluation:
             names_str = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in overlapping)
             raise ValueError(f"The following indexes appear in both parameters= and Scenario.overrides: {names_str}")
 
-        # Total scenario count (used for scatter-back in guarded regions).
-        n_S: int = axis_sizes[list(ensemble.ensemble_axes)[0]] if (has_guarded and ensemble is not None) else 0
-
         state = executor.State(
             {**scenario_subs, **c_subs},
             functions=functions or {},
@@ -813,52 +914,37 @@ class Evaluation:
 
         # Execute regions in topological order.
         for region in plan.regions:
-            if region.guard is None:
+            if not region.guards:
                 # Unconditional region — evaluate for all scenarios.
                 executor.evaluate_nodes(state, *region.nodes)
             else:
-                # Guarded region — evaluate only for the matching scenario subset.
-                guard = region.guard
-                sel_val = np.asarray(state.values[guard.selector_node])
-                # Guard: the selector must not vary along any PARAMETER axis.
-                # If it does, the 1-D scenario mask below would only reflect
-                # PARAMETER position 0, silently producing wrong results for
-                # every other PARAMETER combination.  Detect and reject early.
-                if n_params > 0 and any(sel_val.shape[i] > 1 for i in range(n_params)):
-                    raise NotImplementedError(
-                        "Regional execution is not supported when the variant selector "
-                        "depends on PARAMETER axes (selector shape "
-                        f"{sel_val.shape!r} has non-singleton PARAMETER dims). "
-                        "The scenario partition would differ per parameter combination, "
-                        "requiring per-parameter scatter/gather — not yet implemented. "
-                        "Use strategy='monolithic' instead."
-                    )
-                # sel_val shape: (1,)*n_params + (S,) + (1,)*extra_ts
-                # Extract 1-D boolean mask over the S axis.
-                s_idx: tuple[int | slice, ...] = (0,) * n_params + (slice(None),) + (0,) * extra_ts
-                mask_1d: np.ndarray = sel_val[s_idx] == guard.branch_key  # shape (S,)
-                branch_idx: np.ndarray = np.where(mask_1d)[0]
+                # Guarded region — evaluate only for coordinates where every
+                # guard's selector matches its branch key (AND of all masks).
+                # For single-level plans region.guards has one element; for
+                # nested variants it has one entry per nesting level.
+                mask = np.ones(leading_shape, dtype=bool)
+                for guard in region.guards:
+                    sel_val = state.values[guard.selector_node]
+                    mask = mask & np.asarray(_leading_mask(guard.selector_node, sel_val, guard.branch_key))
+                flat_mask = np.asarray(mask).reshape(-1)
+                branch_idx = np.flatnonzero(flat_mask)
 
-                if len(branch_idx) == 0:
-                    # No scenarios fall into this branch. Pre-initialize branch
-                    # nodes to NaN arrays so the merge region's np.select can
-                    # reference them (branch conditions are all False, so NaN
-                    # values are never selected, but the arrays must exist).
-                    nan_shape = (1,) * n_params + (n_S,) + (1,) * extra_ts
+                if branch_idx.size == 0:
+                    # No coordinates fall into this branch.  Pre-initialize
+                    # missing branch nodes with broadcast-compatible inactive
+                    # arrays so merge-region np.select can still reference them.
                     for node in region.nodes:
                         if node not in state.values:
-                            state.values[node] = np.full(nan_shape, np.nan, dtype=float)
+                            state.values[node] = _empty_branch_value()
                             substituted_nodes.add(node)  # prevent spurious shape-norm
                     continue
 
-                # Build a branch-local state:
-                # - inherits all values already computed in the main state
-                # - overrides ENSEMBLE subs for abstract indexes local to this branch
-                branch_values: dict[graph.Node, np.ndarray] = dict(state.values)
-                branch_region_nodes = set(region.nodes)
-                for ens_node, ens_arr in ens_subs.items():
-                    if ens_node in branch_region_nodes:
-                        branch_values[ens_node] = np.take(ens_arr, branch_idx, axis=n_params)
+                # Build a branch-local state by gathering every already-known
+                # value to the matching leading coordinates.  Constants and
+                # structural variant_selector sentinels are carried unchanged.
+                branch_values: dict[graph.Node, np.ndarray] = {
+                    node: _gather_leading(node, value, branch_idx) for node, value in state.values.items()
+                }
 
                 branch_state = executor.State(
                     branch_values,
@@ -867,28 +953,12 @@ class Evaluation:
                 )
                 executor.evaluate_nodes(branch_state, *region.nodes)
 
-                # Scatter branch results back into the main state as full-S arrays,
-                # with NaN at positions that do not belong to this branch.
+                # Scatter branch results back into full leading-shape arrays,
+                # filling inactive coordinates with branch-neutral placeholders.
                 for node in region.nodes:
                     if node not in branch_state.values or node in state.values:
                         continue
-                    val_k = np.asarray(branch_state.values[node])
-                    # Constant nodes (no dependency on ensemble subs) evaluate to
-                    # scalars (ndim=0) or small arrays (ndim<=n_params).  Expand
-                    # them so the scatter indexing logic below can assume at least
-                    # n_params+1 dimensions with the ensemble axis at position n_params.
-                    if val_k.ndim <= n_params:
-                        leading = (1,) * (n_params + 1 - val_k.ndim)
-                        val_k = val_k.reshape(leading + val_k.shape)
-                        # Broadcast the singleton ensemble dim to len(branch_idx).
-                        bcast_shape = val_k.shape[:n_params] + (len(branch_idx),) + val_k.shape[n_params + 1 :]
-                        val_k = np.broadcast_to(val_k, bcast_shape).copy()
-                    full_shape = list(val_k.shape)
-                    full_shape[n_params] = n_S
-                    full_val = np.full(full_shape, np.nan, dtype=float)
-                    idx_expand = branch_idx.reshape((1,) * n_params + (-1,) + (1,) * (val_k.ndim - n_params - 1))
-                    np.put_along_axis(full_val, np.broadcast_to(idx_expand, val_k.shape), val_k, axis=n_params)
-                    state.values[node] = full_val
+                    state.values[node] = _scatter_leading(node, branch_state.values[node], branch_idx)
                     substituted_nodes.add(node)  # mark as correctly shaped; skip shape-norm
 
         # All nodes in topological order (for touched-set computation).
