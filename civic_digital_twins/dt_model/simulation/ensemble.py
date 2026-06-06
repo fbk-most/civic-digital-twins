@@ -639,6 +639,15 @@ class DistributionEnsemble:
         self._axis = Axis("_ensemble", ENSEMBLE)
         self._exclude: frozenset[GenericIndex] = exclude or frozenset()
         self._plan: EvaluationPlan | None = plan
+        # Per-scope sampling cache.  Populated lazily on the first
+        # call to _scoped_assignments; reused thereafter.  Both fields
+        # are functions of (plan, scenario) which are fixed at
+        # construction time, so the cache is valid for the ensemble's
+        # lifetime (mutating the scenario after construction is not
+        # supported — Scenario.overrides returns a copy, and the
+        # abstract_indexes() result is computed once at scenario use).
+        self._scoped: dict[tuple[Any, ...], frozenset[GenericIndex]] | None = None
+        self._node_to_idx: dict[Any, GenericIndex] | None = None
         # Validate that all abstract indexes can be sampled by this ensemble.
         # Indexes in `exclude` are covered by parameters= at evaluate time and
         # are skipped here. Abstract indexes that are neither Distribution-backed
@@ -691,6 +700,12 @@ class DistributionEnsemble:
         downstream code that inspects assignments directly should
         filter out sentinels (``~np.isnan(arr)`` for float arrays,
         ``arr != None`` for object arrays) before statistical analysis.
+
+        When ``plan=`` is set with a focused :class:`EvaluationPlan`
+        (built via ``nodes_of_interest=[...]``), the result includes
+        only the abstract indexes that are dependencies of
+        ``nodes_of_interest``; other abstract indexes from the
+        scenario are not sampled.
         """
         if self._plan is not None:
             return self._scoped_assignments()
@@ -725,8 +740,13 @@ class DistributionEnsemble:
         """
         plan = self._plan
         assert plan is not None
-        scoped = plan.scoped_abstract_indexes(self._scenario)
-        node_to_idx: dict[Any, GenericIndex] = {idx.node: idx for idx in self._scenario.abstract_indexes()}
+        if self._scoped is None:
+            scoped = plan.scoped_abstract_indexes(self._scenario)
+            node_to_idx = {idx.node: idx for idx in self._scenario.abstract_indexes()}
+            self._scoped, self._node_to_idx = scoped, node_to_idx
+        scoped = self._scoped
+        node_to_idx = self._node_to_idx
+        assert scoped is not None and node_to_idx is not None
         exclude = self._exclude
         result: dict[GenericIndex, np.ndarray] = {}
         for guards, indexes in scoped.items():
@@ -749,46 +769,48 @@ class DistributionEnsemble:
         Requires that each guard's selector is in ``result`` already —
         i.e. its bucket was processed in an earlier (more outer) pass.
         """
-        positions = np.arange(self._size)
+        mask = np.ones(self._size, dtype=bool)
         for g in guards:
             idx = node_to_idx.get(g.selector_node)
             if idx is None:
-                # Selector not in scenario abstract (concretely overridden
-                # or supplied externally).  Best-effort: treat as no filter.
-                continue
+                raise ValueError(
+                    f"Selector for guard {g.branch_key!r} is not in "
+                    f"scenario.abstract_indexes(); per-scope sampling requires every "
+                    f"guard's selector to be an abstract index.  Omit `plan=` to fall "
+                    f"back to the all-abstract sampler, or use a plan whose guards "
+                    f"only reference abstract selectors."
+                )
             if idx not in result:
                 raise RuntimeError(
                     f"Selector {idx.name!r} for guard {g.branch_key!r} has not been "
                     f"sampled yet; the bucket order from "
                     f"EvaluationPlan.scoped_abstract_indexes is not outer-to-inner."
                 )
-            samples = result[idx]
-            positions = positions[samples[positions] == g.branch_key]
-        return positions
+            mask &= result[idx] == g.branch_key
+        return np.flatnonzero(mask)
 
     def _sample_with_default(self, idx: GenericIndex, positions: np.ndarray) -> np.ndarray:
         """Sample ``len(positions)`` values for *idx* and fill the rest with a placeholder."""
         n_branch = int(len(positions))
         placeholder = self._placeholder_value(idx)
-        if isinstance(idx, CategoricalIndex):
-            samples = idx.sample(self._rng, size=n_branch) if n_branch > 0 else np.array([], dtype=object)
-            out = np.full(self._size, placeholder, dtype=object)
-            if n_branch > 0:
-                out[positions] = samples
+        is_categorical = isinstance(idx, CategoricalIndex)
+        out = np.full(
+            self._size,
+            placeholder,
+            dtype=object if is_categorical else None,
+        )
+        if n_branch == 0:
             return out
-        dist = self._scenario.effective_distribution(idx)
-        assert dist is not None
-        if n_branch > 0:
+        if is_categorical:
+            out[positions] = idx.sample(self._rng, size=n_branch)
+        else:
+            dist = self._scenario.effective_distribution(idx)
+            assert dist is not None
             if self._rng is not None:
                 raw = dist.rvs(size=n_branch, random_state=self._rng)
             else:
                 raw = dist.rvs(size=n_branch)
-            samples = np.asarray(raw)
-        else:
-            samples = np.array([], dtype=float)
-        out = np.full(self._size, placeholder)
-        if n_branch > 0:
-            out[positions] = samples
+            out[positions] = np.asarray(raw)
         return out
 
     def _placeholder_value(self, idx: GenericIndex) -> Any:
@@ -845,18 +867,27 @@ class DistributionEnsemble:
         """
         if axis is not None:
             raise ValueError(f"DistributionEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}.")
-        new_dist = DistributionEnsemble(
-            self._scenario,
-            size,
-            rng=rng,
-            exclude=self._exclude,
-            plan=self._plan,
-        )
-        return FrozenEnsemble(
-            (new_dist.ensemble_axes[0],),
-            (new_dist.ensemble_weights[0],),
-            dict(new_dist.assignments()),
-        )
+        return self._sample_batch(size, rng)
+
+    def _sample_batch(self, size: int, rng: np.random.Generator | None) -> FrozenEnsemble:
+        """Sample a frozen batch of the given size without re-running ``__init__`` validation.
+
+        The constructor has already validated ``scenario``, ``exclude``,
+        and ``plan``; only ``size`` and ``rng`` change between batches.
+        Temporarily overrides ``self._size`` / ``self._rng`` and restores
+        them in a ``finally`` block so the original ensemble state is
+        preserved even if sampling raises.
+        """
+        original_size, original_rng = self._size, self._rng
+        self._size, self._rng = size, rng
+        try:
+            return FrozenEnsemble(
+                self.ensemble_axes,
+                self.ensemble_weights,
+                dict(self.assignments()),
+            )
+        finally:
+            self._size, self._rng = original_size, original_rng
 
     # ------------------------------------------------------------------
     # Legacy iterable interface (backward compatible)

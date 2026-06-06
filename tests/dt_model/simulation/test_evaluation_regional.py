@@ -1892,26 +1892,22 @@ def test_scoped_abstract_indexes_unions_same_guards_regions() -> None:
     assert plan.scoped_abstract_indexes(scenario) == {(): frozenset({x, y})}
 
 
-def test_scoped_sampling_pinned_selector_treats_guard_as_noop() -> None:
-    """A guard whose selector was pinned in the Scenario is treated as a no-op.
+def test_scoped_sampling_pinned_selector_raises() -> None:
+    """A guard whose selector is not in ``scenario.abstract_indexes()`` raises.
 
-    The plan was built from the unpinned model, so it has guards on the
-    selector.  When the Scenario pins the selector to a concrete value,
-    the selector is no longer in ``scenario.abstract_indexes()`` and
-    ``node_to_idx`` does not contain it.  ``_active_positions`` then
-    skips the guard (``continue``), leaving all positions active, and
-    the per-branch index is sampled at every position.
+    Per-scope sampling requires every guard's selector to be an
+    abstract index.  When the selector is pinned (via Scenario
+    overrides or ``parameter_axes=``), it is no longer in
+    ``scenario.abstract_indexes()`` and the per-scope path cannot
+    resolve the guard.  ``_active_positions`` raises a clear
+    ``ValueError`` so the user gets a fast, actionable failure
+    rather than silently wrong per-branch statistics.
     """
-    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    mode, _weather_bike, _weather_train, mv = _make_branch_abstract_mv()
     plan = Evaluation(mv).build_plan(strategy="regional")
     pinned_scenario = Scenario(mv, overrides={mode: "bike"})
-    ens = DistributionEnsemble(pinned_scenario, size=100, rng=np.random.default_rng(0), plan=plan)
-    a = ens.assignments()
-    # mode is pinned, so it is not in the abstract indexes and not in the result.
-    assert mode not in a
-    # weather_bike: every position is active (no-op guard), so no sentinels.
-    assert a[weather_bike].shape == (100,)
-    assert not np.any(np.isnan(a[weather_bike]))
+    with pytest.raises(ValueError, match="not in scenario.abstract_indexes"):
+        DistributionEnsemble(pinned_scenario, size=100, rng=np.random.default_rng(0), plan=plan).assignments()
 
 
 def test_scoped_sampling_defensive_wrong_order_plan_raises() -> None:
