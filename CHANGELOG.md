@@ -216,6 +216,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over the listed outcomes at construction time (validated: unknown outcomes or an empty list
   raise `ValueError`).  The renormalised distribution is stored internally as `dict[str, float]`
   so all existing downstream code works unchanged.  `DomainValue` now includes `list[str]`.
+- `EvaluationPlan.scoped_abstract_indexes(scenario)` — groups the model's
+  abstract indexes by region of the plan, returning a dict from guard chain
+  to the indexes that belong to that scope.  Used internally by per-scope
+  sampling; raises an error if an index would appear in more than one
+  region (closing #137).
+- `DistributionEnsemble(plan=...)` — when a plan is supplied, per-branch
+  indexes are sampled only at branch positions and the rest is filled with
+  placeholders that the executor never reads.  The output is statistically
+  equivalent to the unsampled-everywhere path, but uses fewer draws on
+  regional plans.  Existing callers that don't pass a plan see no change
+  (closing #173).
 
 ### Changed
 

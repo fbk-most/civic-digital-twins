@@ -65,6 +65,7 @@ jobs:
         uses: codecov/codecov-action@v5
         if: matrix['python_version'] == '3.12'
         with:
+          use_pypi: true
           token: ${{ secrets.CODECOV_TOKEN }} # Add this token as a GitHub secret
           file: ./coverage.xml # This is the default output file from pytest-cov
           fail_ci_if_error: true # Make the CI fail if the upload doesn't work

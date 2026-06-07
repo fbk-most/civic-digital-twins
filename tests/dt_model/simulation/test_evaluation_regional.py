@@ -1355,3 +1355,615 @@ def test_nested_regional_selective_execution() -> None:
     np.testing.assert_allclose(arr[n_b : n_b + n_s], np.sqrt(x_arr[n_b : n_b + n_s]), rtol=1e-12)
     # car+loose → x**2
     np.testing.assert_allclose(arr[n_b + n_s :], x_arr[n_b + n_s :] ** 2, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# EvaluationPlan.scoped_abstract_indexes(scenario) — branch-scope API
+#
+# Pins the contract for #137: group scenario-abstract indexes by the guard
+# chain of the region whose .nodes contain each index's .node.  Keys are
+# tuple[RegionGuard, ...] (empty tuple = unconditional).
+# ---------------------------------------------------------------------------
+
+
+def _make_branch_abstract_mv() -> tuple[CategoricalIndex, DistributionIndex, DistributionIndex, ModelVariant]:
+    """2-branch ModelVariant with a per-branch abstract Index in each variant.
+
+    Concrete capacity is shared by both branches; the only branch-specific
+    nodes are the per-branch ``weather`` placeholders.  Used by both
+    ``scoped_abstract_indexes`` tests and ``DistributionEnsemble`` per-scope
+    sampling tests.
+    """
+    from scipy import stats as _stats
+
+    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
+    cap = Index("capacity", _CAPACITY_VALUE)
+    weather_bike = DistributionIndex("weather_bike", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+    weather_train = DistributionIndex("weather_train", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+
+    class _BikeBranch(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            weather: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, weather: Index) -> None:
+            throughput = Index("throughput", capacity.node * weather.node)
+            super().__init__(
+                "BikeBranch",
+                inputs=_BikeBranch.Inputs(capacity=capacity, weather=weather),
+                outputs=_BikeBranch.Outputs(throughput=throughput),
+            )
+
+    class _TrainBranch(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            weather: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, weather: Index) -> None:
+            throughput = Index("throughput", capacity.node * weather.node)
+            super().__init__(
+                "TrainBranch",
+                inputs=_TrainBranch.Inputs(capacity=capacity, weather=weather),
+                outputs=_TrainBranch.Outputs(throughput=throughput),
+            )
+
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeBranch(cap, weather_bike), "train": _TrainBranch(cap, weather_train)},
+        selector=mode,
+    )
+    return mode, weather_bike, weather_train, mv
+
+
+def _make_nested_branch_abstract_mv() -> tuple[
+    CategoricalIndex, CategoricalIndex, DistributionIndex, DistributionIndex, DistributionIndex, ModelVariant
+]:
+    """Nested ModelVariant with an abstract Index in each scoped sub-region.
+
+    Expected scope buckets (5 distinct keys, after collapsing same-guards
+    regions and dropping empty buckets):
+
+      ()                                            : mode
+      ((mode, 'bike'),)                             : bike_w
+      ((mode, 'car'),)                              : policy
+      ((mode, 'car'), (policy, 'strict'))           : strict_w
+      ((mode, 'car'), (policy, 'loose'))            : loose_w
+    """
+    from scipy import stats as _stats
+
+    mode = CategoricalIndex("mode", {"bike": 1 / 3, "car": 2 / 3})
+    policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
+    cap = Index("capacity", _CAPACITY_VALUE)
+
+    bike_w = DistributionIndex("bike_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+    strict_w = DistributionIndex("strict_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+    loose_w = DistributionIndex("loose_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
+
+    class _BikeOuter(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            bike_w: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, bike_w: Index) -> None:
+            throughput = Index("throughput", capacity.node * bike_w.node)
+            super().__init__(
+                "BikeOuter",
+                inputs=_BikeOuter.Inputs(capacity=capacity, bike_w=bike_w),
+                outputs=_BikeOuter.Outputs(throughput=throughput),
+            )
+
+    class _StrictInner(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            strict_w: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, strict_w: Index) -> None:
+            throughput = Index("throughput", capacity.node * 2.0 * strict_w.node)
+            super().__init__(
+                "StrictInner",
+                inputs=_StrictInner.Inputs(capacity=capacity, strict_w=strict_w),
+                outputs=_StrictInner.Outputs(throughput=throughput),
+            )
+
+    class _LooseInner(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            capacity: Index
+            loose_w: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, capacity: Index, loose_w: Index) -> None:
+            throughput = Index("throughput", capacity.node * 3.0 * loose_w.node)
+            super().__init__(
+                "LooseInner",
+                inputs=_LooseInner.Inputs(capacity=capacity, loose_w=loose_w),
+                outputs=_LooseInner.Outputs(throughput=throughput),
+            )
+
+    inner_mv = ModelVariant(
+        "Policy",
+        {"strict": _StrictInner(cap, strict_w), "loose": _LooseInner(cap, loose_w)},
+        selector=policy,
+    )
+    outer_mv = ModelVariant(
+        "Transport",
+        {"bike": _BikeOuter(cap, bike_w), "car": inner_mv},
+        selector=mode,
+    )
+    return mode, policy, bike_w, strict_w, loose_w, outer_mv
+
+
+def test_scoped_abstract_indexes_monolithic():
+    """Monolithic plan: a single () key holds every scenario-abstract index.
+
+    Establishes the base case: a no-variant plan has one unconditional
+    region and one bucket with the full abstract-index list.
+    """
+    x = Index("x", None)
+
+    class _M(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            y: Index
+
+        def __init__(self, x: Index) -> None:
+            y = Index("y", x.node)
+            super().__init__(
+                "_M",
+                inputs=_M.Inputs(x=x),
+                outputs=_M.Outputs(y=y),
+            )
+
+    m = _M(x)
+    scenario = Scenario(m)
+    plan = Evaluation(m).build_plan()
+
+    scoped = plan.scoped_abstract_indexes(scenario)
+
+    assert scoped == {(): frozenset({x})}
+
+
+def test_scoped_abstract_indexes_regional_single_level():
+    """Single-level regional: 3 keys, branch abstracts route to their branch.
+
+    Pins: branch-keyed entries use a *singleton tuple* guard; shared and
+    merge regions (both with guards=()) collapse into one () key; empty
+    buckets (if any) are not emitted.
+    """
+    mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+
+    scoped = plan.scoped_abstract_indexes(scenario)
+
+    bike_guard = (RegionGuard(mode.node, "bike"),)
+    train_guard = (RegionGuard(mode.node, "train"),)
+
+    assert set(scoped.keys()) == {(), bike_guard, train_guard}
+    assert scoped[()] == frozenset({mode})
+    assert scoped[bike_guard] == frozenset({weather_bike})
+    assert scoped[train_guard] == frozenset({weather_train})
+
+
+def test_scoped_abstract_indexes_regional_nested():
+    """Nested regional: keys are *tuples* of guards (length 0/1/2).
+
+    Pins the load-bearing design point distinguishing this proposal from
+    the issue sketch: a region can carry a multi-element guards chain, so
+    the dict key must be ``tuple[RegionGuard, ...]``, not ``str``.
+
+    Also pins that the *inner* selector (``policy``) lands at the
+    ``(mode=='car',)`` key, not at the outer-shared ``()`` key — i.e.
+    selector placement tracks the deepest scope where its node is needed.
+    """
+    mode, policy, bike_w, strict_w, loose_w, mv = _make_nested_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+
+    scoped = plan.scoped_abstract_indexes(scenario)
+
+    # Recover the actual RegionGuard instances from the plan so the test
+    # is independent of how those objects are constructed internally.
+    guard_by_branch_key: dict[str, RegionGuard] = {g.branch_key: g for region in plan.regions for g in region.guards}
+    bike_guard = (guard_by_branch_key["bike"],)
+    car_guard = (guard_by_branch_key["car"],)
+    strict_guard = (guard_by_branch_key["strict"],)
+    loose_guard = (guard_by_branch_key["loose"],)
+
+    expected_keys = {
+        (),
+        bike_guard,
+        car_guard,
+        car_guard + strict_guard,
+        car_guard + loose_guard,
+    }
+    assert set(scoped.keys()) == expected_keys
+
+    assert scoped[()] == frozenset({mode})
+    assert scoped[car_guard] == frozenset({policy})
+    assert scoped[bike_guard] == frozenset({bike_w})
+    assert scoped[car_guard + strict_guard] == frozenset({strict_w})
+    assert scoped[car_guard + loose_guard] == frozenset({loose_w})
+
+
+def test_scoped_abstract_indexes_raises_on_overlap():
+    """Raises when an abstract index's node appears in multiple regions.
+
+    build_plan currently guarantees disjointness, but the per-scope
+    allocation in DistributionEnsemble (issue #173) relies on this
+    invariant: an index's node must live in exactly one region for the
+    per-scope sampling to be well-defined.  We construct a synthetic
+    plan with overlapping regions to verify the defensive check fires.
+    """
+    x = Index("x", None)
+    y = Index("y", None)
+
+    class _M(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            y: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            z: Index
+
+        def __init__(self, x: Index, y: Index) -> None:
+            z = Index("z", x.node + y.node)
+            super().__init__(
+                "_M",
+                inputs=_M.Inputs(x=x, y=y),
+                outputs=_M.Outputs(z=z),
+            )
+
+    m = _M(x, y)
+    scenario = Scenario(m)
+    # Synthesise an EvaluationPlan where x.node appears in two regions.
+    plan = EvaluationPlan(
+        model=m,
+        nodes_of_interest=(x, y),
+        regions=(
+            Region(nodes=(x.node,), has_timeseries=False, guards=()),
+            Region(nodes=(x.node, y.node), has_timeseries=False, guards=()),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+
+    with pytest.raises(ValueError, match="appear in multiple regions"):
+        plan.scoped_abstract_indexes(scenario)
+
+
+# ---------------------------------------------------------------------------
+# DistributionEnsemble per-scope sampling (issue #173)
+#
+# When constructed with plan=, assignments() performs per-scope sampling:
+# indexes scoped to a particular region are sampled only at the scenario
+# positions where that region is active; unsampled slots are filled with
+# a semantically valid default (mean() for DistributionIndex, argmax
+# for CategoricalIndex).
+# ---------------------------------------------------------------------------
+
+
+def test_scoped_sampling_flat_branch_sample_count():
+    """Flat 2-branch MV: per-branch DistributionIndex sampled at branch positions.
+
+    p_bike = p_train = 0.5, size = 10_000.  Allow a 5-sigma binomial
+    tolerance (std = 50) on each branch's real-sample count.  Real
+    samples are detected by ``~np.isnan(arr)`` (the sentinel for
+    unsampled DistributionIndex slots is ``np.nan``).
+    """
+    mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=10_000, rng=rng, plan=plan)
+    a = ens.assignments()
+
+    # Shared: sampled at full size.
+    assert a[mode].shape == (10_000,)
+
+    # Per-branch: sentinel is np.nan; real samples are non-NaN.
+    bike_real = int(np.sum(~np.isnan(a[weather_bike])))
+    train_real = int(np.sum(~np.isnan(a[weather_train])))
+    assert 4750 <= bike_real <= 5250
+    assert 4750 <= train_real <= 5250
+    assert bike_real + train_real == 10_000  # every position is exactly one branch
+
+
+def test_scoped_sampling_nested_intersection():
+    """Nested MV: inner-strict DistributionIndex sampled at car AND strict positions.
+
+    Verifies the multi-pass / outer-to-inner invariant: positions for
+    the (mode=='car', policy=='strict') bucket are intersected across
+    all ancestor guards, not just the innermost.
+    """
+    mode, policy, bike_w, strict_w, loose_w, mv = _make_nested_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=30_000, rng=rng, plan=plan)
+    a = ens.assignments()
+
+    car_mask = a[mode] == "car"
+    strict_mask = car_mask & (a[policy] == "strict")
+    loose_mask = car_mask & (a[policy] == "loose")
+    bike_mask = a[mode] == "bike"
+
+    # Real-sample counts (non-NaN) must equal the position counts for
+    # the corresponding active scopes.
+    assert int(np.sum(~np.isnan(a[strict_w]))) == int(np.sum(strict_mask))
+    assert int(np.sum(~np.isnan(a[loose_w]))) == int(np.sum(loose_mask))
+    # bike_w is at the (mode=='bike',) bucket; its real-sample count
+    # equals the count of bike positions.
+    assert int(np.sum(~np.isnan(a[bike_w]))) == int(np.sum(bike_mask))
+
+
+def test_scoped_sampling_categorical_sentinel():
+    """Per-branch CategoricalIndex: non-active positions get the None sentinel.
+
+    For the nested fixture, policy lives at the (mode=='car',) bucket.
+    Non-car positions must be ``None``; car positions are real samples
+    from {"strict", "loose"}.  Filtering with ``arr != None`` recovers
+    the real samples.
+    """
+    mode, policy, _bike_w, _strict_w, _loose_w, mv = _make_nested_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=2000, rng=rng, plan=plan)
+    a = ens.assignments()
+
+    car_mask = a[mode] == "car"
+    non_car = ~car_mask
+    # All non-car positions: policy sentinel = None
+    policy_non_car = a[policy][non_car]
+    assert np.all(np.asarray(policy_non_car == None, dtype=bool))  # noqa: E711
+    # Car positions: real samples from {"strict", "loose"}
+    policy_car = np.asarray(a[policy][car_mask], dtype=object)
+    assert set(policy_car.tolist()) <= {"strict", "loose"}
+
+
+def test_scoped_sampling_draw_batch_propagates_plan():
+    """draw_batch must propagate self._plan so the plan-aware path is used."""
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    rng = np.random.default_rng(0)
+    ens = DistributionEnsemble(Scenario(mv), size=1000, rng=rng, plan=plan)
+
+    rng2 = np.random.default_rng(1)
+    batch = ens.draw_batch(500, rng2)
+    a = batch.assignments()
+
+    # The batch has its own size = 500; per-scope sampling is active.
+    assert a[mode].shape == (500,)
+    bike_real = int(np.sum(~np.isnan(a[weather_bike])))
+    # 50% of 500 = 250, allow binomial wiggle
+    assert 200 <= bike_real <= 300
+
+
+def test_scoped_sampling_end_to_end_matches_no_plan_mean() -> None:
+    """Per-scope and no-plan DistributionEnsemble produce statistically equivalent throughput means.
+
+    The per-scope path only samples per-branch DistributionIndex at
+    branch positions and fills the rest with sentinels (np.nan).  The
+    executor's region masking ensures the sentinels are never read, so
+    the per-scope throughput mean converges to the same analytical value
+    as the no-plan mean.
+
+    Both paths run with the same seed.  The means will not be *equal*
+    (the draw order and count differ), but they should agree within
+    statistical tolerance and both should match the analytical
+    expected value.
+    """
+    _, _, _, mv = _make_branch_abstract_mv()
+    ev = Evaluation(mv)
+    n = 50_000
+
+    rng_a = np.random.default_rng(42)
+    ens_no = DistributionEnsemble(Scenario(mv), size=n, rng=rng_a)
+    throughput_no = np.asarray(ev.execute_plan(ev.build_plan(), ens_no)[mv.outputs.throughput]).ravel()
+
+    rng_b = np.random.default_rng(42)
+    plan_reg = ev.build_plan(strategy="regional")
+    ens_with = DistributionEnsemble(Scenario(mv), size=n, rng=rng_b, plan=plan_reg)
+    throughput_with = np.asarray(ev.execute_plan(plan_reg, ens_with)[mv.outputs.throughput]).ravel()
+
+    # Analytical expected throughput: cap * E[weather] = 100 * 0.5 = 50.
+    expected = _CAPACITY_VALUE * 0.5
+
+    # Per-position std is cap * sqrt(1/12) ~= 28.87.  Std of the mean
+    # over n=50000 positions: ~0.129.  A tolerance of 1.0 is ~7.7
+    # sigma — comfortably above any plausible Monte Carlo noise.
+    assert abs(np.mean(throughput_no) - expected) < 1.0
+    assert abs(np.mean(throughput_with) - expected) < 1.0
+
+    # The two means should agree; tolerance ~5.5 sigma on the
+    # difference-of-means standard error (~0.18).
+    assert abs(np.mean(throughput_no) - np.mean(throughput_with)) < 1.5
+
+
+def test_scoped_sampling_exclude_skips_bucket() -> None:
+    """An abstract index listed in ``exclude`` is dropped from the per-scope result.
+
+    The bucket containing only excluded indexes is skipped (the
+    ``if not active_indexes: continue`` branch in ``_scoped_assignments``).
+    Other buckets in the same plan are still sampled.
+    """
+    mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    ens = DistributionEnsemble(
+        Scenario(mv),
+        size=100,
+        rng=np.random.default_rng(0),
+        plan=plan,
+        exclude=frozenset({weather_bike}),
+    )
+    a = ens.assignments()
+    # mode is in the shared bucket — sampled at all positions.
+    assert a[mode].shape == (100,)
+    # weather_train is in its own bucket — sampled at train positions.
+    assert a[weather_train].shape == (100,)
+    assert 30 <= int(np.sum(~np.isnan(a[weather_train]))) <= 70
+    # weather_bike was excluded; its bucket is empty after filtering.
+    assert weather_bike not in a
+
+
+def test_scoped_sampling_no_rng() -> None:
+    """Per-scope sampling works without an rng (scipy's default is used).
+
+    Exercises the ``self._rng is None`` branch in ``_sample_with_default``.
+    """
+    mode, weather_bike, _, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    ens = DistributionEnsemble(Scenario(mv), size=200, plan=plan)
+    a = ens.assignments()
+    assert a[mode].shape == (200,)
+    # Real samples for weather_bike have mean ~0.5 (uniform[0, 1]).
+    bike_real = a[weather_bike][~np.isnan(a[weather_bike])]
+    assert 0.35 < float(np.mean(bike_real)) < 0.65
+
+
+def test_scoped_abstract_indexes_unions_same_guards_regions() -> None:
+    """Two regions with the same guards tuple union their abstract indexes.
+
+    build_plan currently never produces duplicate guard tuples, but the
+    union branch is the correct fallback if it ever does — abstract
+    indexes that live in regions with identical guards are all active
+    whenever the guards are satisfied.
+    """
+    x = Index("x", None)
+    y = Index("y", None)
+
+    class _M(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            x: Index
+            y: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            z: Index
+
+        def __init__(self, x: Index, y: Index) -> None:
+            z = Index("z", x.node + y.node)
+            super().__init__(
+                "_M",
+                inputs=_M.Inputs(x=x, y=y),
+                outputs=_M.Outputs(z=z),
+            )
+
+    m = _M(x, y)
+    scenario = Scenario(m)
+    # x and y are disjoint, so the overlap check passes.  The two
+    # regions share guards=() and the union branch fires for the second.
+    plan = EvaluationPlan(
+        model=m,
+        nodes_of_interest=(x, y),
+        regions=(
+            Region(nodes=(x.node,), has_timeseries=False, guards=()),
+            Region(nodes=(y.node,), has_timeseries=False, guards=()),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+    assert plan.scoped_abstract_indexes(scenario) == {(): frozenset({x, y})}
+
+
+def test_scoped_sampling_pinned_selector_raises() -> None:
+    """A guard whose selector is not in ``scenario.abstract_indexes()`` raises.
+
+    Per-scope sampling requires every guard's selector to be an
+    abstract index.  When the selector is pinned (via Scenario
+    overrides or ``parameter_axes=``), it is no longer in
+    ``scenario.abstract_indexes()`` and the per-scope path cannot
+    resolve the guard.  ``_active_positions`` raises a clear
+    ``ValueError`` so the user gets a fast, actionable failure
+    rather than silently wrong per-branch statistics.
+    """
+    mode, _weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    plan = Evaluation(mv).build_plan(strategy="regional")
+    pinned_scenario = Scenario(mv, overrides={mode: "bike"})
+    with pytest.raises(ValueError, match="not in scenario.abstract_indexes"):
+        DistributionEnsemble(pinned_scenario, size=100, rng=np.random.default_rng(0), plan=plan).assignments()
+
+
+def test_scoped_sampling_defensive_wrong_order_plan_raises() -> None:
+    """A custom plan with regions in the wrong order triggers the defensive RuntimeError.
+
+    The build_plan invariant guarantees that the bucket order from
+    ``scoped_abstract_indexes`` is outer-to-inner — the shared
+    pre-selector region is processed first, so its bucket is populated
+    before any per-branch bucket uses it as a guard.  We construct a
+    custom plan that violates this invariant to verify the defensive
+    check fires.
+    """
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    scenario = Scenario(mv)
+    # Wrong order: per-branch region first (depends on mode), shared
+    # region second (where mode is actually sampled).
+    bike_guard = RegionGuard(selector_node=mode.node, branch_key="bike")
+    plan = EvaluationPlan(
+        model=mv,
+        nodes_of_interest=(mv.outputs.throughput,),
+        regions=(
+            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(bike_guard,)),
+            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+    with pytest.raises(RuntimeError, match="has not been sampled yet"):
+        DistributionEnsemble(scenario, size=100, rng=np.random.default_rng(0), plan=plan).assignments()
+
+
+def test_scoped_sampling_empty_active_positions() -> None:
+    """A guard whose branch_key never matches produces all-placeholder output.
+
+    Exercises the ``n_branch == 0`` branch in ``_sample_with_default``:
+    when no positions satisfy the guard, the per-scope path fills the
+    full output array with the placeholder (np.nan for
+    DistributionIndex).
+    """
+    mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
+    scenario = Scenario(mv)
+    # mode's outcomes are {bike, train}, so a guard with branch_key="x"
+    # never matches.  The bucket for weather_bike is then empty.
+    unmatched_guard = RegionGuard(selector_node=mode.node, branch_key="x")
+    plan = EvaluationPlan(
+        model=mv,
+        nodes_of_interest=(mv.outputs.throughput,),
+        regions=(
+            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
+            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(unmatched_guard,)),
+        ),
+        dependencies=(frozenset(), frozenset({0})),
+    )
+    ens = DistributionEnsemble(scenario, size=100, rng=np.random.default_rng(0), plan=plan)
+    a = ens.assignments()
+    # mode is in the shared bucket, sampled at every position.
+    assert a[mode].shape == (100,)
+    # weather_bike: no positions match, so all positions are sentinels.
+    assert a[weather_bike].shape == (100,)
+    assert np.all(np.isnan(a[weather_bike]))
