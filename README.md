@@ -222,6 +222,7 @@ Per-release checklist (eight manual steps):
    uv run python examples/doc/doc_simulation.py
    uv run python examples/doc/doc_getting_started.py
    uv run python examples/doc/doc_overtourism_getting_started.py
+   uv run python examples/doc/doc_readme.py
    ```
 
 6. Verify that the full domain examples run end-to-end without errors (output
