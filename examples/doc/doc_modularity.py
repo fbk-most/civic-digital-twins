@@ -1,10 +1,8 @@
-"""Runnable snippets from docs/design/dd-cdt-modularity.md."""
-
 # SPDX-License-Identifier: Apache-2.0
+"""Runnable snippets from docs/design/dd-cdt-modularity.md."""
 
 import warnings
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import numpy as np
 from scipy import stats
@@ -12,26 +10,29 @@ from scipy import stats
 from civic_digital_twins.dt_model import (
     CategoricalIndex,
     ConstIndex,
+    DistributionEnsemble,
     DistributionIndex,
+    Evaluation,
+    Functor,
     GenericIndex,
     Index,
     InputsContractWarning,
     Model,
     ModelVariant,
+    NumpyBackend,
+    Scenario,
     TimeseriesIndex,
+    define,
+    expose,
+    functions,
     graph,
+    inputs,
+    outputs,
 )
 
 
 def _id_in(idx: GenericIndex, seq: Sequence[GenericIndex]) -> bool:
     """Return ``True`` if *idx* is present in *seq* by identity.
-
-    Parameters
-    ----------
-    idx:
-        The index to search for.
-    seq:
-        The sequence to search in.
 
     Notes
     -----
@@ -44,54 +45,62 @@ def _id_in(idx: GenericIndex, seq: Sequence[GenericIndex]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# dd-cdt-modularity.md §2 — Basic submodel pattern (Inputs + Outputs)
+# dd-cdt-modularity.md TL;DR — @define with @inputs/@outputs/@expose
 # ---------------------------------------------------------------------------
 
 
+@define("Traffic")
 class TrafficModel(Model):
-    """Minimal model demonstrating the Inputs / Outputs dataclass pattern."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`TrafficModel`."""
+        ts_inflow:         TimeseriesIndex
+        ts_starting:       TimeseriesIndex
+        modified_inflow:   Index
+        modified_starting: Index
 
-        ts_inflow: TimeseriesIndex
-        ts_starting: TimeseriesIndex
-
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`TrafficModel`."""
+        traffic:                TimeseriesIndex
+        modified_traffic:       TimeseriesIndex
+        total_modified_traffic: Index
+        inflow_ratio:           Index
+        starting_ratio:         Index
+        traffic_ratio:          Index
 
-        traffic: TimeseriesIndex
-        modified_traffic: TimeseriesIndex
-        total: Index
-
-    def __init__(self, ts_inflow: TimeseriesIndex, ts_starting: TimeseriesIndex) -> None:
-        Inputs = TrafficModel.Inputs
-        Outputs = TrafficModel.Outputs
-
-        inputs = Inputs(ts_inflow=ts_inflow, ts_starting=ts_starting)
-
-        traffic = TimeseriesIndex("traffic", inputs.ts_inflow + inputs.ts_starting)
-        modified_traffic = TimeseriesIndex("modified_traffic", inputs.ts_inflow * 0.9 + inputs.ts_starting)
-        total = Index("total", traffic.sum())
-
-        super().__init__(
-            "Traffic",
-            inputs=inputs,
-            outputs=Outputs(traffic=traffic, modified_traffic=modified_traffic, total=total),
+    def compute(self, inputs: Inputs) -> Outputs:
+        traffic = TimeseriesIndex("reference traffic", inputs.ts_inflow + inputs.ts_starting)
+        modified_traffic = TimeseriesIndex("modified traffic", inputs.modified_inflow + inputs.modified_starting)
+        total_modified_traffic = Index("total modified traffic", modified_traffic.sum())
+        inflow_ratio     = Index("inflow ratio", inputs.ts_inflow / inputs.modified_inflow)
+        starting_ratio   = Index("starting ratio", inputs.ts_starting / inputs.modified_starting)
+        traffic_ratio    = Index("traffic ratio", traffic / modified_traffic)
+        return TrafficModel.Outputs(
+            traffic=traffic,
+            modified_traffic=modified_traffic,
+            total_modified_traffic=total_modified_traffic,
+            inflow_ratio=inflow_ratio,
+            starting_ratio=starting_ratio,
+            traffic_ratio=traffic_ratio,
         )
 
 
 ts_in = TimeseriesIndex("inflow", np.array([10.0, 20.0, 30.0]))
 ts_st = TimeseriesIndex("starting", np.array([5.0, 10.0, 15.0]))
-m = TrafficModel(ts_in, ts_st)
+mod_in = Index("modified_inflow", 0.9)
+mod_st = Index("modified_starting", 0.95)
+m = TrafficModel(inputs=TrafficModel.Inputs(
+    ts_inflow=ts_in,
+    ts_starting=ts_st,
+    modified_inflow=mod_in,
+    modified_starting=mod_st,
+))
 
 assert m.inputs.ts_inflow is ts_in
 assert m.inputs.ts_starting is ts_st
 assert m.outputs.traffic is not None
 assert m.outputs.modified_traffic is not None
-assert m.outputs.total is not None
+assert m.outputs.total_modified_traffic is not None
 # indexes are derived automatically from inputs + outputs
 assert _id_in(ts_in, m.indexes)
 assert _id_in(ts_st, m.indexes)
@@ -106,10 +115,17 @@ def _demo_02_level1_access() -> None:
     """Block 02: Level 1 contractual attribute access."""
     ts_i = TimeseriesIndex("ts_inflow_demo", np.array([10.0, 20.0, 30.0]))
     ts_s = TimeseriesIndex("ts_starting_demo", np.array([5.0, 10.0, 15.0]))
-    traffic = TrafficModel(ts_inflow=ts_i, ts_starting=ts_s)
-    ts = traffic.outputs.traffic  # contractual output — stable
+    mod_i = Index("mod_inflow_demo", 0.9)
+    mod_s = Index("mod_starting_demo", 0.95)
+    traffic = TrafficModel(inputs=TrafficModel.Inputs(
+        ts_inflow=ts_i,
+        ts_starting=ts_s,
+        modified_inflow=mod_i,
+        modified_starting=mod_s,
+    ))
+    ts = traffic.outputs.traffic           # contractual output — stable
     mod = traffic.outputs.modified_traffic  # contractual output — stable
-    inp = traffic.inputs.ts_inflow  # contractual input  — stable
+    inp = traffic.inputs.ts_inflow         # contractual input  — stable
     assert ts is not None
     assert mod is not None
     assert inp is ts_i
@@ -120,46 +136,32 @@ def _demo_02_level1_access() -> None:
 # ---------------------------------------------------------------------------
 
 
+@define("ThreeLevel")
 class ThreeLevelModel(Model):
-    """Demonstrates all three access levels: Inputs, Outputs, and Expose."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`ThreeLevelModel`."""
-
         base: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`ThreeLevelModel`."""
-
         result: Index
 
-    @dataclass
+    @expose
     class Expose:
-        """Inspectable intermediate indexes of :class:`ThreeLevelModel`."""
-
         intermediate: Index
 
-    def __init__(self, base: Index) -> None:
-        Inputs = ThreeLevelModel.Inputs
-        Outputs = ThreeLevelModel.Outputs
-        Expose = ThreeLevelModel.Expose
-
-        inputs = Inputs(base=base)
+    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
         intermediate = Index("intermediate", inputs.base * 2)
         result = Index("result", intermediate + 1)
-
-        super().__init__(
-            "ThreeLevel",
-            inputs=inputs,
-            outputs=Outputs(result=result),
-            expose=Expose(intermediate=intermediate),
+        return (
+            ThreeLevelModel.Outputs(result=result),
+            ThreeLevelModel.Expose(intermediate=intermediate),
         )
 
 
 b = Index("base", 5.0)
-m3 = ThreeLevelModel(b)
+m3 = ThreeLevelModel(inputs=ThreeLevelModel.Inputs(base=b))
 
 assert m3.inputs.base is b
 assert m3.outputs.result is not None
@@ -169,145 +171,107 @@ assert _id_in(m3.inputs.base, m3.indexes)
 assert _id_in(m3.outputs.result, m3.indexes)
 assert _id_in(m3.expose.intermediate, m3.indexes)
 
+
 # ---------------------------------------------------------------------------
 # dd-cdt-modularity.md §4 — Wiring sub-models via constructor (pipeline)
 # ---------------------------------------------------------------------------
 
 
+@define("StageA")
 class StageAModel(Model):
-    """Stage-A sub-model: processes raw data into two outputs."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`StageAModel`."""
-
         raw_data: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`StageAModel`."""
-
         processed: Index
         ratio: Index
 
-    def __init__(self, raw_data: Index) -> None:
-        inputs = StageAModel.Inputs(raw_data=raw_data)
+    def compute(self, inputs: Inputs) -> Outputs:
         processed = Index("processed", inputs.raw_data * 2.0)
         ratio = Index("ratio", inputs.raw_data * 0.1)
-        super().__init__("StageA", inputs=inputs, outputs=StageAModel.Outputs(processed=processed, ratio=ratio))
+        return StageAModel.Outputs(processed=processed, ratio=ratio)
 
 
+@define("StageB")
 class StageBModel(Model):
-    """Stage-B sub-model: combines processed data and ratio."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`StageBModel`."""
-
         processed: Index
         ratio: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`StageBModel`."""
-
         result: Index
 
-    def __init__(self, processed: Index, ratio: Index) -> None:
-        inputs = StageBModel.Inputs(processed=processed, ratio=ratio)
+    def compute(self, inputs: Inputs) -> Outputs:
         result = Index("result", inputs.processed + inputs.ratio)
-        super().__init__("StageB", inputs=inputs, outputs=StageBModel.Outputs(result=result))
+        return StageBModel.Outputs(result=result)
 
 
+@define("Pipeline")
 class PipelineModel(Model):
-    """Root model that wires StageAModel → StageBModel as a pipeline."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`PipelineModel`."""
-
         raw_data: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`PipelineModel`."""
-
         result: Index
 
-    @dataclass
-    class Expose:
-        """Inspectable intermediate indexes of :class:`PipelineModel`."""
-
-        stage_a_indexes: list[GenericIndex]
-        stage_b_indexes: list[GenericIndex]
-
-    def __init__(self, raw_data: DistributionIndex) -> None:
-        inputs = PipelineModel.Inputs(raw_data=raw_data)
-
-        stage_a = StageAModel(raw_data=inputs.raw_data)
-        stage_b = StageBModel(
+    def compute(self, inputs: Inputs) -> Outputs:
+        stage_a = StageAModel(inputs=StageAModel.Inputs(raw_data=inputs.raw_data))
+        stage_b = StageBModel(inputs=StageBModel.Inputs(
             processed=stage_a.outputs.processed,
             ratio=stage_a.outputs.ratio,
-        )
-
-        super().__init__(
-            "Pipeline",
-            inputs=inputs,
-            outputs=PipelineModel.Outputs(result=stage_b.outputs.result),
-            expose=PipelineModel.Expose(
-                stage_a_indexes=list(stage_a.indexes),
-                stage_b_indexes=list(stage_b.indexes),
-            ),
-        )
+        ))
+        return PipelineModel.Outputs(result=stage_b.outputs.result)
 
 
 _raw_data = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
-pipeline = PipelineModel(raw_data=_raw_data)
+pipeline = PipelineModel(inputs=PipelineModel.Inputs(raw_data=_raw_data))
 
 assert pipeline.outputs.result is not None
 # raw_data is a DistributionIndex (abstract) → model is not fully instantiated
 assert pipeline.is_instantiated() is False
 # The wired output is reachable through the pipeline's index list
 assert _id_in(pipeline.outputs.result, pipeline.indexes)
-# Sub-model indexes are surfaced via Expose
-assert len(pipeline.expose.stage_a_indexes) > 0
-assert len(pipeline.expose.stage_b_indexes) > 0
+
 
 # ---------------------------------------------------------------------------
 # dd-cdt-modularity.md §5 — Inputs contract convention / InputsContractWarning
+# (legacy=True models demonstrating the warning for hand-written __init__)
 # ---------------------------------------------------------------------------
 
 
-class GoodModel(Model):
+class GoodModel(Model, legacy=True):
     """Model that correctly declares its GenericIndex parameter in Inputs."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`GoodModel` — 'inflow' declared here ..."""
-
         inflow: TimeseriesIndex
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`GoodModel`."""
-
         total: Index
 
     def __init__(self, inflow: TimeseriesIndex) -> None:
         Inputs = GoodModel.Inputs
-        inputs = Inputs(inflow=inflow)  # ... and forwarded here
-        total = Index("total_good", inputs.inflow.sum())
-        super().__init__("Good", inputs=inputs, outputs=GoodModel.Outputs(total=total))
+        inputs_ = Inputs(inflow=inflow)       # ... and forwarded here
+        total_idx = Index("total_good", inputs_.inflow.sum())
+        super().__init__("Good", inputs=inputs_, outputs=GoodModel.Outputs(total=total_idx))
 
 
-class BadModel(Model):
-    """Model that deliberately omits 'inflow' from its Inputs dataclass."""
+class BadModel(Model, legacy=True):
+    """Model that deliberately omits 'inflow' from its Inputs to trigger the warning."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`BadModel` — intentionally empty to trigger the warning."""
-
-        pass  # inflow is missing
+        pass   # inflow is missing
 
     def __init__(self, inflow: TimeseriesIndex) -> None:
         # InputsContractWarning fires here: 'inflow' holds a GenericIndex
@@ -355,48 +319,44 @@ def _demo_08_filterwarnings() -> None:
 # ---------------------------------------------------------------------------
 
 
+@define("Bike")
 class BikeModel(Model):
-    """Variant: bike transport emissions model."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`BikeModel`."""
-
         capacity: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`BikeModel`."""
-
         emissions: Index
 
-    def __init__(self, capacity: float = 100.0) -> None:
-        cap = ConstIndex("bike_capacity", float(capacity))
-        inputs = BikeModel.Inputs(capacity=cap)
-        emissions = Index("bike_emissions", cap * 3.0)
-        super().__init__("Bike", inputs=inputs, outputs=BikeModel.Outputs(emissions=emissions))
+    @classmethod
+    def default_inputs(cls, capacity: float = 100.0) -> Inputs:
+        return cls.Inputs(capacity=ConstIndex("bike_capacity", capacity))
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        emissions = Index("bike_emissions", inputs.capacity * 3.0)
+        return BikeModel.Outputs(emissions=emissions)
 
 
+@define("Train")
 class TrainModel(Model):
-    """Variant: train transport emissions model."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`TrainModel`."""
-
         capacity: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`TrainModel`."""
-
         emissions: Index
 
-    def __init__(self, capacity: float = 500.0) -> None:
-        cap = ConstIndex("train_capacity", float(capacity))
-        inputs = TrainModel.Inputs(capacity=cap)
-        emissions = Index("train_emissions", cap * 1.0)
-        super().__init__("Train", inputs=inputs, outputs=TrainModel.Outputs(emissions=emissions))
+    @classmethod
+    def default_inputs(cls, capacity: float = 500.0) -> Inputs:
+        return cls.Inputs(capacity=ConstIndex("train_capacity", capacity))
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        emissions = Index("train_emissions", inputs.capacity * 1.0)
+        return TrainModel.Outputs(emissions=emissions)
 
 
 # ---------------------------------------------------------------------------
@@ -405,14 +365,12 @@ class TrainModel(Model):
 
 
 def _demo_09_static_variant() -> None:
-    """Block 09: ModelVariant with static string selector and capacity kwargs."""
-    from civic_digital_twins.dt_model import ModelVariant
-
+    """Block 09: ModelVariant with static string selector."""
     mv = ModelVariant(
         "TransportModel",
         variants={
-            "bike": BikeModel(capacity=100),
-            "train": TrainModel(capacity=500),
+            "bike":  BikeModel(inputs=BikeModel.default_inputs(100)),
+            "train": TrainModel(inputs=TrainModel.default_inputs(500)),
         },
         selector="bike",
     )
@@ -430,16 +388,16 @@ def _demo_10_proxy_attributes() -> None:
     mv = ModelVariant(
         "TransportModel",
         variants={
-            "bike": BikeModel(capacity=100),
-            "train": TrainModel(capacity=500),
+            "bike":  BikeModel(inputs=BikeModel.default_inputs(100)),
+            "train": TrainModel(inputs=TrainModel.default_inputs(500)),
         },
         selector="bike",
     )
-    mv.outputs.emissions  # delegates to BikeModel.outputs.emissions
-    mv.inputs.capacity  # delegates to BikeModel.inputs.capacity
-    mv.indexes  # index list of the active (BikeModel) variant only
-    mv.abstract_indexes()  # delegates to BikeModel.abstract_indexes()
-    mv.is_instantiated()  # delegates to BikeModel.is_instantiated()
+    mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
+    mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
+    mv.indexes                  # index list of the active (BikeModel) variant only
+    mv.abstract_indexes()       # delegates to BikeModel.abstract_indexes()
+    mv.is_instantiated()        # delegates to BikeModel.is_instantiated()
 
 
 # ---------------------------------------------------------------------------
@@ -452,13 +410,13 @@ def _demo_11_inactive_variants() -> None:
     mv = ModelVariant(
         "TransportModel",
         variants={
-            "bike": BikeModel(),
-            "train": TrainModel(),
+            "bike":  BikeModel(inputs=BikeModel.default_inputs()),
+            "train": TrainModel(inputs=TrainModel.default_inputs()),
         },
         selector="bike",
     )
-    mv.variants["train"].outputs.emissions  # explicit — reaches inactive variant
-    mv.variants["train"].indexes  # index list of TrainModel only
+    mv.variants["train"].outputs.emissions   # explicit — reaches inactive variant
+    mv.variants["train"].indexes             # index list of TrainModel only
 
     # Active variant's emissions IS in mv.indexes; inactive's is NOT
     assert _id_in(mv.variants["bike"].outputs.emissions, mv.indexes)
@@ -469,11 +427,15 @@ def _demo_11_inactive_variants() -> None:
 # dd-cdt-modularity.md — Runtime ModelVariant with CategoricalIndex selector
 # ---------------------------------------------------------------------------
 
+
 mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
 
 mv_runtime = ModelVariant(
     "TransportModel",
-    variants={"bike": BikeModel(), "train": TrainModel()},
+    variants={
+        "bike":  BikeModel(inputs=BikeModel.default_inputs()),
+        "train": TrainModel(inputs=TrainModel.default_inputs()),
+    },
     selector=mode,  # runtime: resolved per scenario via DistributionEnsemble
 )
 
@@ -491,16 +453,14 @@ assert mv_runtime.is_instantiated() is False
 
 
 def _demo_13_categorical_selector() -> None:
-    """Block 13: ModelVariant with CategoricalIndex selector and no-arg variant construction."""
-    from civic_digital_twins.dt_model import CategoricalIndex, ModelVariant
-
+    """Block 13: ModelVariant with CategoricalIndex selector."""
     mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
 
     mv = ModelVariant(
         "TransportModel",
         variants={
-            "bike": BikeModel(),
-            "train": TrainModel(),
+            "bike":  BikeModel(inputs=BikeModel.default_inputs()),
+            "train": TrainModel(inputs=TrainModel.default_inputs()),
         },
         selector=mode,
     )
@@ -528,8 +488,6 @@ assert peak_factor.value is not None
 
 def _demo_15_piecewise_categorical() -> None:
     """Block 15: CategoricalIndex season guard with four-clause graph.piecewise."""
-    from civic_digital_twins.dt_model import CategoricalIndex, graph
-
     season = CategoricalIndex("season", {"summer": 0.25, "spring": 0.25, "autumn": 0.25, "winter": 0.25})
 
     peak_factor = Index(
@@ -550,61 +508,36 @@ def _demo_15_piecewise_categorical() -> None:
 # ---------------------------------------------------------------------------
 
 
+@define("BikePres")
 class BikeModelPres(Model):
-    """Bike variant whose emissions scale with an abstract presence index."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`BikeModelPres`."""
-
         presence: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`BikeModelPres`."""
-
         emissions: Index
 
-    def __init__(self, presence: Index) -> None:
-        inputs = BikeModelPres.Inputs(presence=presence)
+    def compute(self, inputs: Inputs) -> Outputs:
         emissions = Index("bike_pres_emissions", inputs.presence * 3.0)
-        super().__init__("BikePres", inputs=inputs, outputs=BikeModelPres.Outputs(emissions=emissions))
+        return BikeModelPres.Outputs(emissions=emissions)
 
 
+@define("TrainPres")
 class TrainModelPres(Model):
-    """Train variant whose emissions scale with an abstract presence index."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Inputs of :class:`TrainModelPres`."""
-
         presence: Index
 
-    @dataclass
+    @outputs
     class Outputs:
-        """Outputs of :class:`TrainModelPres`."""
-
         emissions: Index
 
-    def __init__(self, presence: Index) -> None:
-        inputs = TrainModelPres.Inputs(presence=presence)
+    def compute(self, inputs: Inputs) -> Outputs:
         emissions = Index("train_pres_emissions", inputs.presence * 1.0)
-        super().__init__("TrainPres", inputs=inputs, outputs=TrainModelPres.Outputs(emissions=emissions))
-
-
-# ---------------------------------------------------------------------------
-# dd-cdt-modularity.md — End-to-End evaluation with marginalize
-# ---------------------------------------------------------------------------
-
-from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation  # noqa: E402
-
-# PipelineModel has a DistributionIndex (raw_data), so DistributionEnsemble works.
-_pipeline_eval = PipelineModel(raw_data=DistributionIndex("x_eval", stats.uniform, {"loc": 0.0, "scale": 10.0}))
-_ensemble_eval = DistributionEnsemble(_pipeline_eval, size=50)
-_result_eval = Evaluation(_pipeline_eval).evaluate(ensemble=_ensemble_eval)
-
-mean_pipeline_result = _result_eval.expected_value(_pipeline_eval.outputs.result)
-assert mean_pipeline_result > 0
+        return TrainModelPres.Outputs(emissions=emissions)
 
 
 # ---------------------------------------------------------------------------
@@ -617,11 +550,14 @@ def _demo_catidx_param_axis_1d() -> None:
     mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
     mv_param = ModelVariant(
         "TransportParam",
-        variants={"bike": BikeModel(), "train": TrainModel()},
+        variants={
+            "bike":  BikeModel(inputs=BikeModel.default_inputs()),
+            "train": TrainModel(inputs=TrainModel.default_inputs()),
+        },
         selector=mode_param,
     )
 
-    result = Evaluation(mv_param).evaluate(
+    result = Evaluation(Scenario(mv_param)).evaluate(
         ensemble=None,
         parameters={mode_param: np.array(["bike", "train"])},
     )
@@ -645,13 +581,13 @@ def _demo_catidx_param_axis_2d() -> None:
     mv_grid = ModelVariant(
         "TransportGrid",
         variants={
-            "bike": BikeModelPres(presence),
-            "train": TrainModelPres(presence),
+            "bike":  BikeModelPres(inputs=BikeModelPres.Inputs(presence=presence)),
+            "train": TrainModelPres(inputs=TrainModelPres.Inputs(presence=presence)),
         },
         selector=mode_param,
     )
 
-    result = Evaluation(mv_grid).evaluate(
+    result = Evaluation(Scenario(mv_grid)).evaluate(
         ensemble=None,
         parameters={
             mode_param: np.array(["bike", "train"]),
@@ -665,6 +601,47 @@ def _demo_catidx_param_axis_2d() -> None:
     assert arr.shape == (2, 3)
     assert np.allclose(arr[0], [100.0 * 3, 200.0 * 3, 300.0 * 3])  # bike: presence * 3
     assert np.allclose(arr[1], [100.0 * 1, 200.0 * 1, 300.0 * 1])  # train: presence * 1
+
+
+# ---------------------------------------------------------------------------
+# Block 20: dd-cdt-modularity.md — @functions contract
+# ---------------------------------------------------------------------------
+
+
+def _demo_20_functions_contract() -> None:
+    """Block 20: @functions typed functor contract."""
+
+    @define("Smoother")
+    class SmootherModel(Model):
+
+        @inputs
+        class Inputs:
+            signal: TimeseriesIndex
+
+        @functions
+        class Functions:
+            smooth: Functor
+
+        @outputs
+        class Outputs:
+            smoothed: TimeseriesIndex
+
+        def compute(self, inputs: Inputs, *, fns: Functions) -> Outputs:
+            smoothed = TimeseriesIndex("smoothed", graph.function_call("smooth", inputs.signal))
+            return SmootherModel.Outputs(smoothed=smoothed)
+
+    signal = TimeseriesIndex("signal", np.array([1.0, 2.0, 3.0, 2.0, 1.0]))
+    m = SmootherModel(
+        inputs=SmootherModel.Inputs(signal=signal),
+        fns=SmootherModel.Functions(smooth=NumpyBackend.adapt(lambda x: x)),
+    )
+    assert m.outputs.smoothed is not None
+
+
+# ---------------------------------------------------------------------------
+# dd-cdt-modularity.md — End-to-end evaluation with Scenario
+# ---------------------------------------------------------------------------
+
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +683,7 @@ _demo_10_proxy_attributes()
 _demo_11_inactive_variants()
 _demo_13_categorical_selector()
 _demo_15_piecewise_categorical()
+_demo_20_functions_contract()
 _demo_catidx_param_axis_1d()
 _demo_catidx_param_axis_2d()
 _demo_29_filterwarnings_api()

@@ -27,6 +27,7 @@ from civic_digital_twins.dt_model import (  # noqa: E402
     Index,
     Model,
     Scenario,
+    define,
     graph,
     inputs,
     outputs,
@@ -116,40 +117,36 @@ assert C_beach.name == "beach"
 # ---------------------------------------------------------------------------
 
 
+@define("minimal overtourism")
 class MinimalOvertourismModel(Model):  # noqa: D101
     @inputs
     class Inputs:  # noqa: D106
-        cvs: list[CategoricalIndex]
-        pvs: list[ConditionalDistributionIndex]
-        domain_indexes: list[GenericIndex]
-        capacities: list[GenericIndex]
+        cv_season: CategoricalIndex
+        cv_weather: CategoricalIndex
+        pv_visitors: ConditionalDistributionIndex
+        i_u_beach_visitors: Index
+        i_c_beach: DistributionIndex
 
     @outputs
     class Outputs:  # noqa: D106
         usage_indexes: list[GenericIndex]
 
-    def __init__(self, name, *, cvs, pvs, indexes, capacities, constraints):
-        super().__init__(
-            name,
-            inputs=self.Inputs(cvs=cvs, pvs=pvs, domain_indexes=indexes, capacities=capacities),
-            outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
-        )
-        self.cvs = cvs
-        self.pvs = pvs
-        self.constraints = constraints
+    def compute(self, inputs: Inputs) -> Outputs:  # noqa: D102
+        usage = Index("beach_usage", inputs.pv_visitors * inputs.i_u_beach_visitors)
+        self.constraints = [Constraint(name="beach", usage=usage, capacity=inputs.i_c_beach)]
+        return MinimalOvertourismModel.Outputs(usage_indexes=[c.usage for c in self.constraints])
 
 
-model = MinimalOvertourismModel(
-    name="minimal_overtourism",
-    cvs=[CV_season, CV_weather],
-    pvs=[PV_visitors],
-    indexes=[I_U_beach_visitors],
-    capacities=[I_C_beach],
-    constraints=[C_beach],
-)
+model = MinimalOvertourismModel(inputs=MinimalOvertourismModel.Inputs(
+    cv_season=CV_season,
+    cv_weather=CV_weather,
+    pv_visitors=PV_visitors,
+    i_u_beach_visitors=I_U_beach_visitors,
+    i_c_beach=I_C_beach,
+))
 
 assert len(model.constraints) == 1
-assert model.constraints[0] is C_beach
+assert model.constraints[0].name == "beach"
 
 
 # ---------------------------------------------------------------------------
@@ -157,14 +154,14 @@ assert model.constraints[0] is C_beach
 # ---------------------------------------------------------------------------
 
 scenario_overrides: dict[GenericIndex, DomainValue] = {
-    CV_season: ["low", "high"],
-    CV_weather: ["good", "unsettled", "bad"],
+    model.inputs.cv_season: ["low", "high"],
+    model.inputs.cv_weather: ["good", "unsettled", "bad"],
 }
 
 scenario_obj = Scenario(
     model,
     overrides=scenario_overrides,
-    parameter_axes=model.pvs,
+    parameter_axes=[model.inputs.pv_visitors],
 )
 ensemble = CrossProductEnsemble(scenario_obj, max_categorical_size=10)
 # 2 × 3 = 6 scenarios (max_categorical_size=10 >= support sizes 2 and 3,
@@ -182,7 +179,7 @@ visitors_axis = np.linspace(0, 20_000, 201)
 
 result = Evaluation(scenario_obj).evaluate(
     ensemble=ensemble,
-    parameters={PV_visitors: visitors_axis},
+    parameters={model.inputs.pv_visitors: visitors_axis},
 )
 
 assert result.full_shape == (201, 6)
@@ -195,7 +192,7 @@ assert result.full_shape == (201, 6)
 field = np.ones(visitors_axis.size)
 
 for c in model.constraints:
-    usage = np.broadcast_to(result[c.usage], result.full_shape)  # (201, 60)
+    usage = np.broadcast_to(result[c.usage], result.full_shape)  # (201, 6)
 
     if isinstance(c.capacity.value, Distribution):
         # Probabilistic capacity: probability that usage ≤ capacity

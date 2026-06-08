@@ -10,7 +10,7 @@ _examples_dir = Path(__file__).parent.parent
 if str(_examples_dir) not in sys.path:
     sys.path.insert(0, str(_examples_dir))
 
-from civic_digital_twins.dt_model import ConstIndex, Index, Model  # noqa: E402
+from civic_digital_twins.dt_model import ConstIndex, Model  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Block 00: dd-cdt-model.md — Index Types: Index modes
@@ -171,7 +171,7 @@ def _demo_12_distribution_ensemble() -> None:
     """Block 12: DistributionEnsemble."""
     from scipy import stats
 
-    from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index
+    from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index, Scenario
 
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
@@ -181,7 +181,8 @@ def _demo_12_distribution_ensemble() -> None:
         warnings.simplefilter("ignore", DeprecationWarning)
         model = Model("demo12", [x, y, z])
 
-    ensemble = DistributionEnsemble(model, size=100)
+    scenario = Scenario(model)
+    ensemble = DistributionEnsemble(scenario, size=100)
 
     assert len(ensemble.ensemble_weights[0]) == 100
     weight = ensemble.ensemble_weights[0][0]
@@ -200,7 +201,9 @@ def _demo_14_15_end_to_end() -> None:
     """Blocks 14+15: Grid-mode marginalize + End-to-End Example (1-D mode)."""
     from scipy import stats
 
-    from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Evaluation, Index, Model
+    from civic_digital_twins.dt_model import (
+        DistributionEnsemble, DistributionIndex, Evaluation, Index, Model, Scenario,
+    )
 
     # Define the model
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
@@ -209,12 +212,13 @@ def _demo_14_15_end_to_end() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         model = Model("demo", [x, y, z])
+    scenario = Scenario(model)
 
     # Build an ensemble of 200 scenarios
-    ensemble = DistributionEnsemble(model, size=200)
+    ensemble = DistributionEnsemble(scenario, size=200)
 
     # Evaluate
-    result = Evaluation(model).evaluate(ensemble=ensemble)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
     # Weighted mean of z across all scenarios
     print(result.expected_value(z))  # ≈ 10.0
@@ -255,8 +259,6 @@ def _demo_17_constraint() -> None:
 
 def _demo_18_19_overtourism() -> None:
     """Blocks 18+19: CrossProductEnsemble + Grid Evaluation."""
-    from dataclasses import dataclass
-
     import numpy as np
     from overtourism_molveno.molveno_model import Constraint
     from scipy import stats
@@ -272,6 +274,8 @@ def _demo_18_19_overtourism() -> None:
         Index,
         Model,
         Scenario,
+        inputs,
+        outputs,
     )
 
     CV_weather = CategoricalIndex(
@@ -280,9 +284,11 @@ def _demo_18_19_overtourism() -> None:
     )
 
     def tourist_dist(w):
+        del w
         return stats.uniform(loc=4000.0, scale=2000.0)
 
     def excursionist_dist(w):
+        del w
         return stats.uniform(loc=2500.0, scale=1000.0)
 
     PV_tourists = ConditionalDistributionIndex("tourists", [CV_weather], tourist_dist)
@@ -292,14 +298,14 @@ def _demo_18_19_overtourism() -> None:
     capacity_idx = ConstIndex("capacity_idx", 100_000.0)
     c_beach = Constraint("beach", usage_idx, capacity_idx)
 
-    class _MinimalModel(Model):
-        @dataclass
+    class _MinimalModel(Model, legacy=True):
+        @inputs
         class Inputs:
             cvs: list[CategoricalIndex]
             pvs: list[ConditionalDistributionIndex]
             capacities: list[GenericIndex]
 
-        @dataclass
+        @outputs
         class Outputs:
             usage_indexes: list[GenericIndex]
 

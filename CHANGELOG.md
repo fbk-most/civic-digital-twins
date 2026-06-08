@@ -11,11 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Scenario` accepts `parameter_axes: list[GenericIndex]` (closing #165).  Indexes declared here
-  are excluded from `Scenario.abstract_indexes()` — `CrossProductEnsemble` skips them
-  automatically without any `exclude=` argument.  `Evaluation.evaluate()` raises `ValueError`
-  when a declared parameter axis is missing from `parameters=`, turning the previously silent
-  two-place duplication into a checked invariant.
+**Model definition decorators**
+
 - `@define` decorator — declare a leaf `Model` subclass via a `compute()`
   method instead of a hand-written `__init__`.  `@define("Name")` generates
   `__init__(self, inputs: Inputs)` (plus `fns: Functions` when a `@functions`
@@ -26,16 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at decoration time.  `Model.__init_subclass__` now emits `DeprecationWarning`
   for subclasses that define `__init__` directly; composite models that cannot
   use `compute()` opt out with `legacy=True`.  Exported from
-  `civic_digital_twins.dt_model`.  Closes #190.
-- All example models migrated to `@define` + `compute()`. `BolognaModel` gains
-  `default_inputs() → Inputs` and `default_fns() → Functions` classmethods;
-  callers use `BolognaModel(inputs=BolognaModel.default_inputs(),
-  fns=BolognaModel.default_fns())` with `dataclasses.replace()` for
-  per-scenario overrides.  `MolvenoModel` exposes all domain parameters as
-  named `Inputs` fields (CVs, PVs, distribution-backed uncertainty
-  parameters, per-concern formula parameters, presence-transformation
-  parameters); `default_inputs()` supplies the defaults; `compute()` is pure
-  wiring with no local index construction.
+  `civic_digital_twins.dt_model` (closing #190).
 - `@define` auto-constructs `Inputs()` when the declared `Inputs` class has
   no fields, so `Model()` can be called with no arguments in that case.
 - `@functions` decorator — declare the custom functions a `Model` subclass
@@ -53,23 +41,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or lists/dicts thereof) at construction time, catching wiring errors early.
   Passing a plain `@dataclass` now emits `DeprecationWarning`.  Exported from
   `civic_digital_twins.dt_model`.
+- All example models migrated to `@define` + `compute()`.  `BolognaModel` gains
+  `default_inputs() → Inputs` and `default_fns() → Functions` classmethods;
+  callers use `BolognaModel(inputs=BolognaModel.default_inputs(),
+  fns=BolognaModel.default_fns())` with `dataclasses.replace()` for
+  per-scenario overrides.  `MolvenoModel` exposes all domain parameters as
+  named `Inputs` fields (CVs, PVs, distribution-backed uncertainty
+  parameters, per-concern formula parameters, presence-transformation
+  parameters); `default_inputs()` supplies the defaults; `compute()` is pure
+  wiring with no local index construction.
 - `BolognaModel` now declares its solver as a typed `@functions` contract,
   replacing the previous evaluation-time `functions={"ts_solve": ...}` dict.
   A custom solver can be injected at construction time via
   `BolognaModel(…, functions=BolognaModel.Functions(ts_solve=my_functor))`;
-  the default NumPy implementation is used when `functions=` is omitted.
-- `EvaluationResult.expected_value(idx)` — canonical weighted expectation over
-  the ensemble and parameter dimensions, replacing `marginalize()`.  Uses
-  `GenericIndex.output_axes` to determine which dimensions are DOMAIN (kept) vs
-  ENSEMBLE/PARAMETER (contracted); correctly handles T=1 timeseries that were
-  previously indistinguishable from scalars.
-- `GenericIndex.output_axes` — ordered tuple of `Axis` objects describing the
-  dimensions of the index's result array (`*PARAMETER, *ENSEMBLE, *DOMAIN`
-  convention).
-- `dt_model/axes.py` — shared module owning `Axis`, `AxisRole`, and the built-in
-  role constants `DOMAIN`, `PARAMETER`, `ENSEMBLE`.  Breaking the former
-  engine→model import dependency: the engine layer now imports axis types from
-  this module rather than from `model.axis`. 
+  the default numpy implementation is used when `functions=` is omitted.
+
+**`Scenario` — what-if scenario wrapper**
+
+- `Scenario(model, overrides={idx: value})` in `simulation/scenario.py` — the
+  canonical what-if wrapper around a `Model` or `ModelVariant`.  Accepted override
+  types per index kind: `float` for `Index`; `np.ndarray` for `TimeseriesIndex`;
+  `Distribution` for `DistributionIndex`; `str` (concrete pin) or `dict[str, float]`
+  (new probability weights, subset of support) for `CategoricalIndex`; `str` only
+  for `ConditionalCategoricalIndex`.  `ConstIndex`, `ConstTimeseriesIndex`, and
+  `ConditionalDistributionIndex` do not accept overrides.
+  `Scenario.abstract_indexes()` returns indexes that still require ensemble sampling.
+  `Scenario.base_substitutions()` returns concrete values ready for engine injection.
+  `Scenario.effective_distribution(idx)` returns the active distribution (override if
+  present, else `idx.value`).
+  `Scenario.effective_outcomes(idx)` returns the active outcome-probability map for
+  categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
+  for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
+- `Scenario` accepts `parameter_axes: list[GenericIndex]` (closing #165).  Indexes
+  declared here are excluded from `Scenario.abstract_indexes()` —
+  `CrossProductEnsemble` skips them automatically without any `exclude=` argument.
+  `Evaluation.evaluate()` raises `ValueError` when a declared parameter axis is
+  missing from `parameters=`, turning the previously silent two-place duplication
+  into a checked invariant.
+- `Scenario` accepts `list[str]` overrides for `CategoricalIndex` (closing #187).
+  Passing a list restricts sampling to that subset and renormalises the model's
+  original probabilities over the listed outcomes at construction time (validated:
+  unknown outcomes or an empty list raise `ValueError`).  The renormalised
+  distribution is stored internally as `dict[str, float]` so all existing downstream
+  code works unchanged.  `DomainValue` now includes `list[str]`.
+- `Scenario.overrides` — public read-only property returning the active override mapping.
+
+**Parameter sweeps**
+
+- `parameter_axes=` kwarg on `Evaluation.evaluate()`, `execute_plan()`,
+  `EvaluationHandle.evaluate()`, and `AsyncEvaluationHandle.evaluate()` —
+  declares named PARAMETER axes for correlated parameter sweeps (closing #154).
+  Maps axis name to a 1-D numpy array.  Callable values in `parameters=` are now
+  supported: each callable receives axis arrays by name from its signature and
+  computes the substitution value for the corresponding model index (e.g.
+  `lambda base, gradient, e=e: base - gradient * e`).  Parameters with defaults
+  whose names are not axis names are ignored (the `e=e` closure idiom).
+  Array-valued `parameters=` entries retain their existing behaviour.
+- `EvaluationResult.named_axis_values` — dict mapping each named axis name to
+  its raw 1-D input array (from `parameter_axes=`).  Results for callable-backed
+  indexes are accessed via `result[idx]` or `result.expected_value(idx)`.
+- `CategoricalIndex` selector can be passed as a `parameters=` axis to
+  `Evaluation.evaluate()` to sweep over variant outcomes deterministically
+  (no ensemble required), including in combination with numeric PARAMETER axes
+  for multi-dimensional grids.  Tests and documentation added; no implementation
+  change was needed (closing #134).
+
+**Evaluation infrastructure**
+
 - `EvaluationPlan`, `Region`, `RegionGuard` in `simulation/plan.py` — frozen
   dataclasses encoding the evaluation structure as a topologically-ordered DAG
   of computation regions.  `build_plan(strategy="monolithic" | "regional")`
@@ -84,20 +122,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ModelVariant`s are supported via recursive partitioning: each nesting level
   adds one guard to `Region.guards`, and the executor ANDs all guards into a
   compound mask (closing #136, #177, #178, #179).
-- `EvaluationHandle.evaluate(evaluation, initial_ensemble_size, ...)` →
-  `EvaluationHandle` — builds a plan, runs the first batch, and returns a
-  handle for checkpoint-style ensemble extension without discarding prior
-  results (closing #168).
-- `EvaluationHandle` in `simulation/handle.py` — incremental handle.
+- `EvaluationPlan.scoped_abstract_indexes(scenario)` — groups the model's
+  abstract indexes by region of the plan, returning a dict from guard chain
+  to the indexes that belong to that scope.  Used internally by per-scope
+  sampling; raises an error if an index would appear in more than one
+  region (closing #137).
+- `EvaluationHandle` in `simulation/handle.py` — incremental evaluation handle.
+  `EvaluationHandle.evaluate(evaluation, initial_ensemble_size, ...)` builds a
+  plan, runs the first batch, and returns a handle for checkpoint-style ensemble
+  extension without discarding prior results (closing #168).
   `extend(ensemble_size=N)` draws *N* new Monte Carlo samples via the stored
   `BatchDrawable` recipe, executes the plan, and merges via `_merge_results`.
   `extend(extra_ensemble={"axis": N})` extends a named ENSEMBLE axis of a
-  multi-axis recipe (e.g. `PartitionedEnsemble`) by *N* samples
-  (closing #175).  `extend(extra_parameters={idx: vals})` re-runs the stored
-  frozen ensemble at new parameter values and merges along the PARAMETER axis
-  (closing #174).  All three forms can be combined in one call.  Two calls
-  from the same seed reproduce the same sequence as one call of the combined
-  size.
+  multi-axis recipe (e.g. `PartitionedEnsemble`) by *N* samples (closing #175).
+  `extend(extra_parameters={idx: vals})` re-runs the stored frozen ensemble at
+  new parameter values and merges along the PARAMETER axis (closing #174).
+  All three forms can be combined in one call.  Two calls from the same seed
+  reproduce the same sequence as one call of the combined size.
+- `AsyncEvaluationHandle(EvaluationHandle)` in `simulation/handle.py` —
+  non-blocking variant backed by `concurrent.futures.Future`; exposes
+  `poll() → (bool, EvaluationResult | None)` and `get() → EvaluationResult`;
+  `extend()` delegates to the base class once the future resolves (closing #169).
+  `AsyncEvaluationHandle.evaluate(evaluation, initial_ensemble_size, ..., pool=)` —
+  submits the initial `execute_plan` call to a `concurrent.futures.Executor`
+  (defaults to a lazily-created module-level `ThreadPoolExecutor`) and returns an
+  `AsyncEvaluationHandle` immediately.
 - `FrozenEnsemble` — public class in `simulation/ensemble.py` holding
   pre-drawn sample arrays for one or more ENSEMBLE axes.  Produced by
   `BatchDrawable.draw_batch`; held by `EvaluationHandle` as the accumulated
@@ -108,20 +157,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DistributionEnsemble`, `CrossProductEnsemble`, and `PartitionedEnsemble`
   (closing #199).  Decouples `EvaluationHandle` from any concrete ensemble
   type: any `BatchDrawable` recipe can serve as the extension sampler.
-- `AsyncEvaluationHandle(EvaluationHandle)` in `simulation/handle.py` —
-  non-blocking variant backed by `concurrent.futures.Future`; exposes
-  `poll() → (bool, EvaluationResult | None)` and `get() → EvaluationResult`;
-  `extend()` delegates to the base class once the future resolves
-  (closing #169).  `AsyncEvaluationHandle.evaluate(evaluation,
-  initial_ensemble_size, ..., pool=)` — submits the initial `execute_plan`
-  call to a `concurrent.futures.Executor` (defaults to a lazily-created
-  module-level `ThreadPoolExecutor`) and returns an `AsyncEvaluationHandle`
-  immediately.
-- `CategoricalIndex` selector can be passed as a `parameters=` axis to
-  `Evaluation.evaluate()` to sweep over variant outcomes deterministically
-  (no ensemble required), including in combination with numeric PARAMETER axes
-  for multi-dimensional grids.  Tests and documentation added; no implementation
-  change was needed (closing #134).
+
+**`ModelEvaluator` — stable application protocol**
+
+- `ModelEvaluator` / `ModelOutput` / `EvaluationConfig` — stable protocol
+  layer between `dt_model` and application code (web APIs, CLIs, UIs).
+  Domain packages subclass `ModelEvaluator` and `ModelOutput` to expose a
+  uniform evaluation lifecycle: blocking `evaluate()`, optional non-blocking
+  `run_async()` returning a `ModelRunHandle`, `get_index_diffs()` and
+  `get_model_values()` for scenario introspection, and `structure()` for
+  scenario-creation UIs.
+- `ModelEvaluator.resume()` — reconstruct an `EvaluationHandle` from a
+  previously saved `ModelOutput` and extend the ensemble across sessions.
+  `ModelOutput.is_resumable` and `IncompatibleResultError` form the
+  corresponding save/load contract.
+- `BolognaOutput` / `BolognaEvaluator` and `MolvenoOutput` / `MolvenoEvaluator`
+  — concrete `ModelEvaluator` implementations for the Bologna and Molveno
+  examples, replacing the previous ad-hoc module-level evaluation functions.
+
+**Engine and index improvements**
+
+- `dt_model/axes.py` — shared module owning `Axis`, `AxisRole`, and the built-in
+  role constants `DOMAIN`, `PARAMETER`, `ENSEMBLE`.  Breaking the former
+  engine→model import dependency: the engine layer now imports axis types from
+  this module rather than from `model.axis`.
+- `GenericIndex.output_axes` — ordered tuple of `Axis` objects describing the
+  dimensions of the index's result array (`*PARAMETER, *ENSEMBLE, *DOMAIN`
+  convention).
+- `EvaluationResult.expected_value(idx)` — canonical weighted expectation over
+  the ensemble and parameter dimensions, replacing `marginalize()`.  Uses
+  `GenericIndex.output_axes` to determine which dimensions are DOMAIN (kept) vs
+  ENSEMBLE/PARAMETER (contracted); correctly handles T=1 timeseries that were
+  previously indistinguishable from scalars.
 - `HasNode[T]` protocol in `engine.frontend.graph` — structural protocol satisfied
   by any object with a `.node: Node[T]` property (e.g. `GenericIndex`).  Re-exported
   from `civic_digital_twins.dt_model`.  `function_call`, `piecewise`, and `where`
@@ -137,49 +204,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constant backed by a `timeseries_constant` graph node whose values are fixed at
   model-construction time and cannot be overridden in a `Scenario`.  Exported from
   `civic_digital_twins.dt_model`.
-- `Scenario(model, overrides={idx: value})` in `simulation/scenario.py` — the
-  canonical what-if wrapper around a `Model` or `ModelVariant`.  Accepted override
-  types per index kind: `float` for `Index`; `np.ndarray` for `TimeseriesIndex`;
-  `Distribution` for `DistributionIndex`; `str` (concrete pin) or `dict[str, float]`
-  (new probability weights, subset of support) for `CategoricalIndex`; `str` only
-  for `ConditionalCategoricalIndex`.  `ConstIndex`, `ConstTimeseriesIndex`, and
-  `ConditionalDistributionIndex` do not accept overrides.
-  `Scenario.abstract_indexes()` returns indexes that still require ensemble sampling.
-  `Scenario.base_substitutions()` returns concrete values ready for engine injection.
-  `Scenario.effective_distribution(idx)` returns the active distribution (override if
-  present, else `idx.value`).
-  `Scenario.effective_outcomes(idx)` returns the active outcome-probability map for
-  categorical indexes (`{pin: 1.0}` for a concrete pin, override dict or `idx.outcomes`
-  for `CategoricalIndex`, `None` for an unresolved `ConditionalCategoricalIndex`).
-- `parameter_axes=` kwarg on `Evaluation.evaluate()`, `execute_plan()`,
-  `EvaluationHandle.evaluate()`, and
-  `AsyncEvaluationHandle.evaluate()` — declares named PARAMETER axes
-  for correlated parameter sweeps (closing #154).  Maps axis name to a 1-D
-  numpy array.  Callable values in `parameters=` are now supported: each
-  callable receives axis arrays by name from its signature and computes the
-  substitution value for the corresponding model index (e.g.
-  `lambda base, gradient, e=e: base - gradient * e`).  Parameters with defaults
-  whose names are not axis names are ignored (the `e=e` closure idiom).
-  Array-valued `parameters=` entries retain their existing behaviour.
-- `EvaluationResult.named_axis_values` — dict mapping each named axis name to
-  its raw 1-D input array (from `parameter_axes=`).  Results for callable-backed
-  indexes are accessed via `result[idx]` or `result.expected_value(idx)`.
-- `ModelEvaluator` / `ModelOutput` / `EvaluationConfig` — stable protocol
-  layer between `dt_model` and application code (web APIs, CLIs, UIs).
-  Domain packages subclass `ModelEvaluator` and `ModelOutput` to expose a
-  uniform evaluation lifecycle: blocking `evaluate()`, optional non-blocking
-  `run_async()` returning a `ModelRunHandle`, `get_index_diffs()` and
-  `get_model_values()` for scenario introspection, and `structure()` for
-  scenario-creation UIs.
-- `ModelEvaluator.resume()` — reconstruct an `EvaluationHandle` from a
-  previously saved `ModelOutput` and extend the ensemble across sessions.
-  `ModelOutput.is_resumable` and `IncompatibleResultError` form the
-  corresponding save/load contract.
-- `BolognaOutput` / `BolognaEvaluator` and `MolvenoOutput` / `MolvenoEvaluator`
-  — concrete `ModelEvaluator` implementations for the Bologna and Molveno
-  examples, replacing the previous ad-hoc module-level evaluation functions.
-- `Scenario.overrides` — public read-only property returning the active
-  override mapping.
+
+**Ensemble improvements**
+
 - `CrossProductEnsemble`: new `n_samples_per_combo: int = 1` constructor
   parameter.  When `> 1`, each categorical combination is replicated
   `n_samples_per_combo` times with independently drawn distribution samples;
@@ -189,6 +216,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the distribution sampling budget, reducing Monte Carlo variance for models
   that retain distribution-backed indexes in the ensemble (closing #192).
   Default `n_samples_per_combo=1` preserves existing behaviour exactly.
+- `DistributionEnsemble(plan=...)` — when a plan is supplied, per-branch
+  indexes are sampled only at branch positions and the rest is filled with
+  placeholders that the executor never reads.  The output is statistically
+  equivalent to the unsampled-everywhere path, but uses fewer draws on
+  regional plans.  Existing callers that don't pass a plan see no change
+  (closing #173).
+
+**Validation**
+
 - `Scenario.__init__` now raises `ValueError` when an override key is not in
   the model's `indexes` list.  Previously such overrides were silently dropped
   by `base_substitutions()` (closing #195).
@@ -211,27 +247,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iterates `model.indexes` to inject concrete values; absent entries caused a
   cryptic `PlaceholderValueNotProvided` deep inside the executor — now
   surfaced early with a clear error message (closing #195).
-- `Scenario` accepts `list[str]` overrides for `CategoricalIndex` (closes #187).  Passing a
-  list restricts sampling to that subset and renormalises the model's original probabilities
-  over the listed outcomes at construction time (validated: unknown outcomes or an empty list
-  raise `ValueError`).  The renormalised distribution is stored internally as `dict[str, float]`
-  so all existing downstream code works unchanged.  `DomainValue` now includes `list[str]`.
-- `EvaluationPlan.scoped_abstract_indexes(scenario)` — groups the model's
-  abstract indexes by region of the plan, returning a dict from guard chain
-  to the indexes that belong to that scope.  Used internally by per-scope
-  sampling; raises an error if an index would appear in more than one
-  region (closing #137).
-- `DistributionEnsemble(plan=...)` — when a plan is supplied, per-branch
-  indexes are sampled only at branch positions and the rest is filled with
-  placeholders that the executor never reads.  The output is statistically
-  equivalent to the unsampled-everywhere path, but uses fewer draws on
-  regional plans.  Existing callers that don't pass a plan see no change
-  (closing #173).
 
 ### Changed
 
 - **Breaking: `project_using_*` nodes now accept `axis: Axis`** instead of a
-  raw integer.  Pass `Axis("time", DOMAIN)` for the time axis.  The numpybackend
+  raw integer.  Pass `Axis("time", DOMAIN)` for the time axis.  The numpy backend
   raises `UnsupportedOperation` at evaluation time if any other axis is supplied.
 - **Breaking: `TimeseriesIndex` is no longer a subclass of `Index`.**  Both are now
   direct subclasses of `GenericIndex`.  Code that relied on
@@ -242,21 +262,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   object (`Index.value`, `TimeseriesIndex.values`) and injected at evaluation time
   by the base `Scenario`.  Use `ConstIndex(v)` / `ConstTimeseriesIndex(array)` to
   retain constant-node semantics for values that must never be overridden.
-- **Breaking: Assigning a `Distribution` directly to `Index` now raises `TypeError`.** 
+- **Breaking: Assigning a `Distribution` directly to `Index` now raises `TypeError`.**
   Use `DistributionIndex` instead.
 
 ### Deprecated
 
-- `EvaluationResult.marginalize()` — use `EvaluationResult.expected_value()`
-  instead.  `marginalize()` now emits `DeprecationWarning` and will be removed
-  in a future release.
-- `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
-  emits a `DeprecationWarning` on construction and will be removed in a future
-  release (closing #162).
-- `CrossProductEnsemble.restrictions=` — use `Scenario(model, overrides={idx: [...]})` instead.
-  Emits `DeprecationWarning` at construction time.
-- `CrossProductEnsemble.exclude=` — declare parameter axes on the `Scenario` instead:
-  `Scenario(model, parameter_axes=[idx, ...])`.  Emits `DeprecationWarning` at construction time.
 - `Evaluation(model)` and all `Ensemble(model, ...)` constructors — pass a
   `Scenario(model)` instead.  These constructors now auto-wrap the model in a
   base `Scenario` and emit `DeprecationWarning`.  The canonical chain is
@@ -266,6 +276,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TimeseriesIndex.values`, and `DistributionIndex.params` — vary index values
   via `Scenario(model, overrides={idx: new_value})` instead.  All setters emit
   `DeprecationWarning` and will be removed in a future release.
+- `EvaluationResult.marginalize()` — use `EvaluationResult.expected_value()`
+  instead.  `marginalize()` now emits `DeprecationWarning` and will be removed
+  in a future release.
+- `CrossProductEnsemble.restrictions=` — use `Scenario(model, overrides={idx: [...]})` instead.
+  Emits `DeprecationWarning` at construction time.
+- `CrossProductEnsemble.exclude=` — declare parameter axes on the `Scenario` instead:
+  `Scenario(model, parameter_axes=[idx, ...])`.  Emits `DeprecationWarning` at construction time.
+- `LambdaAdapter` — use `NumpyBackend.adapt()` instead.  `LambdaAdapter` now
+  emits a `DeprecationWarning` on construction and will be removed in a future
+  release (closing #162).
 
 ### Removed
 

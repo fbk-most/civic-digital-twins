@@ -23,10 +23,10 @@ the `Constraint` definition and the `Model` subclass.
 For the **direct pattern** (no context variables, plain distribution
 sampling) see [`docs/getting-started.md`](../../docs/getting-started.md).
 
-(For reference documentation on the model/simulation layer see
-[`docs/design/dd-cdt-model.md`](../../docs/design/dd-cdt-model.md); for the
-engine layer see
-[`docs/design/dd-cdt-engine.md`](../../docs/design/dd-cdt-engine.md).)
+(For reference documentation see
+[`docs/design/dd-cdt-model.md`](../../docs/design/dd-cdt-model.md),
+[`docs/design/dd-cdt-simulation.md`](../../docs/design/dd-cdt-simulation.md),
+and [`docs/design/dd-cdt-engine.md`](../../docs/design/dd-cdt-engine.md).)
 
 ---
 
@@ -133,53 +133,50 @@ concrete value in a scenario.
 
 ## 4 — Model
 
-Define a `Model` subclass with `Inputs` and `Outputs` dataclasses that
-declare the abstract-index contract.  Expose `.cvs`, `.pvs`, and
-`.constraints` attributes so that `CrossProductEnsemble` and the
-sustainability-field loop can find them.
+Use `@define` to declare a `Model` subclass.  `Inputs` declares the contract
+(context variables, presence variables, parameter indexes, and capacities);
+`Outputs` carries the usage formula indexes.  `compute()` builds the usage
+formula from its inputs, stores `.constraints` on the instance for the
+sustainability-field loop, and returns the output indexes.
 
 ```python
-from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex, GenericIndex, Model, inputs, outputs
+from civic_digital_twins.dt_model import CategoricalIndex, ConditionalDistributionIndex, DistributionIndex, GenericIndex, Index, Model, define, inputs, outputs
 
 
+@define("minimal overtourism")
 class MinimalOvertourismModel(Model):
     @inputs
     class Inputs:
-        cvs: list[CategoricalIndex]
-        pvs: list[ConditionalDistributionIndex]
-        domain_indexes: list[GenericIndex]
-        capacities: list[GenericIndex]
+        cv_season: CategoricalIndex
+        cv_weather: CategoricalIndex
+        pv_visitors: ConditionalDistributionIndex
+        i_u_beach_visitors: Index
+        i_c_beach: DistributionIndex
 
     @outputs
     class Outputs:
         usage_indexes: list[GenericIndex]
 
-    def __init__(self, name, *, cvs, pvs, indexes, capacities, constraints):
-        super().__init__(
-            name,
-            inputs=self.Inputs(cvs=cvs, pvs=pvs, domain_indexes=indexes, capacities=capacities),
-            outputs=self.Outputs(usage_indexes=[c.usage for c in constraints]),
-        )
-        self.cvs = cvs
-        self.pvs = pvs
-        self.constraints = constraints
+    def compute(self, inputs: Inputs) -> Outputs:
+        usage = Index("beach_usage", inputs.pv_visitors * inputs.i_u_beach_visitors)
+        self.constraints = [Constraint(name="beach", usage=usage, capacity=inputs.i_c_beach)]
+        return MinimalOvertourismModel.Outputs(usage_indexes=[c.usage for c in self.constraints])
 
 
-model = MinimalOvertourismModel(
-    name="minimal_overtourism",
-    cvs=[CV_season, CV_weather],
-    pvs=[PV_visitors],
-    indexes=[I_U_beach_visitors],
-    capacities=[I_C_beach],
-    constraints=[C_beach],
-)
+model = MinimalOvertourismModel(inputs=MinimalOvertourismModel.Inputs(
+    cv_season=CV_season,
+    cv_weather=CV_weather,
+    pv_visitors=PV_visitors,
+    i_u_beach_visitors=I_U_beach_visitors,
+    i_c_beach=I_C_beach,
+))
 ```
 
-All abstract indexes (CVs, PVs, domain indexes, capacities) are declared in
-`Inputs`; usage indexes in `Outputs`.  `CrossProductEnsemble` discovers
-abstract indexes via `model.abstract_indexes()`; the sustainability-field loop
-uses `.constraints`.  For a production model with multiple sub-models see
-`MolvenoModel` in `molveno_model.py`.
+All abstract indexes (context and presence variables, capacities) are declared
+in `Inputs`; usage indexes in `Outputs`.  `compute()` stores `.constraints` on
+the instance as a plain attribute — the sustainability-field loop uses it
+directly.  For a production model with multiple concern sub-models using the
+same `@define` pattern see `MolvenoModel` in `molveno_model.py`.
 
 ## 5 — Ensemble
 
@@ -187,14 +184,14 @@ uses `.constraints`.  For a production model with multiple sub-models see
 from civic_digital_twins.dt_model import CrossProductEnsemble, DomainValue, GenericIndex, Scenario
 
 scenario_overrides: dict[GenericIndex, DomainValue] = {
-    CV_season:  ["low", "high"],
-    CV_weather: ["good", "unsettled", "bad"],
+    model.inputs.cv_season:  ["low", "high"],
+    model.inputs.cv_weather: ["good", "unsettled", "bad"],
 }
 
 scenario_obj = Scenario(
     model,
     overrides=scenario_overrides,
-    parameter_axes=model.pvs,
+    parameter_axes=[model.inputs.pv_visitors],
 )
 ensemble = CrossProductEnsemble(scenario_obj, max_categorical_size=10)
 # 2 × 3 = 6 scenarios (all CV combinations enumerated)
@@ -229,7 +226,7 @@ visitors_axis = np.linspace(0, 20_000, 201)
 
 result = Evaluation(scenario_obj).evaluate(
     ensemble=ensemble,
-    parameters={PV_visitors: visitors_axis},
+    parameters={model.inputs.pv_visitors: visitors_axis},
 )
 # result.full_shape == (201, 6)
 ```
@@ -245,7 +242,7 @@ from civic_digital_twins.dt_model import Distribution
 field = np.ones(visitors_axis.size)
 
 for c in model.constraints:
-    usage = np.broadcast_to(result[c.usage], result.full_shape)  # (201, 60)
+    usage = np.broadcast_to(result[c.usage], result.full_shape)  # (201, 6)
 
     if isinstance(c.capacity.value, Distribution):
         # Probabilistic capacity: probability that usage ≤ capacity
@@ -272,4 +269,5 @@ for the full Molveno implementation.
 - Browse the full Molveno example: [`overtourism_molveno.py`](overtourism_molveno.py) — four constraints, 2-D grid, visualisation.
 - Read the reference documentation:
   - [Model / simulation layer](../../docs/design/dd-cdt-model.md) — `Model`, `Evaluation`, `EvaluationResult`, `CrossProductEnsemble`, domain modeling pattern, design rationale.
+  - [Simulation guide](../../docs/design/dd-cdt-simulation.md) — `Scenario`, `CrossProductEnsemble`, `EvaluationHandle`, incremental evaluation.
   - [Engine layer](../../docs/design/dd-cdt-engine.md) — graph nodes, topological sorting, NumPy executor.

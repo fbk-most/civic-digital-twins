@@ -27,6 +27,7 @@ uv run pyright
 uv run python examples/doc/doc_engine.py
 uv run python examples/doc/doc_model.py
 uv run python examples/doc/doc_modularity.py
+uv run python examples/doc/doc_simulation.py
 uv run python examples/doc/doc_getting_started.py
 uv run python examples/doc/doc_overtourism_getting_started.py
 uv run python examples/doc/doc_readme.py

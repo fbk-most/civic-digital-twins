@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-05-27                                     |
+| Last-Updated | 2026-06-07                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -47,7 +47,7 @@ named ENSEMBLE axes with factorized weight vectors.  `CrossProductEnsemble`
 is purpose-built for models with categorical context variables: it enumerates
 all category combinations and pre-samples stochastic capacities.
 
-**Evaluation.** `Evaluation(model).evaluate(ensemble=…, parameters=…)`
+**Evaluation.** `Evaluation(scenario).evaluate(ensemble=…, parameters=…)`
 consumes an ensemble, builds the engine substitution dictionary from the
 batched assignments, runs `executor.evaluate_nodes`, and returns an
 `EvaluationResult`.  The result provides typed access to node arrays and
@@ -73,6 +73,7 @@ GenericIndex  (ABC)
 │   ├── CategoricalIndex
 │   └── ConditionalCategoricalIndex
 └── TimeseriesIndex
+    └── ConstTimeseriesIndex
 ```
 
 ### GenericIndex
@@ -92,7 +93,8 @@ GenericIndex  (ABC)
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as
   dictionary keys.  *Never use `in` to test membership in a list of
-  `GenericIndex` objects* — use `{id(x) for x in collection}` instead.
+  `GenericIndex` objects* — use `any(idx is item for item in collection)`
+  instead.
 
 ### Index
 
@@ -255,14 +257,12 @@ can inspect which indexes are abstract.
 `Distribution`.  All other indexes (constants and formulas) are concrete
 and are not returned.
 
-### New dataclass-based API (recommended)
+### Recommended API: `@define` + `compute()`
 
-Declare `Inputs`, `Outputs`, and optionally `Expose` as inner
-`@dataclass` classes on the subclass.  Construct instances of these
-dataclasses and pass them to `super().__init__()` via the keyword
-arguments `inputs=`, `outputs=`, and `expose=`.  `model.indexes` is
-derived automatically by collecting and deduplicating all scalar
-`GenericIndex` values found in `inputs`, `outputs`, and `expose` — no
+The `@define` decorator generates `__init__` from a `compute()` method — the
+recommended way to build all leaf models.  Declare `Inputs`, `Outputs`, and
+optionally `Expose` as inner classes decorated with `@inputs`, `@outputs`, and
+`@expose`.  `model.indexes` is derived automatically from those inner classes — no
 manual list needed.
 
 **Three access levels** define the visibility contract:
@@ -273,48 +273,64 @@ manual list needed.
 2. `model.expose.<field>` — **inspectable, not contracted**: useful for
    debugging or visualisation, but `Expose` fields MUST NOT be used to
    wire indexes between models.
-3. Local variables inside `__init__` — **internal, not accessible**
-   outside the constructor.
+3. Local variables inside `compute()` — **internal, not accessible**
+   outside the method.
 
-**Inputs contract convention**: every `GenericIndex` that is passed as a
-constructor parameter must be declared as a field in `Inputs`.  If a
-`GenericIndex` parameter is absent from `Inputs`, an
-`InputsContractWarning` is emitted naming the offending parameter (see
+**Inputs contract convention**: every `GenericIndex` that is an external input must
+be declared as a field in `Inputs`.  If a `GenericIndex` value is used but absent
+from `Inputs`, an `InputsContractWarning` is emitted naming the offending field (see
 [Contract Warnings](#contract-warnings)).
 
 ```python
-from dataclasses import dataclass
-
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionIndex, Index, Model
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model, define, inputs, outputs
 
+@define("Demo")
 class DemoModel(Model):
 
-    @dataclass
+    @inputs
+    class Inputs:
+        x: DistributionIndex
+        y: DistributionIndex
+
+    @outputs
     class Outputs:
         z: Index
 
-    def __init__(self) -> None:
-        x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
-        y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
-        z = Index("z", x + y)
+    def compute(self, inputs: Inputs) -> Outputs:
+        z = Index("z", inputs.x + inputs.y)
+        return DemoModel.Outputs(z=z)
 
-        super().__init__(
-            "demo",
-            outputs=DemoModel.Outputs(z=z),
-        )
-
-m = DemoModel()
+x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
+m = DemoModel(inputs=DemoModel.Inputs(x=x, y=y))
 print(m.abstract_indexes())   # [x, y]  — derived automatically
 print(m.is_instantiated())    # False
 ```
+
+See [dd-cdt-modularity.md](dd-cdt-modularity.md) for the full `@define`/`compute()` guide,
+including `@expose`, `@functions`, `default_inputs()`, and composite ("root") models.
+
+### Direct subclassing with `legacy=True`
+
+For composite models that wire sub-models together, or any model that cannot be expressed
+with `compute()`, define `__init__` directly and pass `legacy=True` to suppress the
+deprecation warning:
+
+```python
+class CompositeModel(Model, legacy=True):
+    ...
+```
+
+See [dd-cdt-modularity.md § Composite models](dd-cdt-modularity.md#composite-models-the-bologna-example)
+for a worked example.
 
 ### Legacy `indexes=` API
 
 Passing a flat `list[GenericIndex]` via the positional `indexes`
 parameter still works but emits a `DeprecationWarning`.  New code should
-use the dataclass-based API above.
+use `@define` + `compute()` above.
 
 ```python
 from scipy import stats
@@ -332,7 +348,7 @@ print(model.is_instantiated())     # False
 
 Models can be subclassed to add domain-specific structure (labeled
 subsets of indexes, constraint lists, etc.) while preserving the
-core contract.  See [Vertical Extension](#vertical-extension) below.
+core contract.
 
 ## ModelVariant
 
@@ -481,15 +497,16 @@ with ENSEMBLE dimensions at the positions declared by the axes.
 
 ### DistributionEnsemble
 
-`DistributionEnsemble(model, size, rng=None)` is the standard ensemble
+`DistributionEnsemble(scenario, size, rng=None)` is the standard ensemble
 for models whose abstract indexes are all distribution-backed.  It draws
 `size` independent samples from each distribution into a single ENSEMBLE
 axis with uniform weights (`1/size` each).
 
 ```python
-from civic_digital_twins.dt_model import DistributionEnsemble
+from civic_digital_twins.dt_model import DistributionEnsemble, Scenario
 
-ensemble = DistributionEnsemble(model, size=100)
+scenario = Scenario(model)
+ensemble = DistributionEnsemble(scenario, size=100)
 # ensemble.ensemble_axes   → (Axis("x", ENSEMBLE), …)
 # ensemble.ensemble_weights[0]  → array of 100 weights summing to 1
 assignments = ensemble.assignments()
@@ -635,19 +652,22 @@ grid.
 ```python
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Evaluation, Index, Model
+from civic_digital_twins.dt_model import (
+    DistributionEnsemble, DistributionIndex, Evaluation, Index, Model, Scenario,
+)
 
 # Define the model
 x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
 y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
 z = Index("z", x + y)
 model = Model("demo", [x, y, z])
+scenario = Scenario(model)
 
 # Build an ensemble of 200 scenarios
-ensemble = DistributionEnsemble(model, size=200)
+ensemble = DistributionEnsemble(scenario, size=200)
 
 # Evaluate
-result = Evaluation(model).evaluate(ensemble=ensemble)
+result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
 # Weighted mean of z across all scenarios
 print(result.expected_value(z))  # ≈ 10.0

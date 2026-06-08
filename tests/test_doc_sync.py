@@ -99,6 +99,7 @@ DOC_TO_SCRIPT: dict[str, str] = {
     "docs/design/dd-cdt-engine.md": "examples/doc/doc_engine.py",
     "docs/design/dd-cdt-model.md": "examples/doc/doc_model.py",
     "docs/design/dd-cdt-modularity.md": "examples/doc/doc_modularity.py",
+    "docs/design/dd-cdt-simulation.md": "examples/doc/doc_simulation.py",
     "examples/overtourism_molveno/overtourism-getting-started.md": ("examples/doc/doc_overtourism_getting_started.py"),
 }
 
