@@ -1,8 +1,7 @@
-"""Runnable snippets from docs/getting-started.md."""
 # SPDX-License-Identifier: Apache-2.0
+"""Runnable snippets from docs/getting-started.md."""
 
 import warnings
-from dataclasses import dataclass
 
 import numpy as np
 from scipy import stats
@@ -13,117 +12,80 @@ from civic_digital_twins.dt_model import (
     Evaluation,
     Index,
     Model,
+    NumpyBackend,
+    Scenario,
     TimeseriesIndex,
+    define,
     graph,
+    inputs,
+    outputs,
 )
-from civic_digital_twins.dt_model import NumpyBackend
 
 # ---------------------------------------------------------------------------
-# getting-started.md §1 — Define the model (legacy flat-list API)
-# ---------------------------------------------------------------------------
-
-fuel_efficiency = DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0})
-distance = DistributionIndex("distance_km", stats.uniform, {"loc": 50.0, "scale": 30.0})
-
-litres = Index("litres", distance / fuel_efficiency)
-co2_per_litre = Index("co2_per_litre", 2.31)
-co2 = Index("co2_kg", litres * co2_per_litre)
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    model = Model("co2_model", [fuel_efficiency, distance, litres, co2_per_litre, co2])
-
-assert len(model.abstract_indexes()) == 2  # fuel_efficiency, distance
-assert model.is_instantiated() is False
-
-
-# ---------------------------------------------------------------------------
-# getting-started.md §1 — Define the model (dataclass-based API, v0.8.0+)
+# getting-started.md §1 — Define the model (@define + compute())
 # ---------------------------------------------------------------------------
 
 
+@define("CO2 Model")
 class Co2Model(Model):
-    """CO2 model using the recommended dataclass-based API."""
 
-    @dataclass
+    @inputs
     class Inputs:
-        """Uncertain parameters."""
-
         fuel_efficiency: DistributionIndex
         distance: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
-        """KPI outputs."""
-
         litres: Index
         co2_per_litre: Index
         co2: Index
 
-    def __init__(self) -> None:
-        Inputs = Co2Model.Inputs
-        Outputs = Co2Model.Outputs
-
-        inputs = Inputs(
-            fuel_efficiency=DistributionIndex("fuel_efficiency_km_l2", stats.uniform, {"loc": 10.0, "scale": 5.0}),
-            distance=DistributionIndex("distance_km2", stats.uniform, {"loc": 50.0, "scale": 30.0}),
-        )
-
-        litres = Index("litres2", inputs.distance / inputs.fuel_efficiency)
-        co2_per_litre = Index("co2_per_litre2", 2.31)
-        co2 = Index("co2_kg2", litres * co2_per_litre)
-
-        super().__init__(
-            "co2_model",
-            inputs=inputs,
-            outputs=Outputs(
-                litres=litres,
-                co2_per_litre=co2_per_litre,
-                co2=co2,
-            ),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        litres = Index("litres", inputs.distance / inputs.fuel_efficiency)
+        co2_per_litre = Index("co2_per_litre", 2.31)
+        co2 = Index("co2_kg", litres * co2_per_litre)
+        return Co2Model.Outputs(litres=litres, co2_per_litre=co2_per_litre, co2=co2)
 
 
-co2_model = Co2Model()
+co2_model = Co2Model(inputs=Co2Model.Inputs(
+    fuel_efficiency=DistributionIndex("fuel_efficiency_km_l", stats.uniform, {"loc": 10.0, "scale": 5.0}),
+    distance=DistributionIndex("distance_km", stats.uniform, {"loc": 50.0, "scale": 30.0}),
+))
+co2 = co2_model.outputs.co2   # access via contractual output
 
-assert len(co2_model.abstract_indexes()) == 2  # fuel_efficiency, distance
+assert len(co2_model.abstract_indexes()) == 2   # fuel_efficiency, distance
 assert co2_model.is_instantiated() is False
 assert co2_model.outputs.co2 is not None
-assert co2_model.outputs.litres is not None
-# indexes derived automatically from inputs + outputs — no flat list needed
-assert len(co2_model.indexes) == 5
+assert len(co2_model.indexes) == 5              # indexes collected automatically
+
+
+# ---------------------------------------------------------------------------
+# getting-started.md §1 — abstract_indexes / is_instantiated (Block 01)
+# ---------------------------------------------------------------------------
+
+co2_model.abstract_indexes()   # → [fuel_efficiency, distance]
+co2_model.is_instantiated()    # → False
 
 
 # ---------------------------------------------------------------------------
 # getting-started.md §2 — Build an ensemble
 # ---------------------------------------------------------------------------
 
-# Use the dataclass-based model for the rest of the walkthrough
-ensemble = DistributionEnsemble(co2_model, size=1000)
+scenario = Scenario(co2_model)
+ensemble = DistributionEnsemble(scenario, size=1000)
 
 
 # ---------------------------------------------------------------------------
 # getting-started.md §3 — Evaluate
 # ---------------------------------------------------------------------------
 
-result = Evaluation(co2_model).evaluate(ensemble=ensemble)
+result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
-co2 = co2_model.outputs.co2  # access via contractual output
-co2_samples = result[co2]  # np.ndarray, shape (1000,)
-co2_mean = result.expected_value(co2)  # scalar
+co2_samples = result[co2]          # np.ndarray, shape (1000,)
+co2_mean = result.expected_value(co2) # scalar
 
 assert co2_samples.shape == (1000,)
-# E[CO2] = E[distance / fuel_efficiency * 2.31]
-# distance ~ U(50,80), fuel_efficiency ~ U(10,15)  → reasonable range
 assert 0 < co2_mean < 200, f"Unexpected CO2 mean: {co2_mean:.1f}"
-
-
-# ---------------------------------------------------------------------------
-# getting-started.md §1 — abstract_indexes / is_instantiated (Block 02)
-# ---------------------------------------------------------------------------
-
-co2_model.abstract_indexes()  # → [fuel_efficiency, distance]
-co2_model.is_instantiated()  # → False
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +107,11 @@ with warnings.catch_warnings():
     model = Model("ts_model", [demand_ts, smoothed])
 
 # No abstract indexes — omit ensemble (deterministic evaluation)
-result = Evaluation(model).evaluate(
+result = Evaluation(Scenario(model)).evaluate(
     functions={
         "smooth": NumpyBackend.adapt(
-            lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same"),
-        ),
+            lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
+        )
     },
 )
 
