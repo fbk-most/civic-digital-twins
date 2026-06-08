@@ -50,13 +50,16 @@ abstractions built on top of the engine:
 - **`Index`** / **`TimeseriesIndex`** — named wrappers around graph nodes.
   An index can be a constant, a distribution (sampled at evaluation time),
   or a formula.
-- **`Model`** — a named collection of `Index` objects.  Declare `Inputs`,
-  `Outputs`, and `Expose` as inner dataclasses to make the inter-model
-  interface explicit.  Sub-models are wired via constructor arguments,
-  producing a composable pipeline.
+- **`Model`** — a typed computation unit.  Use the `@define` decorator to
+  declare a `Model` subclass via a `compute()` method; `@inputs`, `@outputs`,
+  and `@expose` decorators mark the contractual interface.  Sub-models are
+  wired via constructor arguments in `compute()`, producing a composable
+  pipeline.
 - **`ModelVariant`** — selects among pre-constructed `Model` implementations
-  sharing the same I/O contract.  The active variant is resolved at
-  construction time via a string key.
+  sharing the same I/O contract.  The active variant is resolved by a string
+  key (static) or a `CategoricalIndex`/graph node (runtime dispatch).
+- **`Scenario`** — wraps a model with optional value overrides and parameter
+  axes; the canonical first argument to `Evaluation` and all ensemble classes.
 - **`Evaluation`** — evaluates a model over a sequence of *weighted
   scenarios*, each of which maps every abstract index to a concrete value.
 - **`Ensemble`** / **`WeightedScenario`** — a protocol and type alias that
@@ -65,14 +68,27 @@ abstractions built on top of the engine:
 ```python
 from scipy import stats
 
-from civic_digital_twins.dt_model import DistributionIndex, Evaluation, Index, Model
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model, define, inputs, outputs
 
-# Two distribution-backed indexes
-x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
-y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 1.0})
-result = Index("result", x + y)
+@define("example")
+class ExampleModel(Model):
+    @inputs
+    class Inputs:
+        x: DistributionIndex
+        y: DistributionIndex
 
-model = Model("example", [x, y, result])
+    @outputs
+    class Outputs:
+        result: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        result = Index("result", inputs.x + inputs.y)
+        return ExampleModel.Outputs(result=result)
+
+model = ExampleModel(inputs=ExampleModel.Inputs(
+    x=DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0}),
+    y=DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 1.0}),
+))
 ```
 
 See [docs/design/dd-cdt-model.md](docs/design/dd-cdt-model.md) for the full
@@ -83,9 +99,8 @@ domain modeling pattern.
 
 The `examples/` directory contains two illustrative examples, distinguished
 by whether the model has external categorical context.  Both use the
-dataclass-based modularity API (`Inputs`, `Outputs`, `Expose`,
-`ModelVariant`) — see
-[docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md).
+`@define`/`compute()` API (`@inputs`, `@outputs`, `@expose`, `ModelVariant`) —
+see [docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md).
 
 **Direct pattern** (`examples/mobility_bologna/`) — no context variables.
 Uncertainty enters only through `DistributionIndex` parameters.
@@ -174,7 +189,7 @@ uv sync --upgrade
 
 ## Releasing
 
-Per-release checklist (seven manual steps):
+Per-release checklist (eight manual steps):
 
 1. Make sure the version number in `pyproject.toml` is correct.
 
@@ -192,6 +207,7 @@ Per-release checklist (seven manual steps):
    git log -1 --format="%ai" -- docs/design/dd-cdt-engine.md
    git log -1 --format="%ai" -- docs/design/dd-cdt-model.md
    git log -1 --format="%ai" -- docs/design/dd-cdt-modularity.md
+   git log -1 --format="%ai" -- docs/design/dd-cdt-simulation.md
    git log -1 --format="%ai" -- docs/getting-started.md
    ```
    Update any `Last-Updated` fields that are out of date.
@@ -203,10 +219,19 @@ Per-release checklist (seven manual steps):
    uv run python examples/doc/doc_engine.py
    uv run python examples/doc/doc_model.py
    uv run python examples/doc/doc_modularity.py
+   uv run python examples/doc/doc_simulation.py
    uv run python examples/doc/doc_getting_started.py
+   uv run python examples/doc/doc_overtourism_getting_started.py
    ```
 
-6. Verify that every tracked Python and Markdown file carries an SPDX header:
+6. Verify that the full domain examples run end-to-end without errors (output
+   images are written to `examples/*/output/`):
+   ```bash
+   uv run python examples/mobility_bologna/mobility_bologna.py
+   uv run python examples/overtourism_molveno/overtourism_molveno.py
+   ```
+
+7. Verify that every tracked Python and Markdown file carries an SPDX header:
    ```bash
    # Python files — should print nothing (no files missing the header)
    git ls-files '*.py' | xargs grep -rL "SPDX-License-Identifier"
@@ -217,7 +242,7 @@ Per-release checklist (seven manual steps):
    `<!-- SPDX-License-Identifier: Apache-2.0 -->` (Markdown) to any file
    that is missing the header.
 
-7. Commit the changes above, then create and push a version tag:
+8. Commit the changes above, then create and push a version tag:
    ```bash
    git add pyproject.toml uv.lock CHANGELOG.md docs/
    git commit -m "chore: prepare v<version> release"
@@ -239,10 +264,11 @@ no manual build or upload step is needed.
 
 | Document | Description |
 | -------- | ----------- |
-| [Getting Started](docs/getting-started.md) | Step-by-step guide covering the direct and context-variable usage patterns. |
+| [Getting Started](docs/getting-started.md) | Step-by-step guide: define a model with `@define`/`compute()`, sample with `DistributionEnsemble`, evaluate with `Evaluation`. |
 | [dd-cdt-engine.md](docs/design/dd-cdt-engine.md) | DSL compiler engine — graph nodes, topological sorting, NumPy executor. |
-| [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model / simulation layer — `Model`, `Evaluation`, `CrossProductEnsemble`, and the domain modeling pattern. |
-| [dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md) | Model modularity concept guide — dataclass I/O API, `ModelVariant`, decomposition patterns, and Bologna worked example. |
+| [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model layer reference — index types, `@define`/`compute()`, `Model`, `Evaluation`, `EvaluationResult`, and the domain modeling pattern. |
+| [dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md) | Model modularity concept guide — `@define`/`compute()`, `ModelVariant`, decomposition patterns, and Bologna worked example. |
+| [dd-cdt-simulation.md](docs/design/dd-cdt-simulation.md) | Simulation guide — `Scenario`, `CrossProductEnsemble`, `EvaluationHandle`, incremental evaluation, `ModelEvaluator`. |
 
 ## License
 
