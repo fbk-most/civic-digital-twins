@@ -242,6 +242,11 @@ def _decode_array(d: dict[str, Any]) -> np.ndarray:
     if d.get("encoding") == "json":
         return np.array(d["data"], dtype=object).reshape(tuple(d["shape"]))
     raw = base64.b64decode(d["data"].encode("ascii"))
+    # The numeric path stores raw bytes with the array's native dtype string
+    # (e.g. "float64"), which carries no explicit byte order.  Decoding therefore
+    # assumes the same endianness as the encoding host — sound for the intended
+    # save/resume-on-the-same-machine workflow, but not a portable wire format
+    # across architectures of differing endianness.
     return np.frombuffer(raw, dtype=np.dtype(d["dtype"])).reshape(tuple(d["shape"])).copy()
 
 
@@ -324,6 +329,11 @@ def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> Eva
         model, so the result is valid for the current session.
     """
     idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in indexes}
+    # factorized_weights is serialised keyed by axis name alone (it only ever holds
+    # ENSEMBLE axes), so we recover each axis's role via this name->role lookup.
+    # This is unambiguous because axis names are globally unique within an
+    # EvaluationResult (see Axis docstring): no two axes — across PARAMETER,
+    # ENSEMBLE, or DOMAIN — share a name, so the lookup cannot collide on role.
     axis_role: dict[str, str] = {row[0]: row[1] for row in data["axis_layout"]}
 
     state_values: dict = {}

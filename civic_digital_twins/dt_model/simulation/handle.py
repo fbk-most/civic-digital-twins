@@ -213,6 +213,10 @@ def _merge_results(
     }
 
     merged_state = executor.State(merged_values)
+    # named_axis_values is taken from r1 unchanged.  This is sound because the
+    # _param_sig check above already proved r1 and r2 share identical PARAMETER
+    # axes (name, role, position, size); and _merge_results only ever grows an
+    # ENSEMBLE axis, never a PARAMETER axis.
     return EvaluationResult(
         merged_state,
         merged_axis_layout,
