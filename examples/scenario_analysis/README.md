@@ -2,7 +2,7 @@
 
 # Bologna Mobility Scenario Analysis
 
-Policy scenario analysis for the Bologna Mobility cordon-charging model.
+Policy scenario analysis for the Bologna Mobility area-charging model.
 
 ## Description
 

@@ -119,5 +119,8 @@ group_scenarios = {
     "behavioral_scenarios": ["B1", "B2", "B3", "Base"],
     "policy_duration_scenarios": ["A1", "A3", "A4", "A2", "Base"],
     "policy_fragilities_scenarios": ["A1", "A5", "A6", "Base"],
-    "induced_demand_scenarios": ["I1", "I3", "I4", "I2", "Base"],
+    "induced_vs_no_1_demand_scenarios": ["I1", "A1", "Base"],
+    "induced_vs_no_2_demand_scenarios": ["I2", "A2", "Base"],
+    "induced_vs_no_3_demand_scenarios": ["I3", "A3", "Base"],
+    "induced_vs_no_4_demand_scenarios": ["I4", "A4", "Base"],
 }

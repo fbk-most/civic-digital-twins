@@ -248,7 +248,6 @@ def get_custom_cmap():
 def plot_uncertinty(
     kpi_plot: dict[str, dict[str, list]],
     nameplot: str,
-    which_scenarios: list,
     path_save: Path,
 ):
     """Plot uncertainty visualization for KPIs across scenarios.
@@ -266,34 +265,33 @@ def plot_uncertinty(
     """
     time_minutes = np.arange(0, 24 * 60, 5)  # 288 elementi
     for quantity, kpi_scenarios in kpi_plot.items():
-        for idx, name in enumerate(which_scenarios):
-            plt.figure()
-            kpi_scenario = np.mean(kpi_scenarios[name], axis=0)
-            plt.plot(
-                time_minutes,
-                kpi_scenario,
-                label=name,
-                color="black",
-            )
-            y_max = plt.gca().get_ylim()[1]
-            dist = distribution(kpi_scenarios[name], size=y_max, num=24 * 60).T
-            plt.imshow(
-                np.flip(dist, axis=0),
-                cmap=get_custom_cmap(),
-                extent=[0, 24 * 60, 0, y_max],
-                interpolation="nearest",
-                aspect="auto",
-            )
+        plt.figure()
+        kpi_scenario = np.mean(kpi_scenarios[nameplot], axis=0)
+        plt.plot(
+            time_minutes,
+            kpi_scenario,
+            label=nameplot,
+            color="black",
+        )
+        y_max = plt.gca().get_ylim()[1]
+        dist = distribution(kpi_scenarios[nameplot], size=y_max, num=24 * 60).T
+        plt.imshow(
+            np.flip(dist, axis=0),
+            cmap=get_custom_cmap(),
+            extent=[0, 24 * 60, 0, y_max],
+            interpolation="nearest",
+            aspect="auto",
+        )
 
-            plt.xlabel("Time [minutes from midnight]", fontsize=16)
-            plt.ylabel(quantity, fontsize=16)
-            plt.title(f"{quantity.capitalize()}", fontsize=18)
-            plt.grid(True)
-            plt.tick_params(axis="both", which="major", labelsize=14)
+        plt.xlabel("Time [minutes from midnight]", fontsize=16)
+        plt.ylabel(quantity, fontsize=16)
+        plt.title(f"{quantity.capitalize()} - {nameplot}", fontsize=18)
+        plt.grid(True)
+        plt.tick_params(axis="both", which="major", labelsize=14)
 
-            plt.tight_layout()
-            plt.savefig(path_save / f"plot_u_{nameplot}_{name}_{quantity}.png", dpi=300)
-            plt.close()
+        plt.tight_layout()
+        plt.savefig(path_save / f"plot_u_{nameplot}_{quantity}.png", dpi=300)
+        plt.close()
 
 
 def update_base_params(scenario: dict) -> dict:
@@ -423,13 +421,15 @@ def main(scenarios: dict, group_scenarios: dict[str, list[str]], plot: bool = Fa
 
         output_img_path = Path(__file__).parent.resolve() / "output" / "img"
         output_img_path.mkdir(parents=True, exist_ok=True)
-        for group_name, group_elem in group_scenarios.items():
-            logging.info("Plotting time-series KPIs for %s: %s", group_name, group_elem)
-            plot_ts_kpis(
-                kpi_plot=ts_kpi_plot, nameplot=group_name, which_scenarios=group_elem, path_save=output_img_path
-            )
+        # for group_name, group_elem in group_scenarios.items():
+        #     logging.info("Plotting time-series KPIs for scenarios %s: %s", group_name, group_elem)
+        #     plot_ts_kpis(
+        #         kpi_plot=ts_kpi_plot, nameplot=group_name, which_scenarios=group_elem, path_save=output_img_path
+        #     )
+        for name, _ in scenarios.items():
+            logging.info("Plotting time-series uncertainty for scenario %s", name)
             plot_uncertinty(
-                kpi_plot=ts_kpi_plot, nameplot=group_name, which_scenarios=group_elem, path_save=output_img_path
+                kpi_plot=ts_kpi_plot, nameplot=name, path_save=output_img_path
             )
 
 
