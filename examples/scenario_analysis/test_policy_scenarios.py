@@ -245,7 +245,7 @@ def get_custom_cmap():
     return custom_cmap
 
 
-def plot_uncertinty(
+def plot_ts_uncertinty(
     kpi_plot: dict[str, dict[str, list]],
     nameplot: str,
     path_save: Path,
@@ -421,16 +421,14 @@ def main(scenarios: dict, group_scenarios: dict[str, list[str]], plot: bool = Fa
 
         output_img_path = Path(__file__).parent.resolve() / "output" / "img"
         output_img_path.mkdir(parents=True, exist_ok=True)
-        # for group_name, group_elem in group_scenarios.items():
-        #     logging.info("Plotting time-series KPIs for scenarios %s: %s", group_name, group_elem)
-        #     plot_ts_kpis(
-        #         kpi_plot=ts_kpi_plot, nameplot=group_name, which_scenarios=group_elem, path_save=output_img_path
-        #     )
+        for group_name, group_elem in group_scenarios.items():
+            logging.info("Plotting time-series KPIs for scenarios %s: %s", group_name, group_elem)
+            plot_ts_kpis(
+                kpi_plot=ts_kpi_plot, nameplot=group_name, which_scenarios=group_elem, path_save=output_img_path
+            )
         for name, _ in scenarios.items():
             logging.info("Plotting time-series uncertainty for scenario %s", name)
-            plot_uncertinty(
-                kpi_plot=ts_kpi_plot, nameplot=name, path_save=output_img_path
-            )
+            plot_ts_uncertinty(kpi_plot=ts_kpi_plot, nameplot=name, path_save=output_img_path)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Bologna Mobility model — ``@define``/``compute`` pattern.
+"""Bologna Mobility model.
 
 Hierarchy::
 
@@ -699,10 +699,9 @@ class ParallelBehaviorModel(Model):
                 graph.piecewise(
                     (
                         fraction_rigid
-                        * euro_class_split[f"euro_{e}"]
                         * (fraction_p_rigid_euro_class[e] * euro_class_split[f"euro_{e}"])
                         / fraction_p_rigid,
-                        fraction_p_rigid == 0,
+                        fraction_p_rigid > 0,
                     ),
                     (fraction_rigid * euro_class_split[f"euro_{e}"], True),
                 ),
@@ -1273,6 +1272,7 @@ class AreaRevenueModel(Model):
         ts_starting: TimeseriesIndex
         fraction_rigid: TimeseriesIndex
         fraction_rigid_euro_class: list[TimeseriesIndex]
+        induced_demand: TimeseriesIndex
         i_p_start_time: Index
         i_p_end_time: Index
         i_p_cost: list[Index]
@@ -1297,23 +1297,46 @@ class AreaRevenueModel(Model):
         i_p_end_time = inputs.i_p_end_time
         i_p_cost = inputs.i_p_cost
 
-        number_paying = TimeseriesIndex(
-            "paying vehicles",
+        # Rigid (baseline) vehicles that remain inside the area and pay.
+        number_paying_rigid = TimeseriesIndex(
+            "rigid paying vehicles",
             graph.piecewise(
                 (fraction_rigid * (ts_inflow + ts_starting), (ts >= i_p_start_time) & (ts <= i_p_end_time)),
                 (0, True),
             ),
         )
+        # Induced demand vehicles all pay; induced_demand is already 0 outside the window.
+        number_paying = TimeseriesIndex("paying vehicles", number_paying_rigid + inputs.induced_demand)
         total_paying = Index("total vehicles paying", number_paying.sum())
+
+        # Average cost for rigid vehicles (per-euro-class weighted by rigidity).
         _avg_cost_num: Any = sum(i_p_cost[e] * fraction_rigid_euro_class[e] for e in range(7))
-        modified_avg_cost = Index(
-            "modified average cost with respect to the vehicles paying",
+        _rigid_avg_cost = Index(
+            "average cost for rigid vehicles",
             graph.piecewise(
                 (_avg_cost_num / fraction_rigid, fraction_rigid > 0),
                 (0.0, True),
             ),
         )
-        total_paid = Index("total paid fees", total_paying * modified_avg_cost)
+
+        # Average cost for induced demand vehicles (baseline euro-class distribution).
+        _induced_avg_cost: Any = sum(i_p_cost[e] * euro_class_split[f"euro_{e}"] for e in range(7))
+
+        # Total paid = rigid revenue + induced demand revenue.
+        total_paid = Index(
+            "total paid fees",
+            Index("total rigid paid", number_paying_rigid.sum()) * _rigid_avg_cost
+            + Index("total induced paid", inputs.induced_demand.sum()) * _induced_avg_cost,
+        )
+
+        # True weighted average cost: ensures total_paid == total_paying * modified_avg_cost.
+        modified_avg_cost = Index(
+            "modified average cost with respect to the vehicles paying",
+            graph.piecewise(
+                (total_paid / total_paying, total_paying > 0),
+                (0.0, True),
+            ),
+        )
 
         return AreaRevenueModel.Outputs(
             number_paying=number_paying,
@@ -1431,7 +1454,10 @@ class NoInducedDemand(Model):
 
         induced_demand: TimeseriesIndex
         adjusted_modified_inflow: TimeseriesIndex
+        adjusted_modified_starting: TimeseriesIndex
         adjusted_modified_traffic: TimeseriesIndex
+        total_adjusted_modified_inflow: Index
+        total_adjusted_modified_starting: Index
         total_adjusted_modified_traffic: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
@@ -1441,20 +1467,28 @@ class NoInducedDemand(Model):
             inputs.modified_inflow.node - inputs.modified_inflow.node,
         )
         adjusted_modified_inflow = TimeseriesIndex("adjusted modified inflow", inputs.modified_inflow.node)
+        adjusted_modified_starting = TimeseriesIndex("adjusted modified starting", inputs.modified_starting.node)
         adjusted_modified_traffic = TimeseriesIndex("adjusted modified traffic", inputs.modified_traffic.node)
+        total_adjusted_modified_inflow = Index("total adjusted modified vehicle inflow", adjusted_modified_inflow.sum())
+        total_adjusted_modified_starting = Index(
+            "total adjusted modified vehicle starting", adjusted_modified_starting.sum()
+        )
         total_adjusted_modified_traffic = Index("max adjusted modified traffic", adjusted_modified_traffic.max())
 
         return NoInducedDemand.Outputs(
             induced_demand=induced_demand,
             adjusted_modified_inflow=adjusted_modified_inflow,
+            adjusted_modified_starting=adjusted_modified_starting,
             adjusted_modified_traffic=adjusted_modified_traffic,
+            total_adjusted_modified_inflow=total_adjusted_modified_inflow,
+            total_adjusted_modified_starting=total_adjusted_modified_starting,
             total_adjusted_modified_traffic=total_adjusted_modified_traffic,
         )
 
 
 @define("ElemReliefInducedDemand")
 class ElemReliefInducedDemand(Model):
-    """ELEM-based induced demand from traffic relief during the policy window.
+    r"""ELEM-based induced demand from traffic relief during the policy window.
 
     Used when ``induced_demand_strategy`` is ``"elem_relief"``.
 
@@ -1504,10 +1538,14 @@ class ElemReliefInducedDemand(Model):
 
         induced_demand: TimeseriesIndex
         adjusted_modified_inflow: TimeseriesIndex
+        adjusted_modified_starting: TimeseriesIndex
         adjusted_modified_traffic: TimeseriesIndex
+        total_adjusted_modified_inflow: Index
+        total_adjusted_modified_starting: Index
         total_adjusted_modified_traffic: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
+        """Compute ELEM-based induced demand."""
         # Delta T(t) = T(t) - T_m(t), restricted to t in [t_s, t_e]:
         # delta_from_start(t) is finite iff t >= t_s; delta_to_end(t) is
         # finite iff t <= t_e. The nested piecewise implements the AND of
@@ -1542,42 +1580,69 @@ class ElemReliefInducedDemand(Model):
             (1.0, True),
         )
 
-        # Lambda(t) = rho * (I(t) + S(t))
-        latent_pool = TimeseriesIndex(
-            "latent demand pool",
-            inputs.i_b_share_induced_demand * (inputs.ts_inflow + inputs.ts_starting),
+        # Lambda_I(t) = rho * I(t),  Lambda_S(t) = rho * S(t)
+        latent_pool_inflow = TimeseriesIndex(
+            "latent demand pool (inflow)",
+            inputs.i_b_share_induced_demand * inputs.ts_inflow,
+        )
+        latent_pool_starting = TimeseriesIndex(
+            "latent demand pool (starting)",
+            inputs.i_b_share_induced_demand * inputs.ts_starting,
         )
 
-        # L(t) = Lambda(t) * (1 - decay(t)) = Lambda(t) - Lambda(t) * decay(t)
+        # L_I(t) = Lambda_I(t) * (1 - decay(t)),  L_S(t) = Lambda_S(t) * (1 - decay(t))
+        induced_demand_inflow = TimeseriesIndex(
+            "induced demand (inflow)",
+            latent_pool_inflow - latent_pool_inflow * decay,
+        )
+        induced_demand_starting = TimeseriesIndex(
+            "induced demand (starting)",
+            latent_pool_starting - latent_pool_starting * decay,
+        )
+
+        # L(t) = L_I(t) + L_S(t)
         induced_demand = TimeseriesIndex(
             "induced demand",
-            latent_pool - latent_pool * decay,
+            induced_demand_inflow + induced_demand_starting,
         )
 
-        # I_m^adj(t) = I_m(t) + L(t)
+        # I_m^adj(t) = I_m(t) + L_I(t)
         adjusted_modified_inflow = TimeseriesIndex(
             "adjusted modified inflow",
-            inputs.modified_inflow + induced_demand,
+            inputs.modified_inflow + induced_demand_inflow,
         )
 
-        # T_m^adj(t) = ts_solve(I_m^adj + S_m)
+        # S_m^adj(t) = S_m(t) + L_S(t)
+        adjusted_modified_starting = TimeseriesIndex(
+            "adjusted modified starting",
+            inputs.modified_starting + induced_demand_starting,
+        )
+
+        # T_m^adj(t) = ts_solve(I_m^adj + S_m^adj)
         adjusted_modified_traffic = TimeseriesIndex(
             "adjusted modified traffic",
-            graph.function_call("ts_solve", adjusted_modified_inflow + inputs.modified_starting),
+            graph.function_call("ts_solve", adjusted_modified_inflow + adjusted_modified_starting),
+        )
+        total_adjusted_modified_inflow = Index("total adjusted modified vehicle inflow", adjusted_modified_inflow.sum())
+        total_adjusted_modified_starting = Index(
+            "total adjusted modified vehicle starting", adjusted_modified_starting.sum()
         )
         total_adjusted_modified_traffic = Index("max adjusted modified traffic", adjusted_modified_traffic.max())
 
         return ElemReliefInducedDemand.Outputs(
             induced_demand=induced_demand,
             adjusted_modified_inflow=adjusted_modified_inflow,
+            adjusted_modified_starting=adjusted_modified_starting,
             adjusted_modified_traffic=adjusted_modified_traffic,
+            total_adjusted_modified_inflow=total_adjusted_modified_inflow,
+            total_adjusted_modified_starting=total_adjusted_modified_starting,
             total_adjusted_modified_traffic=total_adjusted_modified_traffic,
         )
 
 
 @define("InducedDemand")
 class InducedDemandModel(Model):
-    """Adjusts modified inflow/traffic to account for induced (latent) demand.
+    r"""Adjusts modified inflow/traffic to account for induced (latent) demand.
 
     Owns the :class:`InducedDemandFormula` :class:`ModelVariant` internally.
 
@@ -1619,6 +1684,7 @@ class InducedDemandModel(Model):
         ts_starting: TimeseriesIndex
         modified_inflow: TimeseriesIndex
         modified_starting: TimeseriesIndex
+        modified_euro_class_split: list[Index]
         delta_from_start: TimeseriesIndex
         delta_to_end: TimeseriesIndex
         i_b_share_induced_demand: Index
@@ -1630,7 +1696,11 @@ class InducedDemandModel(Model):
 
         induced_demand: TimeseriesIndex
         adjusted_modified_inflow: TimeseriesIndex
+        adjusted_modified_starting: TimeseriesIndex
         adjusted_modified_traffic: TimeseriesIndex
+        adjusted_modified_euro_class_split: list[Index]
+        total_adjusted_modified_inflow: Index
+        total_adjusted_modified_starting: Index
         total_adjusted_modified_traffic: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
@@ -1664,13 +1734,49 @@ class InducedDemandModel(Model):
 
         induced_demand: TimeseriesIndex = induced_demand_formula.outputs.induced_demand
         adjusted_modified_inflow: TimeseriesIndex = induced_demand_formula.outputs.adjusted_modified_inflow
+        adjusted_modified_starting: TimeseriesIndex = induced_demand_formula.outputs.adjusted_modified_starting
         adjusted_modified_traffic: TimeseriesIndex = induced_demand_formula.outputs.adjusted_modified_traffic
+        total_adjusted_modified_inflow: Index = induced_demand_formula.outputs.total_adjusted_modified_inflow
+        total_adjusted_modified_starting: Index = induced_demand_formula.outputs.total_adjusted_modified_starting
         total_adjusted_modified_traffic: Index = induced_demand_formula.outputs.total_adjusted_modified_traffic
+
+        # P_l,m^adj(t) — computed here (outside ModelVariant) so the framework correctly
+        # propagates the formula using the already-resolved timeseries outputs above.
+        # ModelVariant cannot handle list[Index] outputs; scalar/timeseries outputs are safe.
+        _modified_total_flow = inputs.modified_inflow + inputs.modified_starting
+        _adjusted_total_flow = adjusted_modified_inflow + adjusted_modified_starting
+        adjusted_modified_euro_class_split = [
+            Index(
+                f"adjusted modified split euro_{e} %",
+                graph.piecewise(
+                    (
+                        graph.piecewise(
+                            (
+                                (
+                                    inputs.modified_euro_class_split[e] * _modified_total_flow
+                                    + euro_class_split[f"euro_{e}"] * induced_demand
+                                )
+                                / _adjusted_total_flow,
+                                inputs.delta_to_end < np.inf,
+                            ),
+                            (inputs.modified_euro_class_split[e], True),
+                        ),
+                        inputs.delta_from_start < np.inf,
+                    ),
+                    (inputs.modified_euro_class_split[e], True),
+                ),
+            )
+            for e in range(7)
+        ]
 
         return InducedDemandModel.Outputs(
             induced_demand=induced_demand,
             adjusted_modified_inflow=adjusted_modified_inflow,
+            adjusted_modified_starting=adjusted_modified_starting,
             adjusted_modified_traffic=adjusted_modified_traffic,
+            adjusted_modified_euro_class_split=adjusted_modified_euro_class_split,
+            total_adjusted_modified_inflow=total_adjusted_modified_inflow,
+            total_adjusted_modified_starting=total_adjusted_modified_starting,
             total_adjusted_modified_traffic=total_adjusted_modified_traffic,
         )
 
@@ -1860,8 +1966,6 @@ class BolognaMobilityModel(Model):
         total_time_shifted_inside: Index
         total_mode_shifted_inside: Index
         total_lost_inside: Index
-        i_b_share_induced_demand: Index
-        i_b_p50_induced_demand: Index
 
     @classmethod
     def default_inputs(cls) -> Inputs:
@@ -1920,12 +2024,9 @@ class BolognaMobilityModel(Model):
         # ---------------------------------------------------------------
         # Validate selectors
         # ---------------------------------------------------------------
-        modal_shift_option = inputs.modal_shift_option.value
-        induced_demand_strategy = inputs.induced_demand_strategy.value
-
-        if modal_shift_option not in ("no", "tpm", "active", "tpm+active"):
+        if inputs.modal_shift_option not in ("no", "tpm", "active", "tpm+active"):
             raise ValueError(
-                f"modal_shift_option must be 'no', 'tpm', 'active', or 'tpm+active', got {modal_shift_option!r}"
+                f"modal_shift_option must be 'no', 'tpm', 'active', or 'tpm+active', got {inputs.modal_shift_option!r}"
             )
 
         # ---------------------------------------------------------------
@@ -1941,33 +2042,9 @@ class BolognaMobilityModel(Model):
             ),
         )
 
-        # ---------------------------------------------------------------
-        # Unpack inputs
-        # ---------------------------------------------------------------
-        i_p_start_time = inputs.i_p_start_time
-        i_p_end_time = inputs.i_p_end_time
-        i_p_cost = inputs.i_p_cost
-        i_p_fraction_exempted = inputs.i_p_fraction_exempted
-        i_p_pt_frequency_modification = inputs.i_p_pt_frequency_modification
-        i_p_pt_capillarity_modification = inputs.i_p_pt_capillarity_modification
-        i_p_pt_cost_modification = inputs.i_p_pt_cost_modification
-        i_p_pt_time_modification = inputs.i_p_pt_time_modification
-
-        i_b_p50_cost = inputs.i_b_p50_cost
-        i_b_p50_anticipating = inputs.i_b_p50_anticipating
-        i_b_p50_postponing = inputs.i_b_p50_postponing
-        i_b_p50_anticipation = inputs.i_b_p50_anticipation
-        i_b_p50_postponement = inputs.i_b_p50_postponement
-        i_b_pt_capillarity = inputs.i_b_pt_capillarity
-        i_b_pt_frequency = inputs.i_b_pt_frequency
-        i_b_pt_cost = inputs.i_b_pt_cost
-        i_b_pt_time = inputs.i_b_pt_time
-
-        # ---------------------------------------------------------------
         # ---------------------------------------------------------------------------
         # BaseFlowsModel
         # ---------------------------------------------------------------------------
-        # ---------------------------------------------------------------
         base_flows = BaseFlowsModel(
             inputs=BaseFlowsModel.Inputs(ts=ts),
         )
@@ -1978,8 +2055,8 @@ class BolognaMobilityModel(Model):
         policy_window = PolicyWindowModel(
             inputs=PolicyWindowModel.Inputs(
                 ts=ts,
-                i_p_start_time=i_p_start_time,
-                i_p_end_time=i_p_end_time,
+                i_p_start_time=inputs.i_p_start_time,
+                i_p_end_time=inputs.i_p_end_time,
             ),
         )
 
@@ -1992,29 +2069,27 @@ class BolognaMobilityModel(Model):
                 ts=ts,
                 delta_from_start=policy_window.outputs.delta_from_start,
                 delta_to_end=policy_window.outputs.delta_to_end,
-                i_p_start_time=i_p_start_time,
-                i_p_end_time=i_p_end_time,
-                i_p_fraction_exempted=i_p_fraction_exempted,
-                i_p_cost=i_p_cost,
-                i_b_p50_cost=i_b_p50_cost,
-                i_b_p50_anticipating=i_b_p50_anticipating,
-                i_b_p50_postponing=i_b_p50_postponing,
-                i_b_pt_capillarity=i_b_pt_capillarity,
-                i_b_pt_frequency=i_b_pt_frequency,
-                i_b_pt_cost=i_b_pt_cost,
-                i_b_pt_time=i_b_pt_time,
-                i_p_pt_capillarity_modification=i_p_pt_capillarity_modification,
-                i_p_pt_frequency_modification=i_p_pt_frequency_modification,
-                i_p_pt_cost_modification=i_p_pt_cost_modification,
-                i_p_pt_time_modification=i_p_pt_time_modification,
+                i_p_start_time=inputs.i_p_start_time,
+                i_p_end_time=inputs.i_p_end_time,
+                i_p_fraction_exempted=inputs.i_p_fraction_exempted,
+                i_p_cost=inputs.i_p_cost,
+                i_b_p50_cost=inputs.i_b_p50_cost,
+                i_b_p50_anticipating=inputs.i_b_p50_anticipating,
+                i_b_p50_postponing=inputs.i_b_p50_postponing,
+                i_b_pt_capillarity=inputs.i_b_pt_capillarity,
+                i_b_pt_frequency=inputs.i_b_pt_frequency,
+                i_b_pt_cost=inputs.i_b_pt_cost,
+                i_b_pt_time=inputs.i_b_pt_time,
+                i_p_pt_capillarity_modification=inputs.i_p_pt_capillarity_modification,
+                i_p_pt_frequency_modification=inputs.i_p_pt_frequency_modification,
+                i_p_pt_cost_modification=inputs.i_p_pt_cost_modification,
+                i_p_pt_time_modification=inputs.i_p_pt_time_modification,
             ),
         )
 
-        # ---------------------------------------------------------------
         # ---------------------------------------------------------------------------
         # TimeShiftModel
         # ---------------------------------------------------------------------------
-        # ---------------------------------------------------------------
         time_shift = TimeShiftModel(
             inputs=TimeShiftModel.Inputs(
                 ts_inflow=base_flows.outputs.ts_inflow,
@@ -2026,10 +2101,10 @@ class BolognaMobilityModel(Model):
                 delta_to_end=policy_window.outputs.delta_to_end,
                 delta_before_start=policy_window.outputs.delta_before_start,
                 delta_after_end=policy_window.outputs.delta_after_end,
-                i_b_p50_anticipating=i_b_p50_anticipating,
-                i_b_p50_postponing=i_b_p50_postponing,
-                i_b_p50_anticipation=i_b_p50_anticipation,
-                i_b_p50_postponement=i_b_p50_postponement,
+                i_b_p50_anticipating=inputs.i_b_p50_anticipating,
+                i_b_p50_postponing=inputs.i_b_p50_postponing,
+                i_b_p50_anticipation=inputs.i_b_p50_anticipation,
+                i_b_p50_postponement=inputs.i_b_p50_postponement,
             ),
         )
 
@@ -2054,38 +2129,20 @@ class BolognaMobilityModel(Model):
             delta_after_end=policy_window.outputs.delta_after_end,
             delta_from_start=policy_window.outputs.delta_from_start,
             delta_to_end=policy_window.outputs.delta_to_end,
-            i_p_start_time=i_p_start_time,
-            i_p_end_time=i_p_end_time,
-            i_p_fraction_exempted=i_p_fraction_exempted,
-            i_p_cost=i_p_cost,
-            i_b_p50_anticipation=i_b_p50_anticipation,
-            i_b_p50_postponement=i_b_p50_postponement,
-            i_b_p50_anticipating=i_b_p50_anticipating,
-            i_b_p50_postponing=i_b_p50_postponing,
+            i_p_start_time=inputs.i_p_start_time,
+            i_p_end_time=inputs.i_p_end_time,
+            i_p_fraction_exempted=inputs.i_p_fraction_exempted,
+            i_p_cost=inputs.i_p_cost,
+            i_b_p50_anticipation=inputs.i_b_p50_anticipation,
+            i_b_p50_postponement=inputs.i_b_p50_postponement,
+            i_b_p50_anticipating=inputs.i_b_p50_anticipating,
+            i_b_p50_postponing=inputs.i_b_p50_postponing,
         )
         modified_flows = AreaModifiedFlowsModel(inputs=AreaModifiedFlowsModel.Inputs(**_inflow_common))
 
-        # ---------------------------------------------------------------
-        # [V.5] Revenue — always AreaRevenueModel
-        # ---------------------------------------------------------------
-        revenue = AreaRevenueModel(
-            inputs=AreaRevenueModel.Inputs(
-                ts=ts,
-                ts_inflow=base_flows.outputs.ts_inflow,
-                ts_starting=base_flows.outputs.ts_starting,
-                fraction_rigid=behavior.outputs.fraction_rigid,
-                fraction_rigid_euro_class=behavior.outputs.fraction_rigid_euro_class,
-                i_p_start_time=i_p_start_time,
-                i_p_end_time=i_p_end_time,
-                i_p_cost=i_p_cost,
-            ),
-        )
-
-        # ---------------------------------------------------------------
         # ---------------------------------------------------------------------------
         # TrafficModel
         # ---------------------------------------------------------------------------
-        # ---------------------------------------------------------------
         traffic = TrafficModel(
             inputs=TrafficModel.Inputs(
                 ts_inflow=base_flows.outputs.ts_inflow,
@@ -2107,14 +2164,30 @@ class BolognaMobilityModel(Model):
                 ts_starting=base_flows.outputs.ts_starting,
                 modified_inflow=modified_flows.outputs.modified_inflow,
                 modified_starting=modified_flows.outputs.modified_starting,
+                modified_euro_class_split=modified_flows.outputs.modified_euro_class_split,
                 delta_from_start=policy_window.outputs.delta_from_start,
                 delta_to_end=policy_window.outputs.delta_to_end,
                 i_b_share_induced_demand=inputs.i_b_share_induced_demand,
                 i_b_p50_induced_demand=inputs.i_b_p50_induced_demand,
             ),
         )
-        i_b_share_induced_demand = induced_demand.inputs.i_b_share_induced_demand
-        i_b_p50_induced_demand = induced_demand.inputs.i_b_p50_induced_demand
+
+        # ---------------------------------------------------------------
+        # [V.5] Revenue — always AreaRevenueModel
+        # ---------------------------------------------------------------
+        revenue = AreaRevenueModel(
+            inputs=AreaRevenueModel.Inputs(
+                ts=ts,
+                ts_inflow=base_flows.outputs.ts_inflow,
+                ts_starting=base_flows.outputs.ts_starting,
+                fraction_rigid=behavior.outputs.fraction_rigid,
+                fraction_rigid_euro_class=behavior.outputs.fraction_rigid_euro_class,
+                induced_demand=induced_demand.outputs.induced_demand,
+                i_p_start_time=inputs.i_p_start_time,
+                i_p_end_time=inputs.i_p_end_time,
+                i_p_cost=inputs.i_p_cost,
+            ),
+        )
 
         # ---------------------------------------------------------------
         # [G] EmissionsModel
@@ -2123,7 +2196,7 @@ class BolognaMobilityModel(Model):
             inputs=EmissionsModel.Inputs(
                 ts_traffic=traffic.outputs.ts_traffic,
                 modified_traffic=induced_demand.outputs.adjusted_modified_traffic,
-                modified_euro_class_split=modified_flows.outputs.modified_euro_class_split,
+                modified_euro_class_split=induced_demand.outputs.adjusted_modified_euro_class_split,
             ),
         )
 
@@ -2139,43 +2212,13 @@ class BolognaMobilityModel(Model):
         self.traffic = traffic
         self.emissions = emissions_model
 
-        # View/dashboard aliases — backward-compatible flat attribute access
-        self.TS_inflow = base_flows.outputs.ts_inflow
-        self.TS_starting = base_flows.outputs.ts_starting
-        self.I_modified_inflow = modified_flows.outputs.modified_inflow
-        self.I_traffic = traffic.outputs.ts_traffic
-        self.I_modified_traffic = traffic.outputs.modified_traffic
-        self.I_emissions = emissions_model.outputs.emissions
-        self.I_modified_emissions = emissions_model.outputs.modified_emissions
-
-        # Policy parameters — aliased for direct external access
-        self.I_P_start_time = i_p_start_time
-        self.I_P_end_time = i_p_end_time
-        self.I_P_cost = i_p_cost
-        self.I_P_fraction_exempted = i_p_fraction_exempted
-        self.I_P_pt_frequency_modification = i_p_pt_frequency_modification
-        self.I_P_pt_capillarity_modification = i_p_pt_capillarity_modification
-        self.I_P_pt_cost_modification = i_p_pt_cost_modification
-        self.I_P_pt_time_modification = i_p_pt_time_modification
-
-        # Behavioural parameters — aliased for direct external access
-        self.I_B_p50_cost = i_b_p50_cost
-        self.I_B_p50_anticipating = i_b_p50_anticipating
-        self.I_B_p50_postponing = i_b_p50_postponing
-        self.I_B_p50_anticipation = i_b_p50_anticipation
-        self.I_B_p50_postponement = i_b_p50_postponement
-        self.I_B_pt_capillarity = i_b_pt_capillarity
-        self.I_B_pt_frequency = i_b_pt_frequency
-        self.I_B_pt_cost = i_b_pt_cost
-        self.I_B_pt_time = i_b_pt_time
-
         # ---------------------------------------------------------------
         # Return Outputs and Expose
         # ---------------------------------------------------------------
         return (
             BolognaMobilityModel.Outputs(
                 total_base_inflow=base_flows.outputs.total_base_inflow,
-                total_modified_inflow=modified_flows.outputs.total_modified_inflow,
+                total_modified_inflow=induced_demand.outputs.total_adjusted_modified_inflow,
                 total_traffic=traffic.outputs.total_traffic,
                 total_modified_traffic=induced_demand.outputs.total_adjusted_modified_traffic,
                 total_mode_shifted=time_shift.outputs.total_mode_shifted,
@@ -2203,8 +2246,6 @@ class BolognaMobilityModel(Model):
                 total_mode_shifted_inside=modified_flows.expose.total_mode_shifted_inside,
                 total_time_shifted_inside=modified_flows.expose.total_time_shifted_inside,
                 total_lost_inside=modified_flows.expose.total_lost_inside,
-                i_b_share_induced_demand=i_b_share_induced_demand,
-                i_b_p50_induced_demand=i_b_p50_induced_demand,
             ),
         )
 
