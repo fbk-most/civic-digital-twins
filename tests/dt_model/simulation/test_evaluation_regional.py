@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 import numpy as np
 import pytest
+from scipy import stats
 
 from civic_digital_twins.dt_model import graph as _graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
@@ -1967,3 +1968,263 @@ def test_scoped_sampling_empty_active_positions() -> None:
     # weather_bike: no positions match, so all positions are sentinels.
     assert a[weather_bike].shape == (100,)
     assert np.all(np.isnan(a[weather_bike]))
+
+
+# ---------------------------------------------------------------------------
+# Three-level nested ModelVariant  (issue #177 — recursive partitioning)
+# ---------------------------------------------------------------------------
+#
+# Outer: Mode.{bike(0.2), car(0.8)}
+#   car → Policy.{strict(0.5), loose(0.5)}
+#     strict → Fuel.{gas(0.5), elec(0.5)}
+#
+# Throughput (capacity = 100):
+#   bike              → 100 * 1.0 = 100
+#   car + strict + gas  → 100 * 2.2 = 220
+#   car + strict + elec → 100 * 2.4 = 240
+#   car + loose + *     → 100 * 3.0 = 300  (fuel irrelevant in loose branch)
+#
+# E[throughput] = 0.2*100 + 0.2*220 + 0.2*240 + 0.2*300 + 0.2*300 = 232.0
+# (all 5 reachable leaf combos have equal probability 0.2)
+# ---------------------------------------------------------------------------
+
+_CAP_TRIPLE = 100.0
+
+
+def _make_triple_nested_mv() -> tuple[CategoricalIndex, CategoricalIndex, CategoricalIndex, ModelVariant]:
+    """Build Mode.{bike,car} × Policy.{strict,loose} × Fuel.{gas,elec}."""
+    mode = CategoricalIndex("mode", {"bike": 0.2, "car": 0.8})
+    policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
+    fuel = CategoricalIndex("fuel", {"gas": 0.5, "elec": 0.5})
+    cap = Index("cap", _CAP_TRIPLE)
+
+    class _LeafModel(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            cap: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, c: Index, mult: float) -> None:
+            super().__init__(
+                f"Leaf{mult}",
+                inputs=_LeafModel.Inputs(cap=c),
+                outputs=_LeafModel.Outputs(throughput=Index("throughput", c.node * mult)),
+            )
+
+    fuel_mv = ModelVariant("Fuel", {"gas": _LeafModel(cap, 2.2), "elec": _LeafModel(cap, 2.4)}, selector=fuel)
+    policy_mv = ModelVariant("Policy", {"strict": fuel_mv, "loose": _LeafModel(cap, 3.0)}, selector=policy)
+    outer_mv = ModelVariant("Mode", {"bike": _LeafModel(cap, 1.0), "car": policy_mv}, selector=mode)
+    return mode, policy, fuel, outer_mv
+
+
+def test_triple_nested_guard_chain_depths() -> None:
+    """Recursive partitioning builds correct guard chain depths for each branch.
+
+    gas/elec leaves: depth 3 (mode=car → policy=strict → fuel=gas/elec)
+    loose branch:    depth 2 (mode=car → policy=loose)
+    bike branch:     depth 1 (mode=bike)
+    """
+    *_, mv = _make_triple_nested_mv()
+    ev = Evaluation(mv)
+    plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+
+    gas_regions = [r for r in plan.regions if any(g.branch_key == "gas" for g in r.guards)]
+    elec_regions = [r for r in plan.regions if any(g.branch_key == "elec" for g in r.guards)]
+    loose_regions = [r for r in plan.regions if any(g.branch_key == "loose" for g in r.guards)]
+    bike_regions = [r for r in plan.regions if any(g.branch_key == "bike" for g in r.guards)]
+
+    assert gas_regions, "no gas region in plan"
+    assert elec_regions, "no elec region in plan"
+    assert loose_regions, "no loose region in plan"
+    assert bike_regions, "no bike region in plan"
+
+    assert tuple(g.branch_key for g in gas_regions[0].guards) == ("car", "strict", "gas")
+    assert tuple(g.branch_key for g in elec_regions[0].guards) == ("car", "strict", "elec")
+    assert tuple(g.branch_key for g in loose_regions[0].guards) == ("car", "loose")
+    assert tuple(g.branch_key for g in bike_regions[0].guards) == ("bike",)
+
+
+def test_triple_nested_regional_matches_expected_value() -> None:
+    """Three-level regional plan produces the analytically correct expected throughput."""
+    *_, mv = _make_triple_nested_mv()
+    ev = Evaluation(mv)
+    plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    ens = CrossProductEnsemble(Scenario(mv), rng=np.random.default_rng(0))
+    result = ev.execute_plan(plan, ens)
+    ev_val = float(result.expected_value(mv.outputs.throughput))
+    assert abs(ev_val - 232.0) < 1e-10, f"expected 232.0, got {ev_val}"
+
+
+# ---------------------------------------------------------------------------
+# Per-scope sampling (plan= on DistributionEnsemble) with ModelVariant
+# ---------------------------------------------------------------------------
+#
+# Tests the integration path that inspect G Part 5 did not exercise:
+# DistributionEnsemble(scenario, N, plan=plan) where plan is built with
+# strategy="regional" from a ModelVariant with branch-local abstract indexes.
+#
+# Model:
+#   mode    = CategoricalIndex(bike:0.5, car:0.5)    — shared
+#   wind    = DistributionIndex(N(0, 2))             — bike-local
+#   traffic = DistributionIndex(N(10, 1))            — car-local
+#   cap     = 100.0
+#
+#   BikeModel:  throughput = cap * (1 + 0.01 * wind)
+#   CarModel:   throughput = cap * (1 + 0.01 * traffic)
+#
+# Analytical: E[throughput] = 0.5*100*(1+0) + 0.5*100*(1+0.1) = 105.0
+# ---------------------------------------------------------------------------
+
+_SCOPED_MODE = CategoricalIndex("scoped_mode", {"bike": 0.5, "car": 0.5})
+_SCOPED_WIND = DistributionIndex("wind", stats.norm, {"loc": 0.0, "scale": 2.0})
+_SCOPED_TRAFFIC = DistributionIndex("traffic", stats.norm, {"loc": 10.0, "scale": 1.0})
+_SCOPED_CAP = Index("cap", 100.0)
+
+
+def _make_scoped_mv() -> tuple["ModelVariant", Scenario, Evaluation, "EvaluationPlan"]:
+    """Build the shared scoped-sampling fixture."""
+
+    class _BikeLeaf(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            cap: Index
+            wind: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, cap: Index, wind: Index) -> None:
+            super().__init__(
+                "BikeLeaf",
+                inputs=self.Inputs(cap=cap, wind=wind),
+                outputs=self.Outputs(throughput=Index("throughput", cap.node * (1.0 + wind.node * 0.01))),
+            )
+
+    class _CarLeaf(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            cap: Index
+            traffic: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, cap: Index, traffic: Index) -> None:
+            super().__init__(
+                "CarLeaf",
+                inputs=self.Inputs(cap=cap, traffic=traffic),
+                outputs=self.Outputs(throughput=Index("throughput", cap.node * (1.0 + traffic.node * 0.01))),
+            )
+
+    mv = ModelVariant(
+        "ScopedTransport",
+        {"bike": _BikeLeaf(_SCOPED_CAP, _SCOPED_WIND), "car": _CarLeaf(_SCOPED_CAP, _SCOPED_TRAFFIC)},
+        selector=_SCOPED_MODE,
+    )
+    scenario = Scenario(mv)
+    ev = Evaluation(mv)
+    plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+    return mv, scenario, ev, plan
+
+
+def test_scoped_ensemble_sentinels_at_inactive_branch_positions() -> None:
+    """Per-scope sampling places NaN exactly at positions where a branch is inactive.
+
+    With plan= set, DistributionEnsemble samples wind only at bike-mode positions
+    and traffic only at car-mode positions; the complementary positions receive NaN.
+    """
+    _, scenario, _, plan = _make_scoped_mv()
+    N = 400
+    ens = DistributionEnsemble(scenario, N, rng=np.random.default_rng(7), plan=plan)
+    a = ens.assignments()
+
+    mode_arr = a[_SCOPED_MODE]
+    wind_arr = np.asarray(a[_SCOPED_WIND], dtype=float)
+    traffic_arr = np.asarray(a[_SCOPED_TRAFFIC], dtype=float)
+
+    bike_mask = mode_arr == "bike"
+    car_mask = mode_arr == "car"
+
+    # wind: sampled at bike positions, NaN elsewhere
+    assert np.all(~np.isnan(wind_arr[bike_mask])), "wind has NaN at active bike positions"
+    assert np.all(np.isnan(wind_arr[car_mask])), "wind is not NaN at inactive car positions"
+    # traffic: sampled at car positions, NaN elsewhere
+    assert np.all(~np.isnan(traffic_arr[car_mask])), "traffic has NaN at active car positions"
+    assert np.all(np.isnan(traffic_arr[bike_mask])), "traffic is not NaN at inactive bike positions"
+
+
+def test_scoped_ensemble_regional_execution_correct() -> None:
+    """Regional execution with a scoped ensemble is NaN-free and matches E[throughput]=105.
+
+    Verifies that the sentinel NaN values in branch-local indexes never propagate
+    into the output: the regional executor's branch mask ensures inactive positions
+    are never read by the wrong branch formula.
+    """
+    mv, scenario, ev, plan = _make_scoped_mv()
+    N = 500
+    ens = DistributionEnsemble(scenario, N, rng=np.random.default_rng(42), plan=plan)
+    result = ev.execute_plan(plan, ens)
+    arr = np.asarray(result[mv.outputs.throughput]).ravel()
+
+    assert np.all(np.isfinite(arr)), f"output contains NaN/inf at positions {np.where(~np.isfinite(arr))[0]}"
+
+    ev_val = float(result.expected_value(mv.outputs.throughput))
+    # E[throughput] = 0.5*100*(1+0.01*0) + 0.5*100*(1+0.01*10) = 105.0
+    # MC std-error ≈ 5/sqrt(500) ≈ 0.22; ±2 is effectively deterministic
+    assert abs(ev_val - 105.0) < 2.0, f"expected ≈ 105.0, got {ev_val}"
+
+
+# ---------------------------------------------------------------------------
+# list[str] selector override + regional plan: zero-scenario branch
+# ---------------------------------------------------------------------------
+
+
+def test_regional_list_str_override_restricts_active_branches() -> None:
+    """A list[str] override on the selector restricts the active branches.
+
+    The regional plan is built for all three branches (bike, car, train), but the
+    scenario restricts the selector support to {bike, car}.  The train branch
+    receives zero scenarios; the executor must handle this gracefully and produce
+    the correct expected value for the two active branches.
+
+    E[throughput | bike/car only] = 0.5 * 100 + 0.5 * 1000 = 550
+    """
+    mode = CategoricalIndex("mode", {"bike": 1 / 3, "car": 1 / 3, "train": 1 / 3})
+    cap = Index("cap", 1.0)
+
+    class _Leaf(Model):
+        @dataclasses.dataclass
+        class Inputs:
+            cap: Index
+
+        @dataclasses.dataclass
+        class Outputs:
+            throughput: Index
+
+        def __init__(self, c: Index, mult: float) -> None:
+            super().__init__(
+                f"Leaf{mult}",
+                inputs=self.Inputs(cap=c),
+                outputs=self.Outputs(throughput=Index("throughput", c.node * mult)),
+            )
+
+    mv = ModelVariant(
+        "Transport",
+        {"bike": _Leaf(cap, 100.0), "car": _Leaf(cap, 1000.0), "train": _Leaf(cap, 500.0)},
+        selector=mode,
+    )
+    scenario = Scenario(mv, overrides={mode: ["bike", "car"]})
+    ev = Evaluation(mv)
+    plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
+
+    ens = CrossProductEnsemble(scenario)
+    assert "train" not in set(ens.assignments()[mode].tolist()), "train should be absent from ensemble"
+
+    result = ev.execute_plan(plan, ens)
+    ev_val = float(result.expected_value(mv.outputs.throughput))
+    assert abs(ev_val - 550.0) < 1e-6, f"expected 550.0, got {ev_val}"

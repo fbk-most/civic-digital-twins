@@ -626,6 +626,56 @@ def test_cpe_draw_batch_returns_frozen_ensemble():
     assert batch.ensemble_weights[0].shape == (3,)
 
 
+def test_cpe_draw_batch_conditional_dist_all_cat_parents():
+    """draw_batch re-samples a ConditionalDistributionIndex whose parents are all categorical.
+
+    Exercises _draw_from_combos: the CDI / no-dist-parents branch.
+    """
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    temp = ConditionalDistributionIndex(
+        "temp",
+        parents=[season],
+        factory=lambda season: (
+            stats.norm(loc=30.0, scale=1.0) if season == "summer" else stats.norm(loc=5.0, scale=1.0)
+        ),
+    )
+    model = _simple_model(season, temp)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=1, rng=np.random.default_rng(0))
+
+    # 2 combos × 3 samples_per_combo = 6 total
+    batch = ens.draw_batch(3, np.random.default_rng(1))
+
+    assert len(batch.ensemble_axes) == 1
+    assert batch.ensemble_weights[0].shape == (6,)
+    assert abs(batch.ensemble_weights[0].sum() - 1.0) < 1e-12
+    assert set(batch.assignments()[season].tolist()) <= {"summer", "winter"}
+    # temp values must be finite (sampled from the correct distribution per combo)
+    assert np.all(np.isfinite(batch.assignments()[temp].astype(float)))
+
+
+def test_cpe_draw_batch_conditional_dist_distribution_parent():
+    """draw_batch re-samples a ConditionalDistributionIndex with a distribution parent.
+
+    Exercises _draw_from_combos: the CDI / has-dist-parents branch (per-replicate sampling).
+    """
+    x = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    y = ConditionalDistributionIndex(
+        "y",
+        parents=[x],
+        factory=lambda x: stats.norm(loc=float(x), scale=0.1),
+    )
+    model = _simple_model(x, y)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=2, rng=np.random.default_rng(0))
+
+    # 1 combo (no categoricals) × 3 samples_per_combo = 3 total
+    batch = ens.draw_batch(3, np.random.default_rng(7))
+
+    assert batch.ensemble_weights[0].shape == (3,)
+    assert abs(batch.ensemble_weights[0].sum() - 1.0) < 1e-12
+    assert np.all(np.isfinite(batch.assignments()[x].astype(float)))
+    assert np.all(np.isfinite(batch.assignments()[y].astype(float)))
+
+
 def test_cpe_draw_batch_axis_not_none_raises():
     """draw_batch raises ValueError when axis= is not None."""
     from scipy import stats  # noqa: PLC0415
@@ -710,3 +760,28 @@ def test_cpe_exclude_deprecated():
     model = _simple_model(season, pv)
     with pytest.warns(DeprecationWarning, match="exclude="):
         CrossProductEnsemble(Scenario(model), exclude=[pv])
+
+
+def test_cpe_draw_batch_categorical_stable_across_batches():
+    """draw_batch reuses the categorical combos fixed at construction.
+
+    When max_categorical_size < support size, categories are MC-sampled rather
+    than enumerated.  Every call to draw_batch must return the *same* categorical
+    values as the initial construction (_combo_cats), not a freshly re-sampled set.
+    Regression test for the bug where draw_batch constructed a new
+    CrossProductEnsemble internally (re-sampling categoricals with a different rng).
+    """
+    season = CategoricalIndex("season", {"s1": 0.2, "s2": 0.2, "s3": 0.2, "s4": 0.2, "s5": 0.2})
+    model = _simple_model(season)
+    # max_categorical_size=3 < 5 → MC sampling of categories (not full enumeration)
+    ens = CrossProductEnsemble(Scenario(model), max_categorical_size=3, rng=np.random.default_rng(7))
+
+    # Record which 3 category values were chosen at construction time.
+    initial_cats = ens.assignments()[season].copy()  # shape (3,)
+
+    # draw_batch with a *different* rng must return the same categorical combos,
+    # only re-sampling distributions (none here).
+    batch = ens.draw_batch(1, np.random.default_rng(99))  # 1 sample per combo → 3 rows
+    batch_cats = batch.assignments()[season]
+
+    np.testing.assert_array_equal(batch_cats, initial_cats)

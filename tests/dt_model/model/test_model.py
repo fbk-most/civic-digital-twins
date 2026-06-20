@@ -1184,3 +1184,48 @@ def test_orphan_check_visited_guard_formula_diamond():
 
     with pytest.raises(ValueError, match="k_tri"):
         _Tri()
+
+
+def test_orphan_check_no_false_positive_on_formula_backed_input():
+    """Orphan detection must not flag nodes inside a formula-backed input as orphans.
+
+    When sub-model A's output (a formula index, not a plain placeholder) is
+    wired as an input to model B, model B's ``input_formula_nodes`` boundary
+    stops the BFS traversal at A's output node.  Nodes inside A's formula are
+    not B's concern and must not be reported as orphans.
+
+    Regression test for the id()-keyed visited/covered sets introduced in
+    ``_find_orphaned_placeholder_nodes`` (Minor 4 fix).
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("Producer")
+    class _Producer(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return _Producer.Outputs(y=Index("y", inp.x.node * 2.0))
+
+    @define("Consumer")
+    class _Consumer(Model):
+        @inputs
+        class Inputs:
+            y: Index  # will receive a formula-backed index from _Producer
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return _Consumer.Outputs(z=Index("z", inp.y.node + 1.0))
+
+    producer = _Producer(inputs=_Producer.Inputs(x=Index("x", 5.0)))
+    # Wire Producer output as Consumer input — must not raise.
+    consumer = _Consumer(inputs=_Consumer.Inputs(y=producer.outputs.y))
+    assert consumer.outputs.z is not None
