@@ -587,7 +587,11 @@ class EvaluationHandle:
         """
         parameters = parameters or {}
         if rng is None:
-            rng = np.random.default_rng()
+            if ensemble_recipe is not None and hasattr(ensemble_recipe, "_rng") and ensemble_recipe._rng is not None:  # type: ignore[reportAttributeAccessIssue]
+                rng = ensemble_recipe._rng  # type: ignore[reportAttributeAccessIssue]
+            else:
+                rng = np.random.default_rng()
+        assert rng is not None
 
         plan = evaluation.build_plan(nodes_of_interest, strategy=strategy)
         if ensemble_recipe is None:

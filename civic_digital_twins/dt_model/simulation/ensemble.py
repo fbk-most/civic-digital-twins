@@ -1166,8 +1166,57 @@ class CrossProductEnsemble:
                 dists_unordered.append(idx)
             # else: plain placeholder Index — skip silently
 
-        categoricals = _topo_sort_categoricals(cats_unordered)
-        distributions = _topo_sort_dists(dists_unordered)
+        self._categoricals = _topo_sort_categoricals(cats_unordered)
+        self._distributions = _topo_sort_dists(dists_unordered)
+        self._restrictions = restrictions if restrictions else None
+        self._max_categorical_size = max_categorical_size
+        self._scenario = scenario
+        self._rng = rng
+
+        (
+            self._assignments,
+            self._weights_arr,
+            self.size,
+            self._combo_cats,
+            self._combo_weights,
+        ) = self._compute_assignments(n_samples_per_combo, rng)
+        self._n_combos: int = self._combo_weights.size
+
+        self._axis = Axis("_cross_product", ENSEMBLE)
+
+    def _compute_assignments(
+        self,
+        n_samples_per_combo: int,
+        rng: np.random.Generator | None,
+    ) -> tuple[
+        dict[GenericIndex, np.ndarray],
+        np.ndarray,
+        int,
+        dict[GenericIndex, np.ndarray],
+        np.ndarray,
+    ]:
+        """Compute categorical/distribution assignments, weights, and total size.
+
+        Parameters
+        ----------
+        n_samples_per_combo:
+            Number of Monte Carlo samples per categorical combination.
+        rng:
+            Random generator for distribution sampling (may be ``None``).
+
+        Returns
+        -------
+        (assignments, weights, S_total, combo_cats, combo_weights)
+            *combo_cats* maps each categorical index to its per-combo value array
+            (shape ``(S,)``); *combo_weights* is the normalised per-combo weight
+            array (shape ``(S,)``).  Both are stored on the instance so that
+            :meth:`draw_batch` can reuse the categorical structure.
+        """
+        scenario = self._scenario
+        restrictions = self._restrictions or {}
+        max_categorical_size = self._max_categorical_size
+        categoricals = self._categoricals
+        distributions = self._distributions
 
         # Build cross-product of categorical values.
         # Each entry: (joint_weight, {id(cat): value_str}) — id keys avoid
@@ -1200,23 +1249,26 @@ class CrossProductEnsemble:
         weights = np.repeat(combo_weights, n_samples_per_combo) / n_samples_per_combo
 
         # Build categorical assignment arrays (each value repeated n_samples_per_combo times).
-        self._assignments: dict[GenericIndex, np.ndarray] = {}
+        # Also keep the per-combo (non-repeated) arrays so draw_batch can reuse them.
+        result_assignments: dict[GenericIndex, np.ndarray] = {}
+        combo_cats: dict[GenericIndex, np.ndarray] = {}
         for cat in categoricals:
             cat_arr = np.array([combo[1][id(cat)] for combo in combos], dtype=object)
-            self._assignments[cat] = np.repeat(cat_arr, n_samples_per_combo)
+            combo_cats[cat] = cat_arr
+            result_assignments[cat] = np.repeat(cat_arr, n_samples_per_combo)
 
         # Sample distribution-backed indexes (topo order — parents before children).
         for idx in distributions:
             if isinstance(idx, ConditionalDistributionIndex):
                 samples = np.empty(S_total)
-                for i, (_, combo_cats) in enumerate(combos):
+                for i, (_, id_keyed_cats) in enumerate(combos):
                     # Separate categorical parents (fixed for all replicates of this combo)
                     # from distribution parents (vary per replicate).
                     cat_parent_vals: dict[str, Any] = {}
                     dist_parents: list[Any] = []
                     for p in idx.parents:
                         if isinstance(p, CategoricalIndex | ConditionalCategoricalIndex):
-                            cat_parent_vals[p.name] = combo_cats[id(p)]
+                            cat_parent_vals[p.name] = id_keyed_cats[id(p)]
                         else:
                             dist_parents.append(p)
                     if not dist_parents:
@@ -1236,26 +1288,85 @@ class CrossProductEnsemble:
                             full_idx = i * n_samples_per_combo + r
                             parent_vals: dict[str, Any] = dict(cat_parent_vals)
                             for p in dist_parents:
-                                parent_vals[p.name] = float(self._assignments[p][full_idx])
+                                parent_vals[p.name] = float(result_assignments[p][full_idx])
                             d = idx.distribution_for(**parent_vals)
                             samples[full_idx] = float(d.rvs(random_state=rng) if rng is not None else d.rvs())
-                self._assignments[idx] = samples
+                result_assignments[idx] = samples
             else:
                 dist = scenario.effective_distribution(idx)
                 assert dist is not None
                 if rng is not None:
-                    self._assignments[idx] = np.asarray(dist.rvs(size=S_total, random_state=rng))
+                    result_assignments[idx] = np.asarray(dist.rvs(size=S_total, random_state=rng))
                 else:
-                    self._assignments[idx] = np.asarray(dist.rvs(size=S_total))
+                    result_assignments[idx] = np.asarray(dist.rvs(size=S_total))
 
-        self._axis = Axis("_cross_product", ENSEMBLE)
-        self._weights_arr = weights
-        self.size = S_total
-        self._scenario = scenario
-        # Store init params so draw_batch can reconstruct with a different n_samples_per_combo.
-        self._init_restrictions: Mapping[Any, Sequence[str]] | None = restrictions if restrictions else None
-        self._init_max_categorical_size = max_categorical_size
-        self._init_exclude = list(exclude) if exclude is not None else None
+        return result_assignments, weights, S_total, combo_cats, combo_weights
+
+    def _draw_from_combos(
+        self,
+        n_samples_per_combo: int,
+        rng: np.random.Generator,
+    ) -> tuple[dict[GenericIndex, np.ndarray], np.ndarray]:
+        """Re-sample distributions over the categorical combos fixed at construction.
+
+        The categorical assignments from ``__init__`` are reused unchanged; only
+        distribution-backed indexes are drawn fresh using *rng*.  This is the
+        method called by :meth:`draw_batch` so that the categorical structure is
+        stable across all batches drawn from the same recipe.
+
+        Parameters
+        ----------
+        n_samples_per_combo:
+            Number of Monte Carlo samples per categorical combination.
+        rng:
+            Random generator for distribution sampling (may be ``None``).
+
+        Returns
+        -------
+        (assignments, weights)
+        """
+        S = self._n_combos
+        S_total = S * n_samples_per_combo
+        weights = np.repeat(self._combo_weights, n_samples_per_combo) / n_samples_per_combo
+
+        result_assignments: dict[GenericIndex, np.ndarray] = {}
+
+        # Categorical: reuse the per-combo arrays stored at construction.
+        for cat in self._categoricals:
+            result_assignments[cat] = np.repeat(self._combo_cats[cat], n_samples_per_combo)
+
+        # Distributions: re-sample with caller's rng (topo order — parents before children).
+        for idx in self._distributions:
+            if isinstance(idx, ConditionalDistributionIndex):
+                samples = np.empty(S_total)
+                for i in range(S):
+                    cat_parent_vals: dict[str, Any] = {}
+                    dist_parents: list[Any] = []
+                    for p in idx.parents:
+                        if isinstance(p, CategoricalIndex | ConditionalCategoricalIndex):
+                            cat_parent_vals[p.name] = self._combo_cats[p][i]
+                        else:
+                            dist_parents.append(p)
+                    if not dist_parents:
+                        d = idx.distribution_for(**cat_parent_vals)
+                        start = i * n_samples_per_combo
+                        raws = d.rvs(size=n_samples_per_combo, random_state=rng)
+                        samples[start : start + n_samples_per_combo] = np.asarray(raws).ravel()
+                    else:
+                        for r in range(n_samples_per_combo):
+                            full_idx = i * n_samples_per_combo + r
+                            parent_vals: dict[str, Any] = dict(cat_parent_vals)
+                            for p in dist_parents:
+                                parent_vals[p.name] = float(result_assignments[p][full_idx])
+                            d = idx.distribution_for(**parent_vals)
+                            samples[full_idx] = float(d.rvs(random_state=rng))
+                result_assignments[idx] = samples
+            else:
+                dist = self._scenario.effective_distribution(idx)
+                assert dist is not None
+                result_assignments[idx] = np.asarray(dist.rvs(size=S_total, random_state=rng))
+
+        return result_assignments, weights
 
     @property
     def ensemble_axes(self) -> tuple[Axis, ...]:
@@ -1276,16 +1387,18 @@ class CrossProductEnsemble:
         return self.size
 
     def draw_batch(self, size: int, rng: np.random.Generator, *, axis: str | None = None) -> FrozenEnsemble:
-        """Draw *size* additional samples per categorical combination.
+        """Draw *size* samples per categorical combination using *rng*.
 
-        Reconstructs the cross-product with the same scenario, restrictions,
-        and categorical structure but with ``n_samples_per_combo=size`` and
-        *rng* as the source of randomness.
+        Reuses the categorical combinations fixed at construction time and
+        re-samples only distribution-backed indexes with *rng*.  The
+        categorical structure is therefore identical across all batches drawn
+        from the same recipe, including when ``max_categorical_size`` caused
+        categories to be sampled rather than fully enumerated.
 
         Parameters
         ----------
         size:
-            Number of new Monte Carlo samples to draw **per categorical combo**.
+            Number of Monte Carlo samples to draw **per categorical combo**.
         rng:
             Caller-owned :class:`numpy.random.Generator`.  Advanced in-place.
         axis:
@@ -1299,18 +1412,11 @@ class CrossProductEnsemble:
         """
         if axis is not None:
             raise ValueError(f"CrossProductEnsemble has a single ENSEMBLE axis; axis= must be None, got {axis!r}.")
-        new_cpe = CrossProductEnsemble(
-            self._scenario,
-            restrictions=self._init_restrictions,
-            max_categorical_size=self._init_max_categorical_size,
-            n_samples_per_combo=size,
-            exclude=self._init_exclude,
-            rng=rng,
-        )
+        assignments, weights = self._draw_from_combos(size, rng)
         return FrozenEnsemble(
-            (new_cpe.ensemble_axes[0],),
-            (new_cpe.ensemble_weights[0],),
-            dict(new_cpe.assignments()),
+            (self._axis,),
+            (weights,),
+            assignments,
         )
 
 
