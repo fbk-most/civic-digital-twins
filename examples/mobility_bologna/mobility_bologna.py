@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from pathlib import Path
 
@@ -19,7 +18,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 from scipy import stats
 
-from civic_digital_twins.dt_model import Index, Scenario
+from civic_digital_twins.dt_model import Scenario
 from civic_digital_twins.dt_model.simulation.runner import EvaluationConfig
 
 try:
@@ -157,16 +156,16 @@ if __name__ == "__main__":
     # ── Stricter pricing scenario ─────────────────────────────────────────────
     # Higher fees with a steeper Euro-class gradient: older/more polluting
     # vehicles pay substantially more, incentivising fleet-mix shifts.
-    _m_strict = BolognaModel(
-        inputs=dataclasses.replace(
-            BolognaModel.default_inputs(),
-            i_p_cost=[Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
+    # Only the per-Euro-class cost values change — the model graph is reused
+    # and the same evaluator receives a Scenario with overrides.
+    _output_strict = _evaluator.evaluate(
+        Scenario(
+            _m,
+            overrides={cost_idx: 8.00 - e * 0.50 for e, cost_idx in enumerate(_m.inputs.i_p_cost)},
         ),
-        fns=BolognaModel.default_fns(),
+        _config,
     )
-    _evaluator_strict = BolognaEvaluator(_m_strict)
-    _output_strict = _evaluator_strict.evaluate(Scenario(_m_strict), _config)
-    _save_scenario_plots("strict", _m_strict, _output_strict, _out)
+    _save_scenario_plots("strict", _m, _output_strict, _out)
 
     print("\nStricter pricing scenario (euro_0: 8.00 €, euro_6: 5.00 €):")
     for k, v in _output_strict.kpis.items():

@@ -562,14 +562,24 @@ class BolognaModel(Model):
     def default_inputs(cls) -> Inputs:
         """Return the reference-scenario inputs as an :class:`~.Inputs` instance.
 
-        Pass to :class:`BolognaModel` or override individual fields with
-        :func:`dataclasses.replace`::
+        Pass to :class:`BolognaModel` to build the reference scenario::
 
             m = BolognaModel(inputs=BolognaModel.default_inputs(), fns=BolognaModel.default_fns())
-            m_alt = BolognaModel(
-                inputs=dataclasses.replace(BolognaModel.default_inputs(), i_p_cost=[...]),
-                fns=BolognaModel.default_fns(),
+
+        To run what-if scenarios that change only index *values*, wrap the model in a
+        :class:`~dt_model.Scenario` with overrides — the model graph and evaluator are
+        reused, only the injected values change::
+
+            evaluator = BolognaEvaluator(m)
+            output = evaluator.evaluate(
+                Scenario(m, overrides={cost_idx: new_val for cost_idx, new_val in ...}),
+                config,
             )
+
+        Use :func:`dataclasses.replace` only when you need to swap in different
+        :class:`~dt_model.Index` *objects* (new graph nodes), which is necessary for
+        :class:`~dt_model.ConstIndex` / :class:`~dt_model.ConstTimeseriesIndex` fields
+        or when the structural wiring of the model must change.
         """
         return cls.Inputs(
             i_p_start_time=Index("start time", (pd.Timestamp("07:30:00") - pd.Timestamp("00:00:00")).total_seconds()),
