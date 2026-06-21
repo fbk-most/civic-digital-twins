@@ -88,6 +88,7 @@ from civic_digital_twins.dt_model import (
     Model,
     Scenario,
     define,
+    expose,
     graph,
     inputs,
     outputs,
@@ -358,12 +359,6 @@ class MolvenoModel(Model):
     :func:`dataclasses.replace`::
 
         m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-        m.inputs.cvs                        # list of CategoricalIndex (weekday, season, weather)
-        m.inputs.pvs                        # list of ConditionalDistributionIndex
-        m.inputs.i_u_tourists_parking       # overridable parameter Index
-        m.cv_weather                        # named alias set by compute()
-        m.parking.outputs.i_u_parking       # usage formula Index
-        m.parking.constraint                # Constraint object
     """
 
     @inputs
@@ -413,6 +408,15 @@ class MolvenoModel(Model):
         """Contractual outputs of :class:`MolvenoModel`."""
 
         usage_indexes: list[GenericIndex]
+
+    @expose
+    class Expose:
+        """Sub-model output proxies for inspection."""
+
+        parking: ParkingModel.Outputs
+        beach: BeachModel.Outputs
+        accommodation: AccommodationModel.Outputs
+        food: FoodModel.Outputs
 
     @classmethod
     def default_inputs(cls) -> Inputs:
@@ -498,7 +502,7 @@ class MolvenoModel(Model):
             i_p_excursionists_saturation_level=Index("excursionists saturation level", 10000),
         )
 
-    def compute(self, inputs: Inputs) -> Outputs:
+    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
         """Wire concern sub-models from inputs."""
         parking = ParkingModel(
             inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
@@ -553,12 +557,16 @@ class MolvenoModel(Model):
             accommodation.constraint,
             food.constraint,
         ]
-        self.parking = parking
-        self.beach = beach
-        self.accommodation = accommodation
-        self.food = food
 
-        return MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints])
+        return (
+            MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints]),
+            MolvenoModel.Expose(
+                parking=parking.outputs,
+                beach=beach.outputs,
+                accommodation=accommodation.outputs,
+                food=food.outputs,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------

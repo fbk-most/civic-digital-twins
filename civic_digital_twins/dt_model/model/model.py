@@ -88,20 +88,32 @@ def _iter_scalars(value: _ProxyValue) -> Iterator[GenericIndex]:
     Parameters
     ----------
     value:
-        A single :class:`~.index.GenericIndex`, a ``list`` of them, or a
-        ``dict`` mapping strings to them.
+        A single :class:`~.index.GenericIndex`, a ``list`` of them, a
+        ``dict`` mapping strings to them, or a nested ``@expose`` or
+        ``@outputs``-decorated dataclass instance (recurses into its fields).
 
     Yields
     ------
     GenericIndex
         Each scalar index in declaration order.
     """
-    if isinstance(value, dict):
+    _dc = getattr(value, "_dc", None)
+    if _dc is not None and getattr(type(_dc), "_is_expose", False):
+        # IOProxy wrapping an @expose dataclass — its __iter__ yields scalars
+        yield from value  # type: ignore[misc]
+    elif _dc is not None and getattr(type(_dc), "_is_outputs", False):
+        # IOProxy wrapping an @outputs dataclass — surface sub-model outputs for inspection
+        yield from value  # type: ignore[misc]
+    elif getattr(type(value), "_is_expose", False) or getattr(type(value), "_is_outputs", False):
+        # raw @expose or @outputs dataclass passed directly — recurse into fields
+        for field in dataclasses.fields(value):  # type: ignore[arg-type]
+            yield from _iter_scalars(getattr(value, field.name))
+    elif isinstance(value, dict):
         yield from value.values()
     elif isinstance(value, list):
         yield from value
     else:
-        yield value
+        yield value  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

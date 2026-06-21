@@ -537,19 +537,19 @@ class BolognaModel(Model):
         total_shifted: Index
         total_paying: Index
         avg_cost: Index
-        total_payed: Index
+        total_paid: Index
         total_emissions: Index
         total_modified_emissions: Index
 
     @expose
     class Expose:
-        """Inspectable timeseries used by plotting helpers."""
+        """Timeseries surfaced for plotting helpers."""
 
-        ts_inflow: TimeseriesIndex
-        modified_inflow: Index
-        traffic: TimeseriesIndex
-        modified_traffic: TimeseriesIndex
-        emissions: TimeseriesIndex
+        ts_inflow:          ConstTimeseriesIndex
+        modified_inflow:    Index
+        traffic:            TimeseriesIndex
+        modified_traffic:   TimeseriesIndex
+        emissions:          TimeseriesIndex
         modified_emissions: Index
 
     @functions
@@ -613,7 +613,7 @@ class BolognaModel(Model):
         ts_inflow = ConstTimeseriesIndex("inflow", vehicle_inflow)
         ts_starting = ConstTimeseriesIndex("staring", vehicle_starting)
 
-        _inflow = InflowModel(
+        inflow = InflowModel(
             inputs=InflowModel.Inputs(  # type: ignore[call-arg]
                 ts_inflow=ts_inflow,
                 ts_starting=ts_starting,
@@ -631,45 +631,45 @@ class BolognaModel(Model):
             )
         )
 
-        _traffic = TrafficModel(  # type: ignore[call-arg]
+        traffic = TrafficModel(  # type: ignore[call-arg]
             inputs=TrafficModel.Inputs(
                 ts_inflow=ts_inflow,
                 ts_starting=ts_starting,
-                modified_inflow=_inflow.outputs.modified_inflow,
-                modified_starting=_inflow.outputs.modified_starting,
+                modified_inflow=inflow.outputs.modified_inflow,
+                modified_starting=inflow.outputs.modified_starting,
             ),
             fns=TrafficModel.Functions(ts_solve=fns.ts_solve),
         )
 
-        _emissions = EmissionsModel(
+        emissions = EmissionsModel(
             inputs=EmissionsModel.Inputs(  # type: ignore[call-arg]
                 ts=ts,
                 i_p_start_time=inputs.i_p_start_time,
                 i_p_end_time=inputs.i_p_end_time,
-                traffic=_traffic.outputs.traffic,
-                modified_traffic=_traffic.outputs.modified_traffic,
-                modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
+                traffic=traffic.outputs.traffic,
+                modified_traffic=traffic.outputs.modified_traffic,
+                modified_euro_class_split=inflow.outputs.modified_euro_class_split,
             )
         )
 
         return (
             BolognaModel.Outputs(
-                total_base_inflow=_inflow.outputs.total_base_inflow,
-                total_modified_inflow=_inflow.outputs.total_modified_inflow,
-                total_shifted=_inflow.outputs.total_shifted,
-                total_paying=_inflow.outputs.total_paying,
-                avg_cost=_inflow.outputs.avg_cost,
-                total_payed=_inflow.outputs.total_paid,
-                total_emissions=_emissions.outputs.total_emissions,
-                total_modified_emissions=_emissions.outputs.total_modified_emissions,
+                total_base_inflow=inflow.outputs.total_base_inflow,
+                total_modified_inflow=inflow.outputs.total_modified_inflow,
+                total_shifted=inflow.outputs.total_shifted,
+                total_paying=inflow.outputs.total_paying,
+                avg_cost=inflow.outputs.avg_cost,
+                total_paid=inflow.outputs.total_paid,
+                total_emissions=emissions.outputs.total_emissions,
+                total_modified_emissions=emissions.outputs.total_modified_emissions,
             ),
             BolognaModel.Expose(
                 ts_inflow=ts_inflow,
-                modified_inflow=_inflow.outputs.modified_inflow,
-                traffic=_traffic.outputs.traffic,
-                modified_traffic=_traffic.outputs.modified_traffic,
-                emissions=_emissions.outputs.emissions,
-                modified_emissions=_emissions.outputs.modified_emissions,
+                modified_inflow=inflow.outputs.modified_inflow,
+                traffic=traffic.outputs.traffic,
+                modified_traffic=traffic.outputs.modified_traffic,
+                emissions=emissions.outputs.emissions,
+                modified_emissions=emissions.outputs.modified_emissions,
             ),
         )
 
@@ -702,7 +702,7 @@ def compute_kpis(m: BolognaModel, result: EvaluationResult) -> dict:
         "Paying inflow [veh/day]": (
             int(result.expected_value(m.outputs.total_paying)) if result.expected_value(m.outputs.avg_cost) > 0 else 0
         ),
-        "Collected fees [€/day]": int(result.expected_value(m.outputs.total_payed)),
+        "Collected fees [€/day]": int(result.expected_value(m.outputs.total_paid)),
         "Emissions [NOx gr/day]": int(result.expected_value(m.outputs.total_modified_emissions)),
         "Modified emissions [NOx gr/day]": int(result.expected_value(m.outputs.total_emissions))
         - int(result.expected_value(m.outputs.total_modified_emissions)),

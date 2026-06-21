@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-07                                     |
+| Last-Updated | 2026-06-21                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -85,21 +85,21 @@ from one to the next:
 
 ```python
 def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
-    _inflow = InflowModel(inputs=InflowModel.Inputs(
+    inflow = InflowModel(inputs=InflowModel.Inputs(
         ts_inflow=inputs.ts_inflow,
         ts_starting=inputs.ts_starting,
         ...
     ))
-    _traffic = TrafficModel(inputs=TrafficModel.Inputs(
+    traffic = TrafficModel(inputs=TrafficModel.Inputs(
         ts_inflow=inputs.ts_inflow,
         ts_starting=inputs.ts_starting,
-        modified_inflow=_inflow.outputs.modified_inflow,     # Level-1 wiring
-        modified_starting=_inflow.outputs.modified_starting,
+        modified_inflow=inflow.outputs.modified_inflow,     # Level-1 wiring
+        modified_starting=inflow.outputs.modified_starting,
     ))
-    _emissions = EmissionsModel(inputs=EmissionsModel.Inputs(
-        traffic=_traffic.outputs.traffic,                    # Level-1 wiring
-        modified_traffic=_traffic.outputs.modified_traffic,
-        modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
+    emissions = EmissionsModel(inputs=EmissionsModel.Inputs(
+        traffic=traffic.outputs.traffic,                    # Level-1 wiring
+        modified_traffic=traffic.outputs.modified_traffic,
+        modified_euro_class_split=inflow.outputs.modified_euro_class_split,
         ...
     ))
     ...
@@ -363,6 +363,40 @@ bad = SomeModel(anticipating=inflow.expose.i_fraction_anticipating)  # forbidden
 
 The rule is simple: `Expose` is for *reading*, never for *wiring*.
 
+#### Surfacing sub-model diagnostics in bulk
+
+A root model's `@expose` fields may hold a sub-model's `.expose` or `.outputs` proxy directly.
+This surfaces all of the sub-model's diagnostics (or outputs) for inspection without manually
+listing each index:
+
+```python
+@define("Root")
+class RootModel(Model):
+
+    @expose
+    class Expose:
+        inflow:     InflowModel.Expose    # all InflowModel diagnostics
+        inflow_out: InflowModel.Outputs   # all InflowModel outputs (for bulk inspection)
+
+    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
+        inflow = InflowModel(...)
+        ...
+        return (
+            RootModel.Outputs(...),
+            RootModel.Expose(
+                inflow=inflow.expose,
+                inflow_out=inflow.outputs,
+            ),
+        )
+
+m = RootModel(...)
+m.expose.inflow.i_fraction_anticipating   # sub-model diagnostic
+m.expose.inflow_out.modified_inflow       # sub-model output, for inspection only
+```
+
+All indexes reachable through these nested proxies are included in `m.indexes`, so they can be
+read from an `EvaluationResult` via `result[m.expose.inflow.i_fraction_anticipating]`.
+
 ### Level 3 — Internal (local variables inside `compute()`)
 
 Indexes bound only to local variables inside `compute()` are engine-internal.  They participate in the
@@ -430,15 +464,17 @@ class PipelineModel(Model):
 ### Key rules
 
 1. **Construct sub-models as local variables inside `compute()`.**  Sub-model instances
-   (`_inflow`, `_traffic`, …) live only inside the root's `compute()`.  They are not assigned to
-   `self.*` and are not exposed directly — only their index *objects* are returned via `Outputs` or
-   `Expose`.
+   (`inflow`, `traffic`, …) live only inside the root's `compute()`.  They are not assigned to
+   `self.*`.  Their index *objects* are returned via `Outputs` or `Expose` — either individually
+   (`modified_inflow=inflow.outputs.modified_inflow`) or in bulk by passing the whole proxy
+   (`inflow=inflow.expose`, `inflow_out=inflow.outputs`).  See
+   [Surfacing sub-model diagnostics in bulk](#surfacing-sub-model-diagnostics-in-bulk).
 
 2. **Wire outputs by name, not by position.**  Always use
    `stage_a.outputs.modified_inflow` rather than indexing into a flat list.  Named access is
    self-documenting and type-safe.
 
-3. **The root's `outputs` hold references, not copies.**  `total_base_inflow=_inflow.outputs.total_base_inflow`
+3. **The root's `outputs` hold references, not copies.**  `total_base_inflow=inflow.outputs.total_base_inflow`
    stores a reference to the same `Index` object that lives inside `InflowModel`.  The evaluation
    engine operates on object identity, so no duplication or aliasing occurs.
 
@@ -526,15 +562,6 @@ with warnings.catch_warnings():
 
 `InputsContractWarning` is a subclass of `ModelContractWarning`, so a single filter on the base class
 catches all present and future contract-violation categories.
-
-### What `Expose` fields are exempt from
-
-Fields declared in `Expose` are intentionally exempt from this check.  `Expose` holds purely
-internal intermediates — indexes created inside `compute()`, not received from the caller.  The
-warning mechanism therefore never fires for them: an `Expose` index in the constructor's local
-frame is known to be an output, not an undeclared input.  If `Expose` is misused so that an
-index is passed in from outside, that is a model design error that code review should catch — the
-warning mechanism does not cover it.
 
 ---
 
@@ -1108,7 +1135,7 @@ class BolognaModel(Model):
     @expose
     class Expose:
         # Timeseries surfaced for plotting helpers
-        ts_inflow:          TimeseriesIndex
+        ts_inflow:          ConstTimeseriesIndex
         modified_inflow:    Index
         traffic:            TimeseriesIndex
         modified_traffic:   TimeseriesIndex
@@ -1134,12 +1161,12 @@ class BolognaModel(Model):
 
     def compute(self, inputs: Inputs, *, fns: Functions) -> tuple[Outputs, Expose]:
         # ── Internal timeseries (Level 3) ──────────────────────────────────────
-        ts          = TimeseriesIndex("time range", np.array([...]))
-        ts_inflow   = TimeseriesIndex("inflow", vehicle_inflow)
-        ts_starting = TimeseriesIndex("starting", vehicle_starting)
+        ts          = ConstTimeseriesIndex("time range", np.array([...]))
+        ts_inflow   = ConstTimeseriesIndex("inflow", vehicle_inflow)
+        ts_starting = ConstTimeseriesIndex("starting", vehicle_starting)
 
         # ── Sub-models in pipeline order ──────────────────────────────────────
-        _inflow = InflowModel(inputs=InflowModel.Inputs(
+        inflow = InflowModel(inputs=InflowModel.Inputs(
             ts_inflow=ts_inflow,
             ts_starting=ts_starting,
             ts=ts,
@@ -1147,38 +1174,38 @@ class BolognaModel(Model):
             ...
         ))
 
-        _traffic = TrafficModel(
+        traffic = TrafficModel(
             inputs=TrafficModel.Inputs(
                 ts_inflow=ts_inflow,
                 ts_starting=ts_starting,
-                modified_inflow=_inflow.outputs.modified_inflow,      # ← Level-1 wiring
-                modified_starting=_inflow.outputs.modified_starting,
+                modified_inflow=inflow.outputs.modified_inflow,      # ← Level-1 wiring
+                modified_starting=inflow.outputs.modified_starting,
             ),
             fns=TrafficModel.Functions(ts_solve=fns.ts_solve),
         )
 
-        _emissions = EmissionsModel(inputs=EmissionsModel.Inputs(
+        emissions = EmissionsModel(inputs=EmissionsModel.Inputs(
             ts=ts,
             i_p_start_time=inputs.i_p_start_time,
             i_p_end_time=inputs.i_p_end_time,
-            traffic=_traffic.outputs.traffic,                     # ← Level-1 wiring
-            modified_traffic=_traffic.outputs.modified_traffic,
-            modified_euro_class_split=_inflow.outputs.modified_euro_class_split,
+            traffic=traffic.outputs.traffic,                     # ← Level-1 wiring
+            modified_traffic=traffic.outputs.modified_traffic,
+            modified_euro_class_split=inflow.outputs.modified_euro_class_split,
         ))
 
         return (
             BolognaModel.Outputs(
-                total_base_inflow=_inflow.outputs.total_base_inflow,
+                total_base_inflow=inflow.outputs.total_base_inflow,
                 ...
-                total_modified_emissions=_emissions.outputs.total_modified_emissions,
+                total_modified_emissions=emissions.outputs.total_modified_emissions,
             ),
             BolognaModel.Expose(
                 ts_inflow=ts_inflow,
-                modified_inflow=_inflow.outputs.modified_inflow,
-                traffic=_traffic.outputs.traffic,
-                modified_traffic=_traffic.outputs.modified_traffic,
-                emissions=_emissions.outputs.emissions,
-                modified_emissions=_emissions.outputs.modified_emissions,
+                modified_inflow=inflow.outputs.modified_inflow,
+                traffic=traffic.outputs.traffic,
+                modified_traffic=traffic.outputs.modified_traffic,
+                emissions=emissions.outputs.emissions,
+                modified_emissions=emissions.outputs.modified_emissions,
             ),
         )
 ```
@@ -1192,7 +1219,7 @@ engine.  `Outputs` covers the 8 KPI scalars; `Expose` covers the plotting timese
 
 **Annotation — `outputs` stores references to sub-model index objects:**
 
-`total_base_inflow=_inflow.outputs.total_base_inflow` stores a reference to the same `Index` object
+`total_base_inflow=inflow.outputs.total_base_inflow` stores a reference to the same `Index` object
 that lives inside `InflowModel`.  The evaluation engine operates on object identity, so no duplication
 or aliasing occurs.  The `BolognaModel` does not own these indexes; it is a wiring hub.
 
@@ -1201,15 +1228,6 @@ or aliasing occurs.  The `BolognaModel` does not own these indexes; it is a wiri
 ```python
 # Reference scenario — use built-in defaults
 m = BolognaModel(inputs=BolognaModel.default_inputs(), fns=BolognaModel.default_fns())
-
-# Alternative scenario — override one parameter via dataclasses.replace
-m_strict = BolognaModel(
-    inputs=dataclasses.replace(
-        BolognaModel.default_inputs(),
-        i_p_cost=[Index(f"cost euro {e}", 8.00 - e * 0.50) for e in range(7)],
-    ),
-    fns=BolognaModel.default_fns(),
-)
 
 scenario = Scenario(m)
 ensemble = DistributionEnsemble(scenario, size=500)
@@ -1224,7 +1242,23 @@ total_emissions       = result.expected_value(m.outputs.total_emissions)
 modified_inflow_ts = result[m.expose.modified_inflow]    # shape (S, T): S samples × T time-steps
 # ts_inflow is a ConstTimeseriesIndex (no stochastic dependency) → single timeseries
 reference_inflow   = result[m.expose.ts_inflow]          # shape (T,):  no sample axis
+
+# What-if scenario — override index values via Scenario(overrides=…)
+# The model graph (m) is reused; only the injected cost values change.
+scenario_strict = Scenario(
+    m,
+    overrides={cost_idx: 8.00 - e * 0.50 for e, cost_idx in enumerate(m.inputs.i_p_cost)},
+)
+result_strict = Evaluation(scenario_strict).evaluate(
+    ensemble=DistributionEnsemble(scenario_strict, size=500),
+)
 ```
+
+**Pattern guidance — `Scenario(overrides=…)` vs `dataclasses.replace`:**
+
+Use `Scenario(overrides=…)` whenever you are changing only the *values* of existing index nodes (scalars, cost levels, fractions, etc.).  The model graph is reused unchanged, so the same `BolognaModel` instance and `BolognaEvaluator` serve all what-if runs.
+
+Use `dataclasses.replace` only when the graph structure itself must change — for example, swapping in different `ConstIndex` or `ConstTimeseriesIndex` *objects* (which are graph nodes, not just values) or rewiring model inputs structurally.
 
 The evaluation layer is unaware of sub-models.  It sees a flat `m.indexes` list, resolves the graph,
 and evaluates it.  The sub-model structure is a pure construction-time concern; it has zero runtime

@@ -7,12 +7,8 @@ import warnings
 import numpy as np
 import pytest
 from overtourism_molveno.molveno_model import (
-    AccommodationModel,
-    BeachModel,
     Constraint,
-    FoodModel,
     MolvenoModel,
-    ParkingModel,
 )
 
 from civic_digital_twins.dt_model import (
@@ -291,13 +287,13 @@ def test_multiple_ensemble_members():
 # ---------------------------------------------------------------------------
 
 
-def test_molveno_model_has_four_sub_models():
-    """MolvenoModel exposes all four concern sub-models as named attributes."""
+def test_molveno_model_expose_has_four_sub_model_proxies():
+    """MolvenoModel.expose holds output proxies for all four concern sub-models."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.parking, ParkingModel)
-    assert isinstance(m.beach, BeachModel)
-    assert isinstance(m.accommodation, AccommodationModel)
-    assert isinstance(m.food, FoodModel)
+    assert m.expose.parking is not None
+    assert m.expose.beach is not None
+    assert m.expose.accommodation is not None
+    assert m.expose.food is not None
 
 
 def test_molveno_model_exposes_pvs():
@@ -328,123 +324,73 @@ def test_cv_probabilities_sum_to_one():
         assert abs(total - 1.0) < 1e-9, f"{cv.name}: outcomes sum to {total}"
 
 
-def test_parking_model_inputs_wired_from_root():
-    """ParkingModel presence inputs are the same objects as MolvenoModel attributes."""
-    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.parking.inputs.pv_tourists is m.inputs.pv_tourists
-    assert m.parking.inputs.pv_excursionists is m.inputs.pv_excursionists
-    assert m.parking.inputs.cv_weather is m.inputs.cv_weather
-
-
-def test_beach_model_inputs_wired_from_root():
-    """BeachModel presence inputs are the same objects as MolvenoModel attributes."""
-    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.beach.inputs.pv_tourists is m.inputs.pv_tourists
-    assert m.beach.inputs.pv_excursionists is m.inputs.pv_excursionists
-    assert m.beach.inputs.cv_weather is m.inputs.cv_weather
-
-
-def test_accommodation_model_inputs_wired_from_root():
-    """AccommodationModel.inputs.pv_tourists is the same object as MolvenoModel attribute."""
-    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.accommodation.inputs.pv_tourists is m.inputs.pv_tourists
-
-
-def test_food_model_inputs_wired_from_root():
-    """FoodModel presence inputs are the same objects as MolvenoModel attributes."""
-    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert m.food.inputs.pv_tourists is m.inputs.pv_tourists
-    assert m.food.inputs.pv_excursionists is m.inputs.pv_excursionists
-    assert m.food.inputs.cv_weather is m.inputs.cv_weather
-
-
 def test_concern_model_outputs_are_generic_indexes_only():
-    """Outputs dataclasses contain only GenericIndex instances (no Constraint)."""
+    """Expose proxies yield only GenericIndex instances (no Constraint)."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    for submodel in (m.parking, m.beach, m.accommodation, m.food):
-        for idx in submodel.outputs:
-            assert isinstance(idx, GenericIndex), (
-                f"{type(submodel).__name__}.outputs yielded a non-GenericIndex: {type(idx)}"
-            )
+    for proxy in (m.expose.parking, m.expose.beach, m.expose.accommodation, m.expose.food):
+        for idx in proxy:
+            assert isinstance(idx, GenericIndex), f"expose proxy yielded a non-GenericIndex: {type(idx)}"
 
 
 def test_concern_model_inputs_include_all_i_parameters():
-    """All i_* parameters are Inputs to the concern sub-model that uses them."""
+    """All i_* parameters are declared on MolvenoModel.Inputs."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
 
-    # Parking: 7 i_* params + 3 presence/cv inputs
-    assert isinstance(m.parking.inputs.i_u_tourists_parking, Index)
-    assert isinstance(m.parking.inputs.i_u_excursionists_parking, Index)
-    assert isinstance(m.parking.inputs.i_xa_tourists_per_vehicle, Index)
-    assert isinstance(m.parking.inputs.i_xa_excursionists_per_vehicle, Index)
-    assert isinstance(m.parking.inputs.i_xo_tourists_parking, Index)
-    assert isinstance(m.parking.inputs.i_xo_excursionists_parking, Index)
-    assert isinstance(m.parking.inputs.i_c_parking, DistributionIndex)
+    # Parking: 7 i_* params
+    assert isinstance(m.inputs.i_u_tourists_parking, Index)
+    assert isinstance(m.inputs.i_u_excursionists_parking, Index)
+    assert isinstance(m.inputs.i_xa_tourists_per_vehicle, Index)
+    assert isinstance(m.inputs.i_xa_excursionists_per_vehicle, Index)
+    assert isinstance(m.inputs.i_xo_tourists_parking, Index)
+    assert isinstance(m.inputs.i_xo_excursionists_parking, Index)
+    assert isinstance(m.inputs.i_c_parking, DistributionIndex)
 
-    # Beach: 5 i_* params + 3 presence/cv inputs
-    assert isinstance(m.beach.inputs.i_u_tourists_beach, Index)
-    assert isinstance(m.beach.inputs.i_u_excursionists_beach, Index)
-    assert isinstance(m.beach.inputs.i_xo_tourists_beach, DistributionIndex)
-    assert isinstance(m.beach.inputs.i_xo_excursionists_beach, Index)
-    assert isinstance(m.beach.inputs.i_c_beach, DistributionIndex)
+    # Beach: 5 i_* params
+    assert isinstance(m.inputs.i_u_tourists_beach, Index)
+    assert isinstance(m.inputs.i_u_excursionists_beach, Index)
+    assert isinstance(m.inputs.i_xo_tourists_beach, DistributionIndex)
+    assert isinstance(m.inputs.i_xo_excursionists_beach, Index)
+    assert isinstance(m.inputs.i_c_beach, DistributionIndex)
 
-    # Accommodation: 3 i_* params + 1 presence input
-    assert isinstance(m.accommodation.inputs.i_u_tourists_accommodation, Index)
-    assert isinstance(m.accommodation.inputs.i_xa_tourists_accommodation, Index)
-    assert isinstance(m.accommodation.inputs.i_c_accommodation, DistributionIndex)
+    # Accommodation: 3 i_* params
+    assert isinstance(m.inputs.i_u_tourists_accommodation, Index)
+    assert isinstance(m.inputs.i_xa_tourists_accommodation, Index)
+    assert isinstance(m.inputs.i_c_accommodation, DistributionIndex)
 
-    # Food: 5 i_* params + 3 presence/cv inputs
-    assert isinstance(m.food.inputs.i_u_tourists_food, Index)
-    assert isinstance(m.food.inputs.i_u_excursionists_food, Index)
-    assert isinstance(m.food.inputs.i_xa_visitors_food, Index)
-    assert isinstance(m.food.inputs.i_xo_visitors_food, Index)
-    assert isinstance(m.food.inputs.i_c_food, DistributionIndex)
-
-
-def test_concern_models_have_no_expose():
-    """Concern sub-models have no Expose — no internal uncertain parameters."""
-    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    for submodel in (m.parking, m.beach, m.accommodation, m.food):
-        assert len(submodel.expose) == 0, f"{type(submodel).__name__}.expose is not empty: {submodel.expose}"
-
-
-def test_concern_model_constraint_is_plain_attribute():
-    """Each concern sub-model exposes its Constraint as a plain instance attribute."""
-    m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    for submodel in (m.parking, m.beach, m.accommodation, m.food):
-        assert isinstance(submodel.constraint, Constraint), f"{type(submodel).__name__}.constraint is not a Constraint"
+    # Food: 5 i_* params
+    assert isinstance(m.inputs.i_u_tourists_food, Index)
+    assert isinstance(m.inputs.i_u_excursionists_food, Index)
+    assert isinstance(m.inputs.i_xa_visitors_food, Index)
+    assert isinstance(m.inputs.i_xo_visitors_food, Index)
+    assert isinstance(m.inputs.i_c_food, DistributionIndex)
 
 
 def test_parking_outputs_index_types():
-    """ParkingModel.outputs contains only the usage formula index."""
+    """ParkingModel outputs are accessible via expose and contain the usage index."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.parking.outputs.i_u_parking, Index)
-    assert len(m.parking.outputs) == 1
-    assert m.parking.constraint.name == "parking"
+    assert isinstance(m.expose.parking.i_u_parking, Index)
+    assert len(m.expose.parking) == 1
 
 
 def test_beach_outputs_index_types():
-    """BeachModel.outputs contains only the usage formula index."""
+    """BeachModel outputs are accessible via expose and contain the usage index."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.beach.outputs.i_u_beach, Index)
-    assert len(m.beach.outputs) == 1
-    assert m.beach.constraint.name == "beach"
+    assert isinstance(m.expose.beach.i_u_beach, Index)
+    assert len(m.expose.beach) == 1
 
 
 def test_accommodation_outputs_index_types():
-    """AccommodationModel.outputs contains only the usage formula index."""
+    """AccommodationModel outputs are accessible via expose and contain the usage index."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.accommodation.outputs.i_u_accommodation, Index)
-    assert len(m.accommodation.outputs) == 1
-    assert m.accommodation.constraint.name == "accommodation"
+    assert isinstance(m.expose.accommodation.i_u_accommodation, Index)
+    assert len(m.expose.accommodation) == 1
 
 
 def test_food_outputs_index_types():
-    """FoodModel.outputs contains only the usage formula index."""
+    """FoodModel outputs are accessible via expose and contain the usage index."""
     m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-    assert isinstance(m.food.outputs.i_u_food, Index)
-    assert len(m.food.outputs) == 1
-    assert m.food.constraint.name == "food"
+    assert isinstance(m.expose.food.i_u_food, Index)
+    assert len(m.expose.food) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -482,29 +428,29 @@ def test_presence_pvs_in_root_indexes():
 def test_all_capacity_indexes_in_root_indexes():
     """All four capacity DistributionIndexes appear in model.indexes."""
     cap_ids = {
-        id(model.parking.inputs.i_c_parking),
-        id(model.beach.inputs.i_c_beach),
-        id(model.accommodation.inputs.i_c_accommodation),
-        id(model.food.inputs.i_c_food),
+        id(model.inputs.i_c_parking),
+        id(model.inputs.i_c_beach),
+        id(model.inputs.i_c_accommodation),
+        id(model.inputs.i_c_food),
     }
     root_ids = {id(idx) for idx in model.indexes}
     assert cap_ids <= root_ids
 
 
 def test_beach_rotation_factor_in_root_indexes():
-    """i_xo_tourists_beach (DistributionIndex in BeachModel.Inputs) is in model.indexes."""
-    rotation_id = id(model.beach.inputs.i_xo_tourists_beach)
+    """i_xo_tourists_beach (DistributionIndex in MolvenoModel.Inputs) is in model.indexes."""
+    rotation_id = id(model.inputs.i_xo_tourists_beach)
     root_ids = {id(idx) for idx in model.indexes}
     assert rotation_id in root_ids
 
 
 def test_usage_formula_indexes_in_root_indexes():
-    """All four usage formula indexes appear in model.indexes."""
+    """All four usage formula indexes appear in model.indexes via expose."""
     usage_ids = {
-        id(model.parking.outputs.i_u_parking),
-        id(model.beach.outputs.i_u_beach),
-        id(model.accommodation.outputs.i_u_accommodation),
-        id(model.food.outputs.i_u_food),
+        id(model.expose.parking.i_u_parking),
+        id(model.expose.beach.i_u_beach),
+        id(model.expose.accommodation.i_u_accommodation),
+        id(model.expose.food.i_u_food),
     }
     root_ids = {id(idx) for idx in model.indexes}
     assert usage_ids <= root_ids
@@ -518,7 +464,7 @@ def test_root_indexes_has_no_duplicates():
 
 def test_beach_rotation_factor_is_abstract():
     """i_xo_tourists_beach is distribution-backed and therefore abstract."""
-    assert any(idx is model.beach.inputs.i_xo_tourists_beach for idx in model.abstract_indexes())
+    assert any(idx is model.inputs.i_xo_tourists_beach for idx in model.abstract_indexes())
 
 
 # ---------------------------------------------------------------------------
@@ -549,19 +495,6 @@ def test_molveno_model_constraints_list():
     assert len(model.constraints) == 4
     names = {c.name for c in model.constraints}
     assert names == {"parking", "beach", "accommodation", "food"}
-
-
-def test_molveno_model_constraints_match_sub_model_attributes():
-    """model.constraints entries are the same objects as sub-model .constraint attributes."""
-    sub_constraints = {
-        model.parking.constraint,
-        model.beach.constraint,
-        model.accommodation.constraint,
-        model.food.constraint,
-    }
-    root_constraints = set(model.constraints)
-    # Identity check via id()
-    assert {id(c) for c in sub_constraints} == {id(c) for c in root_constraints}
 
 
 def test_presence_transformation_indexes_in_root_indexes():
