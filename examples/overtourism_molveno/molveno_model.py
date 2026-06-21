@@ -88,6 +88,7 @@ from civic_digital_twins.dt_model import (
     Model,
     Scenario,
     define,
+    expose,
     graph,
     inputs,
     outputs,
@@ -358,12 +359,6 @@ class MolvenoModel(Model):
     :func:`dataclasses.replace`::
 
         m = MolvenoModel(inputs=MolvenoModel.default_inputs())
-        m.inputs.cvs                        # list of CategoricalIndex (weekday, season, weather)
-        m.inputs.pvs                        # list of ConditionalDistributionIndex
-        m.inputs.i_u_tourists_parking       # overridable parameter Index
-        m.cv_weather                        # named alias set by compute()
-        m.parking.outputs.i_u_parking       # usage formula Index
-        m.parking.constraint                # Constraint object
     """
 
     @inputs
@@ -413,6 +408,15 @@ class MolvenoModel(Model):
         """Contractual outputs of :class:`MolvenoModel`."""
 
         usage_indexes: list[GenericIndex]
+
+    @expose
+    class Expose:
+        """Sub-model output proxies for inspection."""
+
+        parking: ParkingModel.Outputs
+        beach: BeachModel.Outputs
+        accommodation: AccommodationModel.Outputs
+        food: FoodModel.Outputs
 
     @classmethod
     def default_inputs(cls) -> Inputs:
@@ -498,7 +502,7 @@ class MolvenoModel(Model):
             i_p_excursionists_saturation_level=Index("excursionists saturation level", 10000),
         )
 
-    def compute(self, inputs: Inputs) -> Outputs:
+    def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
         """Wire concern sub-models from inputs."""
         parking = ParkingModel(
             inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
@@ -553,12 +557,16 @@ class MolvenoModel(Model):
             accommodation.constraint,
             food.constraint,
         ]
-        self.parking = parking
-        self.beach = beach
-        self.accommodation = accommodation
-        self.food = food
 
-        return MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints])
+        return (
+            MolvenoModel.Outputs(usage_indexes=[c.usage for c in self.constraints]),
+            MolvenoModel.Expose(
+                parking=parking.outputs,
+                beach=beach.outputs,
+                accommodation=accommodation.outputs,
+                food=food.outputs,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +947,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         self._e_sample = e_sample
         self._target_presence_samples = target_presence_samples
 
-    def _pre_compute(self, config: EvaluationConfig) -> tuple[np.ndarray, np.ndarray, dict]:
+    def _pre_compute(self, scenario: Any, config: EvaluationConfig) -> tuple[np.ndarray, np.ndarray, dict]:
         """Pre-compute parameter axes and presence samples (no result dependency).
 
         Used by both :meth:`evaluate` and :meth:`run_async` to share the
@@ -947,6 +955,10 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
 
         Parameters
         ----------
+        scenario : Scenario
+            The scenario to evaluate; its overrides are forwarded to the
+            sampling ensemble so the scatter-plot presences reflect the same
+            conditions (e.g. a pinned weather value) as the main evaluation.
         config : EvaluationConfig
             Evaluation parameters; ``ensemble_size`` controls the cross-product
             size for the sampling ensemble.
@@ -961,7 +973,14 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
         pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
         tt = np.linspace(0, self._t_max, self._t_sample + 1)
         ee = np.linspace(0, self._e_max, self._e_sample + 1)
-        sampling_scenario = Scenario(model, parameter_axes=pvs)
+        # String categorical overrides make the index concrete (excluded from abstract_indexes),
+        # so sample_across can't resolve them as parents of pv_*. Convert to list form so
+        # the category remains abstract with probability 1.0 for that single value.
+        sampling_overrides = {
+            idx: ([val] if isinstance(idx, CategoricalIndex) and isinstance(val, str) else val)
+            for idx, val in scenario.overrides.items()
+        }
+        sampling_scenario = Scenario(model, overrides=sampling_overrides, parameter_axes=pvs)
         sampling_ensemble = CrossProductEnsemble(
             sampling_scenario,
             max_categorical_size=config.ensemble_size,
@@ -1047,7 +1066,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
             parameter axes, and a resume payload.
         """
         model = self._model
-        tt, ee, pv_samples = self._pre_compute(config)
+        tt, ee, pv_samples = self._pre_compute(scenario, config)
         ensemble = CrossProductEnsemble(scenario, max_categorical_size=config.ensemble_size)
         result = Evaluation(scenario).evaluate(
             ensemble=ensemble,
@@ -1084,7 +1103,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
             Handle whose :meth:`~dt_model.simulation.runner.ModelRunHandle.get`
             returns a :class:`MolvenoOutput`.
         """
-        tt, ee, pv_samples = self._pre_compute(config)
+        tt, ee, pv_samples = self._pre_compute(scenario, config)
         ensemble = CrossProductEnsemble(scenario, max_categorical_size=config.ensemble_size)
         future = _get_default_executor().submit(
             Evaluation(scenario).evaluate,

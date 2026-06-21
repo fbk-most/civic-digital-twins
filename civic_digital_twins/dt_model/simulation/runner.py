@@ -7,15 +7,25 @@ UIs).  Domain packages subclass :class:`ModelEvaluator` and
 :class:`ModelOutput` to expose a uniform evaluation lifecycle to any
 application.
 
-The lifecycle covered here is::
+**One-shot evaluation**::
 
     Scenario → ModelEvaluator.evaluate(scenario, config) → ModelOutput
-                                │
-                                ├─ ModelOutput.to_dict()   → save to storage
-                                └─ ModelOutput.from_dict() ← load from storage
-                                         │
-                                         └─ ModelEvaluator.resume(scenario, output, config)
-                                                  → EvaluationHandle  (extend ensemble)
+
+**Incremental evaluation**::
+
+    run = evaluator.start(scenario, config)    → IncrementalRun
+    run = evaluator.resume(scenario, out, cfg) → IncrementalRun
+               │
+               ├─ .extend(n)
+               ├─ .snapshot()               → ModelOutput  (no resume payload)
+               └─ .snapshot(resumable=True) → ModelOutput  (with resume payload)
+                                                  │
+                              ┌───────────────────┘
+                              ▼
+                 ModelOutput.to_dict()   → save to storage
+                 ModelOutput.from_dict() ← load from storage
+                              │
+                 evaluator.resume(scenario, output, config) → IncrementalRun
 
 See :class:`ModelEvaluator` for the full protocol surface.
 """
@@ -45,6 +55,7 @@ from .scenario import Scenario
 __all__ = [
     "EvaluationConfig",
     "IncompatibleResultError",
+    "IncrementalRun",
     "ModelEvaluator",
     "ModelOutput",
     "ModelRunHandle",
@@ -96,11 +107,10 @@ class EvaluationConfig:
     Parameters
     ----------
     ensemble_size : int
-        Total number of Monte Carlo samples drawn in one blocking
-        :meth:`ModelEvaluator.evaluate` call.  Equivalent to
-        :meth:`~simulation.handle.EvaluationHandle.evaluate`'s
-        ``initial_ensemble_size`` parameter.  Also used as the increment
-        size when :meth:`ModelEvaluator.resume` extends a saved evaluation.
+        Number of Monte Carlo samples drawn per batch.  Used as the
+        ``initial_ensemble_size`` in :meth:`ModelEvaluator.evaluate` and
+        :meth:`ModelEvaluator.start`, and as the default increment when
+        :meth:`IncrementalRun.extend` is called without an explicit *n*.
     """
 
     ensemble_size: int
@@ -242,6 +252,11 @@ def _decode_array(d: dict[str, Any]) -> np.ndarray:
     if d.get("encoding") == "json":
         return np.array(d["data"], dtype=object).reshape(tuple(d["shape"]))
     raw = base64.b64decode(d["data"].encode("ascii"))
+    # The numeric path stores raw bytes with the array's native dtype string
+    # (e.g. "float64"), which carries no explicit byte order.  Decoding therefore
+    # assumes the same endianness as the encoding host — sound for the intended
+    # save/resume-on-the-same-machine workflow, but not a portable wire format
+    # across architectures of differing endianness.
     return np.frombuffer(raw, dtype=np.dtype(d["dtype"])).reshape(tuple(d["shape"])).copy()
 
 
@@ -324,6 +339,11 @@ def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> Eva
         model, so the result is valid for the current session.
     """
     idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in indexes}
+    # factorized_weights is serialised keyed by axis name alone (it only ever holds
+    # ENSEMBLE axes), so we recover each axis's role via this name->role lookup.
+    # This is unambiguous because axis names are globally unique within an
+    # EvaluationResult (see Axis docstring): no two axes — across PARAMETER,
+    # ENSEMBLE, or DOMAIN — share a name, so the lookup cannot collide on role.
     axis_role: dict[str, str] = {row[0]: row[1] for row in data["axis_layout"]}
 
     state_values: dict = {}
@@ -701,6 +721,96 @@ class ModelRunHandle(Generic[OutputT]):
 
 
 # ---------------------------------------------------------------------------
+# IncrementalRun
+# ---------------------------------------------------------------------------
+
+
+class IncrementalRun(Generic[OutputT]):
+    """An in-progress incremental evaluation that can be extended and snapshotted.
+
+    Returned by :meth:`ModelEvaluator.start` and :meth:`ModelEvaluator.resume`.
+    Wraps an :class:`~simulation.handle.EvaluationHandle` together with the
+    context needed to produce domain-specific :class:`ModelOutput` instances
+    via :meth:`snapshot`.
+
+    Do not construct directly; obtain via :meth:`ModelEvaluator.start` or
+    :meth:`ModelEvaluator.resume`.
+
+    Parameters
+    ----------
+    handle : EvaluationHandle
+        The underlying incremental engine handle.
+    evaluator : ModelEvaluator
+        The evaluator that owns this run; used for :meth:`~ModelEvaluator.post_process`
+        and :meth:`~ModelEvaluator.attach_resume` in :meth:`snapshot`.
+    scenario : Scenario
+        The scenario under evaluation.
+    config : EvaluationConfig
+        Evaluation parameters; ``config.ensemble_size`` is the default
+        batch size for :meth:`extend`.
+    """
+
+    def __init__(
+        self,
+        handle: EvaluationHandle,
+        evaluator: ModelEvaluator[Any, OutputT],
+        scenario: Scenario,
+        config: EvaluationConfig,
+    ) -> None:
+        self._handle = handle
+        self._evaluator = evaluator
+        self._scenario = scenario
+        self._config = config
+
+    @property
+    def result(self) -> EvaluationResult:
+        """The current accumulated :class:`~simulation.evaluation.EvaluationResult`.
+
+        Returns the raw engine result.  Call :meth:`snapshot` to get the
+        domain-specific :class:`ModelOutput`.
+        """
+        return self._handle.result
+
+    def extend(self, n: int | None = None) -> None:
+        """Draw additional Monte Carlo samples and merge into the accumulated result.
+
+        Parameters
+        ----------
+        n : int, optional
+            Number of new samples to draw.  Defaults to
+            ``config.ensemble_size`` when ``None``.
+        """
+        self._handle.extend(n if n is not None else self._config.ensemble_size)
+
+    def snapshot(self, *, resumable: bool = False) -> OutputT:
+        """Materialise the current accumulated result as a domain :class:`ModelOutput`.
+
+        Calls :meth:`~ModelEvaluator.post_process` on the current
+        :attr:`result` without advancing the ensemble.  Each call produces
+        an independent :class:`ModelOutput`; the run is unaffected.
+
+        Parameters
+        ----------
+        resumable : bool, optional
+            When ``True``, attaches the full resume payload to the returned
+            output (via :meth:`~ModelEvaluator.attach_resume`) so that
+            :meth:`ModelEvaluator.resume` can later reconstruct this handle
+            from the saved output.  Defaults to ``False``.
+
+        Returns
+        -------
+        OutputT
+            The domain-specific evaluation output.
+            :attr:`~ModelOutput.is_resumable` is ``True`` iff *resumable*
+            was ``True``.
+        """
+        output = self._evaluator.post_process(self._scenario, self._handle.result)
+        if resumable:
+            self._evaluator.attach_resume(output, self._handle.result)
+        return output
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -745,28 +855,33 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
     The application layer then drives the uniform lifecycle::
 
         evaluator = DomainEvaluator(model)
-        output    = evaluator.evaluate(scenario, config)
-        data      = output.to_dict()                        # save
-        output2   = DomainOutput.from_dict(data)            # load
-        handle    = evaluator.resume(scenario, output2, config)  # extend
+
+        # one-shot (no resume payload):
+        output = evaluator.evaluate(scenario, config)
+
+        # incremental (resumable snapshot):
+        run    = evaluator.start(scenario, config)
+        run.extend(200)
+        output = run.snapshot(resumable=True)
+        data   = output.to_dict()                          # save
+        output2 = DomainOutput.from_dict(data)             # load
+        run2   = evaluator.resume(scenario, output2, config)
 
     **Abstract interface**: subclasses must implement :meth:`input_schema`.
     They should implement *either* :meth:`post_process` (letting the base
-    handle :meth:`evaluate` and :meth:`run_async`) or override those methods
-    directly for full control.
+    handle :meth:`evaluate`, :meth:`start`, and :meth:`run_async`) or
+    override those methods directly for full control.
 
-    **Override points for** :meth:`evaluate` **/**:meth:`run_async`:
+    **Override points for** :meth:`evaluate` **/**:meth:`start`:
 
     1. *Simple DistributionEnsemble model* — implement :meth:`post_process`
        only; override :attr:`eval_functions` if the model needs custom engine
-       callables.  The base templates for :meth:`evaluate` and
-       :meth:`run_async` handle everything else, including calling
-       :meth:`attach_resume` automatically.
+       callables.  The base templates handle everything else.
     2. *Parametric / complex model* — override :meth:`evaluate` (and
-       :meth:`run_async`) in full, then also override
+       :meth:`start` / :meth:`run_async`) in full, then also override
        :meth:`extract_resume_state` to reconstruct the parameter arrays.
-       Call :meth:`attach_resume` explicitly in your overrides when you
-       want the output to be resumable.
+       Call :meth:`attach_resume` explicitly in :meth:`~IncrementalRun.snapshot`
+       overrides when you want the output to be resumable.
 
     The :class:`ModelOutput` side of the contract uses :meth:`_serialize` /
     :meth:`_deserialize` for the summary layer.
@@ -868,10 +983,10 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         """Encode *result* and store it as the resume payload on *output*.
 
         Convenience wrapper around :func:`_encode_result` +
-        :meth:`~ModelOutput._store_resume`.  Called automatically by the
-        default :meth:`evaluate` and :meth:`run_async` templates.  Evaluators
-        that override those methods should call this explicitly when they want
-        their outputs to be resumable.
+        :meth:`~ModelOutput._store_resume`.  Called by
+        :meth:`IncrementalRun.snapshot` when ``resumable=True``.  Evaluators
+        that override :meth:`start` or need programmatic control over the
+        resume payload can call this directly.
 
         Parameters
         ----------
@@ -920,6 +1035,11 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         :attr:`eval_functions` and :attr:`eval_backend`, then delegates
         post-processing to :meth:`post_process`.
 
+        The returned output is **not resumable** (:attr:`~ModelOutput.is_resumable`
+        is always ``False``).  Use :meth:`start` to obtain an
+        :class:`IncrementalRun` from which :meth:`~IncrementalRun.snapshot`
+        can produce a resumable output.
+
         Override entirely for models that require a parameter grid or a
         different ensemble setup (e.g. Molveno).  Override
         :meth:`post_process` instead when only the output construction
@@ -944,9 +1064,48 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             functions=self.eval_functions,
             backend=self.eval_backend,
         )
-        output = self.post_process(scenario, result)
-        self.attach_resume(output, result)
-        return output
+        return self.post_process(scenario, result)
+
+    def start(
+        self,
+        scenario: Scenario,
+        config: EvaluationConfig,
+        *,
+        rng: np.random.Generator | None = None,
+    ) -> IncrementalRun[OutputT]:
+        """Run an initial batch and return an incremental handle.
+
+        Draws ``config.ensemble_size`` samples, executes the plan, and wraps
+        the result in an :class:`IncrementalRun`.  Use
+        :meth:`IncrementalRun.extend` to draw additional samples and
+        :meth:`IncrementalRun.snapshot` to produce a :class:`ModelOutput`.
+
+        Parameters
+        ----------
+        scenario : Scenario
+            The scenario to evaluate.
+        config : EvaluationConfig
+            Evaluation parameters.  ``config.ensemble_size`` sets the initial
+            batch size and the default increment for subsequent
+            :meth:`~IncrementalRun.extend` calls.
+        rng : numpy.random.Generator, optional
+            Random number generator for reproducibility.  When ``None``, a
+            fresh :func:`numpy.random.default_rng` is created.
+
+        Returns
+        -------
+        IncrementalRun[OutputT]
+            Handle seeded with the initial result.
+        """
+        handle = EvaluationHandle.evaluate(
+            Evaluation(scenario),
+            config.ensemble_size,
+            ensemble_recipe=self.make_ensemble(scenario, config),
+            functions=self.eval_functions,
+            backend=self.eval_backend,
+            rng=rng,
+        )
+        return IncrementalRun(handle, self, scenario, config)
 
     def run_async(self, scenario: Scenario, config: EvaluationConfig) -> ModelRunHandle[OutputT]:
         """Submit an engine-level async evaluation and return a handle immediately.
@@ -955,7 +1114,8 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         :meth:`AsyncEvaluationHandle.evaluate` with
         :attr:`eval_functions` and :attr:`eval_backend`, then wraps the
         result in a :class:`ModelRunHandle` whose post-processor is
-        :meth:`post_process`.
+        :meth:`post_process`.  The returned output is **not resumable**
+        (consistent with the one-shot :meth:`evaluate`).
 
         Override for models that need synchronous pre-computation or a
         parameter grid before the async engine call (e.g. Molveno).
@@ -978,15 +1138,9 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             functions=self.eval_functions,
             backend=self.eval_backend,
         )
-
-        def _post(result: EvaluationResult) -> OutputT:
-            output = self.post_process(scenario, result)
-            self.attach_resume(output, result)
-            return output
-
         return ModelRunHandle(
             future=async_handle.future,
-            post_process=_post,
+            post_process=lambda result: self.post_process(scenario, result),
         )
 
     def extract_resume_state(self, output: OutputT) -> ResumeState:
@@ -1093,15 +1247,14 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         config: EvaluationConfig,
         *,
         rng: np.random.Generator | None = None,
-    ) -> EvaluationHandle:
-        """Reconstruct an :class:`~simulation.handle.EvaluationHandle` from a saved output.
+    ) -> IncrementalRun[OutputT]:
+        """Reconstruct an :class:`IncrementalRun` from a previously saved output.
 
         Template method.  Checks that *output* is resumable, delegates
-        deserialisation to :meth:`extract_resume_state`, builds a fresh
-        :class:`~simulation.evaluation.Evaluation` plan, and returns an
-        :class:`~simulation.handle.EvaluationHandle` ready for
-        :meth:`~simulation.handle.EvaluationHandle.extend`.
-
+        deserialisation to :meth:`extract_resume_state`, rebuilds the
+        evaluation plan, and wraps the result in an :class:`IncrementalRun`.
+        Use :meth:`~IncrementalRun.extend` to draw additional samples and
+        :meth:`~IncrementalRun.snapshot` to materialise a :class:`ModelOutput`.
 
         Parameters
         ----------
@@ -1109,20 +1262,20 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             The scenario used to rebuild the evaluation plan.
         output : OutputT
             A previously produced :class:`ModelOutput`.  Must have
-            ``is_resumable == True``.
+            ``is_resumable == True`` (i.e. produced via
+            :meth:`IncrementalRun.snapshot` with ``resumable=True``).
         config : EvaluationConfig
-            Evaluation parameters (currently unused; reserved for future
-            convergence-loop support).
+            Evaluation parameters.  ``config.ensemble_size`` is used as the
+            default increment size for subsequent
+            :meth:`~IncrementalRun.extend` calls.
         rng : numpy.random.Generator, optional
             Random number generator for reproducible extension sampling.
             When ``None``, a fresh :func:`numpy.random.default_rng` is used.
 
         Returns
         -------
-        EvaluationHandle
-            Handle seeded with the saved result; call
-            :meth:`~simulation.handle.EvaluationHandle.extend` to draw
-            additional Monte Carlo samples.
+        IncrementalRun[OutputT]
+            Handle seeded with the saved result.
 
         .. note::
 
@@ -1130,9 +1283,9 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             :class:`~simulation.ensemble.DistributionEnsemble` using the
             public *scenario* argument, but does **not** restore the frozen
             sample snapshot (``_ensemble``).  When
-            ``extend(extra_parameters=…)`` is called, the abstract index
-            values are reconstructed from the saved result state so that the
-            common-random-numbers guarantee is preserved.
+            ``extend(extra_parameters=…)`` is called on the underlying handle,
+            the abstract index values are reconstructed from the saved result
+            state so that the common-random-numbers guarantee is preserved.
 
         Raises
         ------
@@ -1154,7 +1307,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         # so the recipe's nominal size is immaterial; exclude the parameter
         # indexes exactly as EvaluationHandle.evaluate() does.
         ensemble_recipe = DistributionEnsemble(scenario, config.ensemble_size, exclude=frozenset(state.parameters))
-        return EvaluationHandle(
+        handle = EvaluationHandle(
             evaluation=evaluation,
             plan=plan,
             result=state.result,
@@ -1165,3 +1318,4 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             functions=state.functions,
             backend=state.backend,
         )
+        return IncrementalRun(handle, self, scenario, config)

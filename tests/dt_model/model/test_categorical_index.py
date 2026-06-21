@@ -138,3 +138,25 @@ def test_importable_from_dt_model():
     from civic_digital_twins.dt_model import CategoricalIndex as CI  # noqa: PLC0415
 
     assert CI is CategoricalIndex
+
+
+# ===========================================================================
+# Hash / identity convention
+# ===========================================================================
+
+
+def test_categorical_index_hash_is_id_based():
+    """CategoricalIndex.__hash__ == id(self): different objects don't collide in sets.
+
+    CategoricalIndex.__eq__ returns a graph node (not bool), so the class
+    declares __hash__ = id to prevent silent misbehaviour in sets and dicts.
+    This test guards that invariant explicitly: two distinct objects with the
+    same parameters are different set members, while the same object is always
+    found in its own singleton set.
+    """
+    idx_a = CategoricalIndex("mode", {"bike": 0.5, "car": 0.5})
+    idx_b = CategoricalIndex("mode", {"bike": 0.5, "car": 0.5})
+
+    assert idx_a in {idx_a}, "same object must be found in its own singleton set"
+    assert idx_b not in {idx_a}, "distinct objects with same params must not share set membership"
+    assert not isinstance(idx_a == idx_b, bool), "__eq__ must return a graph node, not bool"

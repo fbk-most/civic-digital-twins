@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Model` inner classes to make the inter-model interface explicit and
   machine-checkable.  Each validates that fields hold `GenericIndex` instances
   (or lists/dicts thereof) at construction time, catching wiring errors early.
+  `@expose` fields additionally accept an `IOProxy` wrapping an `@expose`- or
+  `@outputs`-decorated dataclass, allowing a root model to bulk-surface a
+  sub-model's diagnostics or outputs without re-declaring each index individually
+  (e.g. `inflow=inflow.expose`, `traffic=traffic.outputs`); nested indexes are
+  included in `model.indexes` automatically.
   Passing a plain `@dataclass` now emits `DeprecationWarning`.  Exported from
   `civic_digital_twins.dt_model`.
 - All example models migrated to `@define` + `compute()`.  `BolognaModel` gains
@@ -151,22 +156,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-drawn sample arrays for one or more ENSEMBLE axes.  Produced by
   `BatchDrawable.draw_batch`; held by `EvaluationHandle` as the accumulated
   sample store.  Supports multi-axis ensembles via `concat_along` and
-  `with_replaced_axis`.
+  `with_replaced_axis`.  Exported from `civic_digital_twins.dt_model`.
 - `BatchDrawable` — `@runtime_checkable` protocol in `simulation/ensemble.py`;
   `draw_batch(size, rng, *, axis=None) → FrozenEnsemble` implemented by
   `DistributionEnsemble`, `CrossProductEnsemble`, and `PartitionedEnsemble`
   (closing #199).  Decouples `EvaluationHandle` from any concrete ensemble
   type: any `BatchDrawable` recipe can serve as the extension sampler.
+  Exported from `civic_digital_twins.dt_model`.
 
 **`ModelEvaluator` — stable application protocol**
 
 - `ModelEvaluator` / `ModelOutput` / `EvaluationConfig` — stable protocol
   layer between `dt_model` and application code (web APIs, CLIs, UIs).
   Domain packages subclass `ModelEvaluator` and `ModelOutput` to expose a
-  uniform evaluation lifecycle: blocking `evaluate()`, optional non-blocking
-  `run_async()` returning a `ModelRunHandle`, `get_index_diffs()` and
-  `get_model_values()` for scenario introspection, and `structure()` for
-  scenario-creation UIs.
+  uniform evaluation lifecycle: blocking `evaluate()`, incremental
+  `start() → IncrementalRun`, optional non-blocking `run_async()` returning a
+  `ModelRunHandle`, `get_index_diffs()` and `get_model_values()` for scenario
+  introspection, and `structure()` for scenario-creation UIs.
+- `IncrementalRun[OutputT]` — application-level incremental handle returned by
+  `ModelEvaluator.start()` and `ModelEvaluator.resume()`.
+  `extend(n)` draws *n* more samples and merges; `snapshot(resumable=True)`
+  captures the current output with an optional resume payload.
+  Exported from `civic_digital_twins.dt_model`.
 - `ModelEvaluator.resume()` — reconstruct an `EvaluationHandle` from a
   previously saved `ModelOutput` and extend the ensemble across sessions.
   `ModelOutput.is_resumable` and `IncompatibleResultError` form the

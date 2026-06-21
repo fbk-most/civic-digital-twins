@@ -7,7 +7,7 @@ import warnings
 
 import pytest
 
-from civic_digital_twins.dt_model import expose, inputs, outputs
+from civic_digital_twins.dt_model import define, expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import Model
 
@@ -309,3 +309,344 @@ def test_model_expose_decorated_class():
 
     m = M()
     assert m.expose.internal is internal
+
+
+# ---------------------------------------------------------------------------
+# Nested expose: IOProxy wrapping @expose (sub-model diagnostics)
+# ---------------------------------------------------------------------------
+
+
+def test_expose_accepts_nested_expose_proxy():
+    """@expose fields may hold an IOProxy wrapping an @expose dataclass."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            mid: Index
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            mid = Index("mid", inp.x)
+            return LeafModel.Outputs(y=mid), LeafModel.Expose(mid=mid)
+
+    @define("Root")
+    class RootModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        @expose
+        class Expose:
+            leaf: LeafModel.Expose  # IOProxy wrapping @expose
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            _leaf = LeafModel(inputs=LeafModel.Inputs(x=inp.x))
+            return RootModel.Outputs(z=_leaf.outputs.y), RootModel.Expose(leaf=_leaf.expose)
+
+    x = Index("x", 1.0)
+    m = RootModel(inputs=RootModel.Inputs(x=x))
+    assert m.expose.leaf is not None
+
+
+def test_nested_expose_proxy_attribute_access():
+    """m.expose.leaf.mid returns the correct sub-model intermediate index."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            mid: Index
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            mid = Index("mid", inp.x)
+            return LeafModel.Outputs(y=mid), LeafModel.Expose(mid=mid)
+
+    @define("Root")
+    class RootModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        @expose
+        class Expose:
+            leaf: LeafModel.Expose
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            _leaf = LeafModel(inputs=LeafModel.Inputs(x=inp.x))
+            return RootModel.Outputs(z=_leaf.outputs.y), RootModel.Expose(leaf=_leaf.expose)
+
+    x = Index("x", 1.0)
+    m = RootModel(inputs=RootModel.Inputs(x=x))
+    assert m.expose.leaf.mid is m.expose.leaf.mid  # same object each call
+
+
+def test_nested_expose_proxy_indexes_reachable():
+    """Indexes inside a nested expose proxy appear in model.indexes."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            mid: Index
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            mid = Index("mid", inp.x)
+            return LeafModel.Outputs(y=mid), LeafModel.Expose(mid=mid)
+
+    @define("Root")
+    class RootModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        @expose
+        class Expose:
+            leaf: LeafModel.Expose
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            _leaf = LeafModel(inputs=LeafModel.Inputs(x=inp.x))
+            return RootModel.Outputs(z=_leaf.outputs.y), RootModel.Expose(leaf=_leaf.expose)
+
+    x = Index("x", 1.0)
+    m = RootModel(inputs=RootModel.Inputs(x=x))
+    mid = m.expose.leaf.mid
+    assert any(idx is mid for idx in m.indexes)
+
+
+# ---------------------------------------------------------------------------
+# Nested expose: IOProxy wrapping @outputs (sub-model outputs for inspection)
+# ---------------------------------------------------------------------------
+
+
+def test_expose_accepts_nested_outputs_proxy():
+    """@expose fields may hold an IOProxy wrapping an @outputs dataclass."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @define("Root")
+    class RootModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        @expose
+        class Expose:
+            leaf_out: LeafModel.Outputs  # IOProxy wrapping @outputs
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            _leaf = LeafModel(inputs=LeafModel.Inputs(x=inp.x))
+            return RootModel.Outputs(z=_leaf.outputs.y), RootModel.Expose(leaf_out=_leaf.outputs)
+
+    x = Index("x", 1.0)
+    m = RootModel(inputs=RootModel.Inputs(x=x))
+    assert m.expose.leaf_out is not None
+
+
+def test_nested_outputs_proxy_attribute_access():
+    """m.expose.leaf_out.y returns the same object as the wired root output."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @define("Root")
+    class RootModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        @expose
+        class Expose:
+            leaf_out: LeafModel.Outputs
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            _leaf = LeafModel(inputs=LeafModel.Inputs(x=inp.x))
+            return RootModel.Outputs(z=_leaf.outputs.y), RootModel.Expose(leaf_out=_leaf.outputs)
+
+    x = Index("x", 1.0)
+    m = RootModel(inputs=RootModel.Inputs(x=x))
+    # The inspectable output is the same object as the wired root output
+    assert m.expose.leaf_out.y is m.outputs.z
+
+
+def test_nested_outputs_proxy_indexes_reachable():
+    """Indexes inside a nested outputs proxy appear in model.indexes."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @define("Root")
+    class RootModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        @expose
+        class Expose:
+            leaf_out: LeafModel.Outputs
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            _leaf = LeafModel(inputs=LeafModel.Inputs(x=inp.x))
+            return RootModel.Outputs(z=_leaf.outputs.y), RootModel.Expose(leaf_out=_leaf.outputs)
+
+    x = Index("x", 1.0)
+    m = RootModel(inputs=RootModel.Inputs(x=x))
+    leaf_y = m.expose.leaf_out.y
+    assert any(idx is leaf_y for idx in m.indexes)
+
+
+# ---------------------------------------------------------------------------
+# Nested expose: raw @expose dataclass (direct instantiation)
+# ---------------------------------------------------------------------------
+
+
+def test_expose_accepts_raw_expose_dataclass():
+    """@expose fields may hold a raw @expose-decorated dataclass instance."""
+
+    @expose
+    class Inner:
+        a: Index
+
+    @expose
+    class Outer:
+        inner: Inner  # raw @expose dataclass, not an IOProxy
+
+    a = Index("a", 7.0)
+    outer = Outer(inner=Inner(a=a))  # must not raise
+    assert outer.inner.a is a
+
+
+def test_raw_expose_dataclass_indexes_reachable():
+    """Indexes inside a raw nested @expose dataclass appear in model.indexes."""
+
+    @expose
+    class Inner:
+        a: Index
+
+    @expose
+    class Outer:
+        inner: Inner
+
+    a = Index("a", 7.0)
+
+    class M(Model):
+        def __init__(self) -> None:
+            super().__init__("M", expose=Outer(inner=Inner(a=a)))
+
+    m = M()
+    assert any(idx is a for idx in m.indexes)
+
+
+def test_expose_accepts_raw_outputs_dataclass():
+    """@expose fields may hold a raw @outputs-decorated dataclass instance."""
+
+    @outputs
+    class Inner:
+        a: Index
+
+    @expose
+    class Outer:
+        inner: Inner  # raw @outputs dataclass, not an IOProxy
+
+    a = Index("a", 7.0)
+    outer = Outer(inner=Inner(a=a))  # must not raise
+    assert outer.inner.a is a
+
+
+def test_raw_outputs_dataclass_indexes_reachable():
+    """Indexes inside a raw nested @outputs dataclass appear in model.indexes."""
+
+    @outputs
+    class Inner:
+        a: Index
+
+    @expose
+    class Outer:
+        inner: Inner
+
+    a = Index("a", 7.0)
+
+    class M(Model):
+        def __init__(self) -> None:
+            super().__init__("M", expose=Outer(inner=Inner(a=a)))
+
+    m = M()
+    assert any(idx is a for idx in m.indexes)

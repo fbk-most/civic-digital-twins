@@ -151,9 +151,20 @@ def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
     """Raise :class:`TypeError` if *val* is not a valid IO contract field value.
 
     Valid shapes: a single :class:`~.index.GenericIndex`, a ``list`` of them,
-    or a ``dict`` mapping strings to them.
+    a ``dict`` mapping strings to them, a nested ``@expose``-decorated dataclass
+    instance, or an ``IOProxy`` wrapping an ``@expose`` or ``@outputs`` dataclass
+    (for surfacing sub-model diagnostics and outputs for inspection).
     """
     if isinstance(val, GenericIndex):
+        return
+    if getattr(type(val), "_is_expose", False) or getattr(type(val), "_is_outputs", False):
+        return
+    # IOProxy wrapping an @expose or @outputs dataclass (model.expose / model.outputs
+    # both return IOProxy, not the raw dataclass)
+    _dc = getattr(val, "_dc", None)
+    if _dc is not None and getattr(type(_dc), "_is_expose", False):
+        return
+    if _dc is not None and getattr(type(_dc), "_is_outputs", False):
         return
     if isinstance(val, list):
         for i, item in enumerate(val):
@@ -242,9 +253,13 @@ expose = _make_io_decorator("_is_expose")
 expose.__name__ = "expose"
 expose.__doc__ = """Decorator for declaring inspectable non-contractual indexes on a :class:`~.model.Model` subclass.
 
-Wraps ``@dataclass`` and validates at construction time that every field
-holds a :class:`~.index.GenericIndex`, a ``list`` of them, or a ``dict``
-mapping strings to them.
+Wraps ``@dataclass`` and validates at construction time that every field holds one of:
+
+* a :class:`~.index.GenericIndex` (scalar, list, or dict thereof), or
+* an ``IOProxy`` wrapping an ``@expose``-decorated dataclass — to surface a sub-model's
+  diagnostics in bulk (``inflow=_inflow.expose``), or
+* an ``IOProxy`` wrapping an ``@outputs``-decorated dataclass — to surface a sub-model's
+  outputs for inspection in bulk (``inflow_out=_inflow.outputs``).
 
 Passing a plain ``@dataclass`` instance as ``expose=`` to
 :class:`~.model.Model` is deprecated; use ``@expose`` instead.

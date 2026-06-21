@@ -88,20 +88,32 @@ def _iter_scalars(value: _ProxyValue) -> Iterator[GenericIndex]:
     Parameters
     ----------
     value:
-        A single :class:`~.index.GenericIndex`, a ``list`` of them, or a
-        ``dict`` mapping strings to them.
+        A single :class:`~.index.GenericIndex`, a ``list`` of them, a
+        ``dict`` mapping strings to them, or a nested ``@expose`` or
+        ``@outputs``-decorated dataclass instance (recurses into its fields).
 
     Yields
     ------
     GenericIndex
         Each scalar index in declaration order.
     """
-    if isinstance(value, dict):
+    _dc = getattr(value, "_dc", None)
+    if _dc is not None and getattr(type(_dc), "_is_expose", False):
+        # IOProxy wrapping an @expose dataclass — its __iter__ yields scalars
+        yield from value  # type: ignore[misc]
+    elif _dc is not None and getattr(type(_dc), "_is_outputs", False):
+        # IOProxy wrapping an @outputs dataclass — surface sub-model outputs for inspection
+        yield from value  # type: ignore[misc]
+    elif getattr(type(value), "_is_expose", False) or getattr(type(value), "_is_outputs", False):
+        # raw @expose or @outputs dataclass passed directly — recurse into fields
+        for field in dataclasses.fields(value):  # type: ignore[arg-type]
+            yield from _iter_scalars(getattr(value, field.name))
+    elif isinstance(value, dict):
         yield from value.values()
     elif isinstance(value, list):
         yield from value
     else:
-        yield value
+        yield value  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -704,7 +716,7 @@ class Model:
                 # Formula-backed input nodes are excluded from the traversal
                 # boundary: their placeholder dependencies belong to the model
                 # that built them (the parent or a sibling sub-model).
-                _input_formula_nodes: frozenset[graph.Node] = frozenset(
+                _input_formula_nodes: tuple[graph.Node, ...] = tuple(
                     idx.node
                     for idx in self.inputs
                     if not isinstance(idx.node, (graph.placeholder, graph.timeseries_placeholder))
@@ -852,7 +864,7 @@ def _collect_submodel_node_functions(instance_dict: dict[str, Any]) -> dict[grap
 
 def _find_orphaned_placeholder_nodes(
     indexes: list[GenericIndex],
-    input_formula_nodes: frozenset["graph.Node"],
+    input_formula_nodes: tuple["graph.Node", ...],
 ) -> list["graph.Node"]:
     """Find placeholder nodes reachable from *indexes* but not covered by any index.
 
@@ -899,24 +911,27 @@ def _find_orphaned_placeholder_nodes(
         Orphaned placeholder nodes in discovery order.  Empty when every
         reachable placeholder is covered by a declared index.
     """
-    covered: set[graph.Node] = {idx.node for idx in indexes}
+    # Boundary/visited sets use id() (graph.Node overrides __eq__), as elsewhere in this module.
+    covered_nodes: list[graph.Node] = [idx.node for idx in indexes]
+    covered_ids: set[int] = {id(n) for n in covered_nodes}
+    input_formula_ids: set[int] = {id(n) for n in input_formula_nodes}
     # Start only from formula-backed nodes that were *built by this model*:
     # i.e., nodes that are covered but are NOT formula-backed inputs from another model.
     internal_formula_starts: list[graph.Node] = [
         node
-        for node in covered
-        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder)) and node not in input_formula_nodes
+        for node in covered_nodes
+        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder)) and id(node) not in input_formula_ids
     ]
-    visited: set[graph.Node] = set()
-    to_visit: list[graph.Node] = internal_formula_starts
+    visited_ids: set[int] = set()
+    to_visit: list[graph.Node] = list(internal_formula_starts)
     orphaned: list[graph.Node] = []
     while to_visit:
         node = to_visit.pop()
-        if node in visited:
+        if id(node) in visited_ids:
             continue
-        visited.add(node)
+        visited_ids.add(id(node))
         for dep in _iter_node_deps(node):
-            if dep in visited or dep in covered or dep in input_formula_nodes:
+            if id(dep) in visited_ids or id(dep) in covered_ids or id(dep) in input_formula_ids:
                 continue  # already handled or belongs to another model
             if isinstance(dep, (graph.placeholder, graph.timeseries_placeholder)):
                 # placeholder nodes with a default_value are self-contained:

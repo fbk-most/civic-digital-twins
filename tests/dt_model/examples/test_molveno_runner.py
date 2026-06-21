@@ -11,8 +11,7 @@ import pytest
 from overtourism_molveno.molveno_model import MolvenoEvaluator, MolvenoModel, MolvenoOutput
 
 from civic_digital_twins.dt_model import Scenario
-from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle
-from civic_digital_twins.dt_model.simulation.runner import EvaluationConfig, ModelRunHandle
+from civic_digital_twins.dt_model.simulation.runner import EvaluationConfig, IncrementalRun, ModelRunHandle
 
 # ---------------------------------------------------------------------------
 # Small grid so tests stay fast.
@@ -222,16 +221,16 @@ def test_to_snapshot_sustainability_index_structure(output: MolvenoOutput) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_resume_returns_evaluation_handle(
+def test_resume_returns_incremental_run(
     evaluator: MolvenoEvaluator,
     scenario: Scenario,
     output: MolvenoOutput,
     config: EvaluationConfig,
 ) -> None:
-    """resume() on a resumable output must return an EvaluationHandle."""
+    """resume() on a resumable output must return an IncrementalRun."""
     loaded = MolvenoOutput.from_dict(output.to_dict())
-    handle = evaluator.resume(scenario, loaded, config)
-    assert isinstance(handle, EvaluationHandle)
+    run = evaluator.resume(scenario, loaded, config)
+    assert isinstance(run, IncrementalRun)
 
 
 def test_resume_raises_when_not_resumable(
@@ -260,10 +259,10 @@ def test_resume_after_round_trip_can_extend(
     """Full save-and-restore cycle: evaluate → to_dict → from_dict → resume → extend."""
     loaded = MolvenoOutput.from_dict(output.to_dict())
     assert loaded.is_resumable
-    handle = evaluator.resume(scenario, loaded, config)
-    assert isinstance(handle, EvaluationHandle)
-    extended = handle.extend(ensemble_size=_ENSEMBLE_SIZE)
-    assert extended is handle.result
+    run = evaluator.resume(scenario, loaded, config)
+    assert isinstance(run, IncrementalRun)
+    run.extend()
+    assert run.result is not None
 
 
 # ---------------------------------------------------------------------------

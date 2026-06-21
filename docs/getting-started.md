@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-07                                     |
+| Last-Updated | 2026-06-08                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 

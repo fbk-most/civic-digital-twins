@@ -26,9 +26,9 @@ from civic_digital_twins.dt_model import (
     DistributionEnsemble,
     Evaluation,
     EvaluationConfig,
-    EvaluationHandle,
     EvaluationResult,
     IncompatibleResultError,
+    IncrementalRun,
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
@@ -717,24 +717,24 @@ class TestResume:
         with pytest.raises(IncompatibleResultError):
             evaluator.resume(Scenario(model), non_resumable, EvaluationConfig(ensemble_size=10))  # type: ignore[arg-type]
 
-    def test_resume_returns_evaluation_handle(self) -> None:
-        """resume() returns an EvaluationHandle when the output is resumable."""
+    def test_resume_returns_incremental_run(self) -> None:
+        """resume() returns an IncrementalRun when the output is resumable."""
         _, model = _make_simple_model()
         scenario = Scenario(model)
         evaluator = _ResumableEvaluator(model)
         output = evaluator.evaluate(scenario, EvaluationConfig(ensemble_size=10))
-        handle = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
-        assert isinstance(handle, EvaluationHandle)
+        run = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
+        assert isinstance(run, IncrementalRun)
 
-    def test_resume_handle_can_be_extended(self) -> None:
-        """The returned EvaluationHandle can be extended with more samples."""
+    def test_resume_run_can_be_extended(self) -> None:
+        """The IncrementalRun returned by resume() can be extended with more samples."""
         _, model = _make_simple_model()
         scenario = Scenario(model)
         evaluator = _ResumableEvaluator(model)
         output = evaluator.evaluate(scenario, EvaluationConfig(ensemble_size=10))
-        handle = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
-        extended = handle.extend(ensemble_size=5)
-        assert extended is handle.result
+        run = evaluator.resume(scenario, output, EvaluationConfig(ensemble_size=5))
+        run.extend()
+        assert isinstance(run.result, EvaluationResult)
 
 
 # ---------------------------------------------------------------------------
@@ -893,23 +893,22 @@ class _DefaultTemplateEvaluator(ModelEvaluator[_SimpleModel, _StubOutput]):
 class TestModelEvaluatorDefaultTemplate:
     """Verify the default evaluate() / run_async() / attach_resume / extract_resume_state."""
 
-    def test_evaluate_calls_post_process_and_attach_resume(self) -> None:
-        """Default evaluate() calls post_process and attach_resume, returning a resumable output."""
+    def test_evaluate_calls_post_process_and_returns_non_resumable(self) -> None:
+        """Default evaluate() calls post_process and returns a non-resumable output."""
         _, model = _make_simple_model()
         evaluator = _DefaultTemplateEvaluator(model)
         output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=5))
         assert isinstance(output, _StubOutput)
-        # attach_resume stores the result on output even though include_resume=False in post_process.
-        assert output.is_resumable
+        assert not output.is_resumable
 
-    def test_run_async_calls_post_process_and_attach_resume(self) -> None:
-        """Default run_async() returns a handle whose get() calls post_process and attach_resume."""
+    def test_run_async_calls_post_process_and_returns_non_resumable(self) -> None:
+        """Default run_async() returns a handle whose get() calls post_process without attaching resume."""
         _, model = _make_simple_model()
         evaluator = _DefaultTemplateEvaluator(model)
         handle = evaluator.run_async(Scenario(model), EvaluationConfig(ensemble_size=5))
         output = handle.get()
         assert isinstance(output, _StubOutput)
-        assert output.is_resumable
+        assert not output.is_resumable
 
     def test_attach_resume_stores_serialized_result(self) -> None:
         """attach_resume encodes the result and marks the output as resumable."""
@@ -925,8 +924,86 @@ class TestModelEvaluatorDefaultTemplate:
         """extract_resume_state decodes the stored result and returns a ResumeState."""
         _, model = _make_simple_model()
         evaluator = _DefaultTemplateEvaluator(model)
-        output = evaluator.evaluate(Scenario(model), EvaluationConfig(ensemble_size=5))
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=5))
+        output = run.snapshot(resumable=True)
         assert output.is_resumable
         state = evaluator.extract_resume_state(output)
         assert isinstance(state, ResumeState)
         assert isinstance(state.result, EvaluationResult)
+
+
+# ---------------------------------------------------------------------------
+# IncrementalRun / ModelEvaluator.start()
+# ---------------------------------------------------------------------------
+
+
+class TestIncrementalRun:
+    """Verify IncrementalRun and ModelEvaluator.start()."""
+
+    def test_start_returns_incremental_run(self) -> None:
+        """start() returns an IncrementalRun."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=5))
+        assert isinstance(run, IncrementalRun)
+
+    def test_start_result_is_evaluation_result(self) -> None:
+        """run.result after start() is an EvaluationResult."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=10))
+        assert isinstance(run.result, EvaluationResult)
+
+    def test_extend_uses_config_ensemble_size_by_default(self) -> None:
+        """extend() with no argument draws config.ensemble_size samples."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=10))
+        run.extend()
+        assert isinstance(run.result, EvaluationResult)
+
+    def test_extend_accepts_explicit_n(self) -> None:
+        """extend(n) draws exactly n additional samples."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=5))
+        run.extend(7)
+        assert isinstance(run.result, EvaluationResult)
+
+    def test_snapshot_returns_output_type(self) -> None:
+        """snapshot() returns the domain OutputT."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=5))
+        output = run.snapshot()
+        assert isinstance(output, _StubOutput)
+
+    def test_snapshot_is_not_resumable_by_default(self) -> None:
+        """snapshot() without resumable=True produces a non-resumable output."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=5))
+        output = run.snapshot()
+        assert not output.is_resumable
+
+    def test_snapshot_resumable_true_produces_resumable_output(self) -> None:
+        """snapshot(resumable=True) attaches the resume payload."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        run = evaluator.start(Scenario(model), EvaluationConfig(ensemble_size=5))
+        output = run.snapshot(resumable=True)
+        assert output.is_resumable
+
+    def test_start_resume_round_trip(self) -> None:
+        """Start → snapshot(resumable=True) → resume() round-trip returns a usable IncrementalRun."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        scenario = Scenario(model)
+        config = EvaluationConfig(ensemble_size=5)
+        run = evaluator.start(scenario, config)
+        output = run.snapshot(resumable=True)
+        data = output.to_dict()
+        output2 = _StubOutput.from_dict(data)
+        run2 = evaluator.resume(scenario, output2, config)
+        assert isinstance(run2, IncrementalRun)
+        assert isinstance(run2.result, EvaluationResult)

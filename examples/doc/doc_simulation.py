@@ -15,8 +15,9 @@ from civic_digital_twins.dt_model import (
     EvaluationHandle,
     EvaluationPlan,
     EvaluationResult,
-    Index,
     IncompatibleResultError,
+    IncrementalRun,
+    Index,
     Model,
     ModelEvaluator,
     ModelOutput,
@@ -277,25 +278,45 @@ class ConcentrationEvaluator(ModelEvaluator[ConcentrationModel, ConcentrationOut
 
 
 def _demo_model_evaluator() -> None:
-    """ModelEvaluator lifecycle: evaluate → save → load → resume."""
+    """ModelEvaluator one-shot evaluate() — not resumable."""
     evaluator = ConcentrationEvaluator(model)
     config = EvaluationConfig(ensemble_size=200)
 
     output = evaluator.evaluate(scenario_fixed, config)
     assert isinstance(output, ConcentrationOutput)
+    assert not output.is_resumable
+
+
+def _demo_incremental() -> None:
+    """ModelEvaluator incremental lifecycle: start → extend → snapshot → resume."""
+    evaluator = ConcentrationEvaluator(model)
+    config = EvaluationConfig(ensemble_size=200)
+
+    # Initial run — draws config.ensemble_size samples
+    run = evaluator.start(scenario_fixed, config)
+
+    # Optionally grow the ensemble before snapshotting
+    run.extend(100)          # draw 100 more samples (explicit)
+    run.extend()             # draw config.ensemble_size more (default)
+
+    # Non-resumable snapshot — for display / analysis only
+    output = run.snapshot()
+    assert not output.is_resumable
+
+    # Resumable snapshot — embeds the full result for later resume
+    output = run.snapshot(resumable=True)
     assert output.is_resumable
-    assert output.mean_conc.ndim == 0 or output.mean_conc.shape == ()
 
     # Save and reload via to_dict / from_dict
     data = output.to_dict()
     output2 = ConcentrationOutput.from_dict(data)
-    assert output2.is_resumable
 
-    # Resume from saved output — extend the ensemble in a new session
-    handle = evaluator.resume(scenario_fixed, output2, config)
-    handle.extend(100)
-    extended_mean = handle.result.expected_value(model.outputs.concentration)
-    assert extended_mean.shape == ()
+    # Resume from saved output — picks up where the previous run left off
+    run2 = evaluator.resume(scenario_fixed, output2, config)
+    run2.extend()            # draw more samples; config.ensemble_size is the default
+    output3 = run2.snapshot(resumable=True)
+    assert isinstance(output3, ConcentrationOutput)
+    assert isinstance(run2, IncrementalRun)
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +333,7 @@ def _demo_run_async() -> None:
     poll_state = run_handle.poll()      # (True, output) if done; (False, None) still running
     assert isinstance(poll_state, tuple)
     output = run_handle.get()           # blocks until complete
+    assert not output.is_resumable
     assert isinstance(output, ConcentrationOutput)
 
 
@@ -351,6 +373,7 @@ _demo_async_handle()
 _demo_plan()
 _demo_frozen_ensemble()
 _demo_model_evaluator()
+_demo_incremental()
 _demo_run_async()
 _demo_incompatible()
 

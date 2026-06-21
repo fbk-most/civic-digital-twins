@@ -100,19 +100,24 @@ if __name__ == "__main__":
     )
     config = EvaluationConfig(ensemble_size=ensemble_size)
 
-    output_base = evaluator.evaluate(Scenario(model), config)
+    pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
+
+    output_base = evaluator.evaluate(Scenario(model, parameter_axes=pvs), config)
     fig_base = plot_scenario(output_base, "Base")
     fig_base.savefig(_out / "base.png", dpi=150)
     plt.close(fig_base)
 
     output_good = evaluator.evaluate(
-        Scenario(model, overrides={model.inputs.cv_weather: {"good": 0.5, "unsettled": 0.5}}), config
+        Scenario(model, overrides={model.inputs.cv_weather: {"good": 0.5, "unsettled": 0.5}}, parameter_axes=pvs),
+        config,
     )
     fig_good_weather = plot_scenario(output_good, "Good weather")
     fig_good_weather.savefig(_out / "good_weather.png", dpi=150)
     plt.close(fig_good_weather)
 
-    output_bad = evaluator.evaluate(Scenario(model, overrides={model.inputs.cv_weather: "bad"}), config)
+    output_bad = evaluator.evaluate(
+        Scenario(model, overrides={model.inputs.cv_weather: "bad"}, parameter_axes=pvs), config
+    )
     fig_bad_weather = plot_scenario(output_bad, "Bad weather")
     fig_bad_weather.savefig(_out / "bad_weather.png", dpi=150)
     plt.close(fig_bad_weather)
