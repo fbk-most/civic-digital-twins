@@ -5,14 +5,14 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-07                                     |
+| Last-Updated | 2026-06-21                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
 This guide covers the simulation layer of the civic-digital-twins framework: how to wrap a `Model`
-in a `Scenario`, run Monte Carlo evaluations, grow results incrementally with `EvaluationHandle`,
-structure execution with `EvaluationPlan`, and build application-level evaluators with
-`ModelEvaluator` and `ModelOutput`.
+in a `Scenario`, run Monte Carlo evaluations, grow results incrementally with `EvaluationHandle`
+or the higher-level `IncrementalRun`, structure execution with `EvaluationPlan`, and build
+application-level evaluators with `ModelEvaluator` and `ModelOutput`.
 
 See [dd-cdt-model.md](dd-cdt-model.md) for the `Model`, `ModelVariant`, and index reference.
 See [dd-cdt-modularity.md](dd-cdt-modularity.md) for the `@define` / `compute()` pattern.
@@ -310,8 +310,9 @@ The base class provides two serialisation methods:
 ### ModelEvaluator
 
 Subclass `ModelEvaluator[ModelT, OutputT]` and implement `post_process()` and `input_schema()`.
-The base class template for `evaluate()` calls `make_ensemble()`, runs `Evaluation`, delegates to
-`post_process()`, and calls `attach_resume()` automatically:
+The base class template for `evaluate()` calls `make_ensemble()`, runs `Evaluation`, and delegates
+to `post_process()`.  The returned output is **not resumable** — `is_resumable` is always `False`
+from `evaluate()`.  Use `start()` (below) for resumable incremental runs:
 
 ```python
 class ConcentrationEvaluator(ModelEvaluator[ConcentrationModel, ConcentrationOutput]):
@@ -337,37 +338,62 @@ Override `make_ensemble()` for a different ensemble type without changing the re
 
 ### Evaluation lifecycle
 
+**One-shot evaluation** (no resume payload):
+
 ```python
 evaluator = ConcentrationEvaluator(model)
 config = EvaluationConfig(ensemble_size=200)
 
 output = evaluator.evaluate(scenario_fixed, config)
+assert not output.is_resumable
+```
+
+**Incremental evaluation** with `start()` / `resume()`:
+
+```python
+# Initial run — draws config.ensemble_size samples
+run = evaluator.start(scenario_fixed, config)
+
+# Optionally grow the ensemble before snapshotting
+run.extend(100)          # draw 100 more samples (explicit)
+run.extend()             # draw config.ensemble_size more (default)
+
+# Non-resumable snapshot — for display / analysis only
+output = run.snapshot()
+assert not output.is_resumable
+
+# Resumable snapshot — embeds the full result for later resume
+output = run.snapshot(resumable=True)
 assert output.is_resumable
 
 # Save and reload via to_dict / from_dict
 data = output.to_dict()
 output2 = ConcentrationOutput.from_dict(data)
-assert output2.is_resumable
 
-# Resume from saved output — extend the ensemble in a new session
-handle = evaluator.resume(scenario_fixed, output2, config)
-handle.extend(100)
+# Resume from saved output — picks up where the previous run left off
+run2 = evaluator.resume(scenario_fixed, output2, config)
+run2.extend()            # draw more samples; config.ensemble_size is the default
+output3 = run2.snapshot(resumable=True)
 ```
 
-`evaluator.resume()` reconstructs an `EvaluationHandle` seeded with the saved result.
-`handle.extend(100)` then draws 100 more Monte Carlo samples and merges them.
+`evaluator.start()` returns an `IncrementalRun` seeded with the first batch.
+`evaluator.resume()` returns an `IncrementalRun` seeded with the saved result.
+`run.snapshot(resumable=True)` attaches the full resume payload so the run can be
+continued in a later session.
 
 ---
 
 ## ModelRunHandle: Async Application Evaluation
 
 `evaluator.run_async()` submits the evaluation to a background thread and immediately returns a
-`ModelRunHandle`:
+`ModelRunHandle`.  Like `evaluate()`, it is a **one-shot** path — the returned output is not
+resumable (`is_resumable` is `False`).
 
 ```python
 run_handle: ModelRunHandle[ConcentrationOutput] = evaluator.run_async(scenario_fixed, config)
 poll_state = run_handle.poll()      # (True, output) if done; (False, None) still running
 output = run_handle.get()           # blocks until complete
+assert not output.is_resumable
 ```
 
 ---
@@ -463,6 +489,21 @@ class ModelOutput(ABC):
     def is_resumable(self) -> bool: ...
 ```
 
+### `IncrementalRun`
+
+```python
+class IncrementalRun(Generic[OutputT]):
+    @property
+    def result(self) -> EvaluationResult: ...
+
+    def extend(self, n: int | None = None) -> None: ...
+    # n=None → uses config.ensemble_size passed to start() / resume()
+
+    def snapshot(self, *, resumable: bool = False) -> OutputT: ...
+    # resumable=False → is_resumable is False on the returned output
+    # resumable=True  → attaches full resume payload; is_resumable is True
+```
+
 ### `ModelEvaluator`
 
 ```python
@@ -472,9 +513,16 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
 
     def post_process(self, scenario: Scenario, result: EvaluationResult) -> OutputT: ...
     def make_ensemble(self, scenario: Scenario, config: EvaluationConfig) -> Any: ...
+
+    # One-shot (not resumable):
     def evaluate(self, scenario: Scenario, config: EvaluationConfig) -> OutputT: ...
     def run_async(self, scenario: Scenario, config: EvaluationConfig) -> ModelRunHandle[OutputT]: ...
-    def resume(self, scenario: Scenario, output: OutputT, config: EvaluationConfig) -> EvaluationHandle: ...
+
+    # Incremental (resumable via snapshot(resumable=True)):
+    def start(self, scenario: Scenario, config: EvaluationConfig) -> IncrementalRun[OutputT]: ...
+    def resume(self, scenario: Scenario, output: OutputT, config: EvaluationConfig) -> IncrementalRun[OutputT]: ...
+
+    # Advanced: encode result into output as resume payload
     def attach_resume(self, output: ModelOutput, result: EvaluationResult) -> None: ...
 ```
 

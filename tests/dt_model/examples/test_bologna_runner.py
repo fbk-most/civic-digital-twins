@@ -5,8 +5,7 @@ import numpy as np
 import pytest
 from mobility_bologna.bologna_model import BolognaEvaluator, BolognaModel, BolognaOutput
 
-from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle
-from civic_digital_twins.dt_model.simulation.runner import EvaluationConfig, ModelRunHandle
+from civic_digital_twins.dt_model.simulation.runner import EvaluationConfig, IncrementalRun, ModelRunHandle
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # Use a tiny ensemble to keep tests fast.
@@ -57,6 +56,13 @@ def output(evaluator: BolognaEvaluator, scenario: Scenario, config: EvaluationCo
     return evaluator.evaluate(scenario, config)
 
 
+@pytest.fixture(scope="module")
+def resumable_output(evaluator: BolognaEvaluator, scenario: Scenario, config: EvaluationConfig) -> BolognaOutput:
+    """Resumable output produced via start() + snapshot(resumable=True)."""
+    run = evaluator.start(scenario, config)
+    return run.snapshot(resumable=True)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -92,12 +98,17 @@ def test_timeseries_values_are_arrays(output: BolognaOutput) -> None:
 
 
 def test_to_dict_contains_required_keys(output: BolognaOutput) -> None:
-    """to_dict() must include 'dt_model_version', 'kpis', 'timeseries', 'fields', and '_resume'."""
+    """to_dict() must include 'dt_model_version', 'kpis', 'timeseries', and 'fields'."""
     data = output.to_dict()
     assert "dt_model_version" in data
     assert "kpis" in data
     assert "timeseries" in data
     assert "fields" in data
+
+
+def test_to_dict_resumable_contains_resume_key(resumable_output: BolognaOutput) -> None:
+    """to_dict() on a resumable output must include '_resume'."""
+    data = resumable_output.to_dict()
     assert "_resume" in data
 
 
@@ -107,9 +118,9 @@ def test_from_dict_round_trip_kpis(output: BolognaOutput) -> None:
     assert restored.kpis == output.kpis
 
 
-def test_from_dict_is_resumable(output: BolognaOutput) -> None:
+def test_from_dict_is_resumable(resumable_output: BolognaOutput) -> None:
     """from_dict() on a dict with '_resume' must produce is_resumable=True."""
-    restored = BolognaOutput.from_dict(output.to_dict())
+    restored = BolognaOutput.from_dict(resumable_output.to_dict())
     assert restored.is_resumable is True
 
 
@@ -166,13 +177,13 @@ def test_from_dict_without_resume_not_resumable() -> None:
 def test_resume_raises_when_not_resumable(
     evaluator: BolognaEvaluator,
     scenario: Scenario,
-    output: BolognaOutput,
+    resumable_output: BolognaOutput,
     config: EvaluationConfig,
 ) -> None:
     """resume() must raise IncompatibleResultError when is_resumable is False."""
     from civic_digital_twins.dt_model import IncompatibleResultError
 
-    data = output.to_dict()
+    data = resumable_output.to_dict()
     data.pop("_resume")
     non_resumable = BolognaOutput.from_dict(data)
     assert non_resumable.is_resumable is False
@@ -180,30 +191,30 @@ def test_resume_raises_when_not_resumable(
         evaluator.resume(scenario, non_resumable, config)
 
 
-def test_resume_returns_evaluation_handle(
+def test_resume_returns_incremental_run(
     evaluator: BolognaEvaluator,
     scenario: Scenario,
-    output: BolognaOutput,
+    resumable_output: BolognaOutput,
     config: EvaluationConfig,
 ) -> None:
-    """resume() must return an EvaluationHandle when output is resumable."""
-    handle = evaluator.resume(scenario, output, config)
-    assert isinstance(handle, EvaluationHandle)
+    """resume() must return an IncrementalRun when output is resumable."""
+    run = evaluator.resume(scenario, resumable_output, config)
+    assert isinstance(run, IncrementalRun)
 
 
 def test_resume_after_round_trip(
     evaluator: BolognaEvaluator,
     scenario: Scenario,
 ) -> None:
-    """Full save-and-restore cycle: evaluate → to_dict → from_dict → resume → extend."""
+    """Full save-and-restore cycle: start → snapshot → to_dict → from_dict → resume → extend."""
     config = EvaluationConfig(ensemble_size=2)
-    fresh = evaluator.evaluate(scenario, config)
-    restored = BolognaOutput.from_dict(fresh.to_dict())
+    run = evaluator.start(scenario, config)
+    restored = BolognaOutput.from_dict(run.snapshot(resumable=True).to_dict())
     assert restored.is_resumable
-    handle = evaluator.resume(scenario, restored, config)
-    assert isinstance(handle, EvaluationHandle)
-    extended = handle.extend(ensemble_size=2)
-    assert extended is handle.result
+    run2 = evaluator.resume(scenario, restored, config)
+    assert isinstance(run2, IncrementalRun)
+    run2.extend()
+    assert isinstance(run2.result, type(run.result))
 
 
 def test_run_async_returns_model_run_handle(
