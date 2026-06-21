@@ -920,8 +920,7 @@ def _find_orphaned_placeholder_nodes(
     internal_formula_starts: list[graph.Node] = [
         node
         for node in covered_nodes
-        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder))
-        and id(node) not in input_formula_ids
+        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder)) and id(node) not in input_formula_ids
     ]
     visited_ids: set[int] = set()
     to_visit: list[graph.Node] = list(internal_formula_starts)

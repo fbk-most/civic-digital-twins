@@ -785,3 +785,32 @@ def test_cpe_draw_batch_categorical_stable_across_batches():
     batch_cats = batch.assignments()[season]
 
     np.testing.assert_array_equal(batch_cats, initial_cats)
+
+
+def test_cpe_pinned_categorical_parent_of_conditional_dist():
+    """CrossProductEnsemble handles a ConditionalDistributionIndex whose categorical parent is pinned.
+
+    When a CategoricalIndex parent is pinned via Scenario(overrides={cat: "value"}),
+    it is removed from abstract_indexes() and therefore absent from combo dicts.
+    _compute_assignments must fall back to the scenario override value instead of
+    raising KeyError.
+    """
+    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
+    temp = ConditionalDistributionIndex(
+        "temp",
+        parents=[season],
+        factory=lambda season: (
+            stats.norm(loc=30.0, scale=1.0) if season == "summer" else stats.norm(loc=5.0, scale=1.0)
+        ),
+    )
+    model = _simple_model(season, temp)
+    # Pin season to "summer" — season is no longer abstract, but is still a parent of temp.
+    scenario = Scenario(model, overrides={season: "summer"})
+    ens = CrossProductEnsemble(scenario, rng=np.random.default_rng(0))
+
+    # Should construct without KeyError and sample temp from the "summer" distribution.
+    assert ens.size > 0
+    temps = ens.assignments()[temp].astype(float)
+    assert np.all(np.isfinite(temps))
+    # All samples should come from summer distribution (mean ~30), not winter (mean ~5).
+    assert np.mean(temps) > 20.0

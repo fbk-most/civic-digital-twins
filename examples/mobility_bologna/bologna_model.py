@@ -545,11 +545,11 @@ class BolognaModel(Model):
     class Expose:
         """Timeseries surfaced for plotting helpers."""
 
-        ts_inflow:          ConstTimeseriesIndex
-        modified_inflow:    Index
-        traffic:            TimeseriesIndex
-        modified_traffic:   TimeseriesIndex
-        emissions:          TimeseriesIndex
+        ts_inflow: ConstTimeseriesIndex
+        modified_inflow: Index
+        traffic: TimeseriesIndex
+        modified_traffic: TimeseriesIndex
+        emissions: TimeseriesIndex
         modified_emissions: Index
 
     @functions

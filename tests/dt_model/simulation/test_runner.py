@@ -995,7 +995,7 @@ class TestIncrementalRun:
         assert output.is_resumable
 
     def test_start_resume_round_trip(self) -> None:
-        """start → snapshot(resumable=True) → resume() round-trip returns a usable IncrementalRun."""
+        """Start → snapshot(resumable=True) → resume() round-trip returns a usable IncrementalRun."""
         _, model = _make_simple_model()
         evaluator = _DefaultTemplateEvaluator(model)
         scenario = Scenario(model)

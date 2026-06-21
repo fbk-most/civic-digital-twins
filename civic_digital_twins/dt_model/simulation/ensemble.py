@@ -1268,7 +1268,11 @@ class CrossProductEnsemble:
                     dist_parents: list[Any] = []
                     for p in idx.parents:
                         if isinstance(p, CategoricalIndex | ConditionalCategoricalIndex):
-                            cat_parent_vals[p.name] = id_keyed_cats[id(p)]
+                            if id(p) in id_keyed_cats:
+                                cat_parent_vals[p.name] = id_keyed_cats[id(p)]
+                            else:
+                                # Parent is pinned in the scenario (not abstract) — use its concrete value.
+                                cat_parent_vals[p.name] = self._scenario.overrides[p]
                         else:
                             dist_parents.append(p)
                     if not dist_parents:
