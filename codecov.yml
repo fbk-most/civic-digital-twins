@@ -1,0 +1,23 @@
+# Codecov configuration — coverage gate for CI (release).
+#
+# Coverage reports are uploaded from the `main` branch only (on push, after merge).
+# PRs targeting main still receive a coverage delta comment from Codecov without
+# affecting the trend graph.
+#
+# Current project coverage: 100%. The thresholds below enforce that:
+#   - overall project coverage does not regress by more than 1%;
+#   - new code introduced in a PR is at least 90% covered.
+
+coverage:
+  status:
+    project:
+      default:
+        # target: auto means "must stay >= the base branch's coverage level"
+        target: auto
+        # Allow at most 1% regression (handles floating-point rounding noise)
+        threshold: 1%
+    patch:
+      default:
+        # New lines of code introduced in a PR must be >= 90% covered
+        target: 90%
+        threshold: 5%

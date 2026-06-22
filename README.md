@@ -1,6 +1,6 @@
 # Civic-Digital-Twins Modeling Framework
 
-[![Build Status](https://github.com/fbk-most/civic-digital-twins/actions/workflows/test.yml/badge.svg)](https://github.com/fbk-most/civic-digital-twins/actions) [![codecov](https://codecov.io/gh/fbk-most/civic-digital-twins/branch/main/graph/badge.svg)](https://codecov.io/gh/fbk-most/civic-digital-twins) [![PyPI version](https://img.shields.io/pypi/v/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![Python Versions](https://img.shields.io/pypi/pyversions/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![License](https://img.shields.io/pypi/l/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/)
+[![Build Status](https://github.com/fbk-most/civic-digital-twins/actions/workflows/ci-release.yml/badge.svg)](https://github.com/fbk-most/civic-digital-twins/actions) [![codecov](https://codecov.io/gh/fbk-most/civic-digital-twins/branch/main/graph/badge.svg)](https://codecov.io/gh/fbk-most/civic-digital-twins) [![PyPI version](https://img.shields.io/pypi/v/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![Python Versions](https://img.shields.io/pypi/pyversions/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/) [![License](https://img.shields.io/pypi/l/civic-digital-twins.svg)](https://pypi.org/project/civic-digital-twins/)
 
 This repository contains a Python package implementing a Civic-Digital-Twins
 modeling framework. The framework is designed to support defining digital
@@ -177,8 +177,12 @@ tests use this command (from inside the virtual environment):
 pytest
 ```
 
-Each pull request is automatically tested using GitHub Actions. The workflow
-is defined in [`.github/workflows/test.yml`](.github/workflows/test.yml).
+Pull requests are automatically tested using GitHub Actions. PRs targeting
+`dev` run the fast [`CI (dev)`](.github/workflows/ci-dev.yml) workflow
+(format, lint, type-check, tests on Python 3.12). PRs targeting `main` run
+the full [`CI (release)`](.github/workflows/ci-release.yml) workflow (all
+Python versions, doc examples, domain examples, SPDX check, dependency
+audit, and build smoke test).
 
 ## Updating Dependencies
 
@@ -187,22 +191,58 @@ uv self update
 uv sync --upgrade
 ```
 
+## Development model
+
+This project follows a simplified GitHub Flow with an explicit `dev` branch:
+
+```
+feature/* ──PR─▶ dev ──PR─▶ main ──tag─▶ PyPI
+           (CI dev)   (CI release)  (publish)
+```
+
+- **Feature work** happens on short-lived branches cut from `dev`.
+- **`dev`** is the integration branch. It always carries a `+dev` version
+  marker (e.g. `0.11.0+dev`).
+- **`main`** contains only released commits. Merging `dev` into `main` is
+  always immediately followed by a version tag and a PyPI release.
+
 ## Releasing
 
-Per-release checklist (eight manual steps):
+### Step 1 — Merging a feature PR into `dev`
 
-1. Make sure the version number in `pyproject.toml` is correct.
+Before opening the PR, verify locally:
 
-2. Regenerate the lockfile to record the new version:
+- Tests pass: `uv run pytest`
+- Format, lint, and type-check pass: `uv run ruff format --check .`,
+  `uv run ruff check .`, `uv run pyright`
+- `CHANGELOG.md` `[Unreleased]` section updated (Added / Changed / Removed /
+  Fixed; breaking changes flagged).
+- Design docs (`docs/design/`) updated if public API or architecture changed.
+- SPDX licence header present on any new `.py` or `.md` file.
+
+Open the PR targeting `dev`. The `CI (dev)` workflow runs automatically; merge
+once it is green.
+
+### Step 2 — Preparing a release (promoting `dev` to `main`)
+
+Perform the following steps on the `dev` branch before opening the
+`dev → main` PR:
+
+1. Set the final version in `pyproject.toml` (remove the `+dev` suffix):
+   ```toml
+   version = "<version>"
+   ```
+
+2. Regenerate the lockfile:
    ```bash
    uv lock
    ```
 
-3. Update `CHANGELOG.md`: promote the `[Unreleased]` heading to
-   `[<version>] - <date>` and add the corresponding comparison link at the bottom.
+3. Update `CHANGELOG.md`: promote `[Unreleased]` to `[<version>] - <date>`
+   and add the corresponding comparison link at the bottom.
 
-4. Check that documentation `Last-Updated` dates are in sync with actual commit
-   dates:
+4. Check that documentation `Last-Updated` dates are in sync with actual
+   commit dates:
    ```bash
    git log -1 --format="%ai" -- docs/design/dd-cdt-engine.md
    git log -1 --format="%ai" -- docs/design/dd-cdt-model.md
@@ -212,9 +252,8 @@ Per-release checklist (eight manual steps):
    ```
    Update any `Last-Updated` fields that are out of date.
 
-5. Verify that the runnable doc scripts in `examples/doc/` are in sync with
-   the code snippets in the corresponding documentation files, and that they
-   all execute without errors:
+5. Verify that the runnable doc scripts are in sync with the documentation
+   and execute without errors (also enforced by `CI (release)`):
    ```bash
    uv run python examples/doc/doc_engine.py
    uv run python examples/doc/doc_model.py
@@ -225,16 +264,18 @@ Per-release checklist (eight manual steps):
    uv run python examples/doc/doc_readme.py
    ```
 
-6. Verify that the full domain examples run end-to-end without errors (output
-   images are written to `examples/*/output/`):
+6. Verify that the full domain examples run end-to-end without errors (also
+   enforced by `CI (release)`; output images are written to
+   `examples/*/output/`):
    ```bash
    uv run python examples/mobility_bologna/mobility_bologna.py
    uv run python examples/overtourism_molveno/overtourism_molveno.py
    ```
 
-7. Verify that every tracked Python and Markdown file carries an SPDX header:
+7. Verify that every tracked Python and Markdown file carries an SPDX header
+   (also enforced by `CI (release)`):
    ```bash
-   # Python files — should print nothing (no files missing the header)
+   # Python files — should print nothing
    git ls-files '*.py' | xargs grep -rL "SPDX-License-Identifier"
    # Markdown files — should print nothing
    git ls-files '*.md' | xargs grep -rL "SPDX-License-Identifier"
@@ -243,23 +284,75 @@ Per-release checklist (eight manual steps):
    `<!-- SPDX-License-Identifier: Apache-2.0 -->` (Markdown) to any file
    that is missing the header.
 
-8. Commit the changes above, then create and push a version tag:
+8. Commit the release preparation:
    ```bash
    git add pyproject.toml uv.lock CHANGELOG.md docs/
    git commit -m "chore: prepare v<version> release"
-   git tag v<version> && git push origin main v<version>
+   git push origin dev
    ```
 
-After the tag is pushed, go to the repository's **Releases** page, review the
-auto-created draft, write release notes, and click **Publish release**.  This
-triggers the [`publish.yml`](.github/workflows/publish.yml) workflow, which
-builds the sdist + wheel, runs `twine check`, and publishes to PyPI via OIDC —
-no manual build or upload step is needed.
+Open the PR from `dev` to `main`. The `CI (release)` workflow runs the full
+verification suite automatically (all Python versions, doc examples, domain
+examples, SPDX headers, dependency audit, build smoke test). Merge once it
+is green.
 
-> **Precondition:** PyPI's Trusted Publisher must be configured for this
-> repository before the first release.  See the
-> [PyPI Trusted Publishers documentation](https://docs.pypi.org/trusted-publishers/)
-> for setup instructions.
+### Step 3 — Tagging and publishing
+
+After the `dev → main` PR is merged:
+
+```bash
+git checkout main && git pull
+git tag v<version> && git push origin main v<version>
+```
+
+Go to the repository's **Releases** page, review the auto-created draft, write
+release notes, and click **Publish release**. This triggers the
+[`publish.yml`](.github/workflows/publish.yml) workflow, which builds the
+sdist + wheel, runs `twine check`, and publishes to PyPI via OIDC — no manual
+build or upload step is needed.
+
+### Step 4 — Post-release: bump `dev` back to development
+
+After the release is published, switch back to `dev` and prepare it for the
+next development cycle:
+
+```bash
+git checkout dev && git pull
+```
+
+Edit `pyproject.toml` to bump to the next planned version with the `+dev`
+marker:
+```toml
+version = "<next-version>+dev"
+```
+
+Then:
+```bash
+uv lock
+```
+
+Add a fresh `[Unreleased]` section at the top of `CHANGELOG.md`:
+```markdown
+## [Unreleased]
+```
+
+Commit and push:
+```bash
+git add pyproject.toml uv.lock CHANGELOG.md
+git commit -m "chore: start v<next-version> development"
+git push origin dev
+```
+
+### One-time setup
+
+> **PyPI Trusted Publisher:** must be configured before the first release.
+> See the [PyPI Trusted Publishers documentation](https://docs.pypi.org/trusted-publishers/).
+
+> **Branch protection:** configure GitHub Rulesets (Settings → Rules →
+> Rulesets) to require `CI (dev)` to pass before merging into `dev`, and all
+> `CI (release)` jobs to pass before merging into `main`. Direct pushes to
+> `main` should be blocked; maintainers should be allowed to bypass `dev`
+> protection for post-release bump commits.
 
 ## Documentation
 
