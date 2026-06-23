@@ -1,0 +1,206 @@
+# CI for releases: runs on every push to `main` and on pull requests targeting `main`.
+# Scope: full release gate — all Python versions, doc examples, domain examples,
+# SPDX headers, dependency audit, build smoke test, and coverage upload.
+#
+# Job dependency graph:
+#
+#   version-check ──┬── test (3.12 / 3.13 / 3.14) ──┬── doc-examples
+#                   │                               ├── domain-examples
+#                   │                               └── build-check
+#                   ├── spdx-check
+#                   └── dependency-audit
+
+name: CI (release)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Version sanity ───────────────────────────────────────────────────────────
+  # main must never carry a +dev marker — that would mean a dev build was released.
+  version-check:
+    name: Version has no +dev marker
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Assert version does not contain +dev
+        run: |
+          version=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Version: $version"
+          if echo "$version" | grep -q '+dev'; then
+            echo "ERROR: version '$version' contains '+dev'."
+            echo "Remove the +dev marker from pyproject.toml before merging to main."
+            exit 1
+          fi
+
+  # ── Tests ────────────────────────────────────────────────────────────────────
+  test:
+    name: Test with Python ${{ matrix.python_version }}
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    strategy:
+      matrix:
+        python_version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python_version }} --dev --locked
+
+      # Format, lint, and type-check only need to run once; 3.12 is the reference.
+      - name: Check formatting
+        if: matrix['python_version'] == '3.12'
+        run: uv run --python ${{ matrix.python_version }} ruff format --check .
+
+      - name: Lint
+        if: matrix['python_version'] == '3.12'
+        run: uv run --python ${{ matrix.python_version }} ruff check .
+
+      - name: Type-check
+        if: matrix['python_version'] == '3.12'
+        run: uv run --python ${{ matrix.python_version }} pyright
+
+      - name: Run tests
+        run: uv run --python ${{ matrix.python_version }} pytest
+
+      # Upload coverage only once (3.12) and only on push (not on PR), so that
+      # the Codecov trend reflects merged code on main, not open PR branches.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: matrix['python_version'] == '3.12' && github.event_name == 'push'
+        with:
+          use_pypi: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+          fail_ci_if_error: true
+
+  # ── Doc examples ─────────────────────────────────────────────────────────────
+  # Verify that every runnable doc script executes without errors and stays
+  # verbatim-aligned with the corresponding documentation files.
+  doc-examples:
+    name: Doc examples
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install dependencies
+        run: uv sync --python 3.12 --dev --locked
+
+      - name: Run doc examples
+        run: |
+          uv run python examples/doc/doc_engine.py
+          uv run python examples/doc/doc_model.py
+          uv run python examples/doc/doc_modularity.py
+          uv run python examples/doc/doc_simulation.py
+          uv run python examples/doc/doc_getting_started.py
+          uv run python examples/doc/doc_overtourism_getting_started.py
+          uv run python examples/doc/doc_readme.py
+
+  # ── Domain examples ───────────────────────────────────────────────────────────
+  # Verify that the full end-to-end domain examples run without errors.
+  domain-examples:
+    name: Domain examples
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install dependencies
+        run: uv sync --python 3.12 --dev --locked
+
+      - name: Run domain examples
+        run: |
+          uv run python examples/mobility_bologna/mobility_bologna.py
+          uv run python examples/overtourism_molveno/overtourism_molveno.py
+
+  # ── SPDX headers ─────────────────────────────────────────────────────────────
+  # Every tracked .py and .md file must carry an SPDX licence identifier.
+  spdx-check:
+    name: SPDX headers
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check Python files
+        run: |
+          missing=$(git ls-files '*.py' | xargs grep -rL "SPDX-License-Identifier" || true)
+          if [ -n "$missing" ]; then
+            echo "Missing SPDX header in:"
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: Check Markdown files
+        run: |
+          missing=$(git ls-files '*.md' | xargs grep -rL "SPDX-License-Identifier" || true)
+          if [ -n "$missing" ]; then
+            echo "Missing SPDX header in:"
+            echo "$missing"
+            exit 1
+          fi
+
+  # ── Dependency audit ─────────────────────────────────────────────────────────
+  # Check production dependencies (not dev tools) against the OSV vulnerability
+  # database. A known CVE in a shipped dependency blocks the release.
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Audit production dependencies
+        run: uv audit --no-dev
+
+  # ── Build and smoke test ──────────────────────────────────────────────────────
+  # Build the sdist + wheel, validate metadata with twine, then verify that the
+  # wheel is importable in a clean environment — catching packaging bugs early.
+  build-check:
+    name: Build and smoke test
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install dependencies
+        run: uv sync --python 3.12 --dev --locked
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check artifacts with twine
+        run: uv run --with twine twine check dist/*
+
+      - name: Smoke test wheel installation
+        run: |
+          wheel=$(ls dist/*.whl | head -1)
+          uv run --with "$wheel" --no-project python -c "import civic_digital_twins; print('import ok')"

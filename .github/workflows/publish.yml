@@ -2,10 +2,11 @@
 # GitHub Release is published.
 #
 # Typical flow:
-#   1. Push a version tag: git tag v<version> && git push origin v<version>
-#   2. GitHub auto-creates a draft release linked to the tag.
-#   3. Review / edit the release notes, then click "Publish release".
-#   4. This workflow fires, builds the sdist + wheel, and uploads to PyPI.
+#   1. Merge the release PR (dev → main) after CI (release) passes.
+#   2. Tag the merge commit: git tag v<version> && git push origin main v<version>
+#   3. GitHub auto-creates a draft release linked to the tag.
+#   4. Review / edit the release notes, then click "Publish release".
+#   5. This workflow fires, builds the sdist + wheel, and uploads to PyPI.
 #
 # Authentication uses PyPI's Trusted Publisher mechanism (OIDC), so no
 # long-lived API token is stored in GitHub secrets.  One-time setup on
@@ -34,10 +35,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
 
       # Build both a source distribution (sdist) and a wheel.
       # uv places the artifacts under dist/ by default.
@@ -50,7 +51,7 @@ jobs:
 
       # Make the built artifacts available to the next job.
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -74,7 +75,7 @@ jobs:
 
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/

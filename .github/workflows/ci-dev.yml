@@ -1,0 +1,60 @@
+# CI for development: runs on every push to `dev` and on pull requests targeting `dev`.
+# Scope: fast feedback — format, lint, type-check, and tests on Python 3.12 only.
+# Full release verification (all Python versions, doc examples, etc.) runs in ci-release.yml.
+
+name: CI (dev)
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+jobs:
+  # ── Version sanity ───────────────────────────────────────────────────────────
+  # The dev branch must always carry a +dev version marker so that the
+  # development build is never confused with a published release.
+  version-check:
+    name: Version has +dev marker
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Assert version contains +dev
+        run: |
+          version=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Version: $version"
+          if ! echo "$version" | grep -q '+dev'; then
+            echo "ERROR: version '$version' does not contain '+dev'."
+            echo "The dev branch must always carry a +dev version marker."
+            echo "If you just released, remember to bump the version back to <next>+dev."
+            exit 1
+          fi
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+  test:
+    name: Test with Python 3.12
+    runs-on: ubuntu-latest
+    needs: version-check
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install dependencies
+        run: uv sync --python 3.12 --dev --locked
+
+      - name: Check formatting
+        run: uv run --python 3.12 ruff format --check .
+
+      - name: Lint
+        run: uv run --python 3.12 ruff check .
+
+      - name: Type-check
+        run: uv run --python 3.12 pyright
+
+      - name: Run tests
+        run: uv run --python 3.12 pytest
