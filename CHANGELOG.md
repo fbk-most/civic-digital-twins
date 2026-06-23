@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Split CI into `ci-dev.yml` (fast: 3.12 only) and `ci-release.yml` (full:
+  all Python versions, doc/domain examples, SPDX, audit, build smoke test).
+  Added `+dev` version-marker checks to both workflows.
+- Upgraded GitHub Actions to Node.js 24-compatible versions.
+- Added `codecov.yml` with regression-based coverage gate (project: auto ±1%,
+  patch: ≥90%). Coverage is uploaded from `main` pushes only.
+- Updated `README.md` and `AGENTS.md` to document the explicit `dev` branch
+  model and the two-step development/release process.
+
 
 ## [0.10.0] - 2026-06-21
 
