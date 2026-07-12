@@ -504,7 +504,10 @@ class Model:
         :func:`~.contracts.expose` on the inner classes, then write ``__init__``
         manually and call ``super().__init__()``.  Required for models that
         assign sub-model attributes before ``super().__init__()`` is called.
-        Pass ``legacy=True`` to suppress the ``DeprecationWarning``::
+        A subclass that defines ``__init__`` directly without ``legacy=True``
+        raises ``TypeError`` at class-definition time.  Pass ``legacy=True``
+        to opt in; this escape hatch itself emits a ``DeprecationWarning``
+        and is staged for removal in a future milestone::
 
             from civic_digital_twins.dt_model import Model, inputs, outputs
 
@@ -595,7 +598,7 @@ class Model:
     """
 
     def __init_subclass__(cls, *, legacy: bool = False, **kwargs: Any) -> None:
-        """Warn when a subclass defines ``__init__`` directly instead of using ``@define``.
+        """Reject or warn when a subclass defines ``__init__`` directly instead of using ``@define``.
 
         Fired at class-definition time (before class decorators run), so
         ``@define``-decorated classes — which have no ``__init__`` at that point
@@ -604,16 +607,30 @@ class Model:
         Parameters
         ----------
         legacy:
-            Pass ``True`` to suppress the warning for models that cannot be
-            expressed with :func:`~.contracts.define` + ``compute()`` (e.g.
-            composite models that assign sub-model attributes before calling
-            ``super().__init__()``).
+            Pass ``True`` to opt into hand-written ``__init__`` for models that
+            cannot be expressed with :func:`~.contracts.define` + ``compute()``
+            (e.g. composite models that assign sub-model attributes before
+            calling ``super().__init__()``).  This escape hatch is itself
+            deprecated and staged for removal in a future milestone: it emits
+            a :class:`DeprecationWarning` rather than suppressing one.
+
+        Raises
+        ------
+        TypeError
+            If ``__init__`` is defined directly without ``legacy=True``.
         """
         super().__init_subclass__(**kwargs)
-        if "__init__" in cls.__dict__ and not legacy:
+        if "__init__" in cls.__dict__:
+            if not legacy:
+                raise TypeError(
+                    f"{cls.__name__} defines __init__ directly. "
+                    "Use @define with compute() instead, or pass legacy=True to opt in "
+                    "(deprecated; staged for removal in a future milestone)."
+                )
             warnings.warn(
-                f"{cls.__name__} defines __init__ directly. "
-                "Use @define with compute() instead, or pass legacy=True to suppress this warning.",
+                f"{cls.__name__} uses legacy=True to define __init__ directly. "
+                "This escape hatch is deprecated and will be removed in a future milestone. "
+                "Use @define with compute() instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
