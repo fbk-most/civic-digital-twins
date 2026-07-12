@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model import graph as _graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
 from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
@@ -33,44 +34,40 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 _CAPACITY_VALUE = 100.0
 
 
+@define("BikeModel")
 class _BikeModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 1.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the bike variant."""
+        throughput = Index("throughput", inputs.capacity.node * 1.0)
         emissions = Index("emissions", 0.0)
-        super().__init__(
-            "BikeModel",
-            inputs=_BikeModel.Inputs(capacity=capacity),
-            outputs=_BikeModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
 
+@define("TrainModel")
 class _TrainModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 10.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the train variant."""
+        throughput = Index("throughput", inputs.capacity.node * 10.0)
         emissions = Index("emissions", 50.0)
-        super().__init__(
-            "TrainModel",
-            inputs=_TrainModel.Inputs(capacity=capacity),
-            outputs=_TrainModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
 
 def _make_mv(mode: CategoricalIndex) -> ModelVariant:
@@ -79,7 +76,10 @@ def _make_mv(mode: CategoricalIndex) -> ModelVariant:
     cap_train = Index("capacity", _CAPACITY_VALUE)
     return ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
 
@@ -89,7 +89,10 @@ def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     presence = Index("presence", None)
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
     return presence, mv
@@ -377,7 +380,10 @@ def test_regional_parameter_varying_selector_matches_monolithic():
     cap = Index("capacity", 100.0)
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap), "train": _TrainModel(Index("capacity", 100.0))},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 100.0))),  # type: ignore[call-arg]
+        },
         selector=selector,
     )
     ev = Evaluation(mv)
@@ -439,7 +445,10 @@ def test_regional_plan_with_cross_product_ensemble_matches_monolithic():
     presence = DistributionIndex("presence", _stats.uniform, {"loc": 100.0, "scale": 10.0})
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
     ensemble = CrossProductEnsemble(Scenario(mv), n_samples_per_combo=4, rng=np.random.default_rng(7))
@@ -459,7 +468,10 @@ def test_regional_plan_with_partitioned_ensemble_matches_monolithic():
     presence = DistributionIndex("presence", _stats.uniform, {"loc": 100.0, "scale": 10.0})
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
     recipe = PartitionedEnsemble(
@@ -487,7 +499,7 @@ def test_regional_plan_with_partitioned_ensemble_matches_monolithic():
 def test_regional_plan_raises_for_plain_model():
     """build_plan(strategy='regional') must raise ValueError when no variant_selector exists."""
     cap = Index("capacity", 100.0)
-    plain_model = _BikeModel(cap)
+    plain_model = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap))  # type: ignore[call-arg]
     ev = Evaluation(plain_model)
     with pytest.raises(ValueError, match="No variant_selector found"):
         ev.build_plan(strategy="regional")
@@ -541,7 +553,10 @@ def test_regional_leading_mask_raises_for_array_selector_no_leading():
     cap_train = Index("capacity", _CAPACITY_VALUE)
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=const_sel.node,
     )
     ev = Evaluation(mv)
@@ -661,7 +676,10 @@ def _make_const_ts_selector_mv(keys: list[str]) -> "ModelVariant":
     cap_train = Index("capacity", _CAPACITY_VALUE)
     return ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=sel.node,
     )
 
@@ -777,7 +795,10 @@ def _make_mv_branch_local() -> tuple[Index, Index, "ModelVariant"]:
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
     return cap_bike, cap_train, mv
@@ -995,7 +1016,7 @@ def _make_nested_mv() -> tuple[CategoricalIndex, CategoricalIndex, ModelVariant]
     policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
     cap = Index("capacity", _CAPACITY_VALUE)
 
-    bike_model = _BikeModel(cap)  # throughput = cap * 1.0
+    bike_model = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap))  # type: ignore[call-arg]  # throughput = cap * 1.0
 
     class _StrictCarModel(Model):
         @dataclasses.dataclass

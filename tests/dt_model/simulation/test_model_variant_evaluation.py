@@ -2,11 +2,10 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import dataclasses
-
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
@@ -18,44 +17,40 @@ from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 # ---------------------------------------------------------------------------
 
 
+@define("BikeModel")
 class _BikeModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 1.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the bike variant."""
+        throughput = Index("throughput", inputs.capacity.node * 1.0)
         emissions = Index("emissions", 0.0)
-        super().__init__(
-            "BikeModel",
-            inputs=_BikeModel.Inputs(capacity=capacity),
-            outputs=_BikeModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
 
+@define("TrainModel")
 class _TrainModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 10.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the train variant."""
+        throughput = Index("throughput", inputs.capacity.node * 10.0)
         emissions = Index("emissions", 50.0)
-        super().__init__(
-            "TrainModel",
-            inputs=_TrainModel.Inputs(capacity=capacity),
-            outputs=_TrainModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
 
 # Shared capacity value wired into both models.
@@ -65,9 +60,11 @@ _CAPACITY_VALUE = 100.0
 def _make_mv_with_mode(mode: CategoricalIndex) -> ModelVariant:
     cap_bike = Index("capacity", _CAPACITY_VALUE)
     cap_train = Index("capacity", _CAPACITY_VALUE)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
     return ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {"bike": bike, "train": train},
         selector=mode,
     )
 
@@ -205,9 +202,11 @@ def test_selector_index_accessible_in_result():
 def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     """ModelVariant where both sub-models scale a shared presence axis."""
     presence = Index("presence", None)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))  # type: ignore[call-arg]
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {"bike": bike, "train": train},
         selector=mode,
     )
     return presence, mv
@@ -269,9 +268,11 @@ def test_grid_mode_node_selector_from_axis():
             ("bike", True),
         ]
     )
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))  # type: ignore[call-arg]
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {"bike": bike, "train": train},
         selector=selector,
     )
     xs = np.array([100.0, 200.0, 300.0])

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.engine.numpybackend import executor as _executor
 from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
@@ -22,49 +23,45 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 # ---------------------------------------------------------------------------
 
 
+@define("SimpleModel")
 class _SimpleModel(Model):
     """Model with one distribution-backed abstract index and one output."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         x: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         y: Index
 
-    def __init__(self, x: Index) -> None:
-        y = Index("y", x.node * 2.0)
-        super().__init__(
-            "SimpleModel",
-            inputs=_SimpleModel.Inputs(x=x),
-            outputs=_SimpleModel.Outputs(y=y),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Double the input index."""
+        y = Index("y", inputs.x.node * 2.0)
+        return _SimpleModel.Outputs(y=y)
 
 
+@define("ConstModel")
 class _ConstModel(Model):
     """Model with no abstract indexes — all outputs are constant."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         pass
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         c: Index
 
-    def __init__(self) -> None:
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Return a constant output."""
         c = Index("c", 42.0)
-        super().__init__(
-            "ConstModel",
-            inputs=_ConstModel.Inputs(),
-            outputs=_ConstModel.Outputs(c=c),
-        )
+        return _ConstModel.Outputs(c=c)
 
 
 def _make_simple() -> tuple[Index, _SimpleModel]:
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
-    model = _SimpleModel(x)
+    model = _SimpleModel(inputs=_SimpleModel.Inputs(x=x))  # type: ignore[call-arg]
     return x, model
 
 

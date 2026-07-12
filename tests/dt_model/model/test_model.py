@@ -151,8 +151,12 @@ def test_ioproxy_repr():
 # ---------------------------------------------------------------------------
 
 
-class _TwoIndexModel(Model):
-    """Minimal model with one input and one output."""
+class _TwoIndexModel(Model, legacy=True):
+    """Minimal model with one input and one output.
+
+    Deliberately uses the legacy flat ``indexes=`` constructor API (it is the
+    subject under test for that API) rather than ``@define`` + ``compute()``.
+    """
 
     def __init__(self):
         self.param = Index("Parameter A", None)  # level 1 input
@@ -294,8 +298,12 @@ def test_model_outputs_collision_raises():
 # ---------------------------------------------------------------------------
 
 
-class _SubModel(Model):
-    """Sub-model with one input, one output, one internal, one anonymous index."""
+class _SubModel(Model, legacy=True):
+    """Sub-model with one input, one output, one internal, one anonymous index.
+
+    Deliberately uses the legacy flat ``indexes=`` constructor API (it is the
+    subject under test for that API, together with ``_ParentModel`` below).
+    """
 
     def __init__(self):
         self.inflow = Index("Total vehicle inflow", None)  # input
@@ -334,8 +342,12 @@ def test_submodel_indexes_contains_all():
     assert len(m.indexes) == 4
 
 
-class _ParentModel(Model):
-    """Parent that wires a _SubModel output into its own computation."""
+class _ParentModel(Model, legacy=True):
+    """Parent that wires a _SubModel output into its own computation.
+
+    Deliberately uses the legacy flat ``indexes=`` constructor API (it is the
+    subject under test for that API).
+    """
 
     def __init__(self, sub: _SubModel):
         self.doubled = Index("doubled traffic", sub.outputs.traffic * 2)

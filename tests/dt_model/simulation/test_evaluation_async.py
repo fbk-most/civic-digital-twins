@@ -2,13 +2,13 @@
 """Tests for AsyncEvaluationHandle and submit_evaluate() — Step 4 of engine-control.md."""
 
 import concurrent.futures
-import dataclasses
 import time
 
 import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -23,27 +23,25 @@ from civic_digital_twins.dt_model.simulation.handle import (
 # ---------------------------------------------------------------------------
 
 
+@define("SimpleModel")
 class _SimpleModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         x: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         y: Index
 
-    def __init__(self, x: Index) -> None:
-        y = Index("y", x.node * 2.0)
-        super().__init__(
-            "SimpleModel",
-            inputs=_SimpleModel.Inputs(x=x),
-            outputs=_SimpleModel.Outputs(y=y),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Double the input index."""
+        y = Index("y", inputs.x.node * 2.0)
+        return _SimpleModel.Outputs(y=y)
 
 
 def _make_simple() -> tuple[Index, _SimpleModel]:
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
-    return x, _SimpleModel(x)
+    return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
