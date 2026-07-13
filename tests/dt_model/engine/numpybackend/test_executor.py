@@ -509,9 +509,6 @@ def test_evaluate_nodes_empty():
     assert rv is None
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_user_defined_function():
     """Ensure that user-defined functions work."""
     # When there is a corresponding binding
@@ -521,7 +518,7 @@ def test_user_defined_function():
     f = graph.function_call("f", a, b, c=c)
     g = graph.add(f, graph.constant(1))
 
-    functor: executor.Functor = executor.LambdaAdapter(lambda a, b, *, c: np.add(np.add(a, b), c))
+    functor: executor.Functor = executor.NumpyBackend.adapt(lambda a, b, *, c: np.add(np.add(a, b), c))
 
     state1 = executor.State(
         values={
@@ -547,6 +544,13 @@ def test_user_defined_function():
             }
         )
         executor.evaluate_nodes(state2, *linearize.forest(g))
+
+
+def test_lambda_adapter_deprecated():
+    """LambdaAdapter emits DeprecationWarning and still adapts a callable to a Functor."""
+    with pytest.warns(DeprecationWarning, match="NumpyBackend.adapt"):
+        functor = executor.LambdaAdapter(lambda a, b: np.add(a, b))
+    assert functor(np.asarray(1), np.asarray(2)) == np.asarray(3)
 
 
 def test_state_set_node_value():

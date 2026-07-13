@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import InputsContractWarning, IOProxy, Model, ModelContractWarning
 
@@ -725,18 +726,15 @@ def test_dataclass_proxy_unknown_attr_raises():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_inputs_contract_warning_fires_for_undeclared_index():
     """Warn when a scalar Index parameter is not in Inputs."""
 
     class _Bad(Model, legacy=True):
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
-        @dataclasses.dataclass
+        @expose
         class Expose:
             received: Index  # tracked so the model is valid, but not in Inputs
 
@@ -754,18 +752,15 @@ def test_inputs_contract_warning_fires_for_undeclared_index():
         _Bad(received)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_inputs_contract_warning_fires_for_undeclared_timeseries():
     """Warn when a TimeseriesIndex parameter is not in Inputs."""
 
     class _Bad(Model, legacy=True):
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             out: Index
 
-        @dataclasses.dataclass
+        @expose
         class Expose:
             ts: TimeseriesIndex  # tracked so the model is valid, but not in Inputs
 
@@ -778,18 +773,15 @@ def test_inputs_contract_warning_fires_for_undeclared_timeseries():
         _Bad(ts)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_inputs_contract_warning_fires_for_undeclared_list():
     """Warn for each item in a list[Index] parameter not in Inputs."""
 
     class _Bad(Model, legacy=True):
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             total: Index
 
-        @dataclasses.dataclass
+        @expose
         class Expose:
             costs: list  # tracked so the model is valid, but not in Inputs
 
@@ -805,18 +797,15 @@ def test_inputs_contract_warning_fires_for_undeclared_list():
     assert any("costs[1]" in m for m in messages)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_inputs_contract_no_warning_when_declared():
     """No warning when all Index params are stored in Inputs."""
 
     class _Good(Model, legacy=True):
-        @dataclasses.dataclass
+        @inputs
         class Inputs:
             received: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -837,14 +826,11 @@ def test_inputs_contract_no_warning_when_declared():
         _Good(received)  # must not raise
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_inputs_contract_no_warning_for_non_index_params():
     """No warning for str, float, or ndarray constructor parameters."""
 
     class _Good(Model, legacy=True):
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -874,18 +860,15 @@ def test_inputs_contract_warning_is_subclass_of_model_contract_warning():
     assert issubclass(InputsContractWarning, ModelContractWarning)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
     """Filtering on ModelContractWarning catches InputsContractWarning."""
 
     class _Bad(Model, legacy=True):
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
-        @dataclasses.dataclass
+        @expose
         class Expose:
             received: Index
 

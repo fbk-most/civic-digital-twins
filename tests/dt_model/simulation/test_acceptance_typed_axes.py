@@ -249,9 +249,6 @@ def test_parameter_timeseries_no_ensemble_broadcast():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_grid_ensemble_constant_no_indexerror():
     """grid+ensemble: constant node marginalises correctly without IndexError (#155).
 
@@ -267,7 +264,7 @@ def test_grid_ensemble_constant_no_indexerror():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={i_x: xs, i_y: ys})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={i_x: xs, i_y: ys})
     # Must not raise IndexError.  The constant has 2 PARAMETER singleton dims
     # preserved after ENSEMBLE contraction → shape (1, 1).
     marginalised = result.expected_value(i_c)

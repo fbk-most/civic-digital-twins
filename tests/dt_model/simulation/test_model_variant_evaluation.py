@@ -9,7 +9,7 @@ from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble, WeightedScenario
+from civic_digital_twins.dt_model.simulation.ensemble import CrossProductEnsemble, DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
@@ -134,28 +134,17 @@ def test_evaluation_train_scenario_gives_train_outputs():
     assert float(throughput) == pytest.approx(_CAPACITY_VALUE * 10.0)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_evaluation_mixed_modes_weighted_average():
     """Mixed bike/train scenarios give a correctly weighted average throughput."""
-    # Degenerate ensemble: 2 bike and 2 train out of 4; force via rng that picks
-    # 50/50 mode.  Rather than relying on randomness, build a manual ensemble.
+    # mode has only 2 outcomes, so CrossProductEnsemble fully enumerates them
+    # (weights 0.5/0.5) instead of relying on stochastic sampling.
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv_with_mode(mode)
 
-    # Build a deterministic 4-scenario ensemble: 2 bike, 2 train.
-    bike_val = np.array(["bike"])
-    train_val = np.array(["train"])
-    manual_scenarios: list[WeightedScenario] = [
-        (0.25, {mode: bike_val}),
-        (0.25, {mode: train_val}),
-        (0.25, {mode: bike_val}),
-        (0.25, {mode: train_val}),
-    ]
-
-    ev = Evaluation(Scenario(mv))
-    result = ev.evaluate(manual_scenarios, [mv.outputs.throughput])
+    scenario = Scenario(mv)
+    ens = CrossProductEnsemble(scenario)
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv.outputs.throughput])
     # Expected: 0.5 * (100 * 1) + 0.5 * (100 * 10) = 50 + 500 = 550
     throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(550.0)
@@ -221,40 +210,38 @@ def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     return presence, mv
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_grid_mode_categorical_selector_all_bike():
     """CategoricalIndex selector (all-bike) + numeric axis: throughput = presence * 1."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     presence, mv = _make_presence_mv(mode)
     xs = np.array([100.0, 200.0, 300.0])
 
-    # mode is a non-axis abstract; presence is the axis → single scenario needs mode assignment.
-    manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
-    result = Evaluation(Scenario(mv)).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
+    # presence is swept via parameters=, so exclude it from ensemble sampling;
+    # mode has a single outcome, so CrossProductEnsemble enumerates it deterministically.
+    scenario = Scenario(mv, parameter_axes=[presence])
+    ens = CrossProductEnsemble(scenario)
+    result = Evaluation(scenario).evaluate(
+        ensemble=ens, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_grid_mode_categorical_selector_all_train():
     """CategoricalIndex selector (all-train) + numeric axis: throughput = presence * 10."""
     mode = CategoricalIndex("mode", {"train": 1.0})
     presence, mv = _make_presence_mv(mode)
     xs = np.array([100.0, 200.0, 300.0])
 
-    manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
-    result = Evaluation(Scenario(mv)).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
+    scenario = Scenario(mv, parameter_axes=[presence])
+    ens = CrossProductEnsemble(scenario)
+    result = Evaluation(scenario).evaluate(
+        ensemble=ens, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_grid_mode_categorical_selector_mixed_scenarios():
     """CategoricalIndex selector, two equal-weight scenarios + numeric axis.
 
@@ -264,23 +251,20 @@ def test_grid_mode_categorical_selector_mixed_scenarios():
     presence, mv = _make_presence_mv(mode)
     xs = np.array([100.0, 200.0, 300.0])
 
-    manual_scenarios: list[WeightedScenario] = [
-        (0.5, {mode: np.array(["bike"])}),
-        (0.5, {mode: np.array(["train"])}),
-    ]
-    result = Evaluation(Scenario(mv)).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
+    scenario = Scenario(mv, parameter_axes=[presence])
+    ens = CrossProductEnsemble(scenario)
+    result = Evaluation(scenario).evaluate(
+        ensemble=ens, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 5.5)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_grid_mode_node_selector_from_axis():
     """graph.Node selector derived from numeric axis.
 
     Selector: presence > 150 → 'train', else 'bike'.
-    Single dummy scenario (no non-axis abstract indexes).
+    No abstract indexes remain once presence is swept via parameters=.
     """
     presence = Index("presence", None)
     selector = ModelVariant.guards_to_selector(
@@ -298,8 +282,10 @@ def test_grid_mode_node_selector_from_axis():
     )
     xs = np.array([100.0, 200.0, 300.0])
 
-    # presence is the only abstract index and it is the axis → no assignments needed.
-    result = Evaluation(Scenario(mv)).evaluate([(1.0, {})], [mv.outputs.throughput], parameters={presence: xs})
+    # presence is the only abstract index and it is the axis → no ensemble needed.
+    result = Evaluation(Scenario(mv)).evaluate(
+        ensemble=None, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     # presence=100 → bike → 100*1=100
     # presence=200 → train → 200*10=2000

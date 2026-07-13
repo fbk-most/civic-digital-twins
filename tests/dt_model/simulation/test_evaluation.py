@@ -53,9 +53,6 @@ def _make_model(*indexes: GenericIndex) -> Model:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_1d_single_scenario_constant_model():
     """A fully-concrete model evaluates with an empty scenario."""
     I_a = Index("a", 3.0)
@@ -63,8 +60,8 @@ def test_1d_single_scenario_constant_model():
     I_result = Index("result", I_a.node + I_b.node)
     model = _make_model(I_a, I_b, I_result)
 
-    # No abstract indexes → scenarios list is empty; still evaluates constants.
-    result = Evaluation(Scenario(model)).evaluate([])
+    # No abstract indexes → nothing to sample; still evaluates constants.
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     assert np.isclose(result[I_result], 7.0)
 
 
@@ -124,31 +121,36 @@ def test_1d_raises_on_unresolved_abstract_index():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_axes_single_axis_result_shape():
     """Single axis index produces result shape (N, 1)."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs})
+    # I_x is swept via parameters=, so it must be excluded from ensemble
+    # sampling via parameter_axes=; a size-1 ensemble reproduces the
+    # trailing ENSEMBLE singleton dimension of the legacy 1-scenario call.
+    scenario = Scenario(model, parameter_axes=[I_x])
+    ensemble = DistributionEnsemble(scenario, size=1)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs})
     assert result[I_x].shape == (3, 1)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_axes_two_axes_result_shape():
     """Two axis indexes produce result shape (N0, N1, 1)."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
     I_x = Index("x", None)
     I_y = Index("y", None)
     model = _make_model(I_x, I_y)
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
+    scenario = Scenario(model, parameter_axes=[I_x, I_y])
+    ensemble = DistributionEnsemble(scenario, size=1)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs, I_y: ys})
     assert result[I_x].shape == (2, 1, 1)
     assert result[I_y].shape == (1, 3, 1)
 
@@ -176,9 +178,6 @@ def test_axes_non_axis_abstract_has_shape_1_1_s():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_axes_single_axis_formula_values():
     """Formula with a single axis index evaluates on the full grid."""
     I_x = Index("x", None)
@@ -187,15 +186,12 @@ def test_axes_single_axis_formula_values():
     model = _make_model(I_x, I_scale, I_result)
     xs = np.array([1.0, 2.0, 4.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     # shape (3, 1); marginalize: tensordot(..., [1.0], axes=([-1],[0])) → (3,)
     marginalised = result.expected_value(I_result)
     assert np.allclose(marginalised, [3.0, 6.0, 12.0])
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_axes_two_axes_additive_formula():
     """Sum formula over two axes produces the correct (N0, N1, S) array."""
     I_x = Index("x", None)
@@ -205,7 +201,7 @@ def test_axes_two_axes_additive_formula():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs, I_y: ys})
     marginalised = result.expected_value(I_result)
     # result[i, j] = xs[i] + ys[j]
     expected = xs[:, None] + ys[None, :]
@@ -238,9 +234,6 @@ def test_axes_non_axis_factor_marginalised_correctly():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_axes_raises_on_unresolved_non_axis_abstract():
     """ValueError when a non-axis abstract index is missing from a scenario."""
     I_x = Index("x", None)
@@ -248,19 +241,20 @@ def test_axes_raises_on_unresolved_non_axis_abstract():
     model = _make_model(I_x, I_missing)
 
     with pytest.raises(ValueError, match="abstract index"):
-        Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: np.array([1.0])})
+        Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: np.array([1.0])})
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_axes_axis_index_not_required_in_scenario():
     """Axis indexes do not need to appear in the scenario assignments."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
     I_x = Index("x", None)
     model = _make_model(I_x)
 
-    # Should not raise — I_x is an axis, not required in scenario dict.
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: np.array([5.0, 10.0])})
+    # Should not raise — I_x is an axis, not required in scenario overrides.
+    scenario = Scenario(model, parameter_axes=[I_x])
+    ensemble = DistributionEnsemble(scenario, size=1)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: np.array([5.0, 10.0])})
     assert result[I_x].shape == (2, 1)
 
 
@@ -288,48 +282,36 @@ def test_evaluation_result_weights_property():
     assert np.isclose(weights[1], 0.7)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_evaluation_result_parameter_values_property():
     """EvaluationResult.parameter_values returns the dict passed to evaluate()."""
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     pv = result.parameter_values
     assert I_x in pv
     assert np.array_equal(pv[I_x], xs)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_evaluation_result_parameter_values_empty_in_1d_mode():
     """EvaluationResult.parameter_values is empty when no parameters are passed."""
     I_x = Index("x", 1.0)
     model = _make_model(I_x)
 
-    result = Evaluation(Scenario(model)).evaluate([])
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     assert result.parameter_values == {}
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_value_constant_index():
     """Marginalize on an index with no abstract dependency returns the constant."""
     I_c = Index("c", 42.0)
     model = _make_model(I_c)
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})])
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     marginalised = result.expected_value(I_c)
     assert float(marginalised) == pytest.approx(42.0)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_value_1d_squeeze_scalar():
     """Marginalize of a pure-ENSEMBLE scalar result is a 0-d scalar array."""
     from scipy import stats
@@ -343,7 +325,7 @@ def test_value_1d_squeeze_scalar():
     scenario = Scenario(model)
 
     ensemble = DistributionEnsemble(scenario, size=50)
-    result = Evaluation(scenario).evaluate(ensemble)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble)
     marginalised = result.expected_value(I_result)
     # ENSEMBLE axis contracted, DOMAIN placeholder squeezed → 0-d scalar.
     assert np.ndim(marginalised) == 0
@@ -354,9 +336,6 @@ def test_value_1d_squeeze_scalar():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_result_axes_deprecated_property():
     """EvaluationResult.axes emits DeprecationWarning and returns parameter_values."""
     import warnings
@@ -365,7 +344,7 @@ def test_result_axes_deprecated_property():
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         axes = result.axes
@@ -374,16 +353,13 @@ def test_result_axes_deprecated_property():
     assert I_x in axes
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
 def test_result_parameter_values_for():
     """EvaluationResult.parameter_values_for() returns the array for a given index."""
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     assert np.array_equal(result.parameter_values_for(I_x), xs)
 
 
