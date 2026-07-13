@@ -386,8 +386,8 @@ def test_partitioned_ensemble_accepts_scenario():
 
 
 def test_partitioned_ensemble_rejects_wrong_type():
-    """PartitionedEnsemble raises TypeError when passed something other than Scenario/Model."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """PartitionedEnsemble raises TypeError when passed something other than a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         PartitionedEnsemble("not a model", axes=[])  # type: ignore[arg-type]
 
 

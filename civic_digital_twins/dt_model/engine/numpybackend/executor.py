@@ -15,7 +15,6 @@ state and evaluates each node exactly once, storing results for later reuse.
 """
 # SPDX-License-Identifier: Apache-2.0
 
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import (
@@ -350,23 +349,6 @@ class _NumpyFunctor:
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         return self._fn(*args, **kwargs)
-
-
-class LambdaAdapter(_NumpyFunctor):
-    """Adapter that transforms a Callable into a Functor.
-
-    .. deprecated::
-        Use :meth:`NumpyBackend.adapt` instead.
-        ``LambdaAdapter`` will be removed in a future release.
-    """
-
-    def __init__(self, callable: Callable[..., np.ndarray]) -> None:
-        warnings.warn(
-            "LambdaAdapter is deprecated; use NumpyBackend.adapt() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(callable)
 
 
 class NumpyBackend:

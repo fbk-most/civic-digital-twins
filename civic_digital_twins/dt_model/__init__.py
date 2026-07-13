@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from .engine.frontend.graph import HasNode
-from .engine.numpybackend.executor import Functor, LambdaAdapter, NumpyBackend
+from .engine.numpybackend.executor import Functor, NumpyBackend
 from .model import (
     DOMAIN,
     ENSEMBLE,
@@ -63,7 +63,6 @@ __all__ = [
     "AbstractIndexNotInInputsWarning",
     "Functor",
     "HasNode",
-    "LambdaAdapter",
     "Axis",
     "AsyncEvaluationHandle",
     "AxisEnsemble",

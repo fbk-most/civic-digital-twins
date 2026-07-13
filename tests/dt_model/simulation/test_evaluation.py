@@ -562,13 +562,13 @@ def test_evaluation_rejects_scenario_like_object_after_duck_typing_removal():
         def __init__(self, m):
             self.model = m
 
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    with pytest.raises(TypeError, match="expects a Scenario"):
         Evaluation(_FakeScenario(model))  # type: ignore[arg-type]
 
 
 def test_evaluation_rejects_object_without_model_attribute():
-    """Evaluation() raises TypeError when the argument is not a Scenario, Model, or ModelVariant."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """Evaluation() raises TypeError when the argument is not a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         Evaluation(object())  # type: ignore[arg-type]
 
 

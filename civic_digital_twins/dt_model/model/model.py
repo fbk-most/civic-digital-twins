@@ -370,94 +370,6 @@ def _collect_indexes(
     return result
 
 
-def _build_proxy(
-    label: str,
-    declarations: list[GenericIndex],
-    instance_dict: dict[str, Any],
-    indexes: list[GenericIndex],
-    model_name: str,
-) -> IOProxy[Any]:
-    """Build an :class:`IOProxy` for a legacy flat inputs/outputs declaration.
-
-    The attribute name used for proxy access is determined by looking up each
-    declared index in the model instance's ``__dict__``: whichever attribute
-    name holds that exact object (identity check) becomes the access key.
-    ``index.name`` is not used here — it is a display label only.
-
-    Parameters
-    ----------
-    label:
-        ``"inputs"`` or ``"outputs"`` — used in error messages only.
-    declarations:
-        Ordered list of :class:`~.index.GenericIndex` objects declared as
-        inputs or outputs.
-    instance_dict:
-        ``self.__dict__`` of the model instance at the time
-        ``super().__init__()`` is called, i.e. after all ``self.* =``
-        assignments have been made.
-    indexes:
-        The full flat index list of the model.  Every declared index must
-        appear here (identity check).
-    model_name:
-        Used in error messages.
-
-    Returns
-    -------
-    IOProxy
-        Proxy whose attribute keys are the Python attribute names found in
-        *instance_dict*.
-
-    Raises
-    ------
-    ValueError
-        If a declared index is not in *indexes*, or if no attribute holding
-        that index can be found in *instance_dict*, or if two declared indexes
-        share the same attribute name.
-    """
-    index_ids = {id(idx) for idx in indexes}
-
-    # Build a reverse map: id(index) -> attr_name from the instance dict.
-    # When multiple attributes point to the same object we take the first one
-    # found (dict insertion order, i.e. assignment order).
-    id_to_attr: dict[int, str] = {}
-    for attr, val in instance_dict.items():
-        if isinstance(val, GenericIndex) and id(val) not in id_to_attr:
-            id_to_attr[id(val)] = attr
-
-    entries: list[tuple[str, _ProxyValue]] = []
-    seen_attrs: dict[str, int] = {}  # attr_name -> position, for collision detection
-
-    for idx in declarations:
-        # 1. Must be in indexes.
-        if id(idx) not in index_ids:
-            raise ValueError(
-                f"Model {model_name!r}: {label} entry "
-                f"{getattr(idx, 'name', repr(idx))!r} "
-                f"is not in the model's indexes list."
-            )
-
-        # 2. Must be findable as an instance attribute.
-        attr = id_to_attr.get(id(idx))
-        if attr is None:
-            raise ValueError(
-                f"Model {model_name!r}: {label} entry "
-                f"{getattr(idx, 'name', repr(idx))!r} "
-                f"is not assigned to any attribute of the model instance. "
-                f"Assign it to 'self.<name>' before calling super().__init__()."
-            )
-
-        # 3. No two declared entries may share the same attribute name.
-        if attr in seen_attrs:
-            raise ValueError(
-                f"Model {model_name!r}: {label} attribute name {attr!r} "
-                f"collision — two declared entries map to the same attribute."
-            )
-        seen_attrs[attr] = len(entries)
-        entries.append((attr, idx))
-
-    return IOProxy(entries, dc=None)
-
-
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -534,30 +446,16 @@ class Model:
         ``indexes`` list is derived automatically from ``inputs``, ``outputs``,
         and ``expose``.
 
-    **Legacy API** (deprecated)
-        Pass a flat ``indexes`` list directly, along with optional
-        ``inputs`` and ``outputs`` as plain ``list[GenericIndex]``::
-
-            super().__init__("My Model", indexes=[a, b, c], outputs=[b])
-
-        Every entry in ``inputs``/``outputs`` must be assigned to a
-        ``self.*`` attribute before ``super().__init__()`` is called.
-        A :class:`DeprecationWarning` is emitted when ``indexes`` is
-        provided explicitly.
-
     Parameters
     ----------
     name:
         Human-readable name for the model.
-    indexes:
-        *Deprecated.* Explicit flat index list.  If omitted, the list is
-        derived from the dataclass arguments.
     inputs:
-        Dataclass instance (new API) or ``list[GenericIndex]`` (legacy).
+        Instance of an ``@inputs``-decorated dataclass, or ``None``.
     outputs:
-        Dataclass instance (new API) or ``list[GenericIndex]`` (legacy).
+        Instance of an ``@outputs``-decorated dataclass, or ``None``.
     expose:
-        Dataclass instance (new API) or ``None``.  Ignored in legacy mode.
+        Instance of an ``@expose``-decorated dataclass, or ``None``.
     functions:
         Instance of a ``@functions``-decorated class declaring the custom
         functors this model requires.  At construction time the model
@@ -638,7 +536,6 @@ class Model:
     def __init__(
         self,
         name: str,
-        indexes: list[GenericIndex] | None = None,
         *,
         inputs: Any | None = None,
         outputs: Any | None = None,
@@ -647,122 +544,73 @@ class Model:
     ) -> None:
         self.name = name
 
-        if indexes is not None:
-            # ------------------------------------------------------------------
-            # Legacy path — explicit flat index list provided
-            # ------------------------------------------------------------------
-            warnings.warn(
-                "Passing 'indexes' explicitly is deprecated and will be removed in a future version. "
-                "Use the @inputs/@outputs/@expose contract decorators instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            self.indexes: list[GenericIndex] = indexes
+        self.indexes = _collect_indexes(inputs, outputs, expose)
 
-            # Capture instance __dict__ before we assign self.inputs / self.outputs
-            # so those names do not pollute the attr lookup.
-            instance_dict = dict(self.__dict__)
-            instance_dict.pop("name", None)
-            instance_dict.pop("indexes", None)
+        self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]
+        self.outputs = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])  # type: ignore[assignment]
+        self.expose = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])  # type: ignore[assignment]
 
-            # In legacy mode inputs/outputs are expected to be list[GenericIndex] | None.
-            legacy_inputs: list[GenericIndex] = inputs if isinstance(inputs, list) else []
-            legacy_outputs: list[GenericIndex] = outputs if isinstance(outputs, list) else []
-
-            self.inputs: IOProxy[Any] = _build_proxy("inputs", legacy_inputs, instance_dict, indexes, name)
-            self.outputs: IOProxy[Any] = _build_proxy("outputs", legacy_outputs, instance_dict, indexes, name)
-            self.expose: IOProxy[Any] = IOProxy([])
-            self._node_functions: dict[graph.Node, Functor] = _collect_submodel_node_functions(instance_dict)
-
+        # Build node-function map: collect sub-model claims first, then this
+        # model's own @functions declarations (closest-ancestor wins).
+        _scan = {k: v for k, v in self.__dict__.items() if k not in ("name", "indexes", "inputs", "outputs", "expose")}
+        _submodel_fns = _collect_submodel_node_functions(_scan)
+        if functions is not None and getattr(type(functions), "_is_functions", False):
+            self._node_functions = _build_node_functions_map(self.indexes, self.inputs, functions, _submodel_fns)
         else:
-            # ------------------------------------------------------------------
-            # New dataclass-based path
-            # ------------------------------------------------------------------
+            self._node_functions = _submodel_fns
 
-            # Warn when plain @dataclass instances are used instead of the
-            # dedicated @inputs / @outputs / @expose contract decorators.
-            for _label, _val, _marker in (
-                ("inputs", inputs, "_is_inputs"),
-                ("outputs", outputs, "_is_outputs"),
-                ("expose", expose, "_is_expose"),
-            ):
-                if _val is not None and dataclasses.is_dataclass(_val) and not getattr(type(_val), _marker, False):
+        # Convention check: every GenericIndex constructor parameter should
+        # be declared in Inputs.  We inspect the immediate caller's frame
+        # (the subclass __init__ that called super().__init__()) and warn
+        # for any parameter whose value is a GenericIndex not found in
+        # self.inputs.  The check is skipped for Model itself.
+        concrete_cls = type(self)
+        if concrete_cls is not Model:
+            frame = inspect.currentframe()
+            caller_frame = frame.f_back if frame is not None else None
+            if caller_frame is not None:
+                _check_inputs_contract(caller_frame, concrete_cls, self.inputs)
+
+            # Dropped-index check: any graph.placeholder or
+            # graph.timeseries_placeholder node that is reachable from the
+            # model's internally-built formula nodes but not itself covered
+            # by a declared index will never receive a value at evaluation time.
+            # This catches both sub-model concrete indexes and inline
+            # Index(name, scalar) / TimeseriesIndex(name, array) created
+            # inside compute() but not surfaced via Inputs/Outputs/Expose.
+            # Formula-backed input nodes are excluded from the traversal
+            # boundary: their placeholder dependencies belong to the model
+            # that built them (the parent or a sibling sub-model).
+            _input_formula_nodes: tuple[graph.Node, ...] = tuple(
+                idx.node
+                for idx in self.inputs
+                if not isinstance(idx.node, (graph.placeholder, graph.timeseries_placeholder))
+            )
+            _orphaned = _find_orphaned_placeholder_nodes(self.indexes, _input_formula_nodes)
+            if _orphaned:
+                _names = ", ".join(repr(n.name) for n in _orphaned)
+                raise ValueError(
+                    f"{concrete_cls.__name__}: the following indexes appear in "
+                    f"the model's formulas but are not declared in Inputs, Outputs, or Expose: "
+                    f"{_names}. "
+                    "Without a declaration the model cannot inject their values at "
+                    "evaluation time and will fail with a missing-value error. "
+                    "Add each index to Inputs (if it is supplied from outside the "
+                    "model), Outputs or Expose (if it is computed inside), or "
+                    "replace it with ConstIndex / ConstTimeseriesIndex if its "
+                    "value is fixed and should never be overridden."
+                )
+
+            for idx in self.abstract_indexes():
+                if idx not in self.inputs:
+                    idx_name = getattr(idx, "name", repr(idx))
                     warnings.warn(
-                        f"Passing a plain @dataclass as {_label}= is deprecated. "
-                        f"Replace @dataclass with @{_label} from civic_digital_twins.dt_model.",
-                        DeprecationWarning,
+                        f"{concrete_cls.__name__}: abstract index {idx_name!r} is not "
+                        f"declared in Inputs. Abstract indexes receive their values from "
+                        f"outside the model and should be declared in Inputs.",
+                        AbstractIndexNotInInputsWarning,
                         stacklevel=3,
                     )
-
-            self.indexes = _collect_indexes(inputs, outputs, expose)
-
-            self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]
-            self.outputs = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])  # type: ignore[assignment]
-            self.expose = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])  # type: ignore[assignment]
-
-            # Build node-function map: collect sub-model claims first, then this
-            # model's own @functions declarations (closest-ancestor wins).
-            _scan = {
-                k: v for k, v in self.__dict__.items() if k not in ("name", "indexes", "inputs", "outputs", "expose")
-            }
-            _submodel_fns = _collect_submodel_node_functions(_scan)
-            if functions is not None and getattr(type(functions), "_is_functions", False):
-                self._node_functions = _build_node_functions_map(self.indexes, self.inputs, functions, _submodel_fns)
-            else:
-                self._node_functions = _submodel_fns
-
-            # Convention check: every GenericIndex constructor parameter should
-            # be declared in Inputs.  We inspect the immediate caller's frame
-            # (the subclass __init__ that called super().__init__()) and warn
-            # for any parameter whose value is a GenericIndex not found in
-            # self.inputs.  The check is skipped for Model itself.
-            concrete_cls = type(self)
-            if concrete_cls is not Model:
-                frame = inspect.currentframe()
-                caller_frame = frame.f_back if frame is not None else None
-                if caller_frame is not None:
-                    _check_inputs_contract(caller_frame, concrete_cls, self.inputs)
-
-                # Dropped-index check: any graph.placeholder or
-                # graph.timeseries_placeholder node that is reachable from the
-                # model's internally-built formula nodes but not itself covered
-                # by a declared index will never receive a value at evaluation time.
-                # This catches both sub-model concrete indexes and inline
-                # Index(name, scalar) / TimeseriesIndex(name, array) created
-                # inside compute() but not surfaced via Inputs/Outputs/Expose.
-                # Formula-backed input nodes are excluded from the traversal
-                # boundary: their placeholder dependencies belong to the model
-                # that built them (the parent or a sibling sub-model).
-                _input_formula_nodes: tuple[graph.Node, ...] = tuple(
-                    idx.node
-                    for idx in self.inputs
-                    if not isinstance(idx.node, (graph.placeholder, graph.timeseries_placeholder))
-                )
-                _orphaned = _find_orphaned_placeholder_nodes(self.indexes, _input_formula_nodes)
-                if _orphaned:
-                    _names = ", ".join(repr(n.name) for n in _orphaned)
-                    raise ValueError(
-                        f"{concrete_cls.__name__}: the following indexes appear in "
-                        f"the model's formulas but are not declared in Inputs, Outputs, or Expose: "
-                        f"{_names}. "
-                        "Without a declaration the model cannot inject their values at "
-                        "evaluation time and will fail with a missing-value error. "
-                        "Add each index to Inputs (if it is supplied from outside the "
-                        "model), Outputs or Expose (if it is computed inside), or "
-                        "replace it with ConstIndex / ConstTimeseriesIndex if its "
-                        "value is fixed and should never be overridden."
-                    )
-
-                for idx in self.abstract_indexes():
-                    if idx not in self.inputs:
-                        idx_name = getattr(idx, "name", repr(idx))
-                        warnings.warn(
-                            f"{concrete_cls.__name__}: abstract index {idx_name!r} is not "
-                            f"declared in Inputs. Abstract indexes receive their values from "
-                            f"outside the model and should be declared in Inputs.",
-                            AbstractIndexNotInInputsWarning,
-                            stacklevel=3,
-                        )
 
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that require external values before evaluation.

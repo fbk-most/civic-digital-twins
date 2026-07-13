@@ -516,8 +516,8 @@ def test_distribution_ensemble_accepts_scenario():
 
 
 def test_distribution_ensemble_rejects_wrong_type():
-    """DistributionEnsemble raises TypeError when passed something other than Scenario/Model."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """DistributionEnsemble raises TypeError when passed something other than a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         DistributionEnsemble("not a model", 5)  # type: ignore[arg-type]
 
 
@@ -527,8 +527,8 @@ def test_distribution_ensemble_rejects_wrong_type():
 
 
 def test_cross_product_ensemble_rejects_wrong_type():
-    """CrossProductEnsemble raises TypeError when passed something other than Scenario/Model."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """CrossProductEnsemble raises TypeError when passed something other than a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         CrossProductEnsemble("not a model")  # type: ignore[arg-type]
 
 
