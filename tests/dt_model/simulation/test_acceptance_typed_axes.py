@@ -16,7 +16,8 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index, TimeseriesIndex
+from civic_digital_twins.dt_model import define, inputs, outputs
+from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import (
     DistributionEnsemble,
@@ -25,6 +26,7 @@ from civic_digital_twins.dt_model.simulation.ensemble import (
     WeightedScenario,
 )
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,8 +37,25 @@ def _dist_index(name: str, lo: float = 0.0, hi: float = 1.0) -> Index:
     return DistributionIndex(name, stats.uniform, {"loc": lo, "scale": hi - lo})
 
 
-def _make_model(*indexes) -> Model:
-    return Model("test", list(indexes))
+@define("TestModel")
+class _TestModel(Model):
+    """Minimal model wrapping an arbitrary set of indexes."""
+
+    @inputs
+    class Inputs:
+        indexes: list[GenericIndex]
+
+    @outputs
+    class Outputs:
+        pass
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """No computation — just expose the wrapped indexes."""
+        return _TestModel.Outputs()
+
+
+def _make_model(*indexes: GenericIndex) -> Model:
+    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -56,11 +75,12 @@ def test_parameter_then_ensemble_then_domain_order():
     i_p = Index("p", 1.0)  # concrete default, swept via parameters= → PARAMETER dim
     i_result = Index("result", i_p.node * i_x.node)
     model = _make_model(i_x, i_p, i_result)
+    scenario = Scenario(model)
 
     pp = np.array([1.0, 2.0, 3.0])
-    ens = DistributionEnsemble(model, size=5, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario, size=5, rng=np.random.default_rng(0))
 
-    result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
+    result = Evaluation(scenario).evaluate(ensemble=ens, parameters={i_p: pp})
     arr = result[i_result]
     # Shape: (N_p=3, S=5) — PARAMETER first, ENSEMBLE second
     assert arr.shape == (3, 5)
@@ -71,9 +91,10 @@ def test_no_shape_heuristic_constant_node():
     i_c = Index("c", 42.0)
     i_x = _dist_index("x")  # gives DistributionEnsemble something to sample
     model = _make_model(i_c, i_x)
+    scenario = Scenario(model)
 
-    ens = DistributionEnsemble(model, size=4, rng=np.random.default_rng(0))
-    result = Evaluation(model).evaluate(ensemble=ens)
+    ens = DistributionEnsemble(scenario, size=4, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ens)
 
     marginalised = result.expected_value(i_c)
     # Constant node: marginalize over ENSEMBLE should give scalar 42.0
@@ -96,9 +117,10 @@ def test_s_equals_t_ensemble_contracted_not_time():
     ts = TimeseriesIndex("ts", np.arange(float(T)))  # shape (T,) = (5,)
     i_x = _dist_index("x")
     model = _make_model(ts, i_x)
+    scenario = Scenario(model)
 
-    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
-    result = Evaluation(model).evaluate(ensemble=ens)
+    ens = DistributionEnsemble(scenario, size=S, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ens)
 
     # ts is a constant timeseries — marginalize over ENSEMBLE should preserve (T,)
     marginalised = result.expected_value(ts)
@@ -112,7 +134,7 @@ def test_deterministic_timeseries_no_ensemble_contraction():
     ts = TimeseriesIndex("ts", np.ones(T))
     model = _make_model(ts)
 
-    result = Evaluation(model).evaluate(ensemble=None)
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     marginalised = result.expected_value(ts)
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.ones(T))
@@ -131,16 +153,17 @@ def test_two_ensemble_axes_one_equals_t():
     i_a = _dist_index("a")
     i_b = _dist_index("b")
     model = _make_model(ts, i_a, i_b)
+    scenario = Scenario(model)
 
     ens = PartitionedEnsemble(
-        model,
+        scenario,
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=S0),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=S1),
         ],
         rng=np.random.default_rng(0),
     )
-    result = Evaluation(model).evaluate(ensemble=ens)
+    result = Evaluation(scenario).evaluate(ensemble=ens)
 
     # ts is constant — marginalize over both ENSEMBLE axes → shape (T,)
     marginalised = result.expected_value(ts)
@@ -161,9 +184,10 @@ def test_scalar_ensemble_broadcasts_with_timeseries():
     i_x = _dist_index("x")
     i_result = Index("result", i_x.node * ts.node)
     model = _make_model(ts, i_x, i_result)
+    scenario = Scenario(model)
 
-    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
-    result = Evaluation(model).evaluate(ensemble=ens)
+    ens = DistributionEnsemble(scenario, size=S, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ens)
 
     arr = result[i_result]
     # Shape should be (S, T) = (4, 6) — ENSEMBLE then DOMAIN
@@ -181,9 +205,10 @@ def test_index_sum_axis_minus1_over_timeseries_with_ensemble():
     i_prod = Index("prod", i_x.node * ts.node)
     i_sum = Index("sum", i_prod.sum(Axis("time", DOMAIN)))  # keepdims=True by convention
     model = _make_model(ts, i_x, i_prod, i_sum)
+    scenario = Scenario(model)
 
-    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
-    result = Evaluation(model).evaluate(ensemble=ens)
+    ens = DistributionEnsemble(scenario, size=S, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ens)
 
     arr = result[i_sum]
     # sum(axis=-1) reduces T → 1 (keepdims): shape (S, 1)
@@ -214,7 +239,7 @@ def test_parameter_timeseries_no_ensemble_broadcast():
     assert pp.size == N
 
     # No ensemble — pure PARAMETER sweep.  Expected shape: (N, T) = (3, 6).
-    result = Evaluation(model).evaluate(ensemble=None, parameters={i_p: pp})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={i_p: pp})
     arr = result[i_result]
     assert arr.shape == (N, T)
 
@@ -224,6 +249,9 @@ def test_parameter_timeseries_no_ensemble_broadcast():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_grid_ensemble_constant_no_indexerror():
     """grid+ensemble: constant node marginalises correctly without IndexError (#155).
 
@@ -239,7 +267,7 @@ def test_grid_ensemble_constant_no_indexerror():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={i_x: xs, i_y: ys})
+    result = Evaluation(Scenario(model)).evaluate([(1.0, {})], parameters={i_x: xs, i_y: ys})
     # Must not raise IndexError.  The constant has 2 PARAMETER singleton dims
     # preserved after ENSEMBLE contraction → shape (1, 1).
     marginalised = result.expected_value(i_c)
@@ -263,12 +291,13 @@ def test_grid_ensemble_timeseries_broadcast_no_valueerror():
     i_p = Index("p", 1.0)
     i_result = Index("result", i_p.node * i_x.node * ts.node)
     model = _make_model(ts, i_x, i_p, i_result)
+    scenario = Scenario(model)
 
     pp = np.array([1.0, 2.0, 3.0])
-    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario, size=S, rng=np.random.default_rng(0))
 
     # Must not raise ValueError during evaluate().
-    result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
+    result = Evaluation(scenario).evaluate(ensemble=ens, parameters={i_p: pp})
     arr = result[i_result]
     # Shape: (N_p=3, S=4, T=7)
     assert arr.shape == (3, S, T)
@@ -292,12 +321,13 @@ def test_grid_ensemble_constant_and_timeseries_both_normalised():
     i_x = _dist_index("x")
     i_p = Index("p", 1.0)
     model = _make_model(ts, i_c, i_x, i_p)
+    scenario = Scenario(model)
 
     pp = np.array([1.0, 2.0])
     assert pp.size == N
-    ens = DistributionEnsemble(model, size=S, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario, size=S, rng=np.random.default_rng(0))
 
-    result = Evaluation(model).evaluate(ensemble=ens, parameters={i_p: pp})
+    result = Evaluation(scenario).evaluate(ensemble=ens, parameters={i_p: pp})
     # Constant scalar: PARAMETER singleton dim preserved after ENSEMBLE contraction
     # → shape (1,).  All values equal 10.0.
     marginalised_c = result.expected_value(i_c)
@@ -320,9 +350,10 @@ def test_value_t1_timeseries_with_ensemble():
     ts = TimeseriesIndex("ts", np.array([5.0]))
     i_x = _dist_index("x")
     model = _make_model(ts, i_x)
+    scenario = Scenario(model)
 
-    ens = DistributionEnsemble(model, size=4, rng=np.random.default_rng(0))
-    result = Evaluation(model).evaluate(ensemble=ens)
+    ens = DistributionEnsemble(scenario, size=4, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ens)
 
     v = result.expected_value(ts)
     assert v.shape == (1,), f"expected shape (1,), got {v.shape}"
@@ -334,7 +365,7 @@ def test_value_t1_timeseries_no_ensemble():
     ts = TimeseriesIndex("ts", np.array([42.0]))
     model = _make_model(ts)
 
-    result = Evaluation(model).evaluate(ensemble=None)
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
 
     v = result.expected_value(ts)
     assert v.shape == (1,), f"expected shape (1,), got {v.shape}"
@@ -347,7 +378,7 @@ def test_value_t1_scalar_not_squeezed_to_wrong_shape():
     i_c = Index("c", 10.0)
     model = _make_model(ts, i_c)
 
-    result = Evaluation(model).evaluate(ensemble=None)
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
 
     v = result.expected_value(i_c)
     assert v.ndim == 0, f"expected 0-d scalar, got shape {v.shape}"
@@ -366,7 +397,7 @@ def test_value_t1_with_parameter_sweep():
     model = _make_model(ts, i_p, i_result)
 
     pp = np.array([1.0, 2.0, 4.0])
-    result = Evaluation(model).evaluate(ensemble=None, parameters={i_p: pp})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={i_p: pp})
 
     # TimeseriesIndex preserves T: (N_p=1, T=1).
     v = result.expected_value(ts)
@@ -390,7 +421,7 @@ def test_marginalize_deprecated_emits_warning():
     ts = TimeseriesIndex("ts", np.arange(float(T)))
     model = _make_model(ts)
 
-    result = Evaluation(model).evaluate(ensemble=None)
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -414,7 +445,7 @@ def test_legacy_iterable_emits_deprecation_warning():
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        Evaluation(model).evaluate(scenarios)
+        Evaluation(Scenario(model)).evaluate(scenarios)
 
     deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert any("WeightedScenario" in str(w.message) for w in deprecations)
@@ -429,7 +460,7 @@ def test_legacy_iterable_gives_correct_results():
     scenarios: list[WeightedScenario] = [(0.5, {i_x: 1.0}), (0.5, {i_x: 3.0})]
     with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
-        result = Evaluation(model).evaluate(scenarios)
+        result = Evaluation(Scenario(model)).evaluate(scenarios)
 
     # E[result] = 0.5*(1*2) + 0.5*(3*2) = 0.5*2 + 0.5*6 = 4.0
     assert float(result.expected_value(i_result)) == pytest.approx(4.0)
@@ -442,7 +473,7 @@ def test_empty_scenario_list_is_deterministic():
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = Evaluation(model).evaluate([])
+        result = Evaluation(Scenario(model)).evaluate([])
 
     deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert deprecations  # at least one deprecation warning

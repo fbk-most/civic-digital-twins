@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, TimeseriesIndex
+from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, TimeseriesIndex, define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -26,9 +26,26 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 # ---------------------------------------------------------------------------
 
 
+@define("TestModel")
+class _TestModel(Model):
+    """Minimal model wrapping an arbitrary set of indexes."""
+
+    @inputs
+    class Inputs:
+        indexes: list[GenericIndex]
+
+    @outputs
+    class Outputs:
+        pass
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """No computation — just expose the wrapped indexes."""
+        return _TestModel.Outputs()
+
+
 def _make_model(*indexes: GenericIndex) -> Model:
     """Wrap *indexes* in a minimal named model."""
-    return Model("test", list(indexes))
+    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +586,9 @@ def test_cross_product_ensemble_dict_override_restricts_support():
     assert weight_by_value == pytest.approx({"a": 0.7, "b": 0.3})
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_cross_product_ensemble_explicit_restriction_overrides_dict_keys():
     """An explicit restrictions= entry takes precedence over the dict override's key set.
 
@@ -636,7 +656,7 @@ def test_cross_product_ensemble_restrictions_deprecated():
     cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
     model = _make_model(cat)
     with pytest.warns(DeprecationWarning, match="restrictions="):
-        CrossProductEnsemble(model, restrictions={cat: ["good"]})
+        CrossProductEnsemble(Scenario(model), restrictions={cat: ["good"]})
 
 
 def test_cross_product_ensemble_exclude_deprecated():

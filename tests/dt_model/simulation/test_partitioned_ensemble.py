@@ -6,8 +6,9 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
-from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, Index
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import EnsembleAxisSpec, PartitionedEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -22,8 +23,25 @@ def _dist_index(name: str, lo: float = 0.0, hi: float = 1.0) -> Index:
     return DistributionIndex(name, stats.uniform, {"loc": lo, "scale": hi - lo})
 
 
-def _make_model(*indexes) -> Model:
-    return Model("test", list(indexes))
+@define("TestModel")
+class _TestModel(Model):
+    """Minimal model wrapping an arbitrary set of indexes."""
+
+    @inputs
+    class Inputs:
+        indexes: list[GenericIndex]
+
+    @outputs
+    class Outputs:
+        pass
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """No computation — just expose the wrapped indexes."""
+        return _TestModel.Outputs()
+
+
+def _make_model(*indexes: GenericIndex) -> Model:
+    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +55,7 @@ def test_construction_single_axis():
     i_b = _dist_index("b")
     model = _make_model(i_a, i_b)
 
-    ens = PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[i_a, i_b], size=10)])
+    ens = PartitionedEnsemble(Scenario(model), axes=[EnsembleAxisSpec("unc", indexes=[i_a, i_b], size=10)])
     assert len(ens.ensemble_axes) == 1
     assert ens.ensemble_axes[0].name == "unc"
     assert ens.ensemble_axes[0].role == ENSEMBLE
@@ -52,7 +70,7 @@ def test_construction_two_axes():
     model = _make_model(i_a, i_b)
 
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=30),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=50),
@@ -72,7 +90,7 @@ def test_raises_on_uncovered_index_without_default():
     model = _make_model(i_a, i_b)
 
     with pytest.raises(ValueError, match="not covered"):
-        PartitionedEnsemble(model, axes=[EnsembleAxisSpec("ax0", indexes=[i_a], size=10)])
+        PartitionedEnsemble(Scenario(model), axes=[EnsembleAxisSpec("ax0", indexes=[i_a], size=10)])
 
 
 def test_raises_on_non_abstract_index_in_spec():
@@ -82,7 +100,7 @@ def test_raises_on_non_abstract_index_in_spec():
     model = _make_model(i_a)
 
     with pytest.raises(ValueError, match="not an abstract index"):
-        PartitionedEnsemble(model, axes=[EnsembleAxisSpec("ax", indexes=[i_a, i_outside], size=5)])
+        PartitionedEnsemble(Scenario(model), axes=[EnsembleAxisSpec("ax", indexes=[i_a, i_outside], size=5)])
 
 
 def test_raises_on_duplicate_index_across_specs():
@@ -92,7 +110,7 @@ def test_raises_on_duplicate_index_across_specs():
 
     with pytest.raises(ValueError, match="more than one"):
         PartitionedEnsemble(
-            model,
+            Scenario(model),
             axes=[
                 EnsembleAxisSpec("ax0", indexes=[i_a], size=5),
                 EnsembleAxisSpec("ax1", indexes=[i_a], size=5),
@@ -108,7 +126,7 @@ def test_raises_on_duplicate_spec_names():
 
     with pytest.raises(ValueError, match="Duplicate"):
         PartitionedEnsemble(
-            model,
+            Scenario(model),
             axes=[
                 EnsembleAxisSpec("unc", indexes=[i_a], size=5),
                 EnsembleAxisSpec("unc", indexes=[i_b], size=5),
@@ -124,7 +142,7 @@ def test_raises_on_duplicate_name_with_default_axis():
 
     with pytest.raises(ValueError, match="Duplicate"):
         PartitionedEnsemble(
-            model,
+            Scenario(model),
             axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=5)],
             default_axis=EnsembleAxisSpec("unc", indexes=[], size=5),
         )
@@ -137,7 +155,7 @@ def test_default_axis_absorbs_unassigned():
     model = _make_model(i_a, i_b)
 
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[EnsembleAxisSpec("ax0", indexes=[i_a], size=10)],
         default_axis=EnsembleAxisSpec("default", indexes=[], size=20),
     )
@@ -156,7 +174,7 @@ def test_assignments_shape_single_axis():
     i_a = _dist_index("a")
     model = _make_model(i_a)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=7)],
         rng=np.random.default_rng(0),
     )
@@ -171,7 +189,7 @@ def test_assignments_shape_two_axes():
     i_b = _dist_index("b")
     model = _make_model(i_a, i_b)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=30),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=50),
@@ -194,16 +212,17 @@ def test_evaluation_result_shape_two_axes():
     i_b = _dist_index("b")
     i_result = Index("result", i_a.node + i_b.node)
     model = _make_model(i_a, i_b, i_result)
+    scenario = Scenario(model)
 
     ens = PartitionedEnsemble(
-        model,
+        scenario,
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=10),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=5),
         ],
         rng=np.random.default_rng(0),
     )
-    result = Evaluation(model).evaluate(ensemble=ens)
+    result = Evaluation(scenario).evaluate(ensemble=ens)
     arr = result[i_result]
     # Shape: (S0=10, S1=5) — no trailing DOMAIN placeholder in non-timeseries models after bug fix #155
     assert arr.shape == (10, 5)
@@ -215,16 +234,17 @@ def test_marginalize_contracts_both_ensemble_axes():
     i_b = _dist_index("b")
     i_result = Index("result", i_a.node + i_b.node)
     model = _make_model(i_a, i_b, i_result)
+    scenario = Scenario(model)
 
     ens = PartitionedEnsemble(
-        model,
+        scenario,
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=200),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=200),
         ],
         rng=np.random.default_rng(42),
     )
-    result = Evaluation(model).evaluate(ensemble=ens)
+    result = Evaluation(scenario).evaluate(ensemble=ens)
     marginalised = result.expected_value(i_result)
     # Both a and b ~ Uniform(0,1); E[a+b] = 1.0
     assert marginalised.shape == ()
@@ -240,10 +260,11 @@ def test_marginalize_order_independence():
     i_b = _dist_index("b")
     i_result = Index("result", i_a.node + i_b.node)
     model = _make_model(i_a, i_b, i_result)
+    scenario = Scenario(model)
 
     rng0 = np.random.default_rng(7)
     ens_fwd = PartitionedEnsemble(
-        model,
+        scenario,
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=100),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=100),
@@ -252,15 +273,15 @@ def test_marginalize_order_independence():
     )
     rng1 = np.random.default_rng(7)
     ens_rev = PartitionedEnsemble(
-        model,
+        scenario,
         axes=[
             EnsembleAxisSpec("ax1", indexes=[i_b], size=100),
             EnsembleAxisSpec("ax0", indexes=[i_a], size=100),
         ],
         rng=rng1,
     )
-    m_fwd = float(Evaluation(model).evaluate(ensemble=ens_fwd).expected_value(i_result))
-    m_rev = float(Evaluation(model).evaluate(ensemble=ens_rev).expected_value(i_result))
+    m_fwd = float(Evaluation(scenario).evaluate(ensemble=ens_fwd).expected_value(i_result))
+    m_rev = float(Evaluation(scenario).evaluate(ensemble=ens_rev).expected_value(i_result))
     assert m_fwd == pytest.approx(m_rev, rel=0.05)
 
 
@@ -276,7 +297,7 @@ def test_categorical_index_in_partitioned_ensemble():
     model = _make_model(i_cat)
 
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[EnsembleAxisSpec("unc", indexes=[i_cat], size=10)],
         rng=np.random.default_rng(0),
     )
@@ -291,7 +312,7 @@ def test_partitioned_ensemble_without_rng():
     i_a = _dist_index("a")
     model = _make_model(i_a)
 
-    ens = PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=5)])
+    ens = PartitionedEnsemble(Scenario(model), axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=5)])
     asgn = ens.assignments()
     assert i_a in asgn
     assert asgn[i_a].shape == (5,)
@@ -302,16 +323,17 @@ def test_result_weights_with_two_ensemble_axes():
     i_a = _dist_index("a")
     i_b = _dist_index("b")
     model = _make_model(i_a, i_b)
+    scenario = Scenario(model)
 
     ens = PartitionedEnsemble(
-        model,
+        scenario,
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=3),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=4),
         ],
         rng=np.random.default_rng(0),
     )
-    result = Evaluation(model).evaluate(ensemble=ens)
+    result = Evaluation(scenario).evaluate(ensemble=ens)
     w = result.weights
     # Joint weight = outer product of (3,) and (4,) uniform weights → (3, 4)
     assert w.shape == (3, 4)
@@ -324,7 +346,7 @@ def test_raises_on_non_samplable_index_in_spec():
     model = _make_model(I_plain)
 
     with pytest.raises(ValueError, match="requires all abstract indexes"):
-        PartitionedEnsemble(model, axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
+        PartitionedEnsemble(Scenario(model), axes=[EnsembleAxisSpec("unc", indexes=[I_plain], size=5)])
 
 
 def test_factorized_weights_are_uniform():
@@ -333,7 +355,7 @@ def test_factorized_weights_are_uniform():
     i_b = _dist_index("b")
     model = _make_model(i_a, i_b)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[
             EnsembleAxisSpec("ax0", indexes=[i_a], size=4),
             EnsembleAxisSpec("ax1", indexes=[i_b], size=6),
@@ -400,7 +422,7 @@ def test_draw_batch_multi_axis_requires_axis():
     i_b = _dist_index("b")
     model = _make_model(i_a, i_b)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[
             EnsembleAxisSpec("unc_a", indexes=[i_a], size=4),
             EnsembleAxisSpec("unc_b", indexes=[i_b], size=6),
@@ -419,7 +441,7 @@ def test_draw_batch_explicit_axis_on_multi_axis():
     i_b = _dist_index("b")
     model = _make_model(i_a, i_b)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[
             EnsembleAxisSpec("unc_a", indexes=[i_a], size=4),
             EnsembleAxisSpec("unc_b", indexes=[i_b], size=6),
@@ -438,7 +460,7 @@ def test_draw_batch_unknown_axis_raises():
     i_a = _dist_index("a")
     model = _make_model(i_a)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[EnsembleAxisSpec("unc", indexes=[i_a], size=4)],
         rng=np.random.default_rng(0),
     )
@@ -453,7 +475,7 @@ def test_draw_batch_categorical_index_in_spec():
     i_cat = CategoricalIndex("mode", {"bike": 0.6, "train": 0.4})
     model = _make_model(i_cat)
     ens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[EnsembleAxisSpec("unc", indexes=[i_cat], size=5)],
         rng=np.random.default_rng(0),
     )

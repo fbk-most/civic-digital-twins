@@ -17,6 +17,7 @@ from civic_digital_twins.dt_model.simulation.handle import (
     EvaluationHandle,
     _get_default_executor,
 )
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Shared model fixture (same pattern as test_evaluation_handle.py)
@@ -52,7 +53,7 @@ def _make_simple() -> tuple[Index, _SimpleModel]:
 def test_submit_evaluate_returns_async_handle() -> None:
     """submit_evaluate returns an AsyncEvaluationHandle."""
     _, model = _make_simple()
-    handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 50)
+    handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 50)
     assert isinstance(handle, AsyncEvaluationHandle)
 
 
@@ -69,7 +70,7 @@ def test_async_handle_is_subclass_of_evaluation_handle() -> None:
 def test_get_returns_evaluation_result_with_correct_shape() -> None:
     """get() blocks until done and returns a result with the expected shape."""
     _, model = _make_simple()
-    handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 40)
+    handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 40)
     result = handle.get()
     assert result[model.outputs.y].shape == (40,)
 
@@ -77,7 +78,7 @@ def test_get_returns_evaluation_result_with_correct_shape() -> None:
 def test_get_idempotent() -> None:
     """Repeated get() calls return the same cached result object."""
     _, model = _make_simple()
-    handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 30)
+    handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 30)
     r1 = handle.get()
     r2 = handle.get()
     assert r1 is r2
@@ -86,7 +87,7 @@ def test_get_idempotent() -> None:
 def test_result_property_after_get() -> None:
     """handle.result is accessible after get() has been called."""
     _, model = _make_simple()
-    handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 30)
+    handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 30)
     handle.get()
     arr = handle.result[model.outputs.y]
     assert arr.shape == (30,)
@@ -105,7 +106,7 @@ def test_result_raises_before_done() -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow_exec:
         # Block the sole worker thread.
         blocker = slow_exec.submit(time.sleep, 5)
-        handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 20, pool=slow_exec)
+        handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 20, pool=slow_exec)
         try:
             with pytest.raises(RuntimeError, match="still running"):
                 _ = handle.result
@@ -121,7 +122,7 @@ def test_result_raises_before_done() -> None:
 def test_poll_returns_true_after_get() -> None:
     """poll() returns (True, result) after the future resolves."""
     _, model = _make_simple()
-    handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 30)
+    handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 30)
     handle.get()  # ensure resolved
     done, result = handle.poll()
     assert done is True
@@ -134,7 +135,7 @@ def test_poll_returns_false_while_running() -> None:
     _, model = _make_simple()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow_exec:
         blocker = slow_exec.submit(time.sleep, 5)
-        handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 20, pool=slow_exec)
+        handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 20, pool=slow_exec)
         try:
             done, result = handle.poll()
             assert done is False
@@ -151,7 +152,7 @@ def test_poll_returns_false_while_running() -> None:
 def test_extend_after_get_grows_ensemble() -> None:
     """extend() works normally after get() has resolved the future."""
     _, model = _make_simple()
-    handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 30, rng=np.random.default_rng(1))
+    handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 30, rng=np.random.default_rng(1))
     handle.get()
     handle.extend(20)
     assert handle.result[model.outputs.y].shape == (50,)
@@ -162,7 +163,7 @@ def test_extend_raises_before_done() -> None:
     _, model = _make_simple()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as slow_exec:
         blocker = slow_exec.submit(time.sleep, 5)
-        handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 20, pool=slow_exec)
+        handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 20, pool=slow_exec)
         try:
             with pytest.raises(RuntimeError, match="cannot extend"):
                 handle.extend(10)
@@ -178,7 +179,7 @@ def test_extend_raises_before_done() -> None:
 def test_submit_evaluate_matches_evaluate_incremental() -> None:
     """submit_evaluate(N) + get() is numerically identical to evaluate_incremental(N)."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
 
     sync_handle = EvaluationHandle.evaluate(ev, 50, rng=np.random.default_rng(11))
     async_handle = AsyncEvaluationHandle.evaluate(ev, 50, rng=np.random.default_rng(11))
@@ -205,6 +206,6 @@ def test_custom_executor_is_used() -> None:
     """A caller-supplied pool is used instead of the default."""
     _, model = _make_simple()
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as custom_exec:
-        handle = AsyncEvaluationHandle.evaluate(Evaluation(model), 30, pool=custom_exec)
+        handle = AsyncEvaluationHandle.evaluate(Evaluation(Scenario(model)), 30, pool=custom_exec)
         result = handle.get()
     assert result[model.outputs.y].shape == (30,)

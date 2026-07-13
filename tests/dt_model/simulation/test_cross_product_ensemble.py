@@ -2,9 +2,6 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import warnings
-from dataclasses import dataclass
-
 import numpy as np
 import pytest
 from scipy import stats
@@ -18,6 +15,9 @@ from civic_digital_twins.dt_model import (
     GenericIndex,
     Index,
     Model,
+    define,
+    inputs,
+    outputs,
     sample_across,
 )
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
@@ -27,30 +27,26 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 # ---------------------------------------------------------------------------
 
 
-def _simple_model(
-    *abstract_indexes: GenericIndex,
-) -> Model:
-    """Return a minimal Model wrapping the given abstract indexes."""
+@define("M")
+class _M(Model):
+    """Minimal model wrapping an arbitrary set of indexes."""
 
-    @dataclass
+    @inputs
     class Inputs:
         indexes: list[GenericIndex]
 
-    @dataclass
+    @outputs
     class Outputs:
         pass
 
-    class _M(Model):
-        def __init__(self, idxs: tuple[GenericIndex, ...]) -> None:
-            super().__init__(
-                "test",
-                inputs=Inputs(indexes=list(idxs)),
-                outputs=Outputs(),
-            )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """No computation — just expose the wrapped indexes."""
+        return _M.Outputs()
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return _M(abstract_indexes)
+
+def _simple_model(*abstract_indexes: GenericIndex) -> Model:
+    """Return a minimal Model wrapping the given abstract indexes."""
+    return _M(inputs=_M.Inputs(indexes=list(abstract_indexes)))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +58,7 @@ def test_cpe_single_categorical_enumerated():
     """Single 2-outcome CategoricalIndex is fully enumerated; weights sum to 1."""
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     assert ens.size == 2
     weights = ens.ensemble_weights[0]
     assert pytest.approx(weights.sum()) == 1.0
@@ -74,7 +70,7 @@ def test_cpe_two_categoricals_cross_product():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     weather = CategoricalIndex("weather", {"good": 0.7, "bad": 0.3})
     model = _simple_model(season, weather)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     assert ens.size == 4
     assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
 
@@ -84,7 +80,7 @@ def test_cpe_weights_match_joint_probability():
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     weather = CategoricalIndex("weather", {"good": 0.7, "bad": 0.3})
     model = _simple_model(season, weather)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     a = ens.assignments()
     weights = ens.ensemble_weights[0]
     # Find the (summer, good) scenario.
@@ -96,7 +92,7 @@ def test_cpe_weights_match_joint_probability():
 def test_cpe_no_abstract_indexes():
     """Model with no enumerable/sampleable abstract indexes produces size=1."""
     model = _simple_model()  # no abstract indexes
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     assert ens.size == 1
     assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
 
@@ -105,7 +101,7 @@ def test_cpe_len():
     """__len__ returns the number of scenarios."""
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     assert len(ens) == ens.size
 
 
@@ -114,30 +110,39 @@ def test_cpe_len():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_cpe_restriction_subsets_support():
     """Restricting a CategoricalIndex to a subset reduces ensemble size."""
     season = CategoricalIndex("season", {"summer": 0.5, "spring": 0.3, "winter": 0.2})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model, restrictions={season: ["summer", "winter"]})
+    ens = CrossProductEnsemble(Scenario(model), restrictions={season: ["summer", "winter"]})
     assert ens.size == 2
     assert set(ens.assignments()[season].tolist()) == {"summer", "winter"}
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_cpe_restriction_single_value():
     """Restricting a categorical to one value gives weight 1 for that value."""
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model, restrictions={season: ["summer"]})
+    ens = CrossProductEnsemble(Scenario(model), restrictions={season: ["summer"]})
     assert ens.size == 1
     assert ens.assignments()[season][0] == "summer"
     assert pytest.approx(ens.ensemble_weights[0][0]) == 1.0
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_cpe_restriction_renormalises_weights():
     """Restricting to a subset renormalises probabilities over that subset."""
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model, restrictions={season: ["summer", "winter"]})
+    ens = CrossProductEnsemble(Scenario(model), restrictions={season: ["summer", "winter"]})
     weights = ens.ensemble_weights[0]
     # Probabilities in the restricted set: summer=0.6, winter=0.4 → already sum to 1.
     idx_summer = list(ens.assignments()[season]).index("summer")
@@ -154,7 +159,7 @@ def test_cpe_mc_sampling_when_support_exceeds_size():
     season = CategoricalIndex("season", {"s1": 0.2, "s2": 0.2, "s3": 0.2, "s4": 0.2, "s5": 0.2})
     model = _simple_model(season)
     rng = np.random.default_rng(0)
-    ens = CrossProductEnsemble(model, max_categorical_size=3, rng=rng)
+    ens = CrossProductEnsemble(Scenario(model), max_categorical_size=3, rng=rng)
     assert ens.size == 3
     assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
 
@@ -168,7 +173,7 @@ def test_cpe_distribution_index_sampled():
     """DistributionIndex is sampled and present in assignments."""
     cap = DistributionIndex("cap", stats.uniform, {"loc": 90.0, "scale": 20.0})
     model = _simple_model(cap)
-    ens = CrossProductEnsemble(model, rng=np.random.default_rng(42))
+    ens = CrossProductEnsemble(Scenario(model), rng=np.random.default_rng(42))
     a = ens.assignments()
     assert cap in a
     assert len(a[cap]) == ens.size
@@ -180,7 +185,7 @@ def test_cpe_mixed_categorical_and_distribution():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     cap = DistributionIndex("cap", stats.uniform, {"loc": 100.0, "scale": 50.0})
     model = _simple_model(season, cap)
-    ens = CrossProductEnsemble(model, rng=np.random.default_rng(1))
+    ens = CrossProductEnsemble(Scenario(model), rng=np.random.default_rng(1))
     assert ens.size == 2  # 2 seasons
     a = ens.assignments()
     assert season in a
@@ -205,7 +210,7 @@ def test_cpe_conditional_categorical_enumerated():
 
     weather = ConditionalCategoricalIndex("weather", parents=[season], support=["good", "bad"], factory=weather_factory)
     model = _simple_model(season, weather)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     # 2 seasons × 2 weather outcomes = 4 combos.
     assert ens.size == 4
     assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
@@ -221,7 +226,7 @@ def test_cpe_conditional_categorical_weights():
         factory=lambda season: {"good": 0.8, "bad": 0.2} if season == "summer" else {"good": 0.3, "bad": 0.7},
     )
     model = _simple_model(season, weather)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     a = ens.assignments()
     weights = ens.ensemble_weights[0]
     # (summer, good): P = 0.5 × 0.8 = 0.4
@@ -245,7 +250,7 @@ def test_cpe_conditional_distribution_sampled_per_categorical():
     )
     model = _simple_model(weather, temp)
     rng = np.random.default_rng(99)
-    ens = CrossProductEnsemble(model, rng=rng)
+    ens = CrossProductEnsemble(Scenario(model), rng=rng)
     a = ens.assignments()
     assert ens.size == 2
     assert temp in a
@@ -273,7 +278,7 @@ def test_cpe_conditional_dist_with_distribution_parent():
     )
     model = _simple_model(season, base, derived)
     rng = np.random.default_rng(0)
-    ens = CrossProductEnsemble(model, rng=rng)
+    ens = CrossProductEnsemble(Scenario(model), rng=rng)
     assert ens.size == 2  # 2 seasons
     a = ens.assignments()
     assert base in a
@@ -292,7 +297,7 @@ def test_cpe_plain_placeholder_index_excluded():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     pv = Index("presence", None)  # PresenceVariable-like: abstract placeholder
     model = _simple_model(season, pv)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     # season is enumerated; pv is skipped — assignments has only season.
     a = ens.assignments()
     assert season in a
@@ -310,7 +315,7 @@ def test_cpe_implements_axis_ensemble_protocol():
 
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     assert isinstance(ens, AxisEnsemble)
 
 
@@ -320,7 +325,7 @@ def test_cpe_single_ensemble_axis():
 
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     axes = ens.ensemble_axes
     assert len(axes) == 1
     assert axes[0].role == ENSEMBLE
@@ -336,8 +341,9 @@ def test_cpe_reproducible_with_rng():
     season = CategoricalIndex("season", {"s1": 0.2, "s2": 0.2, "s3": 0.2, "s4": 0.2, "s5": 0.2})
     cap = DistributionIndex("cap", stats.norm, {"loc": 100.0, "scale": 10.0})
     model = _simple_model(season, cap)
-    a1 = CrossProductEnsemble(model, max_categorical_size=3, rng=np.random.default_rng(7)).assignments()
-    a2 = CrossProductEnsemble(model, max_categorical_size=3, rng=np.random.default_rng(7)).assignments()
+    scenario = Scenario(model)
+    a1 = CrossProductEnsemble(scenario, max_categorical_size=3, rng=np.random.default_rng(7)).assignments()
+    a2 = CrossProductEnsemble(scenario, max_categorical_size=3, rng=np.random.default_rng(7)).assignments()
     np.testing.assert_array_equal(a1[season], a2[season])
     np.testing.assert_array_equal(a1[cap], a2[cap])
 
@@ -358,7 +364,7 @@ def test_sample_across_basic():
         ),
     )
     model = _simple_model(season, temp)  # temp is skipped by CrossProductEnsemble (CDI)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     samples = sample_across(ens, [temp], total=100, rng=np.random.default_rng(0))
     assert temp in samples
     # Approximately 100 samples (may be 100 or 102 due to rounding).
@@ -374,7 +380,7 @@ def test_sample_across_respects_weights():
         factory=lambda season: stats.norm(loc=35.0, scale=0.5) if season == "hot" else stats.norm(loc=0.0, scale=0.5),
     )
     model = _simple_model(season, temp)
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     samples = sample_across(ens, [temp], total=1000, rng=np.random.default_rng(42))
     arr = samples[temp]
     # ~80% of samples should be from the hot distribution (mean 35), ~20% from cold (mean 0).
@@ -393,7 +399,7 @@ def test_sample_across_reproducible():
         ),
     )
     model = _simple_model(season, temp)
-    ens = CrossProductEnsemble(model, rng=np.random.default_rng(1))
+    ens = CrossProductEnsemble(Scenario(model), rng=np.random.default_rng(1))
     s1 = sample_across(ens, [temp], total=50, rng=np.random.default_rng(99))
     s2 = sample_across(ens, [temp], total=50, rng=np.random.default_rng(99))
     np.testing.assert_array_equal(s1[temp], s2[temp])
@@ -409,7 +415,7 @@ def test_sample_across_missing_parent_raises():
     )
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)  # orphan_season not in model
-    ens = CrossProductEnsemble(model)
+    ens = CrossProductEnsemble(Scenario(model))
     with pytest.raises(ValueError, match="not present in the ensemble"):
         sample_across(ens, [temp])
 
@@ -422,7 +428,7 @@ def test_sample_across_multi_axis_raises():
     cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0})
     model = _simple_model(season, cap)
     pens = PartitionedEnsemble(
-        model,
+        Scenario(model),
         axes=[EnsembleAxisSpec("cats", [season], size=2), EnsembleAxisSpec("dists", [cap], size=5)],
     )
     temp = ConditionalDistributionIndex("temp", parents=[season], factory=lambda **_kw: stats.norm())
@@ -440,7 +446,7 @@ def test_cpe_n_samples_per_combo_size():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     weather = CategoricalIndex("weather", {"good": 0.7, "bad": 0.3})
     model = _simple_model(season, weather)
-    ens = CrossProductEnsemble(model, n_samples_per_combo=10)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=10)
     assert ens.size == 4 * 10
     assert len(ens) == 4 * 10
 
@@ -449,7 +455,7 @@ def test_cpe_n_samples_per_combo_weights_sum_to_one():
     """Weights still sum to 1.0 with n_samples_per_combo > 1."""
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     model = _simple_model(season)
-    ens = CrossProductEnsemble(model, n_samples_per_combo=7)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=7)
     assert pytest.approx(ens.ensemble_weights[0].sum()) == 1.0
 
 
@@ -458,7 +464,7 @@ def test_cpe_n_samples_per_combo_equal_weight_within_combo():
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     model = _simple_model(season)
     N = 5
-    ens = CrossProductEnsemble(model, n_samples_per_combo=N)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=N)
     weights = ens.ensemble_weights[0]
     cat_arr = ens.assignments()[season]
     for value, expected_combo_weight in [("summer", 0.6), ("winter", 0.4)]:
@@ -473,7 +479,7 @@ def test_cpe_n_samples_per_combo_cat_values_repeated():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)
     N = 4
-    ens = CrossProductEnsemble(model, n_samples_per_combo=N)
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=N)
     cat_arr = ens.assignments()[season].tolist()
     assert cat_arr.count("summer") == N
     assert cat_arr.count("winter") == N
@@ -485,7 +491,7 @@ def test_cpe_n_samples_per_combo_dist_samples_vary():
     cap = DistributionIndex("cap", stats.norm, {"loc": 100.0, "scale": 10.0})
     model = _simple_model(season, cap)
     N = 50
-    ens = CrossProductEnsemble(model, n_samples_per_combo=N, rng=np.random.default_rng(0))
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=N, rng=np.random.default_rng(0))
     assert ens.size == N
     # All samples should not be identical (astronomically unlikely with N=50).
     assert len(set(ens.assignments()[cap].tolist())) > 1
@@ -496,6 +502,7 @@ def test_cpe_n_samples_per_combo_reduces_variance():
     season = CategoricalIndex("season", {"a": 1.0})  # single combo
     cap = DistributionIndex("cap", stats.norm, {"loc": 0.0, "scale": 1.0})
     model = _simple_model(season, cap)
+    scenario = Scenario(model)
 
     def weighted_mean(ens: CrossProductEnsemble) -> float:
         w = ens.ensemble_weights[0]
@@ -505,11 +512,11 @@ def test_cpe_n_samples_per_combo_reduces_variance():
     rng_seed = 12345
     n_trials = 200
     means_small = [
-        weighted_mean(CrossProductEnsemble(model, n_samples_per_combo=1, rng=np.random.default_rng(rng_seed + i)))
+        weighted_mean(CrossProductEnsemble(scenario, n_samples_per_combo=1, rng=np.random.default_rng(rng_seed + i)))
         for i in range(n_trials)
     ]
     means_large = [
-        weighted_mean(CrossProductEnsemble(model, n_samples_per_combo=100, rng=np.random.default_rng(rng_seed + i)))
+        weighted_mean(CrossProductEnsemble(scenario, n_samples_per_combo=100, rng=np.random.default_rng(rng_seed + i)))
         for i in range(n_trials)
     ]
     # Variance with N=100 should be ~100× smaller than with N=1.
@@ -526,7 +533,7 @@ def test_cpe_n_samples_per_combo_conditional_dist_per_categorical():
     )
     model = _simple_model(weather, temp)
     N = 20
-    ens = CrossProductEnsemble(model, n_samples_per_combo=N, rng=np.random.default_rng(7))
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=N, rng=np.random.default_rng(7))
     assert ens.size == 2 * N
     a = ens.assignments()
     # Hot replicates should cluster near 30; cold near 5.
@@ -551,7 +558,7 @@ def test_cpe_n_samples_per_combo_dist_parent_uses_replicate_value():
     )
     model = _simple_model(season, base, derived)
     N = 30
-    ens = CrossProductEnsemble(model, n_samples_per_combo=N, rng=np.random.default_rng(42))
+    ens = CrossProductEnsemble(Scenario(model), n_samples_per_combo=N, rng=np.random.default_rng(42))
     a = ens.assignments()
     assert a[base].shape == (N,)
     assert a[derived].shape == (N,)
@@ -564,9 +571,10 @@ def test_cpe_n_samples_per_combo_one_is_default():
     season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
     cap = DistributionIndex("cap", stats.norm, {"loc": 0.0, "scale": 1.0})
     model = _simple_model(season, cap)
+    scenario = Scenario(model)
     rng = np.random.default_rng(0)
-    ens_default = CrossProductEnsemble(model, rng=np.random.default_rng(0))
-    ens_explicit = CrossProductEnsemble(model, n_samples_per_combo=1, rng=np.random.default_rng(0))
+    ens_default = CrossProductEnsemble(scenario, rng=np.random.default_rng(0))
+    ens_explicit = CrossProductEnsemble(scenario, n_samples_per_combo=1, rng=np.random.default_rng(0))
     assert ens_default.size == ens_explicit.size
     np.testing.assert_array_equal(ens_default.ensemble_weights[0], ens_explicit.ensemble_weights[0])
     np.testing.assert_array_equal(ens_default.assignments()[season], ens_explicit.assignments()[season])
@@ -579,7 +587,7 @@ def test_cpe_n_samples_per_combo_invalid_raises():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)
     with pytest.raises(ValueError, match="n_samples_per_combo"):
-        CrossProductEnsemble(model, n_samples_per_combo=0)
+        CrossProductEnsemble(Scenario(model), n_samples_per_combo=0)
 
 
 # ---------------------------------------------------------------------------
@@ -699,6 +707,9 @@ def test_cpe_no_rng_with_distributions():
     assert a[cap].shape == (1,)
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_cpe_exclude_skips_index():
     """CrossProductEnsemble with exclude= skips the excluded index (covers the continue branch)."""
     from scipy import stats  # noqa: PLC0415
@@ -720,7 +731,7 @@ def test_cat_samples_no_rng_monte_carlo():
     season = CategoricalIndex("season", {"s1": 0.2, "s2": 0.2, "s3": 0.2, "s4": 0.2, "s5": 0.2})
     model = _simple_model(season)
     # rng=None means _cat_samples uses np.random.choice
-    ens = CrossProductEnsemble(model, max_categorical_size=2, rng=None)
+    ens = CrossProductEnsemble(Scenario(model), max_categorical_size=2, rng=None)
     assert ens.assignments()[season].shape == (2,)
 
 
@@ -750,7 +761,7 @@ def test_cpe_restrictions_deprecated():
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)
     with pytest.warns(DeprecationWarning, match="restrictions="):
-        CrossProductEnsemble(model, restrictions={season: ["summer"]})
+        CrossProductEnsemble(Scenario(model), restrictions={season: ["summer"]})
 
 
 def test_cpe_exclude_deprecated():

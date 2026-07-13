@@ -2,11 +2,9 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import dataclasses
-
 import pytest
 
-from civic_digital_twins.dt_model import define, inputs, outputs
+from civic_digital_twins.dt_model import define, expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
@@ -385,16 +383,16 @@ class _ExposeModel(Model, legacy=True):
     ``compute()`` contract, which only accepts ``inputs=`` (and ``fns=``).
     """
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    @dataclasses.dataclass
+    @expose
     class Expose:
         ratio: Index
 

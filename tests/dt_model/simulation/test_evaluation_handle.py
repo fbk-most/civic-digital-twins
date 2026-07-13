@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for EvaluationHandle (incremental evaluation) — Step 3 of engine-control.md."""
 
-import dataclasses
 from typing import Any
 
 import numpy as np
@@ -73,7 +72,7 @@ def _make_simple() -> tuple[Index, _SimpleModel]:
 def test_evaluate_incremental_returns_handle() -> None:
     """evaluate_incremental returns an EvaluationHandle."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 50)
     assert isinstance(handle, EvaluationHandle)
 
@@ -81,7 +80,7 @@ def test_evaluate_incremental_returns_handle() -> None:
 def test_handle_result_is_evaluation_result() -> None:
     """handle.result is an EvaluationResult with the correct shape."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 50)
     result = handle.result
     arr = result[model.outputs.y]
@@ -92,7 +91,7 @@ def test_handle_result_is_evaluation_result() -> None:
 def test_handle_result_weights_sum_to_one() -> None:
     """Initial result weights are uniform and sum to 1."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 40)
     w = handle.result.weights
     assert w.shape == (40,)
@@ -103,7 +102,7 @@ def test_handle_result_weights_sum_to_one() -> None:
 def test_evaluate_incremental_reproducible_with_seed() -> None:
     """The same RNG seed produces the same first result."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     rng1 = np.random.default_rng(42)
     rng2 = np.random.default_rng(42)
     h1 = EvaluationHandle.evaluate(ev, 30, rng=rng1)
@@ -119,7 +118,7 @@ def test_evaluate_incremental_reproducible_with_seed() -> None:
 def test_extend_increases_ensemble_size() -> None:
     """extend(n) grows the ensemble from S to S+n scenarios."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 30)
     result = handle.extend(20)
     arr = result[model.outputs.y]
@@ -129,7 +128,7 @@ def test_extend_increases_ensemble_size() -> None:
 def test_extend_updates_handle_result() -> None:
     """handle.result is updated after extend()."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 30)
     extended = handle.extend(20)
     assert handle.result is extended
@@ -138,7 +137,7 @@ def test_extend_updates_handle_result() -> None:
 def test_extend_weights_renormalized() -> None:
     """After extend(), weights are uniform over the combined ensemble."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 30)
     handle.extend(20)
     w = handle.result.weights
@@ -154,7 +153,7 @@ def test_merge_preserves_nonuniform_weights() -> None:
     merged[j] = w2[j] * S2/(S1+S2)  for j in r2
     """
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     S1, S2 = 4, 2
@@ -181,7 +180,7 @@ def test_merge_preserves_nonuniform_weights() -> None:
 def test_extend_zero_is_noop() -> None:
     """extend(0) is a no-op — result unchanged."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 30)
     before = handle.result
     returned = handle.extend(0)
@@ -192,7 +191,7 @@ def test_extend_zero_is_noop() -> None:
 def test_extend_negative_is_noop() -> None:
     """extend(-1) is also a no-op."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 30)
     before = handle.result
     returned = handle.extend(-1)
@@ -202,7 +201,7 @@ def test_extend_negative_is_noop() -> None:
 def test_multiple_extends_accumulate() -> None:
     """Multiple extend() calls accumulate scenarios correctly."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 10)
     handle.extend(10)
     handle.extend(10)
@@ -219,7 +218,7 @@ def test_incremental_matches_direct_evaluation() -> None:
     After the merge the combined array must equal the direct array element-wise.
     """
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
 
     # --- Incremental: 30 then 20 ---
     h = EvaluationHandle.evaluate(ev, 30, rng=np.random.default_rng(99))
@@ -237,7 +236,7 @@ def test_incremental_matches_direct_evaluation() -> None:
 def test_extend_reproducible_sequence() -> None:
     """Two handles with the same seed produce the same full sequence."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
 
     h1 = EvaluationHandle.evaluate(ev, 20, rng=np.random.default_rng(7))
     h1.extend(30)
@@ -259,7 +258,7 @@ def test_extend_constant_node_stays_singleton() -> None:
     # ConstModel has no abstract indexes — we must pass it via evaluate(), not
     # EvaluationHandle.evaluate (which tries to build a DistributionEnsemble).
     # Instead, test _merge_results directly with a manually built plan + results.
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     # Execute twice with tiny dummy ensembles to get two results.
@@ -286,7 +285,7 @@ def test_extend_with_ensemble_size_1_stochastic() -> None:
     equality — the two draws will almost surely differ.
     """
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 1, rng=np.random.default_rng(0))
     # This must not raise AssertionError.
     result = handle.extend(1)
@@ -297,7 +296,7 @@ def test_extend_with_ensemble_size_1_stochastic() -> None:
 def test_extend_single_sample_preserves_both_draws() -> None:
     """After extend(1) on a size-1 handle, both stochastic draws are in the result."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     rng = np.random.default_rng(42)
     handle = EvaluationHandle.evaluate(ev, 1, rng=rng)
     first_draw = handle.result[model.inputs.x].copy()
@@ -319,20 +318,18 @@ def _make_param_handle(
     seed: int = 0,
 ) -> tuple[Index, Any, Evaluation, EvaluationHandle]:
     """Build a test model with one distribution index and one PARAMETER sweep."""
-    import dataclasses
-
     from scipy import stats
 
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
     speed = Index("speed", 1.0)
 
-    class _SPM(Model):
-        @dataclasses.dataclass
+    class _SPM(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             speed: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -341,7 +338,7 @@ def _make_param_handle(
             super().__init__("SPM", inputs=_SPM.Inputs(x=x, speed=s), outputs=_SPM.Outputs(y=y))
 
     model = _SPM(x2, speed)
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     params: dict[GenericIndex, np.ndarray] = {speed: param_vals}
     handle = EvaluationHandle.evaluate(ev, ensemble_size, parameters=params, rng=np.random.default_rng(seed))
     return speed, model, ev, handle
@@ -372,17 +369,15 @@ def test_extend_extra_parameters_reproducible() -> None:
 
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
 
-    import dataclasses
-
     speed = Index("speed", 1.0)
 
-    class _SPM(Model):
-        @dataclasses.dataclass
+    class _SPM(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             speed: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -391,7 +386,7 @@ def test_extend_extra_parameters_reproducible() -> None:
             super().__init__("SPM", inputs=_SPM.Inputs(x=x, speed=s), outputs=_SPM.Outputs(y=y))
 
     model = _SPM(x2, speed)
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     all_vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     seed = 77
 
@@ -410,22 +405,20 @@ def test_extend_extra_parameters_reproducible() -> None:
 
 def test_extend_extra_parameters_multiple_params() -> None:
     """extend(extra_parameters=) with multiple keys extends each axis in turn."""
-    import dataclasses
-
     from scipy import stats
 
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
     speed = Index("speed", 1.0)
     temp = Index("temp", 10.0)
 
-    class _TwoParam(Model):
-        @dataclasses.dataclass
+    class _TwoParam(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             speed: Index
             temp: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -434,7 +427,7 @@ def test_extend_extra_parameters_multiple_params() -> None:
             super().__init__("TP", inputs=_TwoParam.Inputs(x=x, speed=s, temp=t), outputs=_TwoParam.Outputs(y=y))
 
     model = _TwoParam(x2, speed, temp)
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     params: dict[GenericIndex, np.ndarray] = {speed: np.array([1.0, 2.0]), temp: np.array([10.0, 20.0])}
     handle = EvaluationHandle.evaluate(ev, 15, parameters=params, rng=np.random.default_rng(0))
     assert handle.result[model.outputs.y].shape == (2, 2, 15)
@@ -446,7 +439,7 @@ def test_extend_extra_parameters_multiple_params() -> None:
 def test_extend_extra_parameters_unknown_index_raises() -> None:
     """extend(extra_parameters=) raises ValueError for an index not in the original parameters."""
     x, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 20)
     with pytest.raises(ValueError, match="not in the original parameters"):
         handle.extend(extra_parameters={x: np.array([1.0])})
@@ -461,13 +454,13 @@ def test_evaluate_incremental_with_parameters() -> None:
     """evaluate_incremental respects PARAMETER axes; extend preserves them."""
 
     # Build a model with the parameter as a PARAMETER axis index.
-    class _ParamModel(Model):
-        @dataclasses.dataclass
+    class _ParamModel(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             speed: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -482,7 +475,7 @@ def test_evaluate_incremental_with_parameters() -> None:
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
     speed = Index("speed", 1.0)  # concrete default; swept via parameters=
     pm = _ParamModel(x2, speed)
-    ev2 = Evaluation(pm)
+    ev2 = Evaluation(Scenario(pm))
 
     params: dict[GenericIndex, np.ndarray] = {speed: np.array([1.0, 2.0, 3.0])}
     handle = EvaluationHandle.evaluate(ev2, 20, parameters=params)
@@ -521,7 +514,7 @@ def _make_fake_result(
 def test_merge_results_multi_axis_no_name_raises() -> None:
     """_merge_results raises ValueError for multi-axis results when merge_axis_name is absent."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
     ax1 = Axis("ens1", ENSEMBLE)
     ax2 = Axis("ens2", ENSEMBLE)
@@ -534,7 +527,7 @@ def test_merge_results_multi_axis_no_name_raises() -> None:
 def test_merge_results_multi_axis_concat() -> None:
     """_merge_results concatenates correctly along the named ENSEMBLE axis."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     r1 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (2, 3))
@@ -559,7 +552,7 @@ def test_merge_results_multi_axis_concat() -> None:
 def test_merge_results_multi_axis_fixed_mismatch_raises() -> None:
     """_merge_results raises ValueError when the fixed ENSEMBLE axis sizes differ."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     r1 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (2, 3))
@@ -571,13 +564,13 @@ def test_merge_results_multi_axis_fixed_mismatch_raises() -> None:
 def test_merge_results_parameter_layout_mismatch_raises() -> None:
     """_merge_results raises ValueError when PARAMETER axis layouts differ."""
 
-    class _PM(Model):
-        @dataclasses.dataclass
+    class _PM(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             p: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -588,10 +581,11 @@ def test_merge_results_parameter_layout_mismatch_raises() -> None:
     x2 = DistributionIndex("x2", stats.norm, {"loc": 0.0, "scale": 1.0})
     p2 = Index("p2", 1.0)
     pm = _PM(x2, p2)
-    ev = Evaluation(pm)
+    scenario = Scenario(pm)
+    ev = Evaluation(scenario)
     plan = ev.build_plan()
 
-    ens = DistributionEnsemble(pm, size=10, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario, size=10, rng=np.random.default_rng(0))
     params_2: dict[GenericIndex, np.ndarray] = {p2: np.array([1.0, 2.0])}
     params_3: dict[GenericIndex, np.ndarray] = {p2: np.array([1.0, 2.0, 3.0])}
     r1 = ev.execute_plan(plan, ens, parameters=params_2)
@@ -603,7 +597,7 @@ def test_merge_results_parameter_layout_mismatch_raises() -> None:
 def test_evaluation_handle_result_raises_when_none() -> None:
     """EvaluationHandle.result raises RuntimeError when _result is None."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
     # Construct a handle with result=None directly — the async path does this.
     handle = EvaluationHandle(
@@ -637,7 +631,7 @@ def test_frozen_ensemble_draw_batch_raises() -> None:
 def test_distribution_ensemble_draw_batch_axis_raises() -> None:
     """DistributionEnsemble.draw_batch raises ValueError when axis= is not None."""
     x, model = _make_simple()
-    de = DistributionEnsemble(model, 10, rng=np.random.default_rng(0))
+    de = DistributionEnsemble(Scenario(model), 10, rng=np.random.default_rng(0))
     with pytest.raises(ValueError, match="single ENSEMBLE axis"):
         de.draw_batch(5, np.random.default_rng(), axis="unc")
 
@@ -709,7 +703,7 @@ def test_frozen_ensemble_with_replaced_axis() -> None:
 def test_merge_results_missing_named_axis_in_r1() -> None:
     """_merge_results raises ValueError when merge_axis_name is not in r1."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     r1 = _make_fake_result(plan, (Axis("ens_a", ENSEMBLE), Axis("ens_b", ENSEMBLE)), (2, 3))
@@ -721,7 +715,7 @@ def test_merge_results_missing_named_axis_in_r1() -> None:
 def test_merge_results_missing_named_axis_in_r2() -> None:
     """_merge_results raises ValueError when merge_axis_name is not in r2."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     r1 = _make_fake_result(plan, (Axis("ens_a", ENSEMBLE), Axis("ens_b", ENSEMBLE)), (2, 3))
@@ -763,7 +757,7 @@ def test_merge_results_param_extend_ensemble_size_mismatch_raises() -> None:
     # Build r2 with a different ensemble size (10+1=11 vs 10).
     r2 = ev.execute_plan(
         plan,
-        DistributionEnsemble(model, 11, rng=np.random.default_rng(99)),
+        DistributionEnsemble(Scenario(model), 11, rng=np.random.default_rng(99)),
         parameters={speed: np.array([1.0, 2.0])},
     )
     with pytest.raises(ValueError, match="identical ENSEMBLE sizes"):
@@ -775,11 +769,12 @@ def test_merge_results_param_extend_missing_param_axis_raises() -> None:
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
     x, model = _make_simple()
-    ev = Evaluation(model)
+    scenario = Scenario(model)
+    ev = Evaluation(scenario)
     plan = ev.build_plan()
 
     # Both results have only one ENSEMBLE axis and no PARAMETER axis for speed.
-    ens = DistributionEnsemble(model, 5, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario, 5, rng=np.random.default_rng(0))
     r1 = ev.execute_plan(plan, ens)
     r2 = ev.execute_plan(plan, ens)
 
@@ -797,7 +792,7 @@ def test_merge_results_param_extend_missing_param_axis_raises() -> None:
 def test_extend_ensemble_size_and_extra_ensemble_mutually_exclusive() -> None:
     """extend() raises ValueError when both ensemble_size > 0 and extra_ensemble are supplied."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     handle = EvaluationHandle.evaluate(ev, 20)
     with pytest.raises(ValueError, match="mutually exclusive"):
         handle.extend(10, extra_ensemble={"_ensemble": 5})
@@ -807,7 +802,7 @@ def test_extend_extra_parameters_without_stored_ensemble() -> None:
     """extend(extra_parameters=) works without a stored ensemble by reconstructing from result state."""
     speed, model, ev, _ = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=10)
     plan = ev.build_plan()
-    ens = DistributionEnsemble(model, 10, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(Scenario(model), 10, rng=np.random.default_rng(0))
     r = ev.execute_plan(plan, ens, parameters={speed: np.array([1.0, 2.0])})
     handle = EvaluationHandle(
         evaluation=ev,
@@ -831,7 +826,7 @@ def test_extend_extra_parameters_without_stored_ensemble() -> None:
 def test_merge_results_growing_axis_at_different_position_raises() -> None:
     """_merge_results raises ValueError when the named growing axis is at different positions."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    ev = Evaluation(Scenario(model))
     plan = ev.build_plan()
 
     # r1: (ens1 at dim 0, ens2 at dim 1)  r2: (ens2 at dim 0, ens1 at dim 1)
@@ -931,8 +926,6 @@ def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
 
 def test_merge_results_param_extend_fixed_param_layout_differs_raises() -> None:
     """_merge_results_param_extend raises ValueError when fixed PARAMETER axis layouts differ."""
-    import dataclasses  # noqa: PLC0415
-
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
     # Build a model with two parameter indexes: speed and temp.
@@ -940,14 +933,14 @@ def test_merge_results_param_extend_fixed_param_layout_differs_raises() -> None:
     speed2 = Index("speed2", 1.0)
     temp2 = Index("temp2", 10.0)
 
-    class _TwoP(Model):
-        @dataclasses.dataclass
+    class _TwoP(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             speed: Index
             temp: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -956,9 +949,10 @@ def test_merge_results_param_extend_fixed_param_layout_differs_raises() -> None:
             super().__init__("TP2", inputs=_TwoP.Inputs(x=x, speed=s, temp=t), outputs=_TwoP.Outputs(y=y))
 
     model2 = _TwoP(x2, speed2, temp2)
-    ev2 = Evaluation(model2)
+    scenario2 = Scenario(model2)
+    ev2 = Evaluation(scenario2)
     plan2 = ev2.build_plan()
-    ens = DistributionEnsemble(model2, 5, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario2, 5, rng=np.random.default_rng(0))
 
     # r1 has speed2(2) × temp2(2) × ens(5)
     r1 = ev2.execute_plan(
@@ -992,13 +986,13 @@ def _make_pe_handle() -> tuple[Any, Any, Evaluation, EvaluationHandle]:
     a = DistributionIndex("a", stats.norm, {"loc": 0.0, "scale": 1.0})
     b = DistributionIndex("b", stats.norm, {"loc": 1.0, "scale": 0.5})
 
-    class _ABModel(Model):
-        @dataclasses.dataclass
+    class _ABModel(Model, legacy=True):
+        @inputs
         class Inputs:
             a: Index
             b: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -1068,9 +1062,10 @@ def test_extend_extra_ensemble_updates_frozen_ensemble() -> None:
 def test_extend_ensemble_axis_no_recipe_raises() -> None:
     """_extend_ensemble_axis raises RuntimeError when the handle has no ensemble_recipe."""
     _, model = _make_simple()
-    ev = Evaluation(model)
+    scenario = Scenario(model)
+    ev = Evaluation(scenario)
     plan = ev.build_plan()
-    ens = DistributionEnsemble(model, 10, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(scenario, 10, rng=np.random.default_rng(0))
     result = ev.execute_plan(plan, ens)
     handle = EvaluationHandle(
         evaluation=ev,
@@ -1087,8 +1082,9 @@ def test_extend_ensemble_axis_no_recipe_raises() -> None:
 def test_evaluate_accepts_custom_recipe() -> None:
     """A caller-supplied BatchDrawable recipe is used for both the initial draw and future extends."""
     _, model = _make_simple()
-    ev = Evaluation(model)
-    recipe = DistributionEnsemble(Scenario(model), 20, rng=np.random.default_rng(0))
+    scenario = Scenario(model)
+    ev = Evaluation(scenario)
+    recipe = DistributionEnsemble(scenario, 20, rng=np.random.default_rng(0))
     handle = EvaluationHandle.evaluate(ev, 10, ensemble_recipe=recipe)
     assert handle.result[model.outputs.y].shape == (10,)
     # The stored recipe is the one we supplied.

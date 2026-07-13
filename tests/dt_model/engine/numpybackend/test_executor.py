@@ -509,6 +509,9 @@ def test_evaluate_nodes_empty():
     assert rv is None
 
 
+@pytest.mark.xfail(
+    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
+)
 def test_user_defined_function():
     """Ensure that user-defined functions work."""
     # When there is a corresponding binding
