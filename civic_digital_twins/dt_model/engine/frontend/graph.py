@@ -180,11 +180,8 @@ from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
-from ...axes import DOMAIN, Axis
+from ...axes import TIME_AXIS, Axis, union_axes
 from .. import atomic, compileflags
-
-_TIME_AXIS = Axis("time", DOMAIN)
-"""Singleton for the time domain axis used by timeseries nodes."""
 
 Scalar = bool | float | int | str
 """Type alias for supported scalar value types."""
@@ -273,18 +270,6 @@ _id_generator = atomic.Int()
 
 # In the rest of the file, `T` is used as a type parameter for `Node`,
 # while `C` is used as a type parameter for boolean conditions.
-
-
-def _union_axes(*seqs: tuple[Axis, ...]) -> tuple[Axis, ...]:
-    """Merge axis tuples, preserving first-seen order and deduplicating."""
-    seen: set[Axis] = set()
-    result: list[Axis] = []
-    for seq in seqs:
-        for ax in seq:
-            if ax not in seen:
-                seen.add(ax)
-                result.append(ax)
-    return tuple(result)
 
 
 def ensure_node[T](value: Node[T] | HasNode[T] | Scalar) -> Node[T]:
@@ -524,7 +509,7 @@ class timeseries_constant[T](Node[T]):
     @property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return ``(Axis("time", DOMAIN),)`` — this node carries a time axis."""
-        return (_TIME_AXIS,)
+        return (TIME_AXIS,)
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
@@ -544,7 +529,7 @@ class timeseries_placeholder[T](Node[T]):
     @property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return ``(Axis("time", DOMAIN),)`` — this node carries a time axis."""
-        return (_TIME_AXIS,)
+        return (TIME_AXIS,)
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
@@ -567,7 +552,7 @@ class BinaryOp[T](Node[T]):
     @property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of the left and right operand axes."""
-        return _union_axes(self.left.output_axes, self.right.output_axes)
+        return union_axes(self.left.output_axes, self.right.output_axes)
 
 
 class UnaryOp[T](Node[T]):
@@ -778,7 +763,7 @@ class where[C, T](Node[T]):
     @property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of condition, then, and otherwise axes."""
-        return _union_axes(self.condition.output_axes, self.then.output_axes, self.otherwise.output_axes)
+        return union_axes(self.condition.output_axes, self.then.output_axes, self.otherwise.output_axes)
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
@@ -807,7 +792,7 @@ class MultiClauseOp[C, T](Node[T]):
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of all clause condition, clause value, and default axes."""
         clause_seqs = [ax for cond, val in self.clauses for ax in (cond.output_axes, val.output_axes)]
-        return _union_axes(*clause_seqs, self.default_value.output_axes)
+        return union_axes(*clause_seqs, self.default_value.output_axes)
 
 
 class multi_clause_where[C, T](MultiClauseOp[C, T]):
@@ -1254,7 +1239,7 @@ class function_call[T](Node[T]):
     @property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of all input axes (conservative)."""
-        return _union_axes(*(a.output_axes for a in self.args), *(v.output_axes for v in self.kwargs.values()))
+        return union_axes(*(a.output_axes for a in self.args), *(v.output_axes for v in self.kwargs.values()))
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
