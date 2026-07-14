@@ -8,14 +8,12 @@
 # ``dict[Index, float]`` is not assignable to ``dict[GenericIndex, Any]``
 # even though ``Index`` extends ``GenericIndex``.
 
-from typing import Any
-
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import ConstIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
-from civic_digital_twins.dt_model.simulation.ensemble import WeightedScenario
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
@@ -25,9 +23,26 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 # ---------------------------------------------------------------------------
 
 
-def _make_model(*indexes):
+@define("TestModel")
+class _TestModel(Model):
+    """Minimal model wrapping an arbitrary set of indexes."""
+
+    @inputs
+    class Inputs:
+        indexes: list[GenericIndex]
+
+    @outputs
+    class Outputs:
+        pass
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """No computation — just expose the wrapped indexes."""
+        return _TestModel.Outputs()
+
+
+def _make_model(*indexes: GenericIndex) -> Model:
     """Wrap indexes in a named model."""
-    return Model("test", list(indexes))
+    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -42,51 +57,9 @@ def test_1d_single_scenario_constant_model():
     I_result = Index("result", I_a.node + I_b.node)
     model = _make_model(I_a, I_b, I_result)
 
-    # No abstract indexes → scenarios list is empty; still evaluates constants.
-    result = Evaluation(model).evaluate([])
+    # No abstract indexes → nothing to sample; still evaluates constants.
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     assert np.isclose(result[I_result], 7.0)
-
-
-def test_1d_single_scenario_placeholder():
-    """Single scenario with one placeholder index."""
-    I_x = Index("x", None)
-    I_scale = Index("scale", 2.0)
-    I_result = Index("result", I_scale.node * I_x.node)
-    model = _make_model(I_x, I_scale, I_result)
-
-    a: dict[GenericIndex, Any] = {I_x: 5.0}
-    scenarios: list[WeightedScenario] = [(1.0, a)]
-    result = Evaluation(model).evaluate(scenarios)
-    # Shape (S,): S=1 scenario; value = 2 * 5 = 10
-    # (No trailing DOMAIN placeholder in non-timeseries models after bug fix #155.)
-    assert result[I_result].shape == (1,)
-    assert np.isclose(result[I_result][0], 10.0)
-
-
-def test_1d_multiple_scenarios():
-    """Multiple scenarios are stacked; result has one entry per scenario."""
-    I_x = Index("x", None)
-    I_result = Index("result", I_x.node * I_x.node)
-    model = _make_model(I_x, I_result)
-
-    a0: dict[GenericIndex, Any] = {I_x: 2.0}
-    a1: dict[GenericIndex, Any] = {I_x: 3.0}
-    scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
-    result = Evaluation(model).evaluate(scenarios)
-    assert result[I_result].shape == (2,)
-    assert np.isclose(result[I_result][0], 4.0)
-    assert np.isclose(result[I_result][1], 9.0)
-
-
-def test_1d_raises_on_unresolved_abstract_index():
-    """ValueError is raised when a scenario is missing an abstract index."""
-    I_x = Index("x", None)
-    I_y = Index("y", None)
-    model = _make_model(I_x, I_y)
-
-    a: dict[GenericIndex, Any] = {I_x: 1.0}
-    with pytest.raises(ValueError, match="abstract index"):
-        Evaluation(model).evaluate([(1.0, a)])
 
 
 # ---------------------------------------------------------------------------
@@ -96,38 +69,54 @@ def test_1d_raises_on_unresolved_abstract_index():
 
 def test_axes_single_axis_result_shape():
     """Single axis index produces result shape (N, 1)."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    # I_x is swept via parameters=, so it must be excluded from ensemble
+    # sampling via parameter_axes=; a size-1 ensemble reproduces the
+    # trailing ENSEMBLE singleton dimension of the legacy 1-scenario call.
+    scenario = Scenario(model, parameter_axes=[I_x])
+    ensemble = DistributionEnsemble(scenario, size=1)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs})
     assert result[I_x].shape == (3, 1)
 
 
 def test_axes_two_axes_result_shape():
     """Two axis indexes produce result shape (N0, N1, 1)."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
     I_x = Index("x", None)
     I_y = Index("y", None)
     model = _make_model(I_x, I_y)
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
+    scenario = Scenario(model, parameter_axes=[I_x, I_y])
+    ensemble = DistributionEnsemble(scenario, size=1)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs, I_y: ys})
     assert result[I_x].shape == (2, 1, 1)
     assert result[I_y].shape == (1, 3, 1)
 
 
 def test_axes_non_axis_abstract_has_shape_1_1_s():
     """A non-axis abstract index has shape (1, …, 1, S)."""
+    from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
+
     I_x = Index("x", None)
     I_factor = Index("factor", None)
     model = _make_model(I_x, I_factor)
     xs = np.array([1.0, 2.0, 3.0])
 
-    a0: dict[GenericIndex, Any] = {I_factor: 1.0}
-    a1: dict[GenericIndex, Any] = {I_factor: 2.0}
-    scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
-    result = Evaluation(model).evaluate(scenarios, parameters={I_x: xs})
+    # I_x is the PARAMETER axis; I_factor is a separate abstract index sampled
+    # by a deterministic 2-scenario ensemble (factor=1.0, factor=2.0).
+    scenario = Scenario(model, parameter_axes=[I_x])
+    axis = Axis("_ensemble", ENSEMBLE)
+    ensemble = FrozenEnsemble((axis,), (np.array([0.5, 0.5]),), {I_factor: np.array([1.0, 2.0])})
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs})
     # Non-axis abstract: shape (1, S) = (1, 2)
     assert result[I_factor].shape == (1, 2)
 
@@ -145,7 +134,7 @@ def test_axes_single_axis_formula_values():
     model = _make_model(I_x, I_scale, I_result)
     xs = np.array([1.0, 2.0, 4.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     # shape (3, 1); marginalize: tensordot(..., [1.0], axes=([-1],[0])) → (3,)
     marginalised = result.expected_value(I_result)
     assert np.allclose(marginalised, [3.0, 6.0, 12.0])
@@ -160,7 +149,7 @@ def test_axes_two_axes_additive_formula():
     xs = np.array([1.0, 2.0])
     ys = np.array([10.0, 20.0, 30.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs, I_y: ys})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs, I_y: ys})
     marginalised = result.expected_value(I_result)
     # result[i, j] = xs[i] + ys[j]
     expected = xs[:, None] + ys[None, :]
@@ -169,17 +158,21 @@ def test_axes_two_axes_additive_formula():
 
 def test_axes_non_axis_factor_marginalised_correctly():
     """Weighted marginalisation over a non-axis index gives the correct mean."""
+    from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+    from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
+
     I_x = Index("x", None)
     I_factor = Index("factor", None)
     I_result = Index("result", I_x.node * I_factor.node)
     model = _make_model(I_x, I_factor, I_result)
     xs = np.array([1.0, 2.0, 3.0])
-    # Two equiprobable scenarios: factor=1 and factor=3 → mean factor=2
-    a0: dict[GenericIndex, Any] = {I_factor: 1.0}
-    a1: dict[GenericIndex, Any] = {I_factor: 3.0}
-    scenarios: list[WeightedScenario] = [(0.5, a0), (0.5, a1)]
 
-    result = Evaluation(model).evaluate(scenarios, parameters={I_x: xs})
+    # I_x is the PARAMETER axis; two equiprobable scenarios for I_factor
+    # (1.0 and 3.0) → mean factor = 2.0.
+    scenario = Scenario(model, parameter_axes=[I_x])
+    axis = Axis("_ensemble", ENSEMBLE)
+    ensemble = FrozenEnsemble((axis,), (np.array([0.5, 0.5]),), {I_factor: np.array([1.0, 3.0])})
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs})
     marginalised = result.expected_value(I_result)
     # result[i] = xs[i] * mean_factor = xs[i] * 2
     assert np.allclose(marginalised, [2.0, 4.0, 6.0])
@@ -197,16 +190,20 @@ def test_axes_raises_on_unresolved_non_axis_abstract():
     model = _make_model(I_x, I_missing)
 
     with pytest.raises(ValueError, match="abstract index"):
-        Evaluation(model).evaluate([(1.0, {})], parameters={I_x: np.array([1.0])})
+        Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: np.array([1.0])})
 
 
 def test_axes_axis_index_not_required_in_scenario():
     """Axis indexes do not need to appear in the scenario assignments."""
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
+
     I_x = Index("x", None)
     model = _make_model(I_x)
 
-    # Should not raise — I_x is an axis, not required in scenario dict.
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: np.array([5.0, 10.0])})
+    # Should not raise — I_x is an axis, not required in scenario overrides.
+    scenario = Scenario(model, parameter_axes=[I_x])
+    ensemble = DistributionEnsemble(scenario, size=1)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: np.array([5.0, 10.0])})
     assert result[I_x].shape == (2, 1)
 
 
@@ -215,29 +212,13 @@ def test_axes_axis_index_not_required_in_scenario():
 # ---------------------------------------------------------------------------
 
 
-def test_evaluation_result_weights_property():
-    """EvaluationResult.weights returns the scenario weight array."""
-    I_x = Index("x", None)
-    model = _make_model(I_x)
-
-    a0: dict[GenericIndex, Any] = {I_x: 1.0}
-    a1: dict[GenericIndex, Any] = {I_x: 2.0}
-    scenarios: list[WeightedScenario] = [(0.3, a0), (0.7, a1)]
-    result = Evaluation(model).evaluate(scenarios)
-
-    weights = result.weights
-    assert weights.shape == (2,)
-    assert np.isclose(weights[0], 0.3)
-    assert np.isclose(weights[1], 0.7)
-
-
 def test_evaluation_result_parameter_values_property():
     """EvaluationResult.parameter_values returns the dict passed to evaluate()."""
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     pv = result.parameter_values
     assert I_x in pv
     assert np.array_equal(pv[I_x], xs)
@@ -248,7 +229,7 @@ def test_evaluation_result_parameter_values_empty_in_1d_mode():
     I_x = Index("x", 1.0)
     model = _make_model(I_x)
 
-    result = Evaluation(model).evaluate([])
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     assert result.parameter_values == {}
 
 
@@ -256,7 +237,7 @@ def test_value_constant_index():
     """Marginalize on an index with no abstract dependency returns the constant."""
     I_c = Index("c", 42.0)
     model = _make_model(I_c)
-    result = Evaluation(model).evaluate([(1.0, {})])
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     marginalised = result.expected_value(I_c)
     assert float(marginalised) == pytest.approx(42.0)
 
@@ -271,9 +252,10 @@ def test_value_1d_squeeze_scalar():
     I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     I_result = Index("result", I_x * I_x)
     model = _make_model(I_x, I_result)
+    scenario = Scenario(model)
 
-    ensemble = DistributionEnsemble(model, size=50)
-    result = Evaluation(model).evaluate(ensemble)
+    ensemble = DistributionEnsemble(scenario, size=50)
+    result = Evaluation(scenario).evaluate(ensemble=ensemble)
     marginalised = result.expected_value(I_result)
     # ENSEMBLE axis contracted, DOMAIN placeholder squeezed → 0-d scalar.
     assert np.ndim(marginalised) == 0
@@ -284,30 +266,13 @@ def test_value_1d_squeeze_scalar():
 # ---------------------------------------------------------------------------
 
 
-def test_result_axes_deprecated_property():
-    """EvaluationResult.axes emits DeprecationWarning and returns parameter_values."""
-    import warnings
-
-    I_x = Index("x", None)
-    model = _make_model(I_x)
-    xs = np.array([1.0, 2.0])
-
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        axes = result.axes
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("result.axes" in str(w.message) for w in deprecations)
-    assert I_x in axes
-
-
 def test_result_parameter_values_for():
     """EvaluationResult.parameter_values_for() returns the array for a given index."""
     I_x = Index("x", None)
     model = _make_model(I_x)
     xs = np.array([1.0, 2.0, 3.0])
 
-    result = Evaluation(model).evaluate([(1.0, {})], parameters={I_x: xs})
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     assert np.array_equal(result.parameter_values_for(I_x), xs)
 
 
@@ -316,7 +281,7 @@ def test_result_full_shape_no_axes():
     I_c = Index("c", 5.0)
     model = _make_model(I_c)
 
-    result = Evaluation(model).evaluate(ensemble=None)
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     assert result.full_shape == ()
 
 
@@ -325,56 +290,8 @@ def test_result_weights_no_ensemble():
     I_c = Index("c", 5.0)
     model = _make_model(I_c)
 
-    result = Evaluation(model).evaluate(ensemble=None)
+    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
     assert result.weights.shape == (0,)
-
-
-def test_evaluate_raises_when_both_scenarios_and_ensemble():
-    """TypeError when both 'scenarios' and 'ensemble=' are supplied."""
-    from scipy import stats
-
-    from civic_digital_twins.dt_model.model.index import DistributionIndex
-    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
-
-    I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
-    model = _make_model(I_x)
-    ens = DistributionEnsemble(model, size=3)
-
-    scenario: dict[GenericIndex, Any] = {I_x: 0.5}
-    legacy: list[WeightedScenario] = [(1.0, scenario)]
-    with pytest.raises(TypeError, match="both"):
-        Evaluation(model).evaluate(legacy, ensemble=ens)
-
-
-def test_evaluate_raises_when_both_axes_and_parameters():
-    """TypeError when both 'axes=' and 'parameters=' are supplied."""
-    import warnings
-
-    I_x = Index("x", None)
-    model = _make_model(I_x)
-    xs = np.array([1.0, 2.0])
-
-    with pytest.raises(TypeError, match="both"):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs}, parameters={I_x: xs})
-
-
-def test_evaluate_deprecated_axes_kwarg():
-    """Passing axes= emits DeprecationWarning and is equivalent to parameters=."""
-    import warnings
-
-    I_x = Index("x", None)
-    model = _make_model(I_x)
-    xs = np.array([1.0, 2.0])
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = Evaluation(model).evaluate([(1.0, {})], axes={I_x: xs})
-
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("axes" in str(w.message) for w in deprecations)
-    assert result[I_x].shape[0] == 2
 
 
 def test_distribution_ensemble_raises_for_non_distribution_abstract():
@@ -385,7 +302,7 @@ def test_distribution_ensemble_raises_for_non_distribution_abstract():
     model = _make_model(I_placeholder)
 
     with pytest.raises(ValueError, match="unsupported indexes"):
-        DistributionEnsemble(model, size=10)
+        DistributionEnsemble(Scenario(model), size=10)
 
 
 def test_distribution_ensemble_iteration_without_rng():
@@ -398,7 +315,7 @@ def test_distribution_ensemble_iteration_without_rng():
     I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
     model = _make_model(I_x)
 
-    scenarios = list(DistributionEnsemble(model, size=5))
+    scenarios = list(DistributionEnsemble(Scenario(model), size=5))
     assert len(scenarios) == 5
     w, a = scenarios[0]
     assert np.isclose(w, 1.0 / 5)
@@ -414,12 +331,13 @@ def test_distribution_ensemble_with_rng_is_reproducible():
 
     I_x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
     model = _make_model(I_x)
+    scenario = Scenario(model)
 
     rng1 = np.random.default_rng(42)
     rng2 = np.random.default_rng(42)
 
-    scenarios1 = list(DistributionEnsemble(model, size=5, rng=rng1))
-    scenarios2 = list(DistributionEnsemble(model, size=5, rng=rng2))
+    scenarios1 = list(DistributionEnsemble(scenario, size=5, rng=rng1))
+    scenarios2 = list(DistributionEnsemble(scenario, size=5, rng=rng2))
 
     for (w1, a1), (w2, a2) in zip(scenarios1, scenarios2):
         assert w1 == w2
@@ -443,7 +361,7 @@ def test_evaluate_functions_numpy_backend_adapt():
     I_out = Index("out", fc)
     model = _make_model(I_x, I_out)
 
-    result = Evaluation(model).evaluate(
+    result = Evaluation(Scenario(model)).evaluate(
         functions={"double": NumpyBackend.adapt(lambda x: x * 2)},
         backend=NumpyBackend,
     )
@@ -463,19 +381,11 @@ def test_evaluate_functions_adapt_functor_passed_through_unchanged():
     model = _make_model(I_x, I_out)
 
     functor = NumpyBackend.adapt(lambda x: -x)
-    result = Evaluation(model).evaluate(
+    result = Evaluation(Scenario(model)).evaluate(
         functions={"negate": functor},
         backend=NumpyBackend,
     )
     assert float(result[I_out]) == pytest.approx(-float(result[I_x]))
-
-
-def test_lambda_adapter_deprecated():
-    """Constructing LambdaAdapter directly triggers a DeprecationWarning."""
-    from civic_digital_twins.dt_model.engine.numpybackend import executor
-
-    with pytest.warns(DeprecationWarning, match="NumpyBackend.adapt"):
-        executor.LambdaAdapter(lambda x: x)
 
 
 def test_unsupported_backend_raises():
@@ -488,14 +398,14 @@ def test_unsupported_backend_raises():
         pass
 
     with pytest.raises(NotImplementedError, match="not supported"):
-        Evaluation(model).evaluate(backend=_FakeBackend)  # type: ignore[arg-type]
+        Evaluation(Scenario(model)).evaluate(backend=_FakeBackend)  # type: ignore[arg-type]
 
 
 def test_build_plan_unknown_strategy_raises():
     """build_plan raises ValueError for an unrecognised strategy string."""
     model = _make_model(Index("x", 1.0))
     with pytest.raises(ValueError, match="Unknown strategy"):
-        Evaluation(model).build_plan(strategy="turbo")
+        Evaluation(Scenario(model)).build_plan(strategy="turbo")
 
 
 def test_evaluation_rejects_scenario_like_object_after_duck_typing_removal():
@@ -508,13 +418,13 @@ def test_evaluation_rejects_scenario_like_object_after_duck_typing_removal():
         def __init__(self, m):
             self.model = m
 
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    with pytest.raises(TypeError, match="expects a Scenario"):
         Evaluation(_FakeScenario(model))  # type: ignore[arg-type]
 
 
 def test_evaluation_rejects_object_without_model_attribute():
-    """Evaluation() raises TypeError when the argument is not a Scenario, Model, or ModelVariant."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """Evaluation() raises TypeError when the argument is not a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         Evaluation(object())  # type: ignore[arg-type]
 
 
@@ -838,7 +748,8 @@ def test_evaluation_result_full_shape_with_axes():
     I_x = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
     I_result = Index("result", I_x.node * 2.0)
     model = _make_model(I_x, I_result)
-    ev = Evaluation(Scenario(model))
-    ens = DistributionEnsemble(Scenario(model), 7)
+    scenario = Scenario(model)
+    ev = Evaluation(scenario)
+    ens = DistributionEnsemble(scenario, 7)
     result = ev.evaluate(ensemble=ens)
     assert result.full_shape == (7,)

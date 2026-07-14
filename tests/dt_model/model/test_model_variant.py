@@ -2,10 +2,9 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import dataclasses
-
 import pytest
 
+from civic_digital_twins.dt_model import define, expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
@@ -15,58 +14,46 @@ from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 # ---------------------------------------------------------------------------
 
 
+@define("BikeModel")
 class _BikeModel(Model):
     """Variant A — bicycle-mode transport model."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        Inputs = _BikeModel.Inputs
-        Outputs = _BikeModel.Outputs
-
-        cap_val = capacity.value
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the bike variant."""
+        cap_val = inputs.capacity.value
         throughput = Index("throughput", float(cap_val) * 1.0 if isinstance(cap_val, (int, float)) else None)
         emissions = Index("emissions", 0.0)
-
-        super().__init__(
-            "BikeModel",
-            inputs=Inputs(capacity=capacity),
-            outputs=Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
 
+@define("TrainModel")
 class _TrainModel(Model):
     """Variant B — rail-mode transport model."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        Inputs = _TrainModel.Inputs
-        Outputs = _TrainModel.Outputs
-
-        cap_val = capacity.value
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the train variant."""
+        cap_val = inputs.capacity.value
         throughput = Index("throughput", float(cap_val) * 10.0 if isinstance(cap_val, (int, float)) else None)
         emissions = Index("emissions", 50.0)
-
-        super().__init__(
-            "TrainModel",
-            inputs=Inputs(capacity=capacity),
-            outputs=Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
 
 def _make_variants() -> dict[str, Model]:
@@ -74,8 +61,8 @@ def _make_variants() -> dict[str, Model]:
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
     return {
-        "bike": _BikeModel(cap_bike),
-        "train": _TrainModel(cap_train),
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
     }
 
 
@@ -84,51 +71,41 @@ def _make_variants() -> dict[str, Model]:
 # ---------------------------------------------------------------------------
 
 
+@define("OtherOutputsModel")
 class _OtherOutputsModel(Model):
     """Model whose outputs field names differ from _BikeModel / _TrainModel."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         flow: Index  # renamed field
         co2: Index  # renamed field
 
-    def __init__(self, capacity: Index) -> None:
-        Inputs = _OtherOutputsModel.Inputs
-        Outputs = _OtherOutputsModel.Outputs
-
-        super().__init__(
-            "OtherOutputsModel",
-            inputs=Inputs(capacity=capacity),
-            outputs=Outputs(flow=Index("flow", 1.0), co2=Index("co2", 2.0)),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Return fixed flow/co2 outputs."""
+        return _OtherOutputsModel.Outputs(flow=Index("flow", 1.0), co2=Index("co2", 2.0))
 
 
+@define("ExtraInputModel")
 class _ExtraInputModel(Model):
     """Model with an additional input field not present in _BikeModel / _TrainModel."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
         bonus: Index  # extra field absent from _BikeModel / _TrainModel
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index, bonus: Index) -> None:
-        Inputs = _ExtraInputModel.Inputs
-        Outputs = _ExtraInputModel.Outputs
-
-        super().__init__(
-            "ExtraInputModel",
-            inputs=Inputs(capacity=capacity, bonus=bonus),
-            outputs=Outputs(throughput=Index("t", 1.0), emissions=Index("e", 0.0)),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Return fixed throughput/emissions outputs."""
+        return _ExtraInputModel.Outputs(throughput=Index("t", 1.0), emissions=Index("e", 0.0))
 
 
 # ===========================================================================
@@ -179,7 +156,10 @@ def test_inputs_proxy_delegates_to_active_variant():
     """Inputs proxy delegates to the active variant."""
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    variants = {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)}
+    variants = {
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+    }
     mv = ModelVariant("Transport", variants, selector="bike")
     # inputs.capacity should be the bike model's capacity index (same object)
     assert mv.inputs.capacity is cap_bike
@@ -206,8 +186,8 @@ def test_indexes_delegates_to_active_variant_only():
     """Indexes list contains only the active variant's indexes."""
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    bike = _BikeModel(cap_bike)
-    train = _TrainModel(cap_train)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
     mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
 
     # The bike model's indexes must all appear (identity check — __eq__ returns a Node).
@@ -224,8 +204,9 @@ def test_inactive_variant_indexes_accessible_via_variants_key():
     """Inactive variant's indexes are reachable via variants["key"]."""
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    train = _TrainModel(cap_train)
-    mv = ModelVariant("Transport", {"bike": _BikeModel(cap_bike), "train": train}, selector="bike")
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
 
     # The train capacity is NOT in mv.indexes (identity check — __eq__ returns a Node).
     mv_index_ids = {id(idx) for idx in mv.indexes}
@@ -238,8 +219,8 @@ def test_abstract_indexes_delegates_to_active_variant():
     """abstract_indexes() delegates to the active variant."""
     cap_placeholder = Index("capacity", None)
     variants = {
-        "bike": _BikeModel(cap_placeholder),
-        "train": _TrainModel(Index("capacity", 500.0)),
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),  # type: ignore[call-arg]
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     abstract = mv.abstract_indexes()
@@ -251,8 +232,8 @@ def test_is_instantiated_delegates_to_active_variant():
     """is_instantiated() delegates to the active variant."""
     cap_concrete = Index("capacity", 100.0)
     variants = {
-        "bike": _BikeModel(cap_concrete),
-        "train": _TrainModel(Index("capacity", 500.0)),
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_concrete)),  # type: ignore[call-arg]
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     assert mv.is_instantiated()
@@ -262,8 +243,8 @@ def test_is_not_instantiated_when_active_has_placeholder():
     """is_instantiated() returns False when the active variant has a placeholder."""
     cap_placeholder = Index("capacity", None)
     variants = {
-        "bike": _BikeModel(cap_placeholder),
-        "train": _TrainModel(Index("capacity", 500.0)),
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),  # type: ignore[call-arg]
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     assert not mv.is_instantiated()
@@ -277,8 +258,9 @@ def test_is_not_instantiated_when_active_has_placeholder():
 def test_direct_attribute_access_forwards_to_active_variant():
     """Attribute access for unknown names is forwarded to the active Model."""
     cap_bike = Index("capacity", 100.0)
-    bike = _BikeModel(cap_bike)
-    mv = ModelVariant("Transport", {"bike": bike, "train": _TrainModel(Index("capacity", 500.0))}, selector="bike")
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0)))  # type: ignore[call-arg]
+    mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
     # 'name' is defined directly on ModelVariant, not proxied.
     assert mv.name == "Transport"
     # inputs is a property on ModelVariant — check field-level forwarding via proxy.
@@ -306,8 +288,9 @@ def test_variants_dict_contains_all_keys():
 def test_variants_dict_gives_access_to_model_instances():
     """variants["key"] returns the original Model instance."""
     cap_bike = Index("capacity", 100.0)
-    bike = _BikeModel(cap_bike)
-    mv = ModelVariant("Transport", {"bike": bike, "train": _TrainModel(Index("c", 1.0))}, selector="bike")
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("c", 1.0)))  # type: ignore[call-arg]
+    mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
     assert mv.variants["bike"] is bike
 
 
@@ -323,8 +306,8 @@ def test_mismatched_outputs_raises_value_error():
         ModelVariant(
             "Transport",
             {
-                "bike": _BikeModel(cap),
-                "other": _OtherOutputsModel(Index("capacity", 200.0)),
+                "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap)),  # type: ignore[call-arg]
+                "other": _OtherOutputsModel(inputs=_OtherOutputsModel.Inputs(capacity=Index("capacity", 200.0))),  # type: ignore[call-arg]
             },
             selector="bike",
         )
@@ -338,8 +321,8 @@ def test_mismatched_inputs_is_allowed():
     mv = ModelVariant(
         "Transport",
         {
-            "bike": _BikeModel(cap_bike),
-            "extra": _ExtraInputModel(cap_extra, bonus),
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "extra": _ExtraInputModel(inputs=_ExtraInputModel.Inputs(capacity=cap_extra, bonus=bonus)),  # type: ignore[call-arg]
         },
         selector="bike",
     )
@@ -357,8 +340,8 @@ def test_runtime_inputs_union_includes_all_variant_fields():
     mv = ModelVariant(
         "Transport",
         {
-            "bike": _BikeModel(cap_bike),
-            "extra": _ExtraInputModel(cap_extra, bonus),
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "extra": _ExtraInputModel(inputs=_ExtraInputModel.Inputs(capacity=cap_extra, bonus=bonus)),  # type: ignore[call-arg]
         },
         selector=mode,
     )
@@ -392,19 +375,24 @@ def test_repr_contains_name_and_active_key():
 # ===========================================================================
 
 
-class _ExposeModel(Model):
-    """Model that uses an Expose dataclass for intermediate results."""
+class _ExposeModel(Model, legacy=True):
+    """Model that uses an Expose dataclass for intermediate results.
 
-    @dataclasses.dataclass
+    Takes a ``label`` constructor parameter (used for both the model name and
+    the exposed ratio index's name) that does not fit the ``@define`` +
+    ``compute()`` contract, which only accepts ``inputs=`` (and ``fns=``).
+    """
+
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    @dataclasses.dataclass
+    @expose
     class Expose:
         ratio: Index
 

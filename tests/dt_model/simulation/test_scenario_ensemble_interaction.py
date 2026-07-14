@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, TimeseriesIndex
+from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, TimeseriesIndex, define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -26,9 +26,26 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 # ---------------------------------------------------------------------------
 
 
+@define("TestModel")
+class _TestModel(Model):
+    """Minimal model wrapping an arbitrary set of indexes."""
+
+    @inputs
+    class Inputs:
+        indexes: list[GenericIndex]
+
+    @outputs
+    class Outputs:
+        pass
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """No computation — just expose the wrapped indexes."""
+        return _TestModel.Outputs()
+
+
 def _make_model(*indexes: GenericIndex) -> Model:
     """Wrap *indexes* in a minimal named model."""
-    return Model("test", list(indexes))
+    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -499,8 +516,8 @@ def test_distribution_ensemble_accepts_scenario():
 
 
 def test_distribution_ensemble_rejects_wrong_type():
-    """DistributionEnsemble raises TypeError when passed something other than Scenario/Model."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """DistributionEnsemble raises TypeError when passed something other than a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         DistributionEnsemble("not a model", 5)  # type: ignore[arg-type]
 
 
@@ -510,8 +527,8 @@ def test_distribution_ensemble_rejects_wrong_type():
 
 
 def test_cross_product_ensemble_rejects_wrong_type():
-    """CrossProductEnsemble raises TypeError when passed something other than Scenario/Model."""
-    with pytest.raises(TypeError, match="Scenario, Model, or ModelVariant"):
+    """CrossProductEnsemble raises TypeError when passed something other than a Scenario."""
+    with pytest.raises(TypeError, match="expects a Scenario"):
         CrossProductEnsemble("not a model")  # type: ignore[arg-type]
 
 
@@ -569,30 +586,6 @@ def test_cross_product_ensemble_dict_override_restricts_support():
     assert weight_by_value == pytest.approx({"a": 0.7, "b": 0.3})
 
 
-def test_cross_product_ensemble_explicit_restriction_overrides_dict_keys():
-    """An explicit restrictions= entry takes precedence over the dict override's key set.
-
-    The restriction controls which values are sampled; probabilities still come
-    from the scenario dict override (not the model).
-    """
-    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.3, "c": 0.2})
-    model = _make_model(cat)
-    # Scenario override covers {a, b, c} with custom probs.
-    scenario = Scenario(model, overrides={cat: {"a": 0.6, "b": 0.3, "c": 0.1}})  # type: ignore[dict-item]
-
-    # Explicit restriction further limits to just {a, b}.
-    ens = CrossProductEnsemble(scenario, restrictions={cat: ["a", "b"]}, max_categorical_size=20)
-
-    assignments = ens.assignments()[cat]
-    sampled_values = {str(v) for v in assignments}
-    assert sampled_values == {"a", "b"}
-
-    # Weights must come from the override dict, renormalised over {a, b}: 0.6/0.9, 0.3/0.9.
-    weights = ens.ensemble_weights[0]
-    weight_by_value = {str(v): float(w) for v, w in zip(assignments, weights)}
-    assert weight_by_value == pytest.approx({"a": 0.6 / 0.9, "b": 0.3 / 0.9})
-
-
 # ---------------------------------------------------------------------------
 # Foreign-index checks — override keys not in model.indexes
 # ---------------------------------------------------------------------------
@@ -624,32 +617,6 @@ def test_scenario_override_index_in_model_does_not_raise():
     # Both a and b are in the model — no error expected.
     scenario = Scenario(model, overrides={a: 10.0, b: 20.0})
     assert scenario.overrides == {a: 10.0, b: 20.0}
-
-
-# ---------------------------------------------------------------------------
-# CrossProductEnsemble deprecation warnings
-# ---------------------------------------------------------------------------
-
-
-def test_cross_product_ensemble_restrictions_deprecated():
-    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
-    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
-    model = _make_model(cat)
-    with pytest.warns(DeprecationWarning, match="restrictions="):
-        CrossProductEnsemble(model, restrictions={cat: ["good"]})
-
-
-def test_cross_product_ensemble_exclude_deprecated():
-    """CrossProductEnsemble.exclude= emits DeprecationWarning."""
-    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
-    pv = ConditionalDistributionIndex(
-        "presence",
-        parents=[cat],
-        factory=lambda weather: stats.norm(loc=100.0, scale=10.0),
-    )
-    model = _make_model(cat, pv)
-    with pytest.warns(DeprecationWarning, match="exclude="):
-        CrossProductEnsemble(Scenario(model), exclude=[pv])
 
 
 # ---------------------------------------------------------------------------

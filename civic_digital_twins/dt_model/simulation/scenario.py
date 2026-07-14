@@ -108,9 +108,19 @@ class Scenario:
 
     Examples
     --------
-    >>> from civic_digital_twins.dt_model import Index, Model, Scenario
+    >>> from civic_digital_twins.dt_model import Index, Model, Scenario, define, inputs, outputs
+    >>> @define("Parking")
+    ... class ParkingModel(Model):
+    ...     @inputs
+    ...     class Inputs:
+    ...         cost: Index
+    ...     @outputs
+    ...     class Outputs:
+    ...         cost: Index
+    ...     def compute(self, inputs: Inputs) -> Outputs:
+    ...         return ParkingModel.Outputs(cost=inputs.cost)
     >>> cost = Index("cost", 8.0)
-    >>> model = Model("parking", indexes=[cost])
+    >>> model = ParkingModel(inputs=ParkingModel.Inputs(cost=cost))
     >>> # Base scenario — uses model's own value
     >>> base = Scenario(model)
     >>> # What-if scenario — parking costs €12

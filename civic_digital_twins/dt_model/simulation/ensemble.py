@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -19,8 +19,6 @@ from ..model.index import (
     GenericIndex,
     Index,
 )
-from ..model.model import Model
-from ..model.model_variant import ModelVariant
 from .plan import EvaluationPlan
 from .scenario import Scenario
 
@@ -331,8 +329,8 @@ class PartitionedEnsemble:
 
     Parameters
     ----------
-    scenario_or_model:
-        The model whose abstract indexes are sampled.
+    scenario:
+        The scenario whose abstract indexes are sampled.
     axes:
         Ordered list of :class:`EnsembleAxisSpec` objects, each naming a subset
         of abstract indexes and a sample size.
@@ -351,32 +349,13 @@ class PartitionedEnsemble:
 
     def __init__(
         self,
-        scenario_or_model: Scenario | Model | ModelVariant,
+        scenario: Scenario,
         axes: list[EnsembleAxisSpec],
         default_axis: EnsembleAxisSpec | None = None,
         rng: np.random.Generator | None = None,
     ) -> None:
-        import warnings
-
-        scenario: Scenario
-        model: Model | ModelVariant
-        if isinstance(scenario_or_model, Scenario):
-            scenario = scenario_or_model
-            model = scenario_or_model.model
-        elif isinstance(scenario_or_model, (Model, ModelVariant)):
-            warnings.warn(
-                f"Passing a Model or ModelVariant directly to {type(self).__name__}() is deprecated "
-                "and will be removed in a future version. Wrap it in Scenario(model) first.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            model = scenario_or_model
-            scenario = Scenario(model)
-        else:
-            raise TypeError(
-                f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
-                f"got {type(scenario_or_model).__name__!r}."
-            )
+        if not isinstance(scenario, Scenario):
+            raise TypeError(f"{type(self).__name__} expects a Scenario, got {type(scenario).__name__}")
         abstract = list(scenario.abstract_indexes())
         abstract_set = set(abstract)
 
@@ -562,8 +541,8 @@ class DistributionEnsemble:
 
     Parameters
     ----------
-    scenario_or_model:
-        The model whose abstract indexes are sampled.  Every abstract index
+    scenario:
+        The scenario whose abstract indexes are sampled.  Every abstract index
         must be either :class:`~model.index.Distribution`-backed or a
         :class:`~model.index.CategoricalIndex`; a :class:`ValueError` is
         raised at construction time otherwise.
@@ -605,34 +584,15 @@ class DistributionEnsemble:
 
     def __init__(
         self,
-        scenario_or_model: Scenario | Model | ModelVariant,
+        scenario: Scenario,
         size: int,
         rng: np.random.Generator | None = None,
         *,
         exclude: frozenset["GenericIndex"] | None = None,
         plan: EvaluationPlan | None = None,
     ) -> None:
-        import warnings
-
-        scenario: Scenario
-        model: Model | ModelVariant
-        if isinstance(scenario_or_model, Scenario):
-            scenario = scenario_or_model
-            model = scenario_or_model.model
-        elif isinstance(scenario_or_model, (Model, ModelVariant)):
-            warnings.warn(
-                f"Passing a Model or ModelVariant directly to {type(self).__name__}() is deprecated "
-                "and will be removed in a future version. Wrap it in Scenario(model) first.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            model = scenario_or_model
-            scenario = Scenario(model)
-        else:
-            raise TypeError(
-                f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
-                f"got {type(scenario_or_model).__name__!r}."
-            )
+        if not isinstance(scenario, Scenario):
+            raise TypeError(f"{type(self).__name__} expects a Scenario, got {type(scenario).__name__}")
         self._scenario = scenario
         self._size = size
         self._rng = rng
@@ -1019,37 +979,32 @@ class CrossProductEnsemble:
     must be supplied as PARAMETER axes to
     :meth:`~simulation.evaluation.Evaluation.evaluate`.
 
-    **Restrictions** project the categorical cross-product onto a subset of
-    outcomes for selected categorical indexes, renormalising probabilities so
-    that ensemble weights still sum to 1.0::
-
-        ensemble = CrossProductEnsemble(
-            model,
-            restrictions={cv_weather: ["good", "unsettled"]},
-        )
-
     **Scenario dict overrides** are respected automatically.  When the scenario
     carries a ``dict[str, float]`` override for a
     :class:`~model.index.CategoricalIndex`, the override probabilities replace
     the model's declared probabilities *and* the support is automatically
-    restricted to the override's keys (so only those outcomes are sampled).
-    An explicit ``restrictions`` entry for the same index takes precedence for
-    the value subset, but probabilities still come from the override::
+    restricted to the override's keys (so only those outcomes are sampled)::
 
         # cv_weather model probs: good=0.33, unsettled=0.33, bad=0.34
         scenario = Scenario(model, overrides={cv_weather: {"good": 0.8, "unsettled": 0.2}})
         ensemble = CrossProductEnsemble(scenario)  # only good/unsettled, with 80/20 weights
 
+    A ``list[str]`` override restricts to that subset of outcomes and
+    renormalises the model's declared probabilities automatically::
+
+        scenario = Scenario(model, overrides={cv_weather: ["good", "unsettled"]})
+        ensemble = CrossProductEnsemble(scenario)
+
     **Sampling budget for distribution-backed indexes** — when a model retains
-    distribution-backed indexes in the ensemble (i.e. they are *not* in
-    *exclude*), each categorical combination would by default receive exactly
-    one sample from those distributions, giving a total of only
-    ``|categorical cross-product|`` samples and high run-to-run variance.  Use
-    *n_samples_per_combo* to draw more independent samples per categorical
-    combination::
+    distribution-backed indexes in the ensemble (i.e. they are not declared as
+    a :attr:`~simulation.scenario.Scenario.parameter_axes`), each categorical
+    combination would by default receive exactly one sample from those
+    distributions, giving a total of only ``|categorical cross-product|``
+    samples and high run-to-run variance.  Use *n_samples_per_combo* to draw
+    more independent samples per categorical combination::
 
         # 3 weather × 2 seasons = 6 combos × 50 samples = 300 total scenarios
-        ensemble = CrossProductEnsemble(model, n_samples_per_combo=50)
+        ensemble = CrossProductEnsemble(scenario, n_samples_per_combo=50)
 
     Each combo's weight ``w`` is split equally among its *n_samples_per_combo*
     replicates (each replicate carries weight ``w / n_samples_per_combo``), so
@@ -1058,16 +1013,8 @@ class CrossProductEnsemble:
 
     Parameters
     ----------
-    scenario_or_model:
-        Model whose abstract indexes are enumerated / sampled.
-    restrictions:
-        .. deprecated::
-            Use a ``list[str]`` override in :class:`~simulation.scenario.Scenario` instead:
-            ``Scenario(model, overrides={idx: ["a", "b"]})`` restricts to that subset and
-            renormalises the original probabilities automatically.
-        Maps a categorical index to the subset of support values to use
-        instead of its full support.  Omitted or absent entries use the full
-        support.
+    scenario:
+        Scenario whose abstract indexes are enumerated / sampled.
     max_categorical_size:
         Maximum number of samples per categorical axis.  When the support (or
         restricted subset) is larger than this threshold, the axis is Monte-Carlo
@@ -1076,19 +1023,8 @@ class CrossProductEnsemble:
         Number of independent distribution samples to draw for each categorical
         combination.  Total ensemble size is
         ``|categorical cross-product| × n_samples_per_combo``.  Must be >= 1.
-        Has no effect when all distribution-backed indexes are in *exclude*.
-    exclude:
-        .. deprecated::
-            Declare parameter axes on the
-            :class:`~simulation.scenario.Scenario` instead:
-            ``Scenario(model, parameter_axes=[idx, ...])`` — the ensemble
-            reads :attr:`~simulation.scenario.Scenario.parameter_axes`
-            automatically and skips those indexes without any explicit
-            *exclude* argument.
-        Indexes to exclude from ensemble enumeration / sampling.  Use this to
-        mark PARAMETER-axis indexes (e.g. presence variables supplied as grid
-        axes to :meth:`~simulation.evaluation.Evaluation.evaluate`) that should
-        not be part of the cross-product.  Identity-based exclusion.
+        Has no effect when all distribution-backed indexes are declared as
+        parameter axes on *scenario*.
     rng:
         Optional :class:`numpy.random.Generator` for reproducibility.
 
@@ -1097,67 +1033,23 @@ class CrossProductEnsemble:
 
     def __init__(
         self,
-        scenario_or_model: Scenario | Model | ModelVariant,
-        restrictions: Mapping[Any, Sequence[str]] | None = None,
+        scenario: Scenario,
         max_categorical_size: int = 20,
         n_samples_per_combo: int = 1,
-        exclude: Sequence[GenericIndex] | None = None,
         rng: np.random.Generator | None = None,
     ) -> None:
-        import warnings
-
-        scenario: Scenario
-        model: Model | ModelVariant
-        if isinstance(scenario_or_model, Scenario):
-            scenario = scenario_or_model
-            model = scenario_or_model.model
-        elif isinstance(scenario_or_model, (Model, ModelVariant)):
-            warnings.warn(
-                f"Passing a Model or ModelVariant directly to {type(self).__name__}() is deprecated "
-                "and will be removed in a future version. Wrap it in Scenario(model) first.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            model = scenario_or_model
-            scenario = Scenario(model)
-        else:
-            raise TypeError(
-                f"{type(self).__name__}() expects a Scenario, Model, or ModelVariant; "
-                f"got {type(scenario_or_model).__name__!r}."
-            )
+        if not isinstance(scenario, Scenario):
+            raise TypeError(f"{type(self).__name__} expects a Scenario, got {type(scenario).__name__}")
         if n_samples_per_combo < 1:
             raise ValueError(f"n_samples_per_combo must be >= 1; got {n_samples_per_combo}.")
-        if restrictions is not None:
-            warnings.warn(
-                "CrossProductEnsemble.restrictions= is deprecated and will be removed in a future version. "
-                "Use a list[str] override in Scenario instead: "
-                "Scenario(model, overrides={idx: [...]}) restricts to that subset and renormalises "
-                "the original probabilities automatically.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if restrictions is None:
-            restrictions = {}
-        if exclude is not None:
-            warnings.warn(
-                "CrossProductEnsemble.exclude= is deprecated and will be removed in a future version. "
-                "Declare parameter axes on the Scenario instead: "
-                "Scenario(model, overrides={...}, parameter_axes=[idx, ...]) and pass that Scenario to "
-                "CrossProductEnsemble — it will skip them automatically.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        excluded_ids = {id(idx) for idx in (exclude or [])}
-        excluded_ids |= {id(idx) for idx in scenario.parameter_axes}
 
+        # PARAMETER-axis indexes are already excluded by Scenario.abstract_indexes().
         abstract = list(scenario.abstract_indexes())
 
         # Classify abstract indexes.
         cats_unordered: list[CategoricalIndex | ConditionalCategoricalIndex] = []
         dists_unordered: list[Index] = []
         for idx in abstract:
-            if id(idx) in excluded_ids:
-                continue  # skip PARAMETER-axis indexes (deprecated exclude= path)
             if isinstance(idx, CategoricalIndex | ConditionalCategoricalIndex):
                 cats_unordered.append(idx)
             elif isinstance(idx, ConditionalDistributionIndex):
@@ -1168,7 +1060,6 @@ class CrossProductEnsemble:
 
         self._categoricals = _topo_sort_categoricals(cats_unordered)
         self._distributions = _topo_sort_dists(dists_unordered)
-        self._restrictions = restrictions if restrictions else None
         self._max_categorical_size = max_categorical_size
         self._scenario = scenario
         self._rng = rng
@@ -1213,7 +1104,6 @@ class CrossProductEnsemble:
             :meth:`draw_batch` can reuse the categorical structure.
         """
         scenario = self._scenario
-        restrictions = self._restrictions or {}
         max_categorical_size = self._max_categorical_size
         categoricals = self._categoricals
         distributions = self._distributions
@@ -1229,12 +1119,10 @@ class CrossProductEnsemble:
                 if isinstance(cat, ConditionalCategoricalIndex):
                     parent_values = {p.name: assignments[id(p)] for p in cat.parents}
                     outcomes = cat.outcomes_for(**parent_values)
-                    subset = restrictions.get(cat)
-                    values = list(subset) if subset is not None else cat.support
+                    values = cat.support
                 else:
                     outcomes = scenario.effective_outcomes(cat) or cat.outcomes
-                    subset = restrictions.get(cat)
-                    values = list(subset) if subset is not None else list(outcomes.keys())
+                    values = list(outcomes.keys())
                 probs = [outcomes[v] for v in values]
                 for sub_w, val in _cat_samples(values, probs, max_categorical_size, rng):
                     new_combos.append((w * sub_w, {**assignments, id(cat): val}))

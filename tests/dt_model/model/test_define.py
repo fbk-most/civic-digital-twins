@@ -10,6 +10,7 @@ from civic_digital_twins.dt_model import NumpyBackend, define, expose, functions
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Decoration-time error checks
@@ -145,7 +146,7 @@ def test_define_with_functions_and_expose():
     functor = NumpyBackend.adapt(lambda x: x * 2)
     m = M(inputs=M.Inputs(x=x_idx), fns=M.Functions(double=functor))  # type: ignore[call-arg]
 
-    result = Evaluation(m).evaluate(backend=NumpyBackend)
+    result = Evaluation(Scenario(m)).evaluate(backend=NumpyBackend)
     assert float(result[y_idx]) == pytest.approx(6.0)
     assert m.expose.z is z_idx
 

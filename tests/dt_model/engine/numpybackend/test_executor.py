@@ -518,7 +518,7 @@ def test_user_defined_function():
     f = graph.function_call("f", a, b, c=c)
     g = graph.add(f, graph.constant(1))
 
-    functor: executor.Functor = executor.LambdaAdapter(lambda a, b, *, c: np.add(np.add(a, b), c))
+    functor: executor.Functor = executor.NumpyBackend.adapt(lambda a, b, *, c: np.add(np.add(a, b), c))
 
     state1 = executor.State(
         values={
