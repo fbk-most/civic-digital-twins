@@ -546,13 +546,6 @@ def test_user_defined_function():
         executor.evaluate_nodes(state2, *linearize.forest(g))
 
 
-def test_lambda_adapter_deprecated():
-    """LambdaAdapter emits DeprecationWarning and still adapts a callable to a Functor."""
-    with pytest.warns(DeprecationWarning, match="NumpyBackend.adapt"):
-        functor = executor.LambdaAdapter(lambda a, b: np.add(a, b))
-    assert functor(np.asarray(1), np.asarray(2)) == np.asarray(3)
-
-
 def test_state_set_node_value():
     """Ensure we can mutate the state and set node values."""
     state = executor.State(values={})

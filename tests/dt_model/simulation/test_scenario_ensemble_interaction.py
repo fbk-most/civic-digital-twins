@@ -586,33 +586,6 @@ def test_cross_product_ensemble_dict_override_restricts_support():
     assert weight_by_value == pytest.approx({"a": 0.7, "b": 0.3})
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_cross_product_ensemble_explicit_restriction_overrides_dict_keys():
-    """An explicit restrictions= entry takes precedence over the dict override's key set.
-
-    The restriction controls which values are sampled; probabilities still come
-    from the scenario dict override (not the model).
-    """
-    cat = CategoricalIndex("cat", {"a": 0.5, "b": 0.3, "c": 0.2})
-    model = _make_model(cat)
-    # Scenario override covers {a, b, c} with custom probs.
-    scenario = Scenario(model, overrides={cat: {"a": 0.6, "b": 0.3, "c": 0.1}})  # type: ignore[dict-item]
-
-    # Explicit restriction further limits to just {a, b}.
-    ens = CrossProductEnsemble(scenario, restrictions={cat: ["a", "b"]}, max_categorical_size=20)
-
-    assignments = ens.assignments()[cat]
-    sampled_values = {str(v) for v in assignments}
-    assert sampled_values == {"a", "b"}
-
-    # Weights must come from the override dict, renormalised over {a, b}: 0.6/0.9, 0.3/0.9.
-    weights = ens.ensemble_weights[0]
-    weight_by_value = {str(v): float(w) for v, w in zip(assignments, weights)}
-    assert weight_by_value == pytest.approx({"a": 0.6 / 0.9, "b": 0.3 / 0.9})
-
-
 # ---------------------------------------------------------------------------
 # Foreign-index checks — override keys not in model.indexes
 # ---------------------------------------------------------------------------
@@ -644,32 +617,6 @@ def test_scenario_override_index_in_model_does_not_raise():
     # Both a and b are in the model — no error expected.
     scenario = Scenario(model, overrides={a: 10.0, b: 20.0})
     assert scenario.overrides == {a: 10.0, b: 20.0}
-
-
-# ---------------------------------------------------------------------------
-# CrossProductEnsemble deprecation warnings
-# ---------------------------------------------------------------------------
-
-
-def test_cross_product_ensemble_restrictions_deprecated():
-    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
-    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
-    model = _make_model(cat)
-    with pytest.warns(DeprecationWarning, match="restrictions="):
-        CrossProductEnsemble(Scenario(model), restrictions={cat: ["good"]})
-
-
-def test_cross_product_ensemble_exclude_deprecated():
-    """CrossProductEnsemble.exclude= emits DeprecationWarning."""
-    cat = CategoricalIndex("weather", {"good": 0.5, "bad": 0.5})
-    pv = ConditionalDistributionIndex(
-        "presence",
-        parents=[cat],
-        factory=lambda weather: stats.norm(loc=100.0, scale=10.0),
-    )
-    model = _make_model(cat, pv)
-    with pytest.warns(DeprecationWarning, match="exclude="):
-        CrossProductEnsemble(Scenario(model), exclude=[pv])
 
 
 # ---------------------------------------------------------------------------

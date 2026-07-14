@@ -97,6 +97,26 @@ def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     return presence, mv
 
 
+def _frozen_from_weighted_scenarios(
+    scenarios: list[WeightedScenario],
+    abstract_indexes: list[GenericIndex],
+) -> FrozenEnsemble:
+    """Materialise an explicit list of weighted scenarios into a FrozenEnsemble.
+
+    Replaces the legacy ``Iterable[WeightedScenario]`` ensemble adaptation
+    (removed in 0.11.0) for tests that need a small, deterministic ensemble
+    built from explicit scenario assignments.
+    """
+    axis = Axis("_ensemble", ENSEMBLE)
+    weights = np.array([w for w, _ in scenarios])
+    assignments: dict[GenericIndex, np.ndarray] = {}
+    for idx in abstract_indexes:
+        values = [a[idx] for _, a in scenarios]
+        normalized = [v.flat[0] if isinstance(v, np.ndarray) and v.size == 1 else v for v in values]
+        assignments[idx] = np.asarray(normalized)
+    return FrozenEnsemble((axis,), (weights,), assignments)
+
+
 # ---------------------------------------------------------------------------
 # build_plan(strategy='regional') — structural tests
 # ---------------------------------------------------------------------------
@@ -193,102 +213,17 @@ def _train_only_scenarios(mode: CategoricalIndex, n: int) -> list[WeightedScenar
     return [(1.0 / n, {mode: np.array(["train"])}) for _ in range(n)]
 
 
-def _mixed_scenarios(mode: CategoricalIndex) -> list[WeightedScenario]:
-    return [
-        (0.25, {mode: np.array(["bike"])}),
-        (0.25, {mode: np.array(["train"])}),
-        (0.25, {mode: np.array(["bike"])}),
-        (0.25, {mode: np.array(["train"])}),
-    ]
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_regional_bike_only_matches_monolithic():
-    """Regional plan: bike-only scenarios match monolithic throughput."""
-    mode = CategoricalIndex("mode", {"bike": 1.0})
-    mv = _make_mv(mode)
-    ev = Evaluation(Scenario(mv))
-    scenarios = _bike_only_scenarios(mode, 4)
-
-    mono = ev.evaluate(scenarios, [mv.outputs.throughput])
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-        scenarios_list = _bike_only_scenarios(mode, 4)
-        adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    regional_result = ev.execute_plan(regional_plan, adapter)
-    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
-        float(mono.expected_value(mv.outputs.throughput))
-    )
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_regional_train_only_matches_monolithic():
-    """Regional plan: train-only scenarios match monolithic throughput."""
-    mode = CategoricalIndex("mode", {"train": 1.0})
-    mv = _make_mv(mode)
-    ev = Evaluation(Scenario(mv))
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    scenarios_list = _train_only_scenarios(mode, 4)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    mono_result = ev.evaluate(_train_only_scenarios(mode, 4), [mv.outputs.throughput])
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
-
-    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
-        float(mono_result.expected_value(mv.outputs.throughput))
-    )
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_regional_mixed_modes_matches_monolithic():
-    """Regional plan: mixed bike/train scenarios produce correctly weighted mean."""
-    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
-    mv = _make_mv(mode)
-    ev = Evaluation(Scenario(mv))
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    scenarios_list = _mixed_scenarios(mode)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput])
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
-
-    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
-        float(mono_result.expected_value(mv.outputs.throughput))
-    )
-
-
 def test_regional_emissions_bike_only():
     """Regional plan: bike-only emissions = 0."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     mv = _make_mv(mode)
     ev = Evaluation(Scenario(mv))
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
     scenarios_list = _bike_only_scenarios(mode, 4)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
+    regional_result = ev.execute_plan(regional_plan, ensemble)
     assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(0.0)
 
 
@@ -298,13 +233,11 @@ def test_regional_emissions_train_only():
     mv = _make_mv(mode)
     ev = Evaluation(Scenario(mv))
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
     scenarios_list = _train_only_scenarios(mode, 4)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
+    regional_result = ev.execute_plan(regional_plan, ensemble)
     assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(50.0)
 
 
@@ -321,13 +254,11 @@ def test_regional_plan_with_parameter_axis_bike_only():
     xs = np.array([100.0, 200.0, 300.0])
 
     # Single scenario with mode="bike" (presence is the PARAMETER axis)
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
     scenarios_list: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+    result = ev.execute_plan(regional_plan, ensemble, parameters={presence: xs})
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
 
@@ -339,44 +270,13 @@ def test_regional_plan_with_parameter_axis_train_only():
     ev = Evaluation(Scenario(mv))
     xs = np.array([100.0, 200.0, 300.0])
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
     scenarios_list: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+    result = ev.execute_plan(regional_plan, ensemble, parameters={presence: xs})
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_regional_plan_with_parameter_axis_mixed_matches_monolithic():
-    """Regional plan + PARAMETER axis: mixed modes weighted mean = presence * 5.5."""
-    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
-    presence, mv = _make_presence_mv(mode)
-    ev = Evaluation(Scenario(mv))
-    xs = np.array([100.0, 200.0, 300.0])
-
-    scenarios_list: list[WeightedScenario] = [
-        (0.5, {mode: np.array(["bike"])}),
-        (0.5, {mode: np.array(["train"])}),
-    ]
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
-    mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput], parameters={presence: xs})
-
-    assert np.allclose(
-        regional_result.expected_value(mv.outputs.throughput),
-        mono_result.expected_value(mv.outputs.throughput),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -516,25 +416,6 @@ def test_regional_plan_raises_for_plain_model():
     ev = Evaluation(Scenario(plain_model))
     with pytest.raises(ValueError, match="No variant_selector found"):
         ev.build_plan(strategy="regional")
-
-
-# ---------------------------------------------------------------------------
-# Monolithic plan still works (regression guard)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_monolithic_plan_still_works_after_regional_changes():
-    """Existing monolithic path is unaffected by regional implementation."""
-    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
-    mv = _make_mv(mode)
-    ev = Evaluation(Scenario(mv))
-    scenarios = _mixed_scenarios(mode)
-    result = ev.evaluate(scenarios, [mv.outputs.throughput])
-    # 0.5 * 100*1 + 0.5 * 100*10 = 550
-    assert float(result.expected_value(mv.outputs.throughput)) == pytest.approx(550.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1195,13 +1076,10 @@ def test_nested_regional_matches_monolithic() -> None:
     mode, policy, mv = _make_nested_mv()
     ev = Evaluation(Scenario(mv))
     scenarios = _nested_equal_weight_ensemble(mode, policy)
+    ensemble = _frozen_from_weighted_scenarios(scenarios, [mode, policy])
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    adapter = _LegacyEnsembleAdapter(scenarios, [mode, policy])
-
-    mono = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), adapter)
-    regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), adapter)
+    mono = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), ensemble)
+    regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), ensemble)
 
     np.testing.assert_allclose(
         regional[mv.outputs.throughput],
@@ -1214,12 +1092,10 @@ def test_nested_regional_expected_value() -> None:
     mode, policy, mv = _make_nested_mv()
     ev = Evaluation(Scenario(mv))
     scenarios = _nested_equal_weight_ensemble(mode, policy)
+    ensemble = _frozen_from_weighted_scenarios(scenarios, [mode, policy])
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    adapter = _LegacyEnsembleAdapter(scenarios, [mode, policy])
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    result = ev.execute_plan(plan, adapter)
+    result = ev.execute_plan(plan, ensemble)
 
     assert float(result.expected_value(mv.outputs.throughput)) == pytest.approx(200.0)
 

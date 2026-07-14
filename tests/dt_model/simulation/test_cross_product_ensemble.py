@@ -106,50 +106,6 @@ def test_cpe_len():
 
 
 # ---------------------------------------------------------------------------
-# Restrictions
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_cpe_restriction_subsets_support():
-    """Restricting a CategoricalIndex to a subset reduces ensemble size."""
-    season = CategoricalIndex("season", {"summer": 0.5, "spring": 0.3, "winter": 0.2})
-    model = _simple_model(season)
-    ens = CrossProductEnsemble(Scenario(model), restrictions={season: ["summer", "winter"]})
-    assert ens.size == 2
-    assert set(ens.assignments()[season].tolist()) == {"summer", "winter"}
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_cpe_restriction_single_value():
-    """Restricting a categorical to one value gives weight 1 for that value."""
-    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
-    model = _simple_model(season)
-    ens = CrossProductEnsemble(Scenario(model), restrictions={season: ["summer"]})
-    assert ens.size == 1
-    assert ens.assignments()[season][0] == "summer"
-    assert pytest.approx(ens.ensemble_weights[0][0]) == 1.0
-
-
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_cpe_restriction_renormalises_weights():
-    """Restricting to a subset renormalises probabilities over that subset."""
-    season = CategoricalIndex("season", {"summer": 0.6, "winter": 0.4})
-    model = _simple_model(season)
-    ens = CrossProductEnsemble(Scenario(model), restrictions={season: ["summer", "winter"]})
-    weights = ens.ensemble_weights[0]
-    # Probabilities in the restricted set: summer=0.6, winter=0.4 → already sum to 1.
-    idx_summer = list(ens.assignments()[season]).index("summer")
-    assert pytest.approx(weights[idx_summer], rel=1e-6) == 0.6
-
-
-# ---------------------------------------------------------------------------
 # MC sampling (max_categorical_size < support size)
 # ---------------------------------------------------------------------------
 
@@ -707,24 +663,6 @@ def test_cpe_no_rng_with_distributions():
     assert a[cap].shape == (1,)
 
 
-@pytest.mark.xfail(
-    reason="uses deprecated API, scheduled for removal (legacy-cleanup)", raises=DeprecationWarning, strict=True
-)
-def test_cpe_exclude_skips_index():
-    """CrossProductEnsemble with exclude= skips the excluded index (covers the continue branch)."""
-    from scipy import stats  # noqa: PLC0415
-
-    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0})
-    speed = DistributionIndex("speed", stats.norm, {"loc": 1.0, "scale": 0.1})
-    model = _simple_model(cap, speed)
-    # Exclude 'speed' so the CrossProductEnsemble skips it.
-    ens = CrossProductEnsemble(Scenario(model), exclude=[speed], rng=np.random.default_rng(0))
-    a = ens.assignments()
-    # speed is excluded → not in assignments; cap is present.
-    assert cap in a
-    assert speed not in a
-
-
 def test_cat_samples_no_rng_monte_carlo():
     """_cat_samples with rng=None falls back to np.random.choice for MC sampling."""
     # max_categorical_size=2 < len(values)=5 triggers the MC branch; rng=None uses np.random.choice.
@@ -754,23 +692,6 @@ def test_cpe_parameter_axes_auto_excluded():
 # ---------------------------------------------------------------------------
 # Deprecation warnings
 # ---------------------------------------------------------------------------
-
-
-def test_cpe_restrictions_deprecated():
-    """CrossProductEnsemble.restrictions= emits DeprecationWarning."""
-    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
-    model = _simple_model(season)
-    with pytest.warns(DeprecationWarning, match="restrictions="):
-        CrossProductEnsemble(Scenario(model), restrictions={season: ["summer"]})
-
-
-def test_cpe_exclude_deprecated():
-    """CrossProductEnsemble.exclude= emits DeprecationWarning."""
-    season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
-    pv = Index("presence", None)
-    model = _simple_model(season, pv)
-    with pytest.warns(DeprecationWarning, match="exclude="):
-        CrossProductEnsemble(Scenario(model), exclude=[pv])
 
 
 def test_cpe_draw_batch_categorical_stable_across_batches():

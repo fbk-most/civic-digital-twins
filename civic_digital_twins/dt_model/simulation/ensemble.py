@@ -1042,16 +1042,14 @@ class CrossProductEnsemble:
             raise TypeError(f"{type(self).__name__} expects a Scenario, got {type(scenario).__name__}")
         if n_samples_per_combo < 1:
             raise ValueError(f"n_samples_per_combo must be >= 1; got {n_samples_per_combo}.")
-        excluded_ids = {id(idx) for idx in scenario.parameter_axes}
 
+        # PARAMETER-axis indexes are already excluded by Scenario.abstract_indexes().
         abstract = list(scenario.abstract_indexes())
 
         # Classify abstract indexes.
         cats_unordered: list[CategoricalIndex | ConditionalCategoricalIndex] = []
         dists_unordered: list[Index] = []
         for idx in abstract:
-            if id(idx) in excluded_ids:
-                continue  # skip PARAMETER-axis indexes
             if isinstance(idx, CategoricalIndex | ConditionalCategoricalIndex):
                 cats_unordered.append(idx)
             elif isinstance(idx, ConditionalDistributionIndex):

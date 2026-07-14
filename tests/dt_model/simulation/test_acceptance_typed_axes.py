@@ -10,8 +10,6 @@ Covers the checklist in docs/design/sessions/typed-axes.md §7:
 
 # SPDX-License-Identifier: Apache-2.0
 
-import warnings
-
 import numpy as np
 import pytest
 from scipy import stats
@@ -23,7 +21,6 @@ from civic_digital_twins.dt_model.simulation.ensemble import (
     DistributionEnsemble,
     EnsembleAxisSpec,
     PartitionedEnsemble,
-    WeightedScenario,
 )
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
@@ -405,73 +402,3 @@ def test_value_t1_with_parameter_sweep():
     v_result = result.expected_value(i_result)
     assert v_result.shape == (3, 1), f"expected (3, 1), got {v_result.shape}"
     assert np.allclose(v_result[:, 0], [3.0, 6.0, 12.0])
-
-
-# ---------------------------------------------------------------------------
-# marginalize() deprecation
-# ---------------------------------------------------------------------------
-
-
-def test_marginalize_deprecated_emits_warning():
-    """marginalize() emits DeprecationWarning and delegates to expected_value()."""
-    T = 5
-    ts = TimeseriesIndex("ts", np.arange(float(T)))
-    model = _make_model(ts)
-
-    result = Evaluation(Scenario(model)).evaluate(ensemble=None)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        v = result.marginalize(ts)
-
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("expected_value()" in str(w.message) for w in deprecations)
-    assert v.shape == (T,)  # same result as expected_value()
-
-
-# ---------------------------------------------------------------------------
-# Backward compatibility (deprecation window)
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_iterable_emits_deprecation_warning():
-    """Passing Iterable[WeightedScenario] emits DeprecationWarning."""
-    i_x = _dist_index("x")
-    model = _make_model(i_x)
-    scenarios: list[WeightedScenario] = [(1.0, {i_x: 0.5})]
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        Evaluation(Scenario(model)).evaluate(scenarios)
-
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("WeightedScenario" in str(w.message) for w in deprecations)
-
-
-def test_legacy_iterable_gives_correct_results():
-    """Legacy Iterable[WeightedScenario] adapter yields correct marginalised values."""
-    i_x = Index("x", None)
-    i_result = Index("result", i_x.node * 2.0)
-    model = _make_model(i_x, i_result)
-
-    scenarios: list[WeightedScenario] = [(0.5, {i_x: 1.0}), (0.5, {i_x: 3.0})]
-    with warnings.catch_warnings(record=True):
-        warnings.simplefilter("always")
-        result = Evaluation(Scenario(model)).evaluate(scenarios)
-
-    # E[result] = 0.5*(1*2) + 0.5*(3*2) = 0.5*2 + 0.5*6 = 4.0
-    assert float(result.expected_value(i_result)) == pytest.approx(4.0)
-
-
-def test_empty_scenario_list_is_deterministic():
-    """Passing [] emits DeprecationWarning and evaluates deterministically."""
-    i_c = Index("c", 7.0)
-    model = _make_model(i_c)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = Evaluation(Scenario(model)).evaluate([])
-
-    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert deprecations  # at least one deprecation warning
-    assert float(result.expected_value(i_c)) == pytest.approx(7.0)
