@@ -79,9 +79,12 @@ co2_model.abstract_indexes()   # → [fuel_efficiency, distance]
 co2_model.is_instantiated()    # → False
 ```
 
-> **Note:** Earlier API styles (`@dataclass` + `def __init__`, and `Model("name", [indexes…])`)
-> still work but emit a `DeprecationWarning`.  Use `@define` + `compute()` for new code.
-> See [dd-cdt-model.md](design/dd-cdt-model.md) for migration notes.
+> **Note:** A model can also be subclassed directly (hand-written `__init__`,
+> passing `legacy=True`) for cases `@define` + `compute()` cannot express — e.g.
+> a composite model that assigns sub-model attributes before calling
+> `super().__init__()`.  This escape hatch is itself deprecated and staged for
+> removal in a future milestone.  See [dd-cdt-model.md](design/dd-cdt-model.md)
+> for details.
 
 ## 2 — Build an ensemble
 
@@ -129,21 +132,34 @@ backend using `NumpyBackend.adapt()` at evaluation time.
 ```python
 import numpy as np
 
-from civic_digital_twins.dt_model import NumpyBackend, TimeseriesIndex, graph
+from civic_digital_twins.dt_model import Model, NumpyBackend, TimeseriesIndex, define, graph, inputs, outputs
 
-# 24-hour demand time series (one value per hour)
-demand_ts = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
+@define("TS Model")
+class TsModel(Model):
 
-# A custom smoothing function applied as a graph node
-smoothed = TimeseriesIndex(
-    "smoothed_demand",
-    graph.function_call("smooth", demand_ts),
-)
+    @inputs
+    class Inputs:
+        pass
 
-model = ...  # define a suitable model that includes demand_ts and smoothed
+    @outputs
+    class Outputs:
+        demand: TimeseriesIndex
+        smoothed: TimeseriesIndex
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        # 24-hour demand time series (one value per hour)
+        demand = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
+        # A custom smoothing function applied as a graph node
+        smoothed = TimeseriesIndex(
+            "smoothed_demand",
+            graph.function_call("smooth", demand),
+        )
+        return TsModel.Outputs(demand=demand, smoothed=smoothed)
+
+ts_model = TsModel(inputs=TsModel.Inputs())
 
 # Register the implementation at evaluation time — no abstract indexes, so no ensemble needed
-result = Evaluation(Scenario(model)).evaluate(
+result = Evaluation(Scenario(ts_model)).evaluate(
     functions={
         "smooth": NumpyBackend.adapt(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")

@@ -124,26 +124,71 @@ def _demo_02_timeseries_index() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Block 05: dd-cdt-model.md — Model: Legacy indexes= API
+# Block 05: dd-cdt-model.md — Model: Recommended API abstract_indexes / is_instantiated
 # ---------------------------------------------------------------------------
 
 
-def _demo_05_legacy_api() -> None:
-    """Block 05: Legacy indexes= API."""
+def _demo_05_recommended_api() -> None:
+    """Block 05: Recommended API — abstract_indexes / is_instantiated."""
     from scipy import stats
 
-    from civic_digital_twins.dt_model import DistributionIndex, Index, Model
+    from civic_digital_twins.dt_model import DistributionIndex, Index, Model, define, inputs, outputs
+
+    @define("Demo")
+    class DemoModel(Model):
+
+        @inputs
+        class Inputs:
+            x: DistributionIndex
+            y: DistributionIndex
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            z = Index("z", inputs.x + inputs.y)
+            return DemoModel.Outputs(z=z)
 
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
-    z = Index("z", x + y)
+    m = DemoModel(inputs=DemoModel.Inputs(x=x, y=y))
+    assert len(m.abstract_indexes()) == 2
+    assert any(idx is x for idx in m.abstract_indexes())
+    assert any(idx is y for idx in m.abstract_indexes())
+    assert m.is_instantiated() is False
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        model = Model("demo", [x, y, z])  # DeprecationWarning
 
-    assert len(model.abstract_indexes()) == 2
-    assert model.is_instantiated() is False
+# ---------------------------------------------------------------------------
+# Block 06: dd-cdt-model.md — Scenario: what-if overrides
+# ---------------------------------------------------------------------------
+
+
+def _demo_06_scenario_overrides() -> None:
+    """Block 06: Scenario what-if overrides."""
+    from civic_digital_twins.dt_model import Index, Model, Scenario, define, inputs, outputs
+
+    @define("Parking")
+    class ParkingModel(Model):
+
+        @inputs
+        class Inputs:
+            cost: Index
+
+        @outputs
+        class Outputs:
+            cost: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            return ParkingModel.Outputs(cost=inputs.cost)
+
+    cost = Index("cost", 8.0)
+    model = ParkingModel(inputs=ParkingModel.Inputs(cost=cost))
+    base = Scenario(model)  # uses the model's own value
+    expensive = Scenario(model, overrides={cost: 12.0})  # what-if: cost = 12.0
+
+    assert base.overrides == {}
+    assert expensive.overrides == {cost: 12.0}
 
 
 # ---------------------------------------------------------------------------
@@ -171,15 +216,29 @@ def _demo_12_distribution_ensemble() -> None:
     """Block 12: DistributionEnsemble."""
     from scipy import stats
 
-    from civic_digital_twins.dt_model import DistributionEnsemble, DistributionIndex, Index, Scenario
+    from civic_digital_twins.dt_model import (
+        DistributionEnsemble, DistributionIndex, Index, Model, Scenario, define, inputs, outputs,
+    )
+
+    @define("Demo12")
+    class DemoModel(Model):
+
+        @inputs
+        class Inputs:
+            x: DistributionIndex
+            y: DistributionIndex
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            z = Index("z", inputs.x + inputs.y)
+            return DemoModel.Outputs(z=z)
 
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
-    z = Index("z", x + y)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        model = Model("demo12", [x, y, z])
+    model = DemoModel(inputs=DemoModel.Inputs(x=x, y=y))
 
     scenario = Scenario(model)
     ensemble = DistributionEnsemble(scenario, size=100)
@@ -202,16 +261,29 @@ def _demo_14_15_end_to_end() -> None:
     from scipy import stats
 
     from civic_digital_twins.dt_model import (
-        DistributionEnsemble, DistributionIndex, Evaluation, Index, Model, Scenario,
+        DistributionEnsemble, DistributionIndex, Evaluation, Index, Model, Scenario, define, inputs, outputs,
     )
+
+    @define("Demo")
+    class DemoModel(Model):
+
+        @inputs
+        class Inputs:
+            x: DistributionIndex
+            y: DistributionIndex
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            z = Index("z", inputs.x + inputs.y)
+            return DemoModel.Outputs(z=z)
 
     # Define the model
     x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
     y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
-    z = Index("z", x + y)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        model = Model("demo", [x, y, z])
+    model = DemoModel(inputs=DemoModel.Inputs(x=x, y=y))
     scenario = Scenario(model)
 
     # Build an ensemble of 200 scenarios
@@ -221,10 +293,10 @@ def _demo_14_15_end_to_end() -> None:
     result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
     # Weighted mean of z across all scenarios
-    print(result.expected_value(z))  # ≈ 10.0
+    print(result.expected_value(model.outputs.z))  # ≈ 10.0
 
     # shape (N₀, N₁, …, S) → (N₀, N₁, …)
-    idx = z
+    idx = model.outputs.z
     marginalised = result.expected_value(idx)
     assert 7.0 < marginalised < 13.0, f"Expected ~10, got {marginalised}"
 
@@ -369,7 +441,8 @@ _demo_01_categorical_index()
 _demo_03_conditional_categorical_index()
 _demo_04_conditional_distribution_index()
 _demo_02_timeseries_index()
-_demo_05_legacy_api()
+_demo_05_recommended_api()
+_demo_06_scenario_overrides()
 _demo_08_contract_warnings()
 _demo_12_distribution_ensemble()
 _demo_14_15_end_to_end()

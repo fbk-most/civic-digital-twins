@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Runnable snippets from docs/getting-started.md."""
 
-import warnings
-
 import numpy as np
 from scipy import stats
 
@@ -92,22 +90,33 @@ assert 0 < co2_mean < 200, f"Unexpected CO2 mean: {co2_mean:.1f}"
 # getting-started.md §4 — Timeseries and user-defined functions
 # ---------------------------------------------------------------------------
 
-# 24-hour demand time series (one value per hour)
-demand_ts = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
+@define("TS Model")
+class TsModel(Model):
 
-# A custom smoothing function applied as a graph node
-smoothed = TimeseriesIndex(
-    "smoothed_demand",
-    graph.function_call("smooth", demand_ts),
-)
+    @inputs
+    class Inputs:
+        pass
 
-# Build a small model that uses the timeseries indexes
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    model = Model("ts_model", [demand_ts, smoothed])
+    @outputs
+    class Outputs:
+        demand: TimeseriesIndex
+        smoothed: TimeseriesIndex
 
-# No abstract indexes — omit ensemble (deterministic evaluation)
-result = Evaluation(Scenario(model)).evaluate(
+    def compute(self, inputs: Inputs) -> Outputs:
+        # 24-hour demand time series (one value per hour)
+        demand = TimeseriesIndex("demand", np.array([10.0, 12.0, 15.0, 14.0] * 6))
+        # A custom smoothing function applied as a graph node
+        smoothed = TimeseriesIndex(
+            "smoothed_demand",
+            graph.function_call("smooth", demand),
+        )
+        return TsModel.Outputs(demand=demand, smoothed=smoothed)
+
+
+ts_model = TsModel(inputs=TsModel.Inputs())
+
+# Register the implementation at evaluation time — no abstract indexes, so no ensemble needed
+result = Evaluation(Scenario(ts_model)).evaluate(
     functions={
         "smooth": NumpyBackend.adapt(
             lambda ts: np.convolve(ts, np.ones(3) / 3, mode="same")
@@ -115,7 +124,7 @@ result = Evaluation(Scenario(model)).evaluate(
     },
 )
 
-smoothed_values = result[smoothed]
+smoothed_values = result[ts_model.outputs.smoothed]
 assert smoothed_values.shape[-1] == 24  # 24 time steps
 
 
