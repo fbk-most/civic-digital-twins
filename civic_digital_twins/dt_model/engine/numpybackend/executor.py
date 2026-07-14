@@ -25,13 +25,10 @@ from typing import (
 
 import numpy as np
 
-from ...axes import DOMAIN, Axis
+from ...axes import TIME_AXIS
 from .. import compileflags
 from ..frontend import graph
 from . import numpy_ast
-
-_TIME_AXIS = Axis("time", DOMAIN)
-"""The only axis the numpybackend currently supports for ProjectionOp."""
 
 # Type aliases for operation function signatures
 type _BinaryOpFunc = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -611,9 +608,9 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
     so that a future second DOMAIN axis cannot silently produce wrong results.
     """
     node = cast(graph.ProjectionOp, node)
-    if node.axis != _TIME_AXIS:
+    if node.axis != TIME_AXIS:
         raise UnsupportedOperation(
-            f"executor: numpybackend only supports projection along {_TIME_AXIS!r}; got {node.axis!r}"
+            f"executor: numpybackend only supports projection along {TIME_AXIS!r}; got {node.axis!r}"
         )
     operand = state.get_node_value(node.node)
     if isinstance(node, graph.project_using_quantile):
