@@ -7,7 +7,18 @@ everything) rather than from layer-specific modules.
 
 # SPDX-License-Identifier: Apache-2.0
 
-__all__ = ["AxisRole", "DOMAIN", "PARAMETER", "ENSEMBLE", "Axis"]
+from collections.abc import Iterable
+
+__all__ = [
+    "AxisRole",
+    "DOMAIN",
+    "PARAMETER",
+    "ENSEMBLE",
+    "Axis",
+    "TIME_AXIS",
+    "filter_by_role",
+    "union_axes",
+]
 
 # Open string type alias — users can define additional roles as plain strings
 # following the UPPER_CASE convention.
@@ -62,3 +73,30 @@ class Axis:
     def __repr__(self) -> str:
         """Return a concise string representation."""
         return f"Axis({self.name!r}, role={self.role!r})"
+
+
+TIME_AXIS: Axis = Axis("time", DOMAIN)
+"""Singleton for the time DOMAIN axis carried by timeseries nodes.
+
+This is the canonical instance: every module that needs the time axis must
+import it from here rather than constructing ``Axis("time", DOMAIN)`` locally.
+(Value-based equality makes local copies *work*, but a single singleton keeps
+the definition in one place.)
+"""
+
+
+def union_axes(*seqs: tuple[Axis, ...]) -> tuple[Axis, ...]:
+    """Merge axis tuples, preserving first-seen order and deduplicating."""
+    seen: set[Axis] = set()
+    result: list[Axis] = []
+    for seq in seqs:
+        for ax in seq:
+            if ax not in seen:
+                seen.add(ax)
+                result.append(ax)
+    return tuple(result)
+
+
+def filter_by_role(axes: Iterable[Axis], role: AxisRole) -> tuple[Axis, ...]:
+    """Return the axes whose role equals *role*, preserving input order."""
+    return tuple(ax for ax in axes if ax.role == role)
