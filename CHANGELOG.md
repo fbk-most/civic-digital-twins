@@ -19,6 +19,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patch: ≥90%). Coverage is uploaded from `main` pushes only.
 - Updated `README.md` and `AGENTS.md` to document the explicit `dev` branch
   model and the two-step development/release process.
+- **Breaking:** A `Model` subclass that defines `__init__` directly without
+  passing `legacy=True` now raises `TypeError` at class-definition time
+  (previously emitted `DeprecationWarning` and continued).  Passing
+  `legacy=True` still works but now itself emits `DeprecationWarning` — the
+  escape hatch is staged for removal in a future milestone.
+
+### Removed
+
+Milestone-hygiene cleanup: every API deprecated across v0.8.0–v0.10.0 is now
+removed outright (deprecation warnings for these were introduced over the
+prior three releases; see their respective `### Deprecated` sections below).
+
+- **Breaking:** `Model.__init__(indexes=[...])` — the flat positional
+  index-list constructor.  Use `@define` + `compute()`, or the
+  `inputs=`/`outputs=`/`expose=` keyword API.
+- **Breaking:** Plain (undecorated) `@dataclass` inner classes on `Model`
+  subclasses.  Decorate `Inputs`/`Outputs`/`Expose` with
+  `@inputs`/`@outputs`/`@expose`.
+- **Breaking:** Passing a bare `Model` or `ModelVariant` directly to
+  `DistributionEnsemble`, `PartitionedEnsemble`, `CrossProductEnsemble`, or
+  `Evaluation` — all four now require a `Scenario` and raise `TypeError` for
+  any other type.  Wrap with `Scenario(model)` first.
+- **Breaking:** `CrossProductEnsemble.restrictions=` — use
+  `Scenario(model, overrides={idx: [...]})` instead.
+- **Breaking:** `CrossProductEnsemble.exclude=` — declare parameter axes on
+  the `Scenario` instead: `Scenario(model, parameter_axes=[idx, ...])`.
+- **Breaking:** `Evaluation.evaluate(scenarios, ...)` positional argument —
+  use `ensemble=` with an `AxisEnsemble`.
+- **Breaking:** `Evaluation.evaluate(axes=...)` keyword — use `parameters=`
+  instead.
+- **Breaking:** Passing an `Iterable[WeightedScenario]` (the legacy
+  `Ensemble` protocol) to `Evaluation.evaluate(ensemble=...)` — pass an
+  `AxisEnsemble` (e.g. `DistributionEnsemble`) instead.  The `Ensemble`
+  protocol and `WeightedScenario` type remain available for custom ensemble
+  generators; they are just no longer accepted directly by `evaluate()`.
+- **Breaking:** `EvaluationResult.axes` property — use
+  `EvaluationResult.parameter_values` instead.
+- **Breaking:** `EvaluationResult.marginalize()` — use
+  `EvaluationResult.expected_value()` instead.
+- **Breaking:** `LambdaAdapter` — use `NumpyBackend.adapt()` instead.
 
 
 ## [0.10.0] - 2026-06-21
@@ -299,8 +339,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PartitionedEnsemble} + Evaluation`.
 - Mutable index setters `ConstIndex.v`, `ConstTimeseriesIndex.values`,
   `TimeseriesIndex.values`, and `DistributionIndex.params` — vary index values
-  via `Scenario(model, overrides={idx: new_value})` instead.  All setters emit
-  `DeprecationWarning` and will be removed in a future release.
+  via `Scenario(model, overrides={idx: new_value})` instead.  **Correction:**
+  these setters were in fact already removed outright by the `Scenario`
+  introduction earlier in this release (#185); they were never actually
+  reachable in v0.10.0 and did not emit `DeprecationWarning` as originally
+  stated here.
 - `EvaluationResult.marginalize()` — use `EvaluationResult.expected_value()`
   instead.  `marginalize()` now emits `DeprecationWarning` and will be removed
   in a future release.

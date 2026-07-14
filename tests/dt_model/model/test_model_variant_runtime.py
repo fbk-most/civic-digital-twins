@@ -2,10 +2,9 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import dataclasses
-
 import pytest
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import IOProxy, Model
@@ -16,52 +15,48 @@ from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 # ---------------------------------------------------------------------------
 
 
+@define("BikeModel")
 class _BikeModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        cap_val = capacity.value
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the bike variant."""
+        cap_val = inputs.capacity.value
         throughput = Index("throughput", float(cap_val) * 1.0 if isinstance(cap_val, (int, float)) else None)
         emissions = Index("emissions", 0.0)
-        super().__init__(
-            "BikeModel",
-            inputs=_BikeModel.Inputs(capacity=capacity),
-            outputs=_BikeModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
 
+@define("TrainModel")
 class _TrainModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        cap_val = capacity.value
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the train variant."""
+        cap_val = inputs.capacity.value
         throughput = Index("throughput", float(cap_val) * 10.0 if isinstance(cap_val, (int, float)) else None)
         emissions = Index("emissions", 50.0)
-        super().__init__(
-            "TrainModel",
-            inputs=_TrainModel.Inputs(capacity=capacity),
-            outputs=_TrainModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
 
 def _make_variants() -> dict[str, Model]:
     return {
-        "bike": _BikeModel(Index("capacity", 100.0)),
-        "train": _TrainModel(Index("capacity", 500.0)),
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=Index("capacity", 100.0))),  # type: ignore[call-arg]
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
     }
 
 
@@ -92,9 +87,11 @@ def test_runtime_inputs_proxies_first_variant():
     mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {"bike": bike, "train": train},
         selector=mode,
     )
     # inputs.capacity is the first variant's capacity (bike)
@@ -116,8 +113,8 @@ def test_runtime_abstract_indexes_includes_variant_abstract_indexes():
     mv = ModelVariant(
         "Transport",
         {
-            "bike": _BikeModel(cap_placeholder),
-            "train": _TrainModel(Index("capacity", 500.0)),
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
         },
         selector=mode,
     )
@@ -230,9 +227,11 @@ def test_runtime_getattr_forwards_to_first_variant():
     mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {"bike": bike, "train": train},
         selector=mode,
     )
     # 'name' is on ModelVariant itself; access something forwarded via __getattr__.

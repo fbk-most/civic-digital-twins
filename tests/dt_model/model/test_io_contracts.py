@@ -210,40 +210,6 @@ def test_expose_validates_fields():
 # ---------------------------------------------------------------------------
 
 
-def test_plain_dataclass_inputs_emits_deprecation_warning():
-    """Passing a plain @dataclass as inputs= emits a DeprecationWarning pointing at @inputs."""
-
-    @dataclasses.dataclass
-    class Inputs:
-        x: Index
-
-    x = Index("x", 1.0)
-
-    class M(Model):
-        def __init__(self) -> None:
-            super().__init__("M", inputs=Inputs(x=x), outputs=None)
-
-    with pytest.warns(DeprecationWarning, match="@inputs"):
-        M()
-
-
-def test_plain_dataclass_outputs_emits_deprecation_warning():
-    """Passing a plain @dataclass as outputs= emits a DeprecationWarning pointing at @outputs."""
-
-    @dataclasses.dataclass
-    class Outputs:
-        y: Index
-
-    y = Index("y", 2.0)
-
-    class M(Model):
-        def __init__(self) -> None:
-            super().__init__("M", outputs=Outputs(y=y))
-
-    with pytest.warns(DeprecationWarning, match="@outputs"):
-        M()
-
-
 def test_inputs_decorator_no_deprecation_warning():
     """Using @inputs does not trigger any DeprecationWarning."""
 
@@ -253,7 +219,7 @@ def test_inputs_decorator_no_deprecation_warning():
 
     x = Index("x", 1.0)
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self) -> None:
             super().__init__("M", inputs=Inputs(x=x))
 
@@ -281,7 +247,7 @@ def test_model_uses_inputs_proxy_from_decorated_class():
     x = Index("x", 1.0)
     y = Index("y", x.node + x.node)
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self) -> None:
             super().__init__(
                 "M",
@@ -303,7 +269,7 @@ def test_model_expose_decorated_class():
 
     internal = Index("internal", 3.14)
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self) -> None:
             super().__init__("M", expose=Expose(internal=internal))
 
@@ -607,7 +573,7 @@ def test_raw_expose_dataclass_indexes_reachable():
 
     a = Index("a", 7.0)
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self) -> None:
             super().__init__("M", expose=Outer(inner=Inner(a=a)))
 
@@ -644,7 +610,7 @@ def test_raw_outputs_dataclass_indexes_reachable():
 
     a = Index("a", 7.0)
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self) -> None:
             super().__init__("M", expose=Outer(inner=Inner(a=a)))
 

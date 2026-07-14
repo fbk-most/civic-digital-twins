@@ -101,6 +101,15 @@ pythonpath = ["examples"]
 # Coverage configuration (XML and terminal output)
 addopts = "--cov=civic_digital_twins --cov-report=xml --cov-report=term-missing"
 
+# Harden deprecated-API usage to a hard failure (legacy-cleanup, v0.11.0).
+# The legacy=True escape hatch is itself deprecated but intentionally kept
+# working through this milestone — downgrade its specific warning back to
+# non-fatal.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "always:.*uses legacy=True to define __init__ directly.*:DeprecationWarning",
+]
+
 # Ruff Global Settings
 [tool.ruff]
 

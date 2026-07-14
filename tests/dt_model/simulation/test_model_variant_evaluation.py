@@ -2,60 +2,56 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-import dataclasses
-
 import numpy as np
 import pytest
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble, WeightedScenario
+from civic_digital_twins.dt_model.simulation.ensemble import CrossProductEnsemble, DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Simple models with known output values
 # ---------------------------------------------------------------------------
 
 
+@define("BikeModel")
 class _BikeModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 1.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the bike variant."""
+        throughput = Index("throughput", inputs.capacity.node * 1.0)
         emissions = Index("emissions", 0.0)
-        super().__init__(
-            "BikeModel",
-            inputs=_BikeModel.Inputs(capacity=capacity),
-            outputs=_BikeModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
 
+@define("TrainModel")
 class _TrainModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 10.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the train variant."""
+        throughput = Index("throughput", inputs.capacity.node * 10.0)
         emissions = Index("emissions", 50.0)
-        super().__init__(
-            "TrainModel",
-            inputs=_TrainModel.Inputs(capacity=capacity),
-            outputs=_TrainModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
 
 # Shared capacity value wired into both models.
@@ -65,9 +61,11 @@ _CAPACITY_VALUE = 100.0
 def _make_mv_with_mode(mode: CategoricalIndex) -> ModelVariant:
     cap_bike = Index("capacity", _CAPACITY_VALUE)
     cap_train = Index("capacity", _CAPACITY_VALUE)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
     return ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {"bike": bike, "train": train},
         selector=mode,
     )
 
@@ -81,7 +79,7 @@ def test_distribution_ensemble_accepts_categorical_index():
     """DistributionEnsemble does not raise when model has only a CategoricalIndex."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=10, rng=np.random.default_rng(0))
+    ens = DistributionEnsemble(Scenario(mv), size=10, rng=np.random.default_rng(0))
     scenarios = list(ens)
     assert len(scenarios) == 10
 
@@ -90,7 +88,7 @@ def test_distribution_ensemble_assigns_mode_in_every_scenario():
     """Every scenario's assignments dict contains the CategoricalIndex."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=20, rng=np.random.default_rng(1))
+    ens = DistributionEnsemble(Scenario(mv), size=20, rng=np.random.default_rng(1))
     for _weight, assignments in ens:
         assert mode in assignments
 
@@ -99,7 +97,7 @@ def test_distribution_ensemble_mode_values_are_valid_keys():
     """Mode values assigned by the ensemble are always in the support."""
     mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=50, rng=np.random.default_rng(2))
+    ens = DistributionEnsemble(Scenario(mv), size=50, rng=np.random.default_rng(2))
     for _weight, assignments in ens:
         val = assignments[mode]
         # val is a 1-element array like np.array(["bike"])
@@ -115,9 +113,10 @@ def test_evaluation_bike_scenario_gives_bike_outputs():
     """A scenario that selects 'bike' gets BikeModel throughput (capacity * 1)."""
     mode = CategoricalIndex("mode", {"bike": 1.0})  # always bike
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=4, rng=np.random.default_rng(0))
-    ev = Evaluation(mv)
-    result = ev.evaluate(ens, [mv.outputs.throughput, mv.outputs.emissions])
+    scenario = Scenario(mv)
+    ens = DistributionEnsemble(scenario, size=4, rng=np.random.default_rng(0))
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv.outputs.throughput, mv.outputs.emissions])
     # All scenarios use bike: throughput = capacity * 1 = 100
     throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(_CAPACITY_VALUE * 1.0)
@@ -127,32 +126,25 @@ def test_evaluation_train_scenario_gives_train_outputs():
     """A scenario that selects 'train' gets TrainModel throughput (capacity * 10)."""
     mode = CategoricalIndex("mode", {"train": 1.0})  # always train
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=4, rng=np.random.default_rng(0))
-    ev = Evaluation(mv)
-    result = ev.evaluate(ens, [mv.outputs.throughput, mv.outputs.emissions])
+    scenario = Scenario(mv)
+    ens = DistributionEnsemble(scenario, size=4, rng=np.random.default_rng(0))
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv.outputs.throughput, mv.outputs.emissions])
     throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(_CAPACITY_VALUE * 10.0)
 
 
 def test_evaluation_mixed_modes_weighted_average():
     """Mixed bike/train scenarios give a correctly weighted average throughput."""
-    # Degenerate ensemble: 2 bike and 2 train out of 4; force via rng that picks
-    # 50/50 mode.  Rather than relying on randomness, build a manual ensemble.
+    # mode has only 2 outcomes, so CrossProductEnsemble fully enumerates them
+    # (weights 0.5/0.5) instead of relying on stochastic sampling.
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv_with_mode(mode)
 
-    # Build a deterministic 4-scenario ensemble: 2 bike, 2 train.
-    bike_val = np.array(["bike"])
-    train_val = np.array(["train"])
-    manual_scenarios: list[WeightedScenario] = [
-        (0.25, {mode: bike_val}),
-        (0.25, {mode: train_val}),
-        (0.25, {mode: bike_val}),
-        (0.25, {mode: train_val}),
-    ]
-
-    ev = Evaluation(mv)
-    result = ev.evaluate(manual_scenarios, [mv.outputs.throughput])
+    scenario = Scenario(mv)
+    ens = CrossProductEnsemble(scenario)
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv.outputs.throughput])
     # Expected: 0.5 * (100 * 1) + 0.5 * (100 * 10) = 50 + 500 = 550
     throughput = result.expected_value(mv.outputs.throughput)
     assert float(throughput) == pytest.approx(550.0)
@@ -162,9 +154,10 @@ def test_evaluation_emissions_bike_only():
     """BikeModel always has emissions=0."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=5, rng=np.random.default_rng(0))
-    ev = Evaluation(mv)
-    result = ev.evaluate(ens, [mv.outputs.emissions])
+    scenario = Scenario(mv)
+    ens = DistributionEnsemble(scenario, size=5, rng=np.random.default_rng(0))
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv.outputs.emissions])
     assert float(result.expected_value(mv.outputs.emissions)) == pytest.approx(0.0)
 
 
@@ -172,9 +165,10 @@ def test_evaluation_emissions_train_only():
     """TrainModel always has emissions=50."""
     mode = CategoricalIndex("mode", {"train": 1.0})
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=5, rng=np.random.default_rng(0))
-    ev = Evaluation(mv)
-    result = ev.evaluate(ens, [mv.outputs.emissions])
+    scenario = Scenario(mv)
+    ens = DistributionEnsemble(scenario, size=5, rng=np.random.default_rng(0))
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv.outputs.emissions])
     assert float(result.expected_value(mv.outputs.emissions)) == pytest.approx(50.0)
 
 
@@ -187,9 +181,10 @@ def test_selector_index_accessible_in_result():
     """result[mv._selector_index] returns a (S,) string array of variant keys."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     mv = _make_mv_with_mode(mode)
-    ens = DistributionEnsemble(mv, size=3, rng=np.random.default_rng(0))
-    ev = Evaluation(mv)
-    result = ev.evaluate(ens, [mv._selector_index, mv.outputs.throughput])
+    scenario = Scenario(mv)
+    ens = DistributionEnsemble(scenario, size=3, rng=np.random.default_rng(0))
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=ens, nodes_of_interest=[mv._selector_index, mv.outputs.throughput])
     arr = result[mv._selector_index]
     # Should be shape (S,) with all entries "bike"
     # (No trailing DOMAIN placeholder in non-timeseries models after bug fix #155.)
@@ -205,9 +200,11 @@ def test_selector_index_accessible_in_result():
 def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     """ModelVariant where both sub-models scale a shared presence axis."""
     presence = Index("presence", None)
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))  # type: ignore[call-arg]
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {"bike": bike, "train": train},
         selector=mode,
     )
     return presence, mv
@@ -219,9 +216,13 @@ def test_grid_mode_categorical_selector_all_bike():
     presence, mv = _make_presence_mv(mode)
     xs = np.array([100.0, 200.0, 300.0])
 
-    # mode is a non-axis abstract; presence is the axis → single scenario needs mode assignment.
-    manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
-    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
+    # presence is swept via parameters=, so exclude it from ensemble sampling;
+    # mode has a single outcome, so CrossProductEnsemble enumerates it deterministically.
+    scenario = Scenario(mv, parameter_axes=[presence])
+    ens = CrossProductEnsemble(scenario)
+    result = Evaluation(scenario).evaluate(
+        ensemble=ens, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
 
@@ -232,8 +233,11 @@ def test_grid_mode_categorical_selector_all_train():
     presence, mv = _make_presence_mv(mode)
     xs = np.array([100.0, 200.0, 300.0])
 
-    manual_scenarios: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
-    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
+    scenario = Scenario(mv, parameter_axes=[presence])
+    ens = CrossProductEnsemble(scenario)
+    result = Evaluation(scenario).evaluate(
+        ensemble=ens, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
 
@@ -247,11 +251,11 @@ def test_grid_mode_categorical_selector_mixed_scenarios():
     presence, mv = _make_presence_mv(mode)
     xs = np.array([100.0, 200.0, 300.0])
 
-    manual_scenarios: list[WeightedScenario] = [
-        (0.5, {mode: np.array(["bike"])}),
-        (0.5, {mode: np.array(["train"])}),
-    ]
-    result = Evaluation(mv).evaluate(manual_scenarios, [mv.outputs.throughput], parameters={presence: xs})
+    scenario = Scenario(mv, parameter_axes=[presence])
+    ens = CrossProductEnsemble(scenario)
+    result = Evaluation(scenario).evaluate(
+        ensemble=ens, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 5.5)
 
@@ -260,7 +264,7 @@ def test_grid_mode_node_selector_from_axis():
     """graph.Node selector derived from numeric axis.
 
     Selector: presence > 150 → 'train', else 'bike'.
-    Single dummy scenario (no non-axis abstract indexes).
+    No abstract indexes remain once presence is swept via parameters=.
     """
     presence = Index("presence", None)
     selector = ModelVariant.guards_to_selector(
@@ -269,15 +273,19 @@ def test_grid_mode_node_selector_from_axis():
             ("bike", True),
         ]
     )
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))  # type: ignore[call-arg]
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {"bike": bike, "train": train},
         selector=selector,
     )
     xs = np.array([100.0, 200.0, 300.0])
 
-    # presence is the only abstract index and it is the axis → no assignments needed.
-    result = Evaluation(mv).evaluate([(1.0, {})], [mv.outputs.throughput], parameters={presence: xs})
+    # presence is the only abstract index and it is the axis → no ensemble needed.
+    result = Evaluation(Scenario(mv)).evaluate(
+        ensemble=None, nodes_of_interest=[mv.outputs.throughput], parameters={presence: xs}
+    )
 
     # presence=100 → bike → 100*1=100
     # presence=200 → train → 200*10=2000
@@ -300,7 +308,7 @@ def test_grid_mode_categorical_index_as_sole_parameter_axis():
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv_with_mode(mode)
 
-    result = Evaluation(mv).evaluate(
+    result = Evaluation(Scenario(mv)).evaluate(
         ensemble=None,
         nodes_of_interest=[mv.outputs.throughput],
         parameters={mode: np.array(["bike", "train"])},
@@ -321,7 +329,7 @@ def test_grid_mode_categorical_index_and_numeric_axis_2d():
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     presence, mv = _make_presence_mv(mode)
 
-    result = Evaluation(mv).evaluate(
+    result = Evaluation(Scenario(mv)).evaluate(
         ensemble=None,
         nodes_of_interest=[mv.outputs.throughput],
         parameters={

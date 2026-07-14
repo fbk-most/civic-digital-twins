@@ -13,8 +13,8 @@ The [dt_model](../../civic_digital_twins/dt_model) package provides
 a model/simulation layer built on top of the
 [engine](dd-cdt-engine.md).  Where the engine deals with raw DAG nodes
 and NumPy arrays, this layer offers named, typed index variables, a
-uniform model abstraction, and a generic evaluation pipeline that wires
-ensembles of weighted scenarios to the engine.
+uniform model abstraction, a what-if `Scenario` wrapper, and a generic
+evaluation pipeline that wires batched ensembles to the engine.
 
 (See the [Appendix](#appendix) for a glossary.)
 
@@ -32,6 +32,16 @@ node.
 placeholder index whose value must be supplied externally before the
 model can be evaluated.  It is *instantiated* when all indexes are
 fully concrete.
+
+**Scenario.** A *scenario* wraps a model (or model variant) with optional
+*value overrides* that shadow the model's own index values — a concrete
+scalar, array, distribution, or restricted categorical support, depending
+on the index kind.  It is the canonical first argument to every ensemble
+class and to `Evaluation`: `model → Scenario(model, overrides={…}) →
+ensemble + Evaluation(scenario)`.  Ensembles sample
+`scenario.abstract_indexes()`, not the model's own, so an override can turn
+an abstract index concrete (removing it from sampling) or replace its
+distribution/support.
 
 **Conditional indexes.** `ConditionalCategoricalIndex` and
 `ConditionalDistributionIndex` are indexes whose distribution or probability
@@ -238,11 +248,11 @@ class Model:
     def __init__(
         self,
         name: str,
-        indexes: list[GenericIndex] | None = None,  # deprecated
         *,
-        inputs:  Any | None = None,   # dataclass instance (new API)
-        outputs: Any | None = None,   # dataclass instance (new API)
-        expose:  Any | None = None,   # dataclass instance (new API)
+        inputs:    Any | None = None,   # dataclass instance
+        outputs:   Any | None = None,   # dataclass instance
+        expose:    Any | None = None,   # dataclass instance
+        functions: Any | None = None,   # @functions-decorated class instance
     ) -> None: ...
     def abstract_indexes(self) -> list[GenericIndex]: ...
     def is_instantiated(self) -> bool: ...
@@ -315,8 +325,10 @@ including `@expose`, `@functions`, `default_inputs()`, and composite ("root") mo
 ### Direct subclassing with `legacy=True`
 
 For composite models that wire sub-models together, or any model that cannot be expressed
-with `compute()`, define `__init__` directly and pass `legacy=True` to suppress the
-deprecation warning:
+with `compute()`, define `__init__` directly and pass `legacy=True` to opt in.  A subclass
+that defines `__init__` directly without `legacy=True` raises `TypeError` at class-definition
+time; `legacy=True` itself is deprecated (emits a `DeprecationWarning`) and staged for
+removal in a future milestone:
 
 ```python
 class CompositeModel(Model, legacy=True):
@@ -325,26 +337,6 @@ class CompositeModel(Model, legacy=True):
 
 See [dd-cdt-modularity.md § Composite models](dd-cdt-modularity.md#composite-models-the-bologna-example)
 for a worked example.
-
-### Legacy `indexes=` API
-
-Passing a flat `list[GenericIndex]` via the positional `indexes`
-parameter still works but emits a `DeprecationWarning`.  New code should
-use `@define` + `compute()` above.
-
-```python
-from scipy import stats
-
-from civic_digital_twins.dt_model import DistributionIndex, Index, Model
-
-x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
-y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
-z = Index("z", x + y)
-
-model = Model("demo", [x, y, z])   # DeprecationWarning
-print(model.abstract_indexes())    # [x, y]
-print(model.is_instantiated())     # False
-```
 
 Models can be subclassed to add domain-specific structure (labeled
 subsets of indexes, constraint lists, etc.) while preserving the
@@ -394,6 +386,80 @@ mv = ModelVariant("T", variants={"bike": BikeModel(), "train": TrainModel()}, se
 # Runtime — probabilistic
 mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
 mv = ModelVariant("T", variants={"bike": BikeModel(), "train": TrainModel()}, selector=mode)
+```
+
+## Scenario
+
+[`simulation/scenario.py`](../../civic_digital_twins/dt_model/simulation/scenario.py)
+
+```python
+class Scenario:
+    def __init__(
+        self,
+        model: Model | ModelVariant,
+        overrides: dict[GenericIndex, DomainValue] | None = None,
+        parameter_axes: Iterable[GenericIndex] | None = None,
+    ) -> None: ...
+    def abstract_indexes(self) -> list[GenericIndex]: ...
+    def effective_distribution(self, idx: GenericIndex) -> Distribution | None: ...
+    def effective_outcomes(self, idx: CategoricalIndex | ConditionalCategoricalIndex) -> dict[str, float] | None: ...
+```
+
+A `Scenario` wraps a `Model` (or `ModelVariant`) and optionally carries
+*value overrides* that shadow the model's own index values at evaluation
+time.  It is the canonical first step for both ensembles and `Evaluation` —
+the full chain is:
+
+```text
+model → Scenario(model, overrides={…}) → {DistributionEnsemble | CrossProductEnsemble
+                                           | PartitionedEnsemble} + Evaluation(scenario)
+```
+
+`Scenario.abstract_indexes()` — not the model's own `abstract_indexes()` —
+is what an ensemble actually samples: a model-abstract index (`None`-valued
+or distribution-backed) that is *not* concretely overridden.  Indexes
+declared in `parameter_axes=` are always excluded, since they are instead
+swept via `parameters=` at evaluation time (see [Grid mode](#grid-mode));
+`CrossProductEnsemble` skips them automatically and `evaluate()` raises
+`ValueError` if a declared parameter axis is missing from `parameters=`.
+
+**Override compatibility** — the accepted override type depends on the
+index kind:
+
+| Index kind | Accepted override |
+| --- | --- |
+| `Index` | `float` |
+| `TimeseriesIndex` | 1-D `np.ndarray` |
+| `DistributionIndex` | `Distribution` |
+| `CategoricalIndex` | `str` (concrete pin), `dict[str, float]` (new weights, subset of support), or `list[str]` (subset of support — original model probabilities renormalised over it) |
+| `ConditionalCategoricalIndex` | `str` (concrete pin) |
+| `ConstIndex`, `ConstTimeseriesIndex`, `ConditionalDistributionIndex` | not overridable |
+
+Overrides are matched by object identity, not name — always pass the same
+index objects the model was built with.  See the `Scenario` class
+docstring for the full per-method override-handling table.
+
+```python
+from civic_digital_twins.dt_model import Index, Model, Scenario, define, inputs, outputs
+
+@define("Parking")
+class ParkingModel(Model):
+
+    @inputs
+    class Inputs:
+        cost: Index
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        return ParkingModel.Outputs(cost=inputs.cost)
+
+cost = Index("cost", 8.0)
+model = ParkingModel(inputs=ParkingModel.Inputs(cost=cost))
+base = Scenario(model)                               # uses the model's own value
+expensive = Scenario(model, overrides={cost: 12.0})   # what-if: cost = 12.0
 ```
 
 ## Contract Warnings
@@ -491,10 +557,6 @@ Each `Axis` in `ensemble_axes` names one ENSEMBLE dimension.
 `assignments()` returns batched arrays — one array per abstract index,
 with ENSEMBLE dimensions at the positions declared by the axes.
 
-> **Legacy API (deprecated):** `WeightedScenario = tuple[float, dict[GenericIndex, Any]]`
-> and the `Ensemble` iterable protocol are still accepted by `evaluate()` but emit a
-> `DeprecationWarning`.  Migrate to `AxisEnsemble` (e.g. `DistributionEnsemble`).
-
 ### DistributionEnsemble
 
 `DistributionEnsemble(scenario, size, rng=None)` is the standard ensemble
@@ -521,16 +583,16 @@ distribution-backed nor a `CategoricalIndex`.
 
 ### PartitionedEnsemble
 
-`PartitionedEnsemble(model, axes, default_axis=None, rng=None)` creates
+`PartitionedEnsemble(scenario, axes, default_axis=None, rng=None)` creates
 N independent ENSEMBLE axes, each covering a disjoint subset of the
-model's abstract indexes.  Each `EnsembleAxisSpec` names the axis and
+scenario's abstract indexes.  Each `EnsembleAxisSpec` names the axis and
 lists the indexes it covers:
 
 ```python
 from civic_digital_twins.dt_model import EnsembleAxisSpec, PartitionedEnsemble
 
 ens = PartitionedEnsemble(
-    model,
+    scenario,
     axes=[
         EnsembleAxisSpec("demand", indexes=[demand_idx], size=50),
         EnsembleAxisSpec("capacity", indexes=[cap_idx], size=20),
@@ -541,15 +603,14 @@ ens = PartitionedEnsemble(
 
 ### CrossProductEnsemble
 
-`CrossProductEnsemble(model, restrictions, max_categorical_size, n_samples_per_combo, exclude, rng)` implements
+`CrossProductEnsemble(scenario, max_categorical_size, n_samples_per_combo, rng)` implements
 `AxisEnsemble`.  It materialises a batched ENSEMBLE axis by:
 
-1. Discovering the model's abstract indexes via `model.abstract_indexes()`.
+1. Discovering the scenario's abstract indexes via `scenario.abstract_indexes()`.
 2. Enumerating all combinations of `CategoricalIndex` /
-   `ConditionalCategoricalIndex` values (filtered by `restrictions`);
-   probability weights are the product of per-category outcome probabilities.
-   When a categorical's support exceeds `max_categorical_size`, values are
-   Monte-Carlo sampled instead.
+   `ConditionalCategoricalIndex` values; probability weights are the product
+   of per-category outcome probabilities.  When a categorical's support
+   exceeds `max_categorical_size`, values are Monte-Carlo sampled instead.
 3. Pre-sampling `n_samples_per_combo` independent values per distribution-backed
    abstract index (e.g. stochastic capacities) for each categorical combination.
    Total ensemble size is `|categorical cross-product| × n_samples_per_combo`.
@@ -557,19 +618,17 @@ ens = PartitionedEnsemble(
    increase it to reduce Monte Carlo variance when distribution-backed indexes
    are retained in the ensemble.
 
-Indexes passed via `exclude` are skipped in steps 2–3 — they are provided
-as PARAMETER axes at evaluation time.  See [Domain Modeling Pattern](#domain-modeling-pattern)
-for a worked example.
+Indexes declared as `parameter_axes` on the `Scenario` are skipped in steps
+2–3 — they are provided as PARAMETER axes at evaluation time instead.  See
+[Domain Modeling Pattern](#domain-modeling-pattern) for a worked example.
 
 ```python
 class CrossProductEnsemble:
     def __init__(
         self,
-        model: Model | ModelVariant,
-        restrictions: Mapping[Any, Sequence[str]] | None = None,
+        scenario: Scenario,
         max_categorical_size: int = 20,
         n_samples_per_combo: int = 1,
-        exclude: Sequence[GenericIndex] | None = None,
         rng: np.random.Generator | None = None,
     ) -> None: ...
     def __len__(self) -> int: ...
@@ -585,14 +644,15 @@ scatter-plot visualisation of presence variables against the sustainability fiel
 
 ```python
 class Evaluation:
-    def __init__(self, model: Model) -> None: ...
+    def __init__(self, scenario: Scenario) -> None: ...
 
     def evaluate(
         self,
-        ensemble: AxisEnsemble | None = None,
         nodes_of_interest: list[GenericIndex] | None = None,
         *,
-        parameters: dict[GenericIndex, np.ndarray] | None = None,
+        parameters: dict[GenericIndex, Any] | None = None,
+        parameter_axes: dict[str, np.ndarray] | None = None,
+        ensemble: AxisEnsemble | None = None,
         functions: dict[str, executor.Functor] | None = None,
     ) -> EvaluationResult: ...
 ```
@@ -653,14 +713,29 @@ grid.
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
-    DistributionEnsemble, DistributionIndex, Evaluation, Index, Model, Scenario,
+    DistributionEnsemble, DistributionIndex, Evaluation, Index, Model, Scenario, define, inputs, outputs,
 )
+
+@define("Demo")
+class DemoModel(Model):
+
+    @inputs
+    class Inputs:
+        x: DistributionIndex
+        y: DistributionIndex
+
+    @outputs
+    class Outputs:
+        z: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        z = Index("z", inputs.x + inputs.y)
+        return DemoModel.Outputs(z=z)
 
 # Define the model
 x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
 y = DistributionIndex("y", stats.uniform, {"loc": 0.0, "scale": 10.0})
-z = Index("z", x + y)
-model = Model("demo", [x, y, z])
+model = DemoModel(inputs=DemoModel.Inputs(x=x, y=y))
 scenario = Scenario(model)
 
 # Build an ensemble of 200 scenarios
@@ -670,7 +745,7 @@ ensemble = DistributionEnsemble(scenario, size=200)
 result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
 # Weighted mean of z across all scenarios
-print(result.expected_value(z))  # ≈ 10.0
+print(result.expected_value(model.outputs.z))  # ≈ 10.0
 ```
 
 ## Domain Modeling Pattern
@@ -813,9 +888,10 @@ and `is_instantiated()`, and the concrete-value binding is done at the
 mutation-based model instantiation and makes the data flow explicit.
 
 The three-level access model (`inputs` / `outputs` / `expose`) was added
-in v0.8.0 to make the inter-model data-flow contract explicit.  The core
-`Model` class is extended by the dataclass path without breaking the
-existing flat-list path.
+in v0.8.0 to make the inter-model data-flow contract explicit.  The
+original flat-list `indexes=` constructor API was removed in v0.11.0;
+`inputs` / `outputs` / `expose` are now the sole way to declare a
+model's indexes.
 
 ### Why `ModelVariant` rather than subclassing?
 
@@ -832,8 +908,6 @@ means that any class exposing `ensemble_axes`, `ensemble_weights`, and
 `assignments()` satisfies the contract without inheritance.
 `DistributionEnsemble`, `PartitionedEnsemble`, and domain-specific
 ensemble classes (e.g. `CrossProductEnsemble`) all work transparently.
-The legacy `Iterable[WeightedScenario]` path is still supported via a
-deprecation adapter.
 
 ### Why `GenericIndex.__hash__` is identity-based
 
@@ -867,8 +941,9 @@ ENSEMBLE `Axis` objects, per-axis weight vectors, and a batched
 `assignments()` mapping.  `DistributionEnsemble` and `PartitionedEnsemble`
 implement this protocol.
 
-**Ensemble (legacy)**: an iterable of `WeightedScenario` tuples.  Still
-accepted by `evaluate()` via a deprecation adapter; migrate to
+**Ensemble**: a structural `Protocol` for iterables that yield
+`WeightedScenario` tuples.  Used as a common type for ensemble
+generators; not directly accepted by `evaluate()`, which requires an
 `AxisEnsemble`.
 
 **Expose**: optional inner `@dataclass` on a `Model` subclass that
@@ -904,13 +979,17 @@ field names).  The active instance is chosen by a plain string
 model's contractual outputs — the indexes that downstream models or the
 evaluation layer may read.
 
+**Scenario**: a what-if wrapper around a `Model` (or `ModelVariant`)
+carrying optional value overrides.  The canonical first argument to every
+ensemble class and to `Evaluation`.  See [Scenario](#scenario).
+
 **Domain modeling pattern**: the pattern of subclassing `Model` with
 `Inputs` / `Outputs` dataclasses and composing core index types
 (`CategoricalIndex`, `ConditionalDistributionIndex`, etc.) to add domain
 semantics without modifying the core library.  See
 [Domain Modeling Pattern](#domain-modeling-pattern).
 
-**WeightedScenario** (deprecated): `tuple[float, dict[GenericIndex, Any]]` — a
-probability weight paired with an assignment dict.  The legacy iterable
-protocol is still accepted but emits `DeprecationWarning`; use `AxisEnsemble`
-instead.
+**WeightedScenario**: `tuple[float, dict[GenericIndex, Any]]` — a
+probability weight paired with an assignment dict.  Used by the `Ensemble`
+protocol; not directly accepted by `evaluate()`, which requires an
+`AxisEnsemble`.

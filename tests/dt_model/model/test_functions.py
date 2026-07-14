@@ -13,6 +13,7 @@ from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # @functions decorator — unit tests
@@ -157,7 +158,7 @@ def test_model_node_functions_empty_without_functions_arg():
     class Outputs:
         out: Index
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, inp: Index) -> None:
             super().__init__(
                 "M",
@@ -186,7 +187,7 @@ def test_model_node_functions_populated_with_functions_arg():
     class F:
         solve: Any
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: F) -> None:
             super().__init__(
                 "M",
@@ -220,7 +221,7 @@ def test_model_node_functions_input_node_not_claimed():
     class F:
         solve: Any
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, inp_idx: Index, *, fns: F) -> None:
             super().__init__(
                 "M",
@@ -256,7 +257,7 @@ def test_model_node_functions_submodel_inherits():
     class InnerF:
         solve: Any
 
-    class InnerModel(Model):
+    class InnerModel(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: InnerF) -> None:
             super().__init__(
                 "Inner",
@@ -265,7 +266,7 @@ def test_model_node_functions_submodel_inherits():
                 functions=fns,
             )
 
-    class OuterModel(Model):
+    class OuterModel(Model, legacy=True):
         def __init__(self, inp: Index) -> None:
             self.inner = InnerModel(inp, fns=InnerF(solve=functor))
             super().__init__(
@@ -354,7 +355,7 @@ def test_evaluation_uses_node_functions():
     class F:
         double: Any
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, x: Index, *, fns: F) -> None:
             super().__init__(
                 "M",
@@ -366,7 +367,7 @@ def test_evaluation_uses_node_functions():
     functor = NumpyBackend.adapt(lambda x: x * 2)
     m = M(inp_idx, fns=F(double=functor))
 
-    result = Evaluation(m).evaluate(backend=NumpyBackend)
+    result = Evaluation(Scenario(m)).evaluate(backend=NumpyBackend)
     # 4.0 * 2 = 8.0
     assert float(result[out_idx]) == pytest.approx(8.0)
 
@@ -397,7 +398,7 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
     class SubF:
         transform: Any
 
-    class SubModel(Model):
+    class SubModel(Model, legacy=True):
         def __init__(self, inp: Index, out: Index, *, fns: SubF) -> None:
             super().__init__(
                 "Sub",
@@ -411,7 +412,7 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
         a_out: Index
         b_out: Index
 
-    class ParentModel(Model):
+    class ParentModel(Model, legacy=True):
         def __init__(self) -> None:
             self.sub_a = SubModel(a_inp, a_out, fns=SubF(transform=NumpyBackend.adapt(lambda x: x * 2)))
             self.sub_b = SubModel(b_inp, b_out, fns=SubF(transform=NumpyBackend.adapt(lambda x: x * 3)))
@@ -421,7 +422,7 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
             )
 
     parent = ParentModel()
-    result = Evaluation(parent).evaluate(backend=NumpyBackend)
+    result = Evaluation(Scenario(parent)).evaluate(backend=NumpyBackend)
 
     # sub_a: 3.0 * 2 = 6.0
     assert float(result[a_out]) == pytest.approx(6.0)
@@ -464,11 +465,11 @@ def test_model_variant_node_functions_merged_from_branches():
     class Out:
         out: Index
 
-    class BikeModel(Model):
+    class BikeModel(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: F) -> None:
             super().__init__("Bike", inputs=Inp(inp=inp), outputs=Out(out=bike_out), functions=fns)
 
-    class TrainModel(Model):
+    class TrainModel(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: F) -> None:
             super().__init__("Train", inputs=Inp(inp=inp), outputs=Out(out=train_out), functions=fns)
 
@@ -509,7 +510,7 @@ def _simple_model_with_output(out_node: Any, inp_idx: Any, functor: Any) -> Any:
     class F:
         solve: Any
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: F) -> None:
             out = Index("out", out_node)
             super().__init__("M", inputs=Inputs(inp=inp), outputs=Outputs(out=out), functions=fns)
@@ -620,7 +621,7 @@ def test_build_node_functions_map_empty_fn_map_returns_claimed():
     class F:
         pass  # no declared fields
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, inp: Index) -> None:
             super().__init__("M", inputs=Inputs(inp=inp), outputs=Outputs(out=out_idx), functions=F())
 
@@ -650,7 +651,7 @@ def test_build_node_functions_map_diamond_graph_skips_visited():
     class F:
         solve: Any
 
-    class M(Model):
+    class M(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: F) -> None:
             super().__init__("M", inputs=Inputs(inp=inp), outputs=Outputs(out1=out1, out2=out2), functions=fns)
 
@@ -685,11 +686,11 @@ def test_collect_submodel_node_functions_list():
     class InnerF:
         solve: Any
 
-    class InnerModel(Model):
+    class InnerModel(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: InnerF) -> None:
             super().__init__("Inner", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out), functions=fns)
 
-    class OuterModel(Model):
+    class OuterModel(Model, legacy=True):
         def __init__(self, inp: Index) -> None:
             self.models_list = [InnerModel(inp, fns=InnerF(solve=functor))]
             super().__init__("Outer", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out))
@@ -719,11 +720,11 @@ def test_collect_submodel_node_functions_dict():
     class InnerF:
         solve: Any
 
-    class InnerModel(Model):
+    class InnerModel(Model, legacy=True):
         def __init__(self, inp: Index, *, fns: InnerF) -> None:
             super().__init__("Inner", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out), functions=fns)
 
-    class OuterModel(Model):
+    class OuterModel(Model, legacy=True):
         def __init__(self, inp: Index) -> None:
             self.models_dict = {"key": InnerModel(inp, fns=InnerF(solve=functor))}
             super().__init__("Outer", inputs=InnerInputs(inp=inp), outputs=InnerOutputs(out=inner_out))

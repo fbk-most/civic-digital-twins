@@ -34,6 +34,9 @@ from civic_digital_twins.dt_model import (
     ModelRunHandle,
     ResumeState,
     Scenario,
+    define,
+    inputs,
+    outputs,
 )
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
 from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
@@ -46,30 +49,28 @@ from civic_digital_twins.dt_model.simulation.runner import _encode_result, _form
 # ---------------------------------------------------------------------------
 
 
+@define("SimpleModel")
 class _SimpleModel(Model):
     """Single distribution-backed input, one derived output."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         x: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         y: Index
 
-    def __init__(self, x: Index) -> None:
-        y = Index("y", x.node * 2.0)
-        super().__init__(
-            "SimpleModel",
-            inputs=_SimpleModel.Inputs(x=x),
-            outputs=_SimpleModel.Outputs(y=y),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Double the input index."""
+        y = Index("y", inputs.x.node * 2.0)
+        return _SimpleModel.Outputs(y=y)
 
 
 def _make_simple_model() -> tuple[Index, _SimpleModel]:
     """Return a (x_index, model) pair ready for evaluation."""
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
-    return x, _SimpleModel(x)
+    return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))  # type: ignore[call-arg]
 
 
 def _make_result_from(model: Model | ModelVariant, size: int = 10) -> EvaluationResult:
@@ -83,30 +84,28 @@ def _make_result_from(model: Model | ModelVariant, size: int = 10) -> Evaluation
 # float overrides are valid (DistributionIndex requires a Distribution override).
 
 
+@define("ScalarModel")
 class _ScalarModel(Model):
     """Model with one concrete scalar input — overridable with a plain float."""
 
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         cost: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         out: Index
 
-    def __init__(self, cost: Index) -> None:
-        out = Index("out", cost.node * 2.0)
-        super().__init__(
-            "ScalarModel",
-            inputs=_ScalarModel.Inputs(cost=cost),
-            outputs=_ScalarModel.Outputs(out=out),
-        )
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Double the cost index."""
+        out = Index("out", inputs.cost.node * 2.0)
+        return _ScalarModel.Outputs(out=out)
 
 
 def _make_scalar_model() -> tuple[Index, _ScalarModel]:
     """Return (cost_index, model) where cost is a plain scalar Index."""
     cost = Index("cost", 8.0)
-    return cost, _ScalarModel(cost)
+    return cost, _ScalarModel(inputs=_ScalarModel.Inputs(cost=cost))  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------

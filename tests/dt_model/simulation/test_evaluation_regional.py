@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for build_plan(strategy='regional') and execute_plan with multi-region plans."""
 
-import dataclasses
 from collections.abc import Mapping
 
 import numpy as np
 import pytest
 from scipy import stats
 
+from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model import graph as _graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
 from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
@@ -33,44 +33,40 @@ from civic_digital_twins.dt_model.simulation.scenario import Scenario
 _CAPACITY_VALUE = 100.0
 
 
+@define("BikeModel")
 class _BikeModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 1.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the bike variant."""
+        throughput = Index("throughput", inputs.capacity.node * 1.0)
         emissions = Index("emissions", 0.0)
-        super().__init__(
-            "BikeModel",
-            inputs=_BikeModel.Inputs(capacity=capacity),
-            outputs=_BikeModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
 
+@define("TrainModel")
 class _TrainModel(Model):
-    @dataclasses.dataclass
+    @inputs
     class Inputs:
         capacity: Index
 
-    @dataclasses.dataclass
+    @outputs
     class Outputs:
         throughput: Index
         emissions: Index
 
-    def __init__(self, capacity: Index) -> None:
-        throughput = Index("throughput", capacity.node * 10.0)
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Compute throughput/emissions for the train variant."""
+        throughput = Index("throughput", inputs.capacity.node * 10.0)
         emissions = Index("emissions", 50.0)
-        super().__init__(
-            "TrainModel",
-            inputs=_TrainModel.Inputs(capacity=capacity),
-            outputs=_TrainModel.Outputs(throughput=throughput, emissions=emissions),
-        )
+        return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
 
 def _make_mv(mode: CategoricalIndex) -> ModelVariant:
@@ -79,7 +75,10 @@ def _make_mv(mode: CategoricalIndex) -> ModelVariant:
     cap_train = Index("capacity", _CAPACITY_VALUE)
     return ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
 
@@ -89,10 +88,33 @@ def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     presence = Index("presence", None)
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
     return presence, mv
+
+
+def _frozen_from_weighted_scenarios(
+    scenarios: list[WeightedScenario],
+    abstract_indexes: list[GenericIndex],
+) -> FrozenEnsemble:
+    """Materialise an explicit list of weighted scenarios into a FrozenEnsemble.
+
+    Replaces the legacy ``Iterable[WeightedScenario]`` ensemble adaptation
+    (removed in 0.11.0) for tests that need a small, deterministic ensemble
+    built from explicit scenario assignments.
+    """
+    axis = Axis("_ensemble", ENSEMBLE)
+    weights = np.array([w for w, _ in scenarios])
+    assignments: dict[GenericIndex, np.ndarray] = {}
+    for idx in abstract_indexes:
+        values = [a[idx] for _, a in scenarios]
+        normalized = [v.flat[0] if isinstance(v, np.ndarray) and v.size == 1 else v for v in values]
+        assignments[idx] = np.asarray(normalized)
+    return FrozenEnsemble((axis,), (weights,), assignments)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +126,7 @@ def test_regional_plan_has_correct_region_count():
     """Regional plan for a 2-branch variant has exactly 4 regions: shared + 2 branches + merge."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
     # 1 shared + 2 branch + 1 merge = 4
     assert len(plan.regions) == 4
@@ -114,7 +136,7 @@ def test_regional_plan_is_evaluation_plan():
     """build_plan(strategy='regional') returns an EvaluationPlan instance."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     assert isinstance(plan, EvaluationPlan)
 
 
@@ -122,7 +144,7 @@ def test_regional_plan_regions_are_region_instances():
     """Every region in a regional plan is a Region instance."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     for region in plan.regions:
         assert isinstance(region, Region)
 
@@ -131,7 +153,7 @@ def test_regional_plan_shared_region_has_no_guard():
     """The first region (shared) must be unconditional (no guards)."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     assert plan.regions[0].guards == ()
 
 
@@ -139,7 +161,7 @@ def test_regional_plan_branch_regions_have_guards():
     """Middle regions (branches) must carry exactly one RegionGuard."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     # regions[1] and regions[2] are branches
     for region in plan.regions[1:-1]:
         assert len(region.guards) == 1
@@ -150,7 +172,7 @@ def test_regional_plan_branch_keys_match_variant():
     """Branch region guard branch_key values must match the ModelVariant's branch keys."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     branch_keys = {region.guards[0].branch_key for region in plan.regions[1:-1]}
     assert branch_keys == {"bike", "train"}
 
@@ -159,7 +181,7 @@ def test_regional_plan_merge_region_has_no_guard():
     """The last region (merge) must be unconditional (no guards)."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     assert plan.regions[-1].guards == ()
 
 
@@ -167,7 +189,7 @@ def test_regional_plan_correct_dependencies():
     """Check DAG dependencies: shared→branches→merge."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     deps = plan.dependencies
     # shared (0): no deps
     assert deps[0] == frozenset()
@@ -191,93 +213,17 @@ def _train_only_scenarios(mode: CategoricalIndex, n: int) -> list[WeightedScenar
     return [(1.0 / n, {mode: np.array(["train"])}) for _ in range(n)]
 
 
-def _mixed_scenarios(mode: CategoricalIndex) -> list[WeightedScenario]:
-    return [
-        (0.25, {mode: np.array(["bike"])}),
-        (0.25, {mode: np.array(["train"])}),
-        (0.25, {mode: np.array(["bike"])}),
-        (0.25, {mode: np.array(["train"])}),
-    ]
-
-
-def test_regional_bike_only_matches_monolithic():
-    """Regional plan: bike-only scenarios match monolithic throughput."""
-    mode = CategoricalIndex("mode", {"bike": 1.0})
-    mv = _make_mv(mode)
-    ev = Evaluation(mv)
-    scenarios = _bike_only_scenarios(mode, 4)
-
-    mono = ev.evaluate(scenarios, [mv.outputs.throughput])
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-        scenarios_list = _bike_only_scenarios(mode, 4)
-        adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    regional_result = ev.execute_plan(regional_plan, adapter)
-    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
-        float(mono.expected_value(mv.outputs.throughput))
-    )
-
-
-def test_regional_train_only_matches_monolithic():
-    """Regional plan: train-only scenarios match monolithic throughput."""
-    mode = CategoricalIndex("mode", {"train": 1.0})
-    mv = _make_mv(mode)
-    ev = Evaluation(mv)
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    scenarios_list = _train_only_scenarios(mode, 4)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    mono_result = ev.evaluate(_train_only_scenarios(mode, 4), [mv.outputs.throughput])
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
-
-    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
-        float(mono_result.expected_value(mv.outputs.throughput))
-    )
-
-
-def test_regional_mixed_modes_matches_monolithic():
-    """Regional plan: mixed bike/train scenarios produce correctly weighted mean."""
-    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
-    mv = _make_mv(mode)
-    ev = Evaluation(mv)
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    scenarios_list = _mixed_scenarios(mode)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput])
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
-
-    assert float(regional_result.expected_value(mv.outputs.throughput)) == pytest.approx(
-        float(mono_result.expected_value(mv.outputs.throughput))
-    )
-
-
 def test_regional_emissions_bike_only():
     """Regional plan: bike-only emissions = 0."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     mv = _make_mv(mode)
-    ev = Evaluation(mv)
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+    ev = Evaluation(Scenario(mv))
 
     scenarios_list = _bike_only_scenarios(mode, 4)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
+    regional_result = ev.execute_plan(regional_plan, ensemble)
     assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(0.0)
 
 
@@ -285,15 +231,13 @@ def test_regional_emissions_train_only():
     """Regional plan: train-only emissions = 50."""
     mode = CategoricalIndex("mode", {"train": 1.0})
     mv = _make_mv(mode)
-    ev = Evaluation(mv)
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
+    ev = Evaluation(Scenario(mv))
 
     scenarios_list = _train_only_scenarios(mode, 4)
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter)
+    regional_result = ev.execute_plan(regional_plan, ensemble)
     assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(50.0)
 
 
@@ -306,17 +250,15 @@ def test_regional_plan_with_parameter_axis_bike_only():
     """Regional plan + PARAMETER axis: bike-only throughput = presence * 1."""
     mode = CategoricalIndex("mode", {"bike": 1.0})
     presence, mv = _make_presence_mv(mode)
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     xs = np.array([100.0, 200.0, 300.0])
 
     # Single scenario with mode="bike" (presence is the PARAMETER axis)
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
     scenarios_list: list[WeightedScenario] = [(1.0, {mode: np.array(["bike"])})]
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+    result = ev.execute_plan(regional_plan, ensemble, parameters={presence: xs})
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
 
@@ -325,44 +267,16 @@ def test_regional_plan_with_parameter_axis_train_only():
     """Regional plan + PARAMETER axis: train-only throughput = presence * 10."""
     mode = CategoricalIndex("mode", {"train": 1.0})
     presence, mv = _make_presence_mv(mode)
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     xs = np.array([100.0, 200.0, 300.0])
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
 
     scenarios_list: list[WeightedScenario] = [(1.0, {mode: np.array(["train"])})]
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
+    ensemble = _frozen_from_weighted_scenarios(scenarios_list, [mode])
 
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
+    result = ev.execute_plan(regional_plan, ensemble, parameters={presence: xs})
 
     assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
-
-
-def test_regional_plan_with_parameter_axis_mixed_matches_monolithic():
-    """Regional plan + PARAMETER axis: mixed modes weighted mean = presence * 5.5."""
-    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
-    presence, mv = _make_presence_mv(mode)
-    ev = Evaluation(mv)
-    xs = np.array([100.0, 200.0, 300.0])
-
-    scenarios_list: list[WeightedScenario] = [
-        (0.5, {mode: np.array(["bike"])}),
-        (0.5, {mode: np.array(["train"])}),
-    ]
-
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    adapter = _LegacyEnsembleAdapter(scenarios_list, [mode])
-
-    regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    regional_result = ev.execute_plan(regional_plan, adapter, parameters={presence: xs})
-    mono_result = ev.evaluate(scenarios_list, [mv.outputs.throughput], parameters={presence: xs})
-
-    assert np.allclose(
-        regional_result.expected_value(mv.outputs.throughput),
-        mono_result.expected_value(mv.outputs.throughput),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -377,10 +291,13 @@ def test_regional_parameter_varying_selector_matches_monolithic():
     cap = Index("capacity", 100.0)
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap), "train": _TrainModel(Index("capacity", 100.0))},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 100.0))),  # type: ignore[call-arg]
+        },
         selector=selector,
     )
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     xs = np.array([100.0, 200.0, 300.0])
 
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
@@ -439,11 +356,15 @@ def test_regional_plan_with_cross_product_ensemble_matches_monolithic():
     presence = DistributionIndex("presence", _stats.uniform, {"loc": 100.0, "scale": 10.0})
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
-    ensemble = CrossProductEnsemble(Scenario(mv), n_samples_per_combo=4, rng=np.random.default_rng(7))
-    ev = Evaluation(mv)
+    scenario = Scenario(mv)
+    ensemble = CrossProductEnsemble(scenario, n_samples_per_combo=4, rng=np.random.default_rng(7))
+    ev = Evaluation(scenario)
 
     monolithic = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), ensemble)
     regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), ensemble)
@@ -459,11 +380,15 @@ def test_regional_plan_with_partitioned_ensemble_matches_monolithic():
     presence = DistributionIndex("presence", _stats.uniform, {"loc": 100.0, "scale": 10.0})
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(presence), "train": _TrainModel(presence)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=presence)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
+    scenario = Scenario(mv)
     recipe = PartitionedEnsemble(
-        Scenario(mv),
+        scenario,
         axes=[
             EnsembleAxisSpec("mode_axis", [mode], size=6),
             EnsembleAxisSpec("presence_axis", [presence], size=5),
@@ -471,7 +396,7 @@ def test_regional_plan_with_partitioned_ensemble_matches_monolithic():
         rng=np.random.default_rng(11),
     )
     ensemble = _frozen_from_axis_ensemble(recipe)
-    ev = Evaluation(mv)
+    ev = Evaluation(scenario)
 
     monolithic = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), ensemble)
     regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), ensemble)
@@ -487,26 +412,10 @@ def test_regional_plan_with_partitioned_ensemble_matches_monolithic():
 def test_regional_plan_raises_for_plain_model():
     """build_plan(strategy='regional') must raise ValueError when no variant_selector exists."""
     cap = Index("capacity", 100.0)
-    plain_model = _BikeModel(cap)
-    ev = Evaluation(plain_model)
+    plain_model = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap))  # type: ignore[call-arg]
+    ev = Evaluation(Scenario(plain_model))
     with pytest.raises(ValueError, match="No variant_selector found"):
         ev.build_plan(strategy="regional")
-
-
-# ---------------------------------------------------------------------------
-# Monolithic plan still works (regression guard)
-# ---------------------------------------------------------------------------
-
-
-def test_monolithic_plan_still_works_after_regional_changes():
-    """Existing monolithic path is unaffected by regional implementation."""
-    mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
-    mv = _make_mv(mode)
-    ev = Evaluation(mv)
-    scenarios = _mixed_scenarios(mode)
-    result = ev.evaluate(scenarios, [mv.outputs.throughput])
-    # 0.5 * 100*1 + 0.5 * 100*10 = 550
-    assert float(result.expected_value(mv.outputs.throughput)) == pytest.approx(550.0)
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +427,7 @@ def test_regional_execute_plan_uncovered_selector_raises():
     """Regional execution without an ensemble still requires selector coverage."""
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = _make_mv(mode)
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
     with pytest.raises(ValueError, match="abstract indexes"):
         ev.execute_plan(plan, ensemble=None)
@@ -541,10 +450,13 @@ def test_regional_leading_mask_raises_for_array_selector_no_leading():
     cap_train = Index("capacity", _CAPACITY_VALUE)
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=const_sel.node,
     )
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
     with pytest.raises(NotImplementedError, match="non-singleton DOMAIN"):
         ev.execute_plan(plan, ensemble=None)
@@ -584,13 +496,13 @@ def _make_ts_mv() -> tuple[CategoricalIndex, "ModelVariant"]:
     cap_train = Index("capacity", _CAPACITY_VALUE * 2.0)
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
 
-    class _TSTransportModel(Model):
-        @dataclasses.dataclass
+    class _TSTransportModel(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
             ts_load: GenericIndex
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
             ts_out: Index
@@ -622,15 +534,16 @@ def test_regional_timeseries_branch_scatter_normalise():
     Result correctness is verified by comparing regional to monolithic.
     """
     mode, mv = _make_ts_mv()
+    scenario = Scenario(mv)
     rng = np.random.default_rng(0)
-    ens = DistributionEnsemble(mv, size=40, rng=rng)
+    ens = DistributionEnsemble(scenario, size=40, rng=rng)
 
-    ev = Evaluation(mv)
+    ev = Evaluation(scenario)
     plan_reg = ev.build_plan(strategy="regional")
     plan_mono = ev.build_plan(strategy="monolithic")
 
     rng2 = np.random.default_rng(0)
-    ens2 = DistributionEnsemble(mv, size=40, rng=rng2)
+    ens2 = DistributionEnsemble(scenario, size=40, rng=rng2)
 
     result_reg = ev.execute_plan(plan_reg, ens)
     result_mono = ev.execute_plan(plan_mono, ens2)
@@ -661,7 +574,10 @@ def _make_const_ts_selector_mv(keys: list[str]) -> "ModelVariant":
     cap_train = Index("capacity", _CAPACITY_VALUE)
     return ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=sel.node,
     )
 
@@ -676,8 +592,9 @@ def test_regional_leading_mask_raises_for_timeseries_selector_with_ensemble():
     with ensemble (n_full=1) → (S, 2); trailing dim 2 > 1 → NotImplementedError.
     """
     mv = _make_const_ts_selector_mv(["bike", "train"])
-    ev = Evaluation(mv)
-    ens = DistributionEnsemble(mv, size=10)
+    scenario = Scenario(mv)
+    ev = Evaluation(scenario)
+    ens = DistributionEnsemble(scenario, size=10)
     plan = ev.build_plan(strategy="regional")
     with pytest.raises(NotImplementedError, match="non-singleton DOMAIN"):
         ev.execute_plan(plan, ens)
@@ -702,12 +619,12 @@ def test_regional_leading_mask_singleton_timeseries_selector_with_ensemble():
     cap_bike = Index("capacity", _CAPACITY_VALUE)
     cap_train = Index("capacity", _CAPACITY_VALUE)
 
-    class _GraphBikeModel(Model):
-        @dataclasses.dataclass
+    class _GraphBikeModel(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
             emissions: Index
@@ -721,12 +638,12 @@ def test_regional_leading_mask_singleton_timeseries_selector_with_ensemble():
                 outputs=_GraphBikeModel.Outputs(throughput=throughput, emissions=emissions),
             )
 
-    class _GraphTrainModel(Model):
-        @dataclasses.dataclass
+    class _GraphTrainModel(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
             emissions: Index
@@ -745,8 +662,9 @@ def test_regional_leading_mask_singleton_timeseries_selector_with_ensemble():
         {"bike": _GraphBikeModel(cap_bike), "train": _GraphTrainModel(cap_train)},
         selector=sel.node,
     )
-    ev = Evaluation(mv)
-    ens = DistributionEnsemble(mv, size=10)
+    scenario = Scenario(mv)
+    ev = Evaluation(scenario)
+    ens = DistributionEnsemble(scenario, size=10)
     plan = ev.build_plan(strategy="regional")
     result = ev.execute_plan(plan, ens)
     # Verify both outputs are present. extra_ts=1 (selector is timeseries_constant)
@@ -777,7 +695,10 @@ def _make_mv_branch_local() -> tuple[Index, Index, "ModelVariant"]:
     mode = CategoricalIndex("mode", {"bike": 0.5, "train": 0.5})
     mv = ModelVariant(
         "Transport",
-        {"bike": _BikeModel(cap_bike), "train": _TrainModel(cap_train)},
+        {
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        },
         selector=mode,
     )
     return cap_bike, cap_train, mv
@@ -792,11 +713,12 @@ def test_regional_branch_local_abstract_index_correctness():
     equals the monolithic baseline element-wise.
     """
     _, _, mv = _make_mv_branch_local()
-    ev = Evaluation(mv)
+    scenario = Scenario(mv)
+    ev = Evaluation(scenario)
     rng = np.random.default_rng(42)
 
-    ens_mono = DistributionEnsemble(mv, size=200, rng=np.random.default_rng(42))
-    ens_reg = DistributionEnsemble(mv, size=200, rng=rng)
+    ens_mono = DistributionEnsemble(scenario, size=200, rng=np.random.default_rng(42))
+    ens_reg = DistributionEnsemble(scenario, size=200, rng=rng)
 
     plan_mono = ev.build_plan(strategy="monolithic")
     plan_reg = ev.build_plan(strategy="regional")
@@ -837,12 +759,12 @@ def _make_sign_variant() -> tuple[CategoricalIndex, Index, ModelVariant]:
     sign = CategoricalIndex("sign", {"positive": 0.5, "negative": 0.5})
     x = Index("x", None)  # abstract — values injected by the correlated ensemble
 
-    class _PositiveOnlyModel(Model):
-        @dataclasses.dataclass
+    class _PositiveOnlyModel(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -854,12 +776,12 @@ def _make_sign_variant() -> tuple[CategoricalIndex, Index, ModelVariant]:
                 outputs=_PositiveOnlyModel.Outputs(result=result),
             )
 
-    class _AllValuesModel(Model):
-        @dataclasses.dataclass
+    class _AllValuesModel(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -932,7 +854,7 @@ def test_monolithic_evaluates_all_branches_strict_sqrt_raises() -> None:
     sign, x, mv = _make_sign_variant()
     ens = _CorrelatedEnsemble(sign, x, np.random.default_rng(0))
     functions = {"strict_sqrt": NumpyBackend.adapt(_strict_sqrt)}
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="monolithic")
 
     with pytest.raises(ValueError, match="strict_sqrt.*negative"):
@@ -950,7 +872,7 @@ def test_regional_evaluates_branch_only_for_matching_scenarios() -> None:
     rng = np.random.default_rng(1)
     ens = _CorrelatedEnsemble(sign, x, rng)
     functions = {"strict_sqrt": NumpyBackend.adapt(_strict_sqrt)}
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
 
     result = ev.execute_plan(plan, ens, functions=functions)
@@ -995,14 +917,14 @@ def _make_nested_mv() -> tuple[CategoricalIndex, CategoricalIndex, ModelVariant]
     policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
     cap = Index("capacity", _CAPACITY_VALUE)
 
-    bike_model = _BikeModel(cap)  # throughput = cap * 1.0
+    bike_model = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap))  # type: ignore[call-arg]  # throughput = cap * 1.0
 
-    class _StrictCarModel(Model):
-        @dataclasses.dataclass
+    class _StrictCarModel(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
             emissions: Index
@@ -1016,12 +938,12 @@ def _make_nested_mv() -> tuple[CategoricalIndex, CategoricalIndex, ModelVariant]
                 outputs=_StrictCarModel.Outputs(throughput=throughput, emissions=emissions),
             )
 
-    class _LooseCarModel(Model):
-        @dataclasses.dataclass
+    class _LooseCarModel(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
             emissions: Index
@@ -1054,7 +976,7 @@ def _make_nested_mv() -> tuple[CategoricalIndex, CategoricalIndex, ModelVariant]
 def test_nested_regional_plan_region_count() -> None:
     """Two-level nesting produces exactly 7 regions."""
     mode, policy, mv = _make_nested_mv()
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
     # outer-shared + bike + car-shared + car-strict + car-loose + car-merge + outer-merge
     assert len(plan.regions) == 7
@@ -1073,7 +995,7 @@ def test_nested_regional_plan_guard_structure() -> None:
       6  outer merge            guards=()
     """
     mode, policy, mv = _make_nested_mv()
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
 
     def _guard_sig(region: Region) -> tuple[str, ...]:
@@ -1099,7 +1021,7 @@ def test_nested_regional_plan_guard_structure() -> None:
 def test_nested_regional_plan_correct_dependencies() -> None:
     """DAG structure: each region depends only on its necessary predecessors."""
     mode, policy, mv = _make_nested_mv()
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
     deps = plan.dependencies
 
@@ -1152,15 +1074,12 @@ def _nested_equal_weight_ensemble(mode: CategoricalIndex, policy: CategoricalInd
 def test_nested_regional_matches_monolithic() -> None:
     """Two-level nested regional plan produces the same result as monolithic."""
     mode, policy, mv = _make_nested_mv()
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     scenarios = _nested_equal_weight_ensemble(mode, policy)
+    ensemble = _frozen_from_weighted_scenarios(scenarios, [mode, policy])
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    adapter = _LegacyEnsembleAdapter(scenarios, [mode, policy])
-
-    mono = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), adapter)
-    regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), adapter)
+    mono = ev.execute_plan(ev.build_plan([mv.outputs.throughput]), ensemble)
+    regional = ev.execute_plan(ev.build_plan([mv.outputs.throughput], strategy="regional"), ensemble)
 
     np.testing.assert_allclose(
         regional[mv.outputs.throughput],
@@ -1171,14 +1090,12 @@ def test_nested_regional_matches_monolithic() -> None:
 def test_nested_regional_expected_value() -> None:
     """Two-level nested: expected throughput = (100 + 200 + 300) / 3 = 200."""
     mode, policy, mv = _make_nested_mv()
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     scenarios = _nested_equal_weight_ensemble(mode, policy)
+    ensemble = _frozen_from_weighted_scenarios(scenarios, [mode, policy])
 
-    from civic_digital_twins.dt_model.simulation.evaluation import _LegacyEnsembleAdapter
-
-    adapter = _LegacyEnsembleAdapter(scenarios, [mode, policy])
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    result = ev.execute_plan(plan, adapter)
+    result = ev.execute_plan(plan, ensemble)
 
     assert float(result.expected_value(mv.outputs.throughput)) == pytest.approx(200.0)
 
@@ -1204,12 +1121,12 @@ def _make_nested_sign_variant() -> tuple[CategoricalIndex, CategoricalIndex, Ind
     policy = CategoricalIndex("policy", {"strict": 0.5, "loose": 0.5})
     x = Index("x", None)
 
-    class _BikePassthroughModel(Model):
-        @dataclasses.dataclass
+    class _BikePassthroughModel(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -1221,12 +1138,12 @@ def _make_nested_sign_variant() -> tuple[CategoricalIndex, CategoricalIndex, Ind
                 outputs=_BikePassthroughModel.Outputs(result=result),
             )
 
-    class _StrictSqrtModel(Model):
-        @dataclasses.dataclass
+    class _StrictSqrtModel(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -1238,12 +1155,12 @@ def _make_nested_sign_variant() -> tuple[CategoricalIndex, CategoricalIndex, Ind
                 outputs=_StrictSqrtModel.Outputs(result=result),
             )
 
-    class _SquareModel(Model):
-        @dataclasses.dataclass
+    class _SquareModel(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             result: Index
 
@@ -1321,7 +1238,7 @@ def test_nested_monolithic_strict_sqrt_raises() -> None:
     mode, policy, x, mv = _make_nested_sign_variant()
     ens = _NestedCorrelatedEnsemble(mode, policy, x, np.random.default_rng(42))
     functions = {"strict_sqrt": NumpyBackend.adapt(_strict_sqrt)}
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
 
     with pytest.raises(ValueError, match="strict_sqrt.*negative"):
         ev.execute_plan(ev.build_plan(strategy="monolithic"), ens, functions=functions)
@@ -1338,7 +1255,7 @@ def test_nested_regional_selective_execution() -> None:
     rng = np.random.default_rng(7)
     ens = _NestedCorrelatedEnsemble(mode, policy, x, rng)
     functions = {"strict_sqrt": NumpyBackend.adapt(_strict_sqrt)}
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan(strategy="regional")
 
     result = ev.execute_plan(plan, ens, functions=functions)
@@ -1382,13 +1299,13 @@ def _make_branch_abstract_mv() -> tuple[CategoricalIndex, DistributionIndex, Dis
     weather_bike = DistributionIndex("weather_bike", _stats.uniform, {"loc": 0.0, "scale": 1.0})
     weather_train = DistributionIndex("weather_train", _stats.uniform, {"loc": 0.0, "scale": 1.0})
 
-    class _BikeBranch(Model):
-        @dataclasses.dataclass
+    class _BikeBranch(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
             weather: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -1400,13 +1317,13 @@ def _make_branch_abstract_mv() -> tuple[CategoricalIndex, DistributionIndex, Dis
                 outputs=_BikeBranch.Outputs(throughput=throughput),
             )
 
-    class _TrainBranch(Model):
-        @dataclasses.dataclass
+    class _TrainBranch(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
             weather: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -1450,13 +1367,13 @@ def _make_nested_branch_abstract_mv() -> tuple[
     strict_w = DistributionIndex("strict_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
     loose_w = DistributionIndex("loose_w", _stats.uniform, {"loc": 0.0, "scale": 1.0})
 
-    class _BikeOuter(Model):
-        @dataclasses.dataclass
+    class _BikeOuter(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
             bike_w: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -1468,13 +1385,13 @@ def _make_nested_branch_abstract_mv() -> tuple[
                 outputs=_BikeOuter.Outputs(throughput=throughput),
             )
 
-    class _StrictInner(Model):
-        @dataclasses.dataclass
+    class _StrictInner(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
             strict_w: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -1486,13 +1403,13 @@ def _make_nested_branch_abstract_mv() -> tuple[
                 outputs=_StrictInner.Outputs(throughput=throughput),
             )
 
-    class _LooseInner(Model):
-        @dataclasses.dataclass
+    class _LooseInner(Model, legacy=True):
+        @inputs
         class Inputs:
             capacity: Index
             loose_w: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -1525,12 +1442,12 @@ def test_scoped_abstract_indexes_monolithic():
     """
     x = Index("x", None)
 
-    class _M(Model):
-        @dataclasses.dataclass
+    class _M(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             y: Index
 
@@ -1544,7 +1461,7 @@ def test_scoped_abstract_indexes_monolithic():
 
     m = _M(x)
     scenario = Scenario(m)
-    plan = Evaluation(m).build_plan()
+    plan = Evaluation(scenario).build_plan()
 
     scoped = plan.scoped_abstract_indexes(scenario)
 
@@ -1559,8 +1476,8 @@ def test_scoped_abstract_indexes_regional_single_level():
     buckets (if any) are not emitted.
     """
     mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
     scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
 
     scoped = plan.scoped_abstract_indexes(scenario)
 
@@ -1585,8 +1502,8 @@ def test_scoped_abstract_indexes_regional_nested():
     selector placement tracks the deepest scope where its node is needed.
     """
     mode, policy, bike_w, strict_w, loose_w, mv = _make_nested_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
     scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
 
     scoped = plan.scoped_abstract_indexes(scenario)
 
@@ -1626,13 +1543,13 @@ def test_scoped_abstract_indexes_raises_on_overlap():
     x = Index("x", None)
     y = Index("y", None)
 
-    class _M(Model):
-        @dataclasses.dataclass
+    class _M(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             y: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             z: Index
 
@@ -1681,9 +1598,10 @@ def test_scoped_sampling_flat_branch_sample_count():
     unsampled DistributionIndex slots is ``np.nan``).
     """
     mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
     rng = np.random.default_rng(0)
-    ens = DistributionEnsemble(Scenario(mv), size=10_000, rng=rng, plan=plan)
+    ens = DistributionEnsemble(scenario, size=10_000, rng=rng, plan=plan)
     a = ens.assignments()
 
     # Shared: sampled at full size.
@@ -1705,9 +1623,10 @@ def test_scoped_sampling_nested_intersection():
     all ancestor guards, not just the innermost.
     """
     mode, policy, bike_w, strict_w, loose_w, mv = _make_nested_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
     rng = np.random.default_rng(0)
-    ens = DistributionEnsemble(Scenario(mv), size=30_000, rng=rng, plan=plan)
+    ens = DistributionEnsemble(scenario, size=30_000, rng=rng, plan=plan)
     a = ens.assignments()
 
     car_mask = a[mode] == "car"
@@ -1733,9 +1652,10 @@ def test_scoped_sampling_categorical_sentinel():
     the real samples.
     """
     mode, policy, _bike_w, _strict_w, _loose_w, mv = _make_nested_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
     rng = np.random.default_rng(0)
-    ens = DistributionEnsemble(Scenario(mv), size=2000, rng=rng, plan=plan)
+    ens = DistributionEnsemble(scenario, size=2000, rng=rng, plan=plan)
     a = ens.assignments()
 
     car_mask = a[mode] == "car"
@@ -1751,9 +1671,10 @@ def test_scoped_sampling_categorical_sentinel():
 def test_scoped_sampling_draw_batch_propagates_plan():
     """draw_batch must propagate self._plan so the plan-aware path is used."""
     mode, weather_bike, _weather_train, mv = _make_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
     rng = np.random.default_rng(0)
-    ens = DistributionEnsemble(Scenario(mv), size=1000, rng=rng, plan=plan)
+    ens = DistributionEnsemble(scenario, size=1000, rng=rng, plan=plan)
 
     rng2 = np.random.default_rng(1)
     batch = ens.draw_batch(500, rng2)
@@ -1781,16 +1702,17 @@ def test_scoped_sampling_end_to_end_matches_no_plan_mean() -> None:
     expected value.
     """
     _, _, _, mv = _make_branch_abstract_mv()
-    ev = Evaluation(mv)
+    scenario = Scenario(mv)
+    ev = Evaluation(scenario)
     n = 50_000
 
     rng_a = np.random.default_rng(42)
-    ens_no = DistributionEnsemble(Scenario(mv), size=n, rng=rng_a)
+    ens_no = DistributionEnsemble(scenario, size=n, rng=rng_a)
     throughput_no = np.asarray(ev.execute_plan(ev.build_plan(), ens_no)[mv.outputs.throughput]).ravel()
 
     rng_b = np.random.default_rng(42)
     plan_reg = ev.build_plan(strategy="regional")
-    ens_with = DistributionEnsemble(Scenario(mv), size=n, rng=rng_b, plan=plan_reg)
+    ens_with = DistributionEnsemble(scenario, size=n, rng=rng_b, plan=plan_reg)
     throughput_with = np.asarray(ev.execute_plan(plan_reg, ens_with)[mv.outputs.throughput]).ravel()
 
     # Analytical expected throughput: cap * E[weather] = 100 * 0.5 = 50.
@@ -1815,9 +1737,10 @@ def test_scoped_sampling_exclude_skips_bucket() -> None:
     Other buckets in the same plan are still sampled.
     """
     mode, weather_bike, weather_train, mv = _make_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
     ens = DistributionEnsemble(
-        Scenario(mv),
+        scenario,
         size=100,
         rng=np.random.default_rng(0),
         plan=plan,
@@ -1839,8 +1762,9 @@ def test_scoped_sampling_no_rng() -> None:
     Exercises the ``self._rng is None`` branch in ``_sample_with_default``.
     """
     mode, weather_bike, _, mv = _make_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
-    ens = DistributionEnsemble(Scenario(mv), size=200, plan=plan)
+    scenario = Scenario(mv)
+    plan = Evaluation(scenario).build_plan(strategy="regional")
+    ens = DistributionEnsemble(scenario, size=200, plan=plan)
     a = ens.assignments()
     assert a[mode].shape == (200,)
     # Real samples for weather_bike have mean ~0.5 (uniform[0, 1]).
@@ -1859,13 +1783,13 @@ def test_scoped_abstract_indexes_unions_same_guards_regions() -> None:
     x = Index("x", None)
     y = Index("y", None)
 
-    class _M(Model):
-        @dataclasses.dataclass
+    class _M(Model, legacy=True):
+        @inputs
         class Inputs:
             x: Index
             y: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             z: Index
 
@@ -1905,7 +1829,7 @@ def test_scoped_sampling_pinned_selector_raises() -> None:
     rather than silently wrong per-branch statistics.
     """
     mode, _weather_bike, _weather_train, mv = _make_branch_abstract_mv()
-    plan = Evaluation(mv).build_plan(strategy="regional")
+    plan = Evaluation(Scenario(mv)).build_plan(strategy="regional")
     pinned_scenario = Scenario(mv, overrides={mode: "bike"})
     with pytest.raises(ValueError, match="not in scenario.abstract_indexes"):
         DistributionEnsemble(pinned_scenario, size=100, rng=np.random.default_rng(0), plan=plan).assignments()
@@ -1998,12 +1922,12 @@ def _make_triple_nested_mv() -> tuple[CategoricalIndex, CategoricalIndex, Catego
     fuel = CategoricalIndex("fuel", {"gas": 0.5, "elec": 0.5})
     cap = Index("cap", _CAP_TRIPLE)
 
-    class _LeafModel(Model):
-        @dataclasses.dataclass
+    class _LeafModel(Model, legacy=True):
+        @inputs
         class Inputs:
             cap: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -2028,7 +1952,7 @@ def test_triple_nested_guard_chain_depths() -> None:
     bike branch:     depth 1 (mode=bike)
     """
     *_, mv = _make_triple_nested_mv()
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
 
     gas_regions = [r for r in plan.regions if any(g.branch_key == "gas" for g in r.guards)]
@@ -2050,9 +1974,10 @@ def test_triple_nested_guard_chain_depths() -> None:
 def test_triple_nested_regional_matches_expected_value() -> None:
     """Three-level regional plan produces the analytically correct expected throughput."""
     *_, mv = _make_triple_nested_mv()
-    ev = Evaluation(mv)
+    scenario = Scenario(mv)
+    ev = Evaluation(scenario)
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
-    ens = CrossProductEnsemble(Scenario(mv), rng=np.random.default_rng(0))
+    ens = CrossProductEnsemble(scenario, rng=np.random.default_rng(0))
     result = ev.execute_plan(plan, ens)
     ev_val = float(result.expected_value(mv.outputs.throughput))
     assert abs(ev_val - 232.0) < 1e-10, f"expected 232.0, got {ev_val}"
@@ -2087,13 +2012,13 @@ _SCOPED_CAP = Index("cap", 100.0)
 def _make_scoped_mv() -> tuple["ModelVariant", Scenario, Evaluation, "EvaluationPlan"]:
     """Build the shared scoped-sampling fixture."""
 
-    class _BikeLeaf(Model):
-        @dataclasses.dataclass
+    class _BikeLeaf(Model, legacy=True):
+        @inputs
         class Inputs:
             cap: Index
             wind: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -2104,13 +2029,13 @@ def _make_scoped_mv() -> tuple["ModelVariant", Scenario, Evaluation, "Evaluation
                 outputs=self.Outputs(throughput=Index("throughput", cap.node * (1.0 + wind.node * 0.01))),
             )
 
-    class _CarLeaf(Model):
-        @dataclasses.dataclass
+    class _CarLeaf(Model, legacy=True):
+        @inputs
         class Inputs:
             cap: Index
             traffic: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -2127,7 +2052,7 @@ def _make_scoped_mv() -> tuple["ModelVariant", Scenario, Evaluation, "Evaluation
         selector=_SCOPED_MODE,
     )
     scenario = Scenario(mv)
-    ev = Evaluation(mv)
+    ev = Evaluation(scenario)
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     return mv, scenario, ev, plan
 
@@ -2197,12 +2122,12 @@ def test_regional_list_str_override_restricts_active_branches() -> None:
     mode = CategoricalIndex("mode", {"bike": 1 / 3, "car": 1 / 3, "train": 1 / 3})
     cap = Index("cap", 1.0)
 
-    class _Leaf(Model):
-        @dataclasses.dataclass
+    class _Leaf(Model, legacy=True):
+        @inputs
         class Inputs:
             cap: Index
 
-        @dataclasses.dataclass
+        @outputs
         class Outputs:
             throughput: Index
 
@@ -2219,7 +2144,7 @@ def test_regional_list_str_override_restricts_active_branches() -> None:
         selector=mode,
     )
     scenario = Scenario(mv, overrides={mode: ["bike", "car"]})
-    ev = Evaluation(mv)
+    ev = Evaluation(Scenario(mv))
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
 
     ens = CrossProductEnsemble(scenario)
