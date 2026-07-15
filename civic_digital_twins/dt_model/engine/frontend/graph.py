@@ -995,7 +995,7 @@ class ProjectionOp[T](Node[T]):
 
     Args:
         node: Input tensor.
-        axis: The semantic :class:`~civic_digital_twins.dt_model.model.axis.Axis`
+        axis: The semantic :class:`~civic_digital_twins.dt_model.axes.Axis`
             along which to reduce (e.g. ``Axis("time", DOMAIN)``).
         name: Optional node name for debugging.
     """
@@ -1021,7 +1021,7 @@ class project_using_sum[T](ProjectionOp[T]):
 
     Args:
         node: Input tensor.
-        axis: Semantic :class:`~civic_digital_twins.dt_model.model.axis.Axis`
+        axis: Semantic :class:`~civic_digital_twins.dt_model.axes.Axis`
             along which to sum (e.g. ``Axis("time", DOMAIN)``).
     """
 

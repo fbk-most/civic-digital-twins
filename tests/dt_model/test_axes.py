@@ -74,3 +74,14 @@ class TestFilterByRole:
         """Any iterable of axes is accepted, not just tuples."""
         p = Axis("p", PARAMETER)
         assert filter_by_role(iter([p, TIME_AXIS]), DOMAIN) == (TIME_AXIS,)
+
+
+class TestTopLevelExports:
+    """Axis vocabulary re-exported by the top-level package."""
+
+    def test_time_axis_reexported(self):
+        """TIME_AXIS is importable from civic_digital_twins.dt_model."""
+        import civic_digital_twins.dt_model as dt
+
+        assert dt.TIME_AXIS is TIME_AXIS
+        assert dt.Axis is Axis

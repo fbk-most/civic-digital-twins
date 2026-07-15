@@ -1,8 +1,10 @@
-"""Axis identity: role constants and the Axis class.
+"""Axis identity: role constants, the Axis class, and axis set operations.
 
-This module is the canonical home for axis types shared between the model
-and engine layers.  Import from here (or from ``model.axis`` which re-exports
-everything) rather than from layer-specific modules.
+This module is the canonical home for the axis vocabulary shared by all
+layers (engine, model, simulation).  Always import axis types and utilities
+from here; user code can equivalently use the re-exports in the top-level
+``civic_digital_twins.dt_model`` package.  (See the README's "Conceptual
+Overview" for the module-role convention behind this layout.)
 """
 
 # SPDX-License-Identifier: Apache-2.0

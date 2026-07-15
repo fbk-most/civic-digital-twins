@@ -61,7 +61,7 @@ and 4).
 
 ## Important Details
 
-- **Package structure**: `civic_digital_twins/dt_model/` contains the main code with subpackages: `engine/` (DSL compiler), `model/` (higher-level abstractions), `symbols/` (Index, TimeseriesIndex).
+- **Package structure**: `civic_digital_twins/dt_model/` contains the main code with subpackages: `engine/` (DSL compiler), `model/` (indexes, models, contracts), `simulation/` (scenarios, ensembles, evaluation, runners). Top-level modules follow the module-role convention (see README “Conceptual Overview”): `axes.py` is the canonical home of the cross-cutting axis vocabulary; `graph.py` is a curated user façade over `engine/frontend/graph.py`.
 - **Python path**: `pyproject.toml` sets `pythonpath = ["examples"]` so tests can import example packages like `mobility_bologna` and `overtourism_molveno`.
 - **Pyright config**: `pyproject.toml` includes `examples` in both `include` (type-checked) and `extraPaths` (import resolution).
 - **CI uses `--locked`**: Both `ci-dev.yml` and `ci-release.yml` run `uv sync --locked`, which fails if `uv.lock` is out of sync with `pyproject.toml`. Always commit an updated `uv.lock` alongside any `pyproject.toml` change.

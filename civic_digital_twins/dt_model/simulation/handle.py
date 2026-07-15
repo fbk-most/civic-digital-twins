@@ -24,9 +24,9 @@ from typing import Any
 
 import numpy as np
 
+from ..axes import ENSEMBLE, PARAMETER, Axis
 from ..engine.frontend import graph
 from ..engine.numpybackend import executor
-from ..model.axis import ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from .ensemble import BatchDrawable, DistributionEnsemble, FrozenEnsemble
 from .evaluation import Evaluation, EvaluationResult

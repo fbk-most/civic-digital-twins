@@ -42,8 +42,8 @@ from typing import Any, Generic, Self, TypeVar
 
 import numpy as np
 
+from ..axes import Axis
 from ..engine.numpybackend.executor import Functor, NumpyBackend, State
-from ..model.axis import Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant

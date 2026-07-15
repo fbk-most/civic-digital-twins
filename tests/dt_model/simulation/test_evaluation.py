@@ -103,7 +103,7 @@ def test_axes_two_axes_result_shape():
 
 def test_axes_non_axis_abstract_has_shape_1_1_s():
     """A non-axis abstract index has shape (1, …, 1, S)."""
-    from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+    from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
     from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
 
     I_x = Index("x", None)
@@ -158,7 +158,7 @@ def test_axes_two_axes_additive_formula():
 
 def test_axes_non_axis_factor_marginalised_correctly():
     """Weighted marginalisation over a non-axis index gives the correct mean."""
-    from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+    from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
     from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
 
     I_x = Index("x", None)

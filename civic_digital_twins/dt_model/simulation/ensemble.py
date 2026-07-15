@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from ..model.axis import ENSEMBLE, Axis
+from ..axes import ENSEMBLE, Axis
 from ..model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,

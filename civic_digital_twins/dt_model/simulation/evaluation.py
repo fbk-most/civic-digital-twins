@@ -7,9 +7,9 @@ from typing import Any
 
 import numpy as np
 
+from ..axes import DOMAIN, ENSEMBLE, PARAMETER, Axis
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
-from ..model.axis import DOMAIN, ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
@@ -31,7 +31,7 @@ class EvaluationResult:
     state:
         The executor state after evaluation.
     axis_layout:
-        Maps each :class:`~dt_model.model.axis.Axis` to its numpy dimension
+        Maps each :class:`~dt_model.axes.Axis` to its numpy dimension
         position in result arrays.
     parameter_arrays:
         Anonymous PARAMETER-axis arrays from ``parameters=`` (array-valued
@@ -39,7 +39,7 @@ class EvaluationResult:
         :meth:`parameter_values_for`.  Empty dict when no anonymous PARAMETER
         axes.
     axis_sizes:
-        Maps each :class:`~dt_model.model.axis.Axis` to its size.
+        Maps each :class:`~dt_model.axes.Axis` to its size.
     factorized_weights:
         Per-ENSEMBLE-axis weight vectors.
     named_axis_values:

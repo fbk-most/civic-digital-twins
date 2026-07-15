@@ -8,8 +8,8 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model import define, inputs, outputs
+from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.engine.numpybackend import executor as _executor
-from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
@@ -869,8 +869,8 @@ def test_merge_results_growing_axis_at_different_position_raises() -> None:
 
 def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
     """_merge_results_param_extend raises ValueError when r2 lacks the growing PARAMETER axis."""
+    from civic_digital_twins.dt_model.axes import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
-    from civic_digital_twins.dt_model.model.axis import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
     speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=5)
@@ -898,8 +898,8 @@ def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
 
 def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
     """_merge_results_param_extend raises ValueError when ENSEMBLE axis positions differ."""
+    from civic_digital_twins.dt_model.axes import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
-    from civic_digital_twins.dt_model.model.axis import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
     speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=5)

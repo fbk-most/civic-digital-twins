@@ -1,15 +1,11 @@
 """Digital twin modeling and simulation library."""
 # SPDX-License-Identifier: Apache-2.0
 
+from .axes import DOMAIN, ENSEMBLE, PARAMETER, TIME_AXIS, Axis, AxisRole
 from .engine.frontend.graph import HasNode
 from .engine.numpybackend.executor import Functor, NumpyBackend
 from .model import (
-    DOMAIN,
-    ENSEMBLE,
-    PARAMETER,
     AbstractIndexNotInInputsWarning,
-    Axis,
-    AxisRole,
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
@@ -111,6 +107,7 @@ __all__ = [
     "RegionGuard",
     "ResumeState",
     "Scenario",
+    "TIME_AXIS",
     "TimeseriesIndex",
     "WeightedScenario",
     "sample_across",
