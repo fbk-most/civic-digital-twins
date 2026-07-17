@@ -898,7 +898,6 @@ def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
 
 def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
     """_merge_results_param_extend raises ValueError when ENSEMBLE axis positions differ."""
-    from civic_digital_twins.dt_model.axes import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
@@ -907,18 +906,20 @@ def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
     r1 = handle.result
     # r1: PARAMETER(speed) at dim 0, ENSEMBLE at dim 1 → ens_pos=1
 
-    # Build r2 with ENSEMBLE at dim 0 (position mismatch vs r1's dim 1).
-    ax_param = Axis("speed", PARAMETER)
+    # Build r2 with ENSEMBLE at dim 0.  Under the canonical role ordering
+    # (PARAMETER before ENSEMBLE, enforced by AxisLayout) a position mismatch
+    # arises from a differing PARAMETER count: r2 has no PARAMETER axis, so
+    # its single ENSEMBLE axis sits at dim 0 versus r1's dim 1.
     ax_ens = Axis("_ensemble", ENSEMBLE)
     values: dict = {}
     for idx in plan.nodes_of_interest:
-        values[idx.node] = np.zeros((5, 2))  # shape (5_ens, 2_param)
+        values[idx.node] = np.zeros((5,))  # shape (5_ens,)
     r2 = EvaluationResult(
         _ex.State(values),
-        {ax_ens: 0, ax_param: 1},  # ENSEMBLE at dim 0, PARAMETER at dim 1
+        {ax_ens: 0},  # ENSEMBLE at dim 0 (r1 has it at dim 1)
         {},
-        axis_sizes={ax_ens: 5, ax_param: 2},
-        factorized_weights={ax_ens: np.full(5, 0.2), ax_param: np.full(2, 0.5)},
+        axis_sizes={ax_ens: 5},
+        factorized_weights={ax_ens: np.full(5, 0.2)},
     )
     with pytest.raises(ValueError, match="ENSEMBLE axis position mismatch"):
         _merge_results_param_extend(r1, r2, plan, speed)

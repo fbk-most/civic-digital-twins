@@ -30,6 +30,7 @@ from .model import (
 from .simulation import (
     AsyncEvaluationHandle,
     AxisEnsemble,
+    AxisLayout,
     BatchDrawable,
     CrossProductEnsemble,
     DistributionEnsemble,
@@ -62,6 +63,7 @@ __all__ = [
     "Axis",
     "AsyncEvaluationHandle",
     "AxisEnsemble",
+    "AxisLayout",
     "AxisRole",
     "BatchDrawable",
     "CategoricalIndex",
