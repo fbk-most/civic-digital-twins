@@ -106,6 +106,15 @@ class EvaluationResult:
         return joint
 
     @property
+    def factorized_weights(self) -> dict[Axis, np.ndarray]:
+        """Per-ENSEMBLE-axis weight vectors, keyed by axis.
+
+        The joint scenario weight array (outer product of these vectors) is
+        available via :attr:`weights`.
+        """
+        return self._factorized_weights
+
+    @property
     def parameter_values(self) -> dict[GenericIndex, np.ndarray]:
         """Parameter value arrays, keyed by the index passed in ``parameters=``."""
         return self._parameter_arrays
