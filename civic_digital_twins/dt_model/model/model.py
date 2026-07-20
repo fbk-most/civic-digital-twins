@@ -83,19 +83,14 @@ class InputsContractError(ModelContractError):
     """
 
 
-class AbstractIndexNotInInputsWarning(ModelContractWarning):
-    """Emitted when an abstract index is not declared in a :class:`Model`'s ``Inputs``.
+class AbstractIndexNotInInputsError(ModelContractError):
+    """Raised when an abstract index is not declared in a :class:`Model`'s ``Inputs``.
 
     Abstract indexes receive their values from outside the model (via the
     ensemble or a parent model's scenario assignments).  They are therefore
-    inputs by definition and should be declared in the ``Inputs`` dataclass
+    inputs by definition and must be declared in the ``Inputs`` dataclass
     so that the data-flow contract is explicit and cross-variant consistency
     checks work correctly.
-
-    This is a soft warning initially (not an error) for backwards
-    compatibility with models that create abstract indexes internally and
-    surface them via ``expose`` or flat ``indexes`` lists.  It is tracked
-    for promotion to an error in a future release.
 
     The canonical fix is to declare the abstract index as a field of
     ``Inputs`` and wire it through ``super().__init__(inputs=Inputs(...))``.
@@ -628,16 +623,16 @@ class Model:
                     "value is fixed and should never be overridden."
                 )
 
-            for idx in self.abstract_indexes():
-                if idx not in self.inputs:
-                    idx_name = getattr(idx, "name", repr(idx))
-                    warnings.warn(
-                        f"{concrete_cls.__name__}: abstract index {idx_name!r} is not "
-                        f"declared in Inputs. Abstract indexes receive their values from "
-                        f"outside the model and should be declared in Inputs.",
-                        AbstractIndexNotInInputsWarning,
-                        stacklevel=3,
-                    )
+            _missing_abstract = [
+                getattr(idx, "name", repr(idx)) for idx in self.abstract_indexes() if idx not in self.inputs
+            ]
+            if _missing_abstract:
+                _names = ", ".join(repr(n) for n in _missing_abstract)
+                raise AbstractIndexNotInInputsError(
+                    f"{concrete_cls.__name__}: abstract index(es) {_names} not declared "
+                    f"in Inputs. Abstract indexes receive their values from outside the "
+                    f"model and must be declared in Inputs."
+                )
 
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that require external values before evaluation.

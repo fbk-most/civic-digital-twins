@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ModelContractWarning` (a hard error is not a stricter kind of soft
   warning); catch `ModelContractError` or the shared `ModelContractViolation`
   base instead.
+- **Breaking:** `AbstractIndexNotInInputsWarning` is renamed to
+  `AbstractIndexNotInInputsError` and is now raised directly by
+  `Model.__init__` instead of emitted via `warnings.warn` — an abstract
+  index absent from the declared `Inputs` is a hard error and can no longer
+  be silenced with `warnings.filterwarnings`.  It is no longer a subclass of
+  `ModelContractWarning`; catch `ModelContractError` or the shared
+  `ModelContractViolation` base instead.  
+- `ModelContractWarning` currently has no concrete members but remains
+  available for future soft violations.
 
 ### Removed
 

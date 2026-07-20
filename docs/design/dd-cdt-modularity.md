@@ -1571,8 +1571,8 @@ class ModelContractError(ModelContractViolation):
 class InputsContractError(ModelContractError):
     """Raised when a constructor parameter holds a GenericIndex not declared in Inputs."""
 
-class AbstractIndexNotInInputsWarning(ModelContractWarning):
-    """Emitted when an abstract index is not reachable via the model's Inputs."""
+class AbstractIndexNotInInputsError(ModelContractError):
+    """Raised when an abstract index is not reachable via the model's Inputs."""
 ```
 
 `ModelContractWarning` and `ModelContractError` are siblings, not parent/child: a hard error is not a
@@ -1581,20 +1581,10 @@ family lineage.  `ModelContractViolation` exists purely so that a single `except
 it inherits from `Exception` (rather than being a bare marker) precisely so it is itself a valid
 `except`/`pytest.raises` target, but it is never raised or emitted directly.
 
-`InputsContractError` is raised directly (a hard error, unaffected by `warnings.filterwarnings`);
-`AbstractIndexNotInInputsWarning` remains a soft warning that can be escalated with a single filter
-on its own base class:
-
-```python
-import warnings
-
-from civic_digital_twins.dt_model import ModelContractWarning
-
-with warnings.catch_warnings():
-    # InputsContractError is already a hard error; this escalates the
-    # remaining soft warnings still in the family.
-    warnings.filterwarnings("error", category=ModelContractWarning)
-```
+Both `InputsContractError` and `AbstractIndexNotInInputsError` are raised directly (hard errors,
+unaffected by `warnings.filterwarnings`).  `ModelContractWarning` currently has no concrete members —
+it remains the extension point for any future *soft* contract violation that should stay filterable
+rather than fatal.
 
 To catch *any* contract violation regardless of severity, catch `ModelContractViolation` instead:
 

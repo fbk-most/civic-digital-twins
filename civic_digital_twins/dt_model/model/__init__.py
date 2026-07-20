@@ -17,7 +17,7 @@ from .index import (
     TimeseriesIndex,
 )
 from .model import (
-    AbstractIndexNotInInputsWarning,
+    AbstractIndexNotInInputsError,
     InputsContractError,
     Model,
     ModelContractError,
@@ -27,7 +27,7 @@ from .model import (
 from .model_variant import ModelVariant
 
 __all__ = [
-    "AbstractIndexNotInInputsWarning",
+    "AbstractIndexNotInInputsError",
     "Axis",
     "define",
     "expose",

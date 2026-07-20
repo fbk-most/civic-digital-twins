@@ -504,12 +504,12 @@ rather than routing it through `warnings.warn`, so it cannot be silenced
 with `warnings.filterwarnings`.  The message names the offending
 parameter precisely so it can be located and added to `Inputs`.
 
-**`AbstractIndexNotInInputsWarning(ModelContractWarning)`** — emitted when
-an abstract index (one whose value is `None` or a `Distribution`) is not
+**`AbstractIndexNotInInputsError(ModelContractError)`** — raised when an
+abstract index (one whose value is `None` or a `Distribution`) is not
 reachable via `self.inputs`.  Abstract indexes receive their values from
-outside the model and are therefore inputs by definition.  Currently a soft
-warning for backwards compatibility; planned for promotion to an error in a
-future release.
+outside the model and are therefore inputs by definition.  Like
+`InputsContractError`, this is a hard error: `Model` raises it directly and
+it cannot be silenced with `warnings.filterwarnings`.
 
 Example — the following model raises `InputsContractError`
 because `x` is a `GenericIndex` constructor parameter but is not
