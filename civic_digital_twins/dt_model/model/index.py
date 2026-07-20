@@ -359,8 +359,9 @@ class Index(GenericIndex):
         """Whether this index requires an external value before evaluation."""
         return self._value is None
 
+    @property
     def concrete_default(self) -> graph.Scalar | None:
-        """Return this index's concrete scalar default, or ``None`` if unset or formula-backed.
+        """The index's concrete scalar default, or ``None`` if unset or formula-backed.
 
         Used by :class:`~simulation.scenario.Scenario` to seed the executor
         state with each index's default before overrides are applied. Most
@@ -459,8 +460,9 @@ class TimeseriesIndex(GenericIndex):
         """Whether this index requires an external value before evaluation."""
         return self._value is None
 
+    @property
     def concrete_default(self) -> np.ndarray | None:
-        """Return this index's concrete array default, or ``None`` if unset or formula-backed.
+        """The index's concrete array default, or ``None`` if unset or formula-backed.
 
         Used by :class:`~simulation.scenario.Scenario` to seed the executor
         state with each index's default before overrides are applied. Most

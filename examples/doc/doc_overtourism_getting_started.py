@@ -46,8 +46,8 @@ CV_weather = CategoricalIndex(
     {"good": 1 / 3, "unsettled": 1 / 3, "bad": 1 / 3},
 )
 
-assert CV_season.value is None  # placeholder
-assert CV_weather.value is None
+assert CV_season.is_abstract  # placeholder
+assert CV_weather.is_abstract
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ PV_visitors = ConditionalDistributionIndex(
     visitors_distribution,
 )
 
-assert PV_visitors.value is None  # placeholder (axis in grid evaluation)
+assert PV_visitors.is_abstract  # placeholder (axis in grid evaluation)
 
 
 # ---------------------------------------------------------------------------

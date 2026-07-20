@@ -444,7 +444,7 @@ class Scenario:
             # Determine the effective value: override takes precedence.
             val: DomainValue | graph.Node | None = self._overrides.get(idx)
             if val is None and isinstance(idx, (Index, TimeseriesIndex)):
-                val = idx.concrete_default()  # type: ignore[assignment]  # Scalar ⊄ DomainValue
+                val = idx.concrete_default  # type: ignore[assignment]  # Scalar ⊄ DomainValue
 
             if val is None or isinstance(val, (Distribution, dict, graph.Node)):
                 continue  # no concrete value or formula node; ensemble's responsibility

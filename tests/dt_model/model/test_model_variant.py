@@ -125,14 +125,14 @@ def test_static_selector_bike_outputs():
     """Active variant's outputs are accessible through ModelVariant."""
     mv = ModelVariant("Transport", _make_variants(), selector="bike")
     # BikeModel sets emissions=0.0
-    assert mv.outputs.emissions.concrete_default() == 0.0
+    assert mv.outputs.emissions.concrete_default == 0.0
 
 
 def test_static_selector_train_outputs():
     """Static 'train' selector delegates to TrainModel."""
     mv = ModelVariant("Transport", _make_variants(), selector="train")
     # TrainModel sets emissions=50.0
-    assert mv.outputs.emissions.concrete_default() == 50.0
+    assert mv.outputs.emissions.concrete_default == 50.0
 
 
 def test_static_selector_unknown_key_raises():
@@ -424,7 +424,7 @@ def test_expose_proxy_field_accessible_on_active_variant():
     }
     mv = ModelVariant("ExposeGroup", variants, selector="a")
     # The expose.ratio of variant "a" should be accessible.
-    assert mv.expose.ratio.concrete_default() == 1.0
+    assert mv.expose.ratio.concrete_default == 1.0
 
 
 def test_expose_indexes_not_in_inactive_variant():
