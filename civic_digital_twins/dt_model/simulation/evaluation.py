@@ -34,16 +34,11 @@ class EvaluationResult:
         The executor state after evaluation.
     axis_layout:
         The :class:`~simulation.axis_layout.AxisLayout` of result arrays.
-        A ``{Axis: position}`` dict (with sizes in *axis_sizes*) is also
-        accepted transitionally and converted internally.
     parameter_arrays:
         Anonymous PARAMETER-axis arrays from ``parameters=`` (array-valued
         entries only; callable-backed indexes are not included).  Used by
         :meth:`parameter_values_for`.  Empty dict when no anonymous PARAMETER
         axes.
-    axis_sizes:
-        Maps each :class:`~dt_model.axes.Axis` to its size.  Only used (and
-        required) with the transitional dict form of *axis_layout*.
     factorized_weights:
         Per-ENSEMBLE-axis weight vectors.
     named_axis_values:
@@ -54,19 +49,13 @@ class EvaluationResult:
     def __init__(
         self,
         state: executor.State,
-        axis_layout: AxisLayout | dict[Axis, int],
+        axis_layout: AxisLayout,
         parameter_arrays: dict[GenericIndex, np.ndarray],
-        axis_sizes: dict[Axis, int] | None = None,
         factorized_weights: dict[Axis, np.ndarray] | None = None,
         named_axis_values: dict[str, np.ndarray] | None = None,
     ) -> None:
         self._state = state
-        if isinstance(axis_layout, AxisLayout):
-            self._layout = axis_layout
-        else:
-            # Transitional dict form (handle.py, runner.py); to be removed
-            # once all constructors pass an AxisLayout.
-            self._layout = AxisLayout.from_positions(axis_layout, axis_sizes or {})
+        self._layout = axis_layout
         self._parameter_arrays = parameter_arrays
         self._factorized_weights: dict[Axis, np.ndarray] = factorized_weights or {}
         self._named_axis_values: dict[str, np.ndarray] = named_axis_values or {}
@@ -79,20 +68,6 @@ class EvaluationResult:
     def layout(self) -> AxisLayout:
         """The :class:`~simulation.axis_layout.AxisLayout` of result arrays."""
         return self._layout
-
-    # Transitional views, kept only for one lingering test assertion
-    # (test_evaluation_handle.py); to be deleted at step 12 together with the
-    # dict-accepting constructor form, once that assertion is migrated.
-    # _axis_layout has no readers left (handle.py and runner.py are fully
-    # migrated onto .layout) — excluded from coverage until its step-12 removal.
-
-    @property
-    def _axis_layout(self) -> dict[Axis, int]:  # pragma: no cover
-        return self._layout.positions
-
-    @property
-    def _axis_sizes(self) -> dict[Axis, int]:
-        return self._layout.sizes
 
     @property
     def weights(self) -> np.ndarray:
