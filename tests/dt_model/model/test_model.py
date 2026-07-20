@@ -10,7 +10,15 @@ from scipy import stats
 
 from civic_digital_twins.dt_model import expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
-from civic_digital_twins.dt_model.model.model import InputsContractWarning, IOProxy, Model, ModelContractWarning
+from civic_digital_twins.dt_model.model.model import (
+    AbstractIndexNotInInputsWarning,
+    InputsContractError,
+    IOProxy,
+    Model,
+    ModelContractError,
+    ModelContractViolation,
+    ModelContractWarning,
+)
 
 c1: Distribution = stats.norm(loc=2.0, scale=1.0)  # type: ignore[assignment]
 
@@ -111,12 +119,60 @@ def test_abstract_indexes_includes_timeseries_placeholder():
 
 
 # ---------------------------------------------------------------------------
-# InputsContractWarning — convention check
+# AbstractIndexNotInInputsWarning — convention check
 # ---------------------------------------------------------------------------
 
 
-def test_inputs_contract_warning_fires_for_undeclared_index():
-    """Warn when a scalar Index parameter is not in Inputs."""
+def test_abstract_index_not_in_inputs_warning_fires_for_unresolved_output():
+    """Warn when an Output holds a genuine unresolved abstract Index absent from Inputs."""
+
+    class _Bad(Model, legacy=True):
+        @outputs
+        class Outputs:
+            placeholder: Index
+
+        def __init__(self) -> None:
+            placeholder = Index("dangling", None)
+            super().__init__("Bad", outputs=_Bad.Outputs(placeholder=placeholder))
+
+    with pytest.warns(AbstractIndexNotInInputsWarning, match="'dangling'"):
+        _Bad()
+
+
+def test_abstract_index_not_in_inputs_no_warning_when_declared():
+    """No warning when the abstract Output index is also declared in Inputs."""
+
+    class _Good(Model, legacy=True):
+        @inputs
+        class Inputs:
+            placeholder: Index
+
+        @outputs
+        class Outputs:
+            placeholder: Index
+
+        def __init__(self) -> None:
+            placeholder = Index("resolved", None)
+            super().__init__(
+                "Good",
+                inputs=_Good.Inputs(placeholder=placeholder),
+                outputs=_Good.Outputs(placeholder=placeholder),
+            )
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AbstractIndexNotInInputsWarning)
+        _Good()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# InputsContractError — convention check (hard error)
+# ---------------------------------------------------------------------------
+
+
+def test_inputs_contract_raises_for_undeclared_index():
+    """Raise when a scalar Index parameter is not in Inputs."""
 
     class _Bad(Model, legacy=True):
         @outputs
@@ -137,12 +193,12 @@ def test_inputs_contract_warning_fires_for_undeclared_index():
             )
 
     received = Index("x", 1.0)
-    with pytest.warns(InputsContractWarning, match="'received'"):
+    with pytest.raises(InputsContractError, match="'received'"):
         _Bad(received)
 
 
-def test_inputs_contract_warning_fires_for_undeclared_timeseries():
-    """Warn when a TimeseriesIndex parameter is not in Inputs."""
+def test_inputs_contract_raises_for_undeclared_timeseries():
+    """Raise when a TimeseriesIndex parameter is not in Inputs."""
 
     class _Bad(Model, legacy=True):
         @outputs
@@ -158,12 +214,12 @@ def test_inputs_contract_warning_fires_for_undeclared_timeseries():
             super().__init__("Bad", outputs=_Bad.Outputs(out=out), expose=_Bad.Expose(ts=ts))
 
     ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
-    with pytest.warns(InputsContractWarning, match="'ts'"):
+    with pytest.raises(InputsContractError, match="'ts'"):
         _Bad(ts)
 
 
-def test_inputs_contract_warning_fires_for_undeclared_list():
-    """Warn for each item in a list[Index] parameter not in Inputs."""
+def test_inputs_contract_raises_for_undeclared_list():
+    """Raise naming every item in a list[Index] parameter not in Inputs."""
 
     class _Bad(Model, legacy=True):
         @outputs
@@ -179,15 +235,15 @@ def test_inputs_contract_warning_fires_for_undeclared_list():
             super().__init__("Bad", outputs=_Bad.Outputs(total=total), expose=_Bad.Expose(costs=costs))
 
     costs = [Index("c0", 1.0), Index("c1", 2.0)]
-    with pytest.warns(InputsContractWarning) as record:
+    with pytest.raises(InputsContractError) as excinfo:
         _Bad(costs)
-    messages = [str(w.message) for w in record]
-    assert any("costs[0]" in m for m in messages)
-    assert any("costs[1]" in m for m in messages)
+    message = str(excinfo.value)
+    assert "costs[0]" in message
+    assert "costs[1]" in message
 
 
-def test_inputs_contract_no_warning_when_declared():
-    """No warning when all Index params are stored in Inputs."""
+def test_inputs_contract_no_error_when_declared():
+    """No error when all Index params are stored in Inputs."""
 
     class _Good(Model, legacy=True):
         @inputs
@@ -208,15 +264,11 @@ def test_inputs_contract_no_warning_when_declared():
             )
 
     received = Index("x", 1.0)
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", InputsContractWarning)
-        _Good(received)  # must not raise
+    _Good(received)  # must not raise
 
 
-def test_inputs_contract_no_warning_for_non_index_params():
-    """No warning for str, float, or ndarray constructor parameters."""
+def test_inputs_contract_no_error_for_non_index_params():
+    """No error for str, float, or ndarray constructor parameters."""
 
     class _Good(Model, legacy=True):
         @outputs
@@ -227,30 +279,29 @@ def test_inputs_contract_no_warning_for_non_index_params():
             result = Index("result", scale)
             super().__init__("Good", outputs=_Good.Outputs(result=result))
 
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", InputsContractWarning)
-        _Good("hello", 3.14, np.array([1.0]))  # must not raise
+    _Good("hello", 3.14, np.array([1.0]))  # must not raise
 
 
-def test_inputs_contract_no_warning_for_base_model():
-    """No warning when constructing Model directly (only fires for subclasses)."""
-    import warnings
-
+def test_inputs_contract_no_error_for_base_model():
+    """No error when constructing Model directly (only fires for subclasses)."""
     # Model itself has no __init__ parameter convention to check
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", InputsContractWarning)
-        Model("base", outputs=None)  # must not raise
+    Model("base", outputs=None)  # must not raise
 
 
-def test_inputs_contract_warning_is_subclass_of_model_contract_warning():
-    """InputsContractWarning is a subclass of ModelContractWarning."""
-    assert issubclass(InputsContractWarning, ModelContractWarning)
+def test_inputs_contract_error_is_subclass_of_model_contract_error_not_warning():
+    """InputsContractError is a ModelContractError, not a ModelContractWarning."""
+    assert issubclass(InputsContractError, ModelContractError)
+    assert not issubclass(InputsContractError, ModelContractWarning)
 
 
-def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
-    """Filtering on ModelContractWarning catches InputsContractWarning."""
+def test_inputs_contract_error_and_abstract_index_warning_share_violation_base():
+    """Both severities are ModelContractViolation, enabling a single unified except clause."""
+    assert issubclass(InputsContractError, ModelContractViolation)
+    assert issubclass(AbstractIndexNotInInputsWarning, ModelContractViolation)
+
+
+def test_model_contract_error_base_catches_inputs_contract_error():
+    """Catching ModelContractError also catches InputsContractError."""
 
     class _Bad(Model, legacy=True):
         @outputs
@@ -266,8 +317,49 @@ def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
             super().__init__("Bad", outputs=_Bad.Outputs(result=result), expose=_Bad.Expose(received=received))
 
     received = Index("x", 1.0)
-    with pytest.warns(ModelContractWarning):
+    with pytest.raises(ModelContractError):
         _Bad(received)
+
+
+def test_model_contract_violation_catches_inputs_contract_error():
+    """Catching ModelContractViolation also catches the hard-error InputsContractError."""
+
+    class _Bad(Model, legacy=True):
+        @outputs
+        class Outputs:
+            result: Index
+
+        @expose
+        class Expose:
+            received: Index
+
+        def __init__(self, received: Index) -> None:
+            result = Index("result", received + 1.0)
+            super().__init__("Bad", outputs=_Bad.Outputs(result=result), expose=_Bad.Expose(received=received))
+
+    received = Index("x", 1.0)
+    with pytest.raises(ModelContractViolation):
+        _Bad(received)
+
+
+def test_model_contract_violation_catches_abstract_index_warning_once_escalated():
+    """ModelContractViolation also catches the soft AbstractIndexNotInInputsWarning once escalated."""
+
+    class _Bad(Model, legacy=True):
+        @outputs
+        class Outputs:
+            placeholder: Index
+
+        def __init__(self) -> None:
+            placeholder = Index("dangling", None)
+            super().__init__("Bad", outputs=_Bad.Outputs(placeholder=placeholder))
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AbstractIndexNotInInputsWarning)
+        with pytest.raises(ModelContractViolation):
+            _Bad()
 
 
 # ---------------------------------------------------------------------------
@@ -275,9 +367,8 @@ def test_model_contract_warning_base_filter_catches_inputs_contract_warning():
 # ---------------------------------------------------------------------------
 
 
-def test_inputs_contract_warning_fires_for_undeclared_dict():
-    """InputsContractWarning names each missing key when the parameter is a dict."""
-    import warnings
+def test_inputs_contract_raises_for_undeclared_dict():
+    """InputsContractError names each missing key when the parameter is a dict."""
 
     class _Bad(Model, legacy=True):
         @dataclasses.dataclass
@@ -290,20 +381,16 @@ def test_inputs_contract_warning_fires_for_undeclared_dict():
 
     x = Index("x", 1.0)
     y = Index("y", 2.0)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with pytest.raises(InputsContractError) as excinfo:
         _Bad(mapping={"a": x, "b": y})
 
-    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
-    assert len(contract_warnings) == 2
-    messages = [str(w.message) for w in contract_warnings]
-    assert any("mapping['a']" in m for m in messages)
-    assert any("mapping['b']" in m for m in messages)
+    message = str(excinfo.value)
+    assert "mapping['a']" in message
+    assert "mapping['b']" in message
 
 
-def test_inputs_contract_no_warning_for_declared_dict():
-    """No InputsContractWarning when all dict-valued GenericIndex entries are in Inputs."""
-    import warnings
+def test_inputs_contract_no_error_for_declared_dict():
+    """No InputsContractError when all dict-valued GenericIndex entries are in Inputs."""
 
     class _Good(Model, legacy=True):
         @dataclasses.dataclass
@@ -320,12 +407,7 @@ def test_inputs_contract_no_warning_for_declared_dict():
             super().__init__("Good", inputs=inputs, outputs=_Good.Outputs(result=result))
 
     x = Index("x", 1.0)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _Good(mapping={"a": x})
-
-    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
-    assert len(contract_warnings) == 0
+    _Good(mapping={"a": x})  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +418,6 @@ def test_inputs_contract_no_warning_for_declared_dict():
 def test_inputs_contract_no_crash_when_signature_unavailable():
     """_check_inputs_contract silently returns when inspect.signature raises."""
     import unittest.mock
-    import warnings
 
     class _Model(Model, legacy=True):
         @dataclasses.dataclass
@@ -355,13 +436,8 @@ def test_inputs_contract_no_crash_when_signature_unavailable():
     # Patch inspect.signature to raise TypeError, simulating a built-in or
     # C-extension __init__ whose signature cannot be introspected.
     with unittest.mock.patch("inspect.signature", side_effect=TypeError("no sig")):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            # Must not raise — the contract check should be silently skipped.
-            _Model(x)
-
-    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
-    assert len(contract_warnings) == 0
+        # Must not raise — the contract check should be silently skipped.
+        _Model(x)
 
 
 def test_inputs_contract_skips_params_absent_from_locals():
@@ -371,7 +447,6 @@ def test_inputs_contract_skips_params_absent_from_locals():
     parameter declared in the signature is removed from local scope (via ``del``)
     before ``super().__init__()`` is called.
     """
-    import warnings
 
     class _ModelWithDeletedParam(Model, legacy=True):
         @dataclasses.dataclass
@@ -393,14 +468,9 @@ def test_inputs_contract_skips_params_absent_from_locals():
 
     x = Index("x", 1.0)
     y = Index("y", 2.0)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        # Must not raise even though 'y' is absent from f_locals.
-        _ModelWithDeletedParam(x, y)
-
-    # No warning fires: x is declared in Inputs; y was deleted before inspection.
-    contract_warnings = [w for w in caught if issubclass(w.category, InputsContractWarning)]
-    assert len(contract_warnings) == 0
+    # Must not raise even though 'y' is absent from f_locals:
+    # x is declared in Inputs; y was deleted before inspection.
+    _ModelWithDeletedParam(x, y)
 
 
 # ---------------------------------------------------------------------------

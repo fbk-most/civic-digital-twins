@@ -156,7 +156,7 @@ Annotate each inner class with the appropriate decorator instead of `@dataclass`
 | `@functions` | `Functions` | Typed functor injection (see below) |
 
 Each decorator wraps `@dataclass` and additionally validates that every declared field holds a
-`GenericIndex` instance (or a `list` / `dict` thereof).  An `InputsContractWarning` is emitted if
+`GenericIndex` instance (or a `list` / `dict` thereof).  `InputsContractError` is raised if
 a `GenericIndex` is passed to the constructor but absent from the `Inputs` declaration.
 
 ### `@define` — generating `__init__` from `compute()`
@@ -299,7 +299,7 @@ Models with complex construction logic that cannot be expressed in `compute()` c
 hand-written `__init__` is detected and no `@define` is present.
 
 A `legacy=True` model **must still** declare `@inputs`, `@outputs`, and `@expose` inner classes and
-construct them correctly; the `InputsContractWarning` mechanism still applies.  See "Inputs Contract
+construct them correctly; the `InputsContractError` mechanism still applies.  See "Inputs Contract
 Convention" below:
 
 ```python
@@ -325,7 +325,7 @@ class GoodModel(Model, legacy=True):
 ## Three-Level Access Model
 
 Every `Model` instance exposes indexes at exactly three levels of visibility.  The levels are enforced
-by convention and by the `InputsContractWarning` mechanism; they are not enforced by Python's access
+by convention and by the `InputsContractError` mechanism; they are not enforced by Python's access
 control.
 
 ### Level 1 — Contractual (`inputs` and `outputs`)
@@ -487,7 +487,7 @@ class PipelineModel(Model):
 
 ---
 
-## Inputs Contract Convention and `InputsContractWarning`
+## Inputs Contract Convention and `InputsContractError`
 
 ### The convention
 
@@ -520,7 +520,7 @@ class GoodModel(Model, legacy=True):
 ```
 
 ```python
-# INCORRECT — 'inflow' is received but absent from Inputs; InputsContractWarning fires
+# INCORRECT — 'inflow' is received but absent from Inputs; InputsContractError is raised
 class BadModel(Model, legacy=True):
 
     @inputs
@@ -528,7 +528,7 @@ class BadModel(Model, legacy=True):
         pass   # inflow is missing
 
     def __init__(self, inflow: TimeseriesIndex) -> None:
-        # InputsContractWarning fires here: 'inflow' holds a GenericIndex
+        # InputsContractError is raised here: 'inflow' holds a GenericIndex
         # that is not declared in Inputs.
         total = Index("total_bad", inflow.sum())
         super().__init__("Bad", inputs=BadModel.Inputs())
@@ -538,30 +538,31 @@ This rule exists because `Inputs` is the only place where the inter-model wiring
 as inspectable metadata.  `ModelVariant`'s cross-variant consistency check reads `model.inputs` field
 names — if an index is received but not declared in `Inputs`, the check is blind to it.
 
-### `InputsContractWarning`
+### `InputsContractError`
 
 At construction time, `Model.__init__` inspects the calling frame and compares the constructor's
 `GenericIndex` parameters against the declared `Inputs` fields.  Any undeclared index parameter
-triggers an `InputsContractWarning`.
+raises `InputsContractError`.
 
-The warning is **soft** — it does not abort execution — so that existing models can be migrated
-incrementally.  During development, escalate it to an error:
+This is a **hard error**, and deliberately *not* a subclass of `ModelContractWarning`: `Model` raises
+it directly rather than routing it through `warnings.warn`, so it cannot be silenced with
+`warnings.filterwarnings`.  Fix the offending `__init__` instead.  Other, still-soft members of the
+contract-warning family can be escalated during development:
 
 ```python
 import warnings
 
-from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
+from civic_digital_twins.dt_model import ModelContractWarning
 
 with warnings.catch_warnings():
-    # Escalate all contract warnings to errors (recommended for CI)
+    # InputsContractError is already a hard error; this escalates the
+    # remaining soft warnings still in the family.
     warnings.filterwarnings("error", category=ModelContractWarning)
-
-    # Or target only the inputs-specific warning
-    warnings.filterwarnings("error", category=InputsContractWarning)
 ```
 
-`InputsContractWarning` is a subclass of `ModelContractWarning`, so a single filter on the base class
-catches all present and future contract-violation categories.
+`InputsContractError` and `ModelContractWarning`'s subclasses are siblings under `ModelContractViolation`,
+so a single `except ModelContractViolation` catches any contract violation regardless of severity —
+hard error or (once escalated) soft warning alike.
 
 ---
 
@@ -1315,8 +1316,8 @@ def functions(cls: type) -> type:
     ...
 ```
 
-Each decorator wraps `@dataclass` internally and adds field-type validation.  An
-`InputsContractWarning` is emitted when a `GenericIndex` is present in the constructor scope but
+Each decorator wraps `@dataclass` internally and adds field-type validation.
+`InputsContractError` is raised when a `GenericIndex` is present in the constructor scope but
 absent from the `Inputs` declaration (applies to `legacy=True` models).
 
 ### `Model`
@@ -1555,34 +1556,55 @@ are yielded in `.values()` order (insertion order in Python 3.7+).
 
 ---
 
-### Warning classes
+### Contract-violation classes
 
 ```python
-class ModelContractWarning(UserWarning):
-    """Base class for all Model I/O contract warnings."""
+class ModelContractViolation(Exception):
+    """Common base for any Model I/O contract violation, soft or hard."""
 
-class InputsContractWarning(ModelContractWarning):
-    """Emitted when a constructor parameter holds a GenericIndex not declared in Inputs."""
+class ModelContractWarning(ModelContractViolation, UserWarning):
+    """Base class for all soft Model I/O contract warnings."""
+
+class ModelContractError(ModelContractViolation):
+    """Base class for all hard Model I/O contract errors."""
+
+class InputsContractError(ModelContractError):
+    """Raised when a constructor parameter holds a GenericIndex not declared in Inputs."""
 
 class AbstractIndexNotInInputsWarning(ModelContractWarning):
     """Emitted when an abstract index is not reachable via the model's Inputs."""
 ```
 
-All three are subclasses of `UserWarning`.  Both concrete warnings are additionally subclasses of
-`ModelContractWarning`, so a single filter on the base class covers all contract-violation
-categories:
+`ModelContractWarning` and `ModelContractError` are siblings, not parent/child: a hard error is not a
+kind of soft warning wearing a stricter hat, it is a different thing that happens to share a
+family lineage.  `ModelContractViolation` exists purely so that a single `except` can catch both —
+it inherits from `Exception` (rather than being a bare marker) precisely so it is itself a valid
+`except`/`pytest.raises` target, but it is never raised or emitted directly.
+
+`InputsContractError` is raised directly (a hard error, unaffected by `warnings.filterwarnings`);
+`AbstractIndexNotInInputsWarning` remains a soft warning that can be escalated with a single filter
+on its own base class:
 
 ```python
 import warnings
 
-from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
+from civic_digital_twins.dt_model import ModelContractWarning
 
 with warnings.catch_warnings():
-    # Recommended for CI — escalate all contract warnings to errors
+    # InputsContractError is already a hard error; this escalates the
+    # remaining soft warnings still in the family.
     warnings.filterwarnings("error", category=ModelContractWarning)
+```
 
-    # Fine-grained — only escalate the inputs-specific warning
-    warnings.filterwarnings("error", category=InputsContractWarning)
+To catch *any* contract violation regardless of severity, catch `ModelContractViolation` instead:
+
+```python
+from civic_digital_twins.dt_model import ModelContractViolation
+
+try:
+    SomeModel(...)
+except ModelContractViolation:
+    ...
 ```
 
 ---
@@ -1628,7 +1650,7 @@ correct: parameters whose values come from outside the model are inputs by defin
 An earlier approach placed `list(sub_model.indexes)` into named fields of the root's `Expose` to
 achieve the same reachability.  That approach worked mechanically but mixed concerns: `Expose` is
 meant for diagnostic timeseries, not for parameter surfacing.  It also prevented
-`InputsContractWarning` from firing on the parameters that were absent from `Inputs`, silently
+`InputsContractError` from firing on the parameters that were absent from `Inputs`, silently
 weakening the contract check.  Declaring parameters in `Inputs` is clearer and consistent with the
 three-level access model.
 

@@ -16,7 +16,7 @@ from civic_digital_twins.dt_model import (
     Functor,
     GenericIndex,
     Index,
-    InputsContractWarning,
+    InputsContractError,
     Model,
     ModelVariant,
     NumpyBackend,
@@ -243,8 +243,8 @@ assert _id_in(pipeline.outputs.result, pipeline.indexes)
 
 
 # ---------------------------------------------------------------------------
-# dd-cdt-modularity.md §5 — Inputs contract convention / InputsContractWarning
-# (legacy=True models demonstrating the warning for hand-written __init__)
+# dd-cdt-modularity.md §5 — Inputs contract convention / InputsContractError
+# (legacy=True models demonstrating the error for hand-written __init__)
 # ---------------------------------------------------------------------------
 
 
@@ -267,14 +267,14 @@ class GoodModel(Model, legacy=True):
 
 
 class BadModel(Model, legacy=True):
-    """Model that deliberately omits 'inflow' from its Inputs to trigger the warning."""
+    """Model that deliberately omits 'inflow' from its Inputs to trigger the error."""
 
     @inputs
     class Inputs:
         pass   # inflow is missing
 
     def __init__(self, inflow: TimeseriesIndex) -> None:
-        # InputsContractWarning fires here: 'inflow' holds a GenericIndex
+        # InputsContractError is raised here: 'inflow' holds a GenericIndex
         # that is not declared in Inputs.
         total = Index("total_bad", inflow.sum())  # noqa: F841
         super().__init__("Bad", inputs=BadModel.Inputs())
@@ -286,32 +286,28 @@ good = GoodModel(ts_inflow_gs)
 assert good.inputs.inflow is ts_inflow_gs
 assert good.outputs.total is not None
 
-with warnings.catch_warnings(record=True) as caught:
-    warnings.simplefilter("always")
+try:
     BadModel(ts_inflow_gs)
-
-assert any(issubclass(w.category, InputsContractWarning) for w in caught), (
-    "Expected an InputsContractWarning when a GenericIndex parameter is absent from Inputs"
-)
+    raise AssertionError("Expected InputsContractError when a GenericIndex parameter is absent from Inputs")
+except InputsContractError:
+    pass
 
 
 # ---------------------------------------------------------------------------
-# Block 08: dd-cdt-modularity.md — InputsContractWarning filterwarnings
+# Block 08: dd-cdt-modularity.md — ModelContractWarning filterwarnings
 # ---------------------------------------------------------------------------
 
 
 def _demo_08_filterwarnings() -> None:
-    """Block 08: Escalate contract warnings to errors."""
+    """Block 08: Escalate remaining soft contract warnings to errors."""
     import warnings
 
-    from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
+    from civic_digital_twins.dt_model import ModelContractWarning
 
     with warnings.catch_warnings():
-        # Escalate all contract warnings to errors (recommended for CI)
+        # InputsContractError is already a hard error; this escalates the
+        # remaining soft warnings still in the family.
         warnings.filterwarnings("error", category=ModelContractWarning)
-
-        # Or target only the inputs-specific warning
-        warnings.filterwarnings("error", category=InputsContractWarning)
 
 
 # ---------------------------------------------------------------------------
@@ -659,17 +655,15 @@ assert _smoothed_node is not None
 
 
 def _demo_29_filterwarnings_api() -> None:
-    """Block 29: API reference — escalate contract warnings."""
+    """Block 29: API reference — escalate remaining soft contract warnings."""
     import warnings
 
-    from civic_digital_twins.dt_model import InputsContractWarning, ModelContractWarning
+    from civic_digital_twins.dt_model import ModelContractWarning
 
     with warnings.catch_warnings():
-        # Recommended for CI — escalate all contract warnings to errors
+        # Recommended for CI — escalate remaining soft contract warnings to errors
+        # (InputsContractError is already a hard error and needs no escalation)
         warnings.filterwarnings("error", category=ModelContractWarning)
-
-        # Fine-grained — only escalate the inputs-specific warning
-        warnings.filterwarnings("error", category=InputsContractWarning)
 
 
 # ---------------------------------------------------------------------------
