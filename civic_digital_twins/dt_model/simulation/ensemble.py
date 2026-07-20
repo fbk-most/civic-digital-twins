@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from ..model.axis import ENSEMBLE, Axis
+from ..axes import ENSEMBLE, Axis
 from ..model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -19,8 +19,21 @@ from ..model.index import (
     GenericIndex,
     Index,
 )
+from .axis_layout import AxisLayout
 from .plan import EvaluationPlan
 from .scenario import Scenario
+
+
+def _grown_axes(axes: tuple[Axis, ...], sizes: tuple[int, ...], axis_name: str, new_size: int) -> tuple[Axis, ...]:
+    """Return *axes* with the named axis regenerated at *new_size* (position preserved).
+
+    Thin wrapper around :meth:`~simulation.axis_layout.AxisLayout.with_grown_axis`
+    so growing a :class:`FrozenEnsemble` axis goes through the same primitive
+    as the merge functions in ``handle.py``, rather than hand-rolling a fresh
+    ``Axis(name, ENSEMBLE)``.
+    """
+    return AxisLayout.build(ensemble=list(zip(axes, sizes))).with_grown_axis(axis_name, new_size).axes
+
 
 WeightedScenario = tuple[float, dict[GenericIndex, Any]]
 """A weighted scenario maps each abstract index to a concrete value.
@@ -208,9 +221,9 @@ class FrozenEnsemble:
             idx: np.concatenate([self._cached_assignments[idx], other._cached_assignments[idx]])
             for idx in self._cached_assignments
         }
-        new_ax = Axis(self._axes[0].name, ENSEMBLE)
+        new_axes = _grown_axes(self._axes, (S1,), self._axes[0].name, S1 + S2)
         return FrozenEnsemble(
-            (new_ax,),
+            new_axes,
             (merged_weights,),
             merged_assignments,
         )
@@ -235,8 +248,8 @@ class FrozenEnsemble:
         S2 = other._weights[0].size
         alpha = S1 / (S1 + S2)
         merged_weights = np.concatenate([self._weights[ax_idx] * alpha, other._weights[0] * (1.0 - alpha)])
-        new_ax = Axis(axis_name, ENSEMBLE)
-        new_axes = tuple(new_ax if i == ax_idx else ax for i, ax in enumerate(self._axes))
+        sizes = tuple(w.size for w in self._weights)
+        new_axes = _grown_axes(self._axes, sizes, axis_name, S1 + S2)
         new_weights = tuple(merged_weights if i == ax_idx else w for i, w in enumerate(self._weights))
         M = len(self._axes)
         merged_assignments: dict[GenericIndex, np.ndarray] = {}
@@ -268,8 +281,8 @@ class FrozenEnsemble:
         """
         ax_idx = next(i for i, ax in enumerate(self._axes) if ax.name == axis_name)
         S2 = other._weights[0].size
-        new_ax = Axis(axis_name, ENSEMBLE)
-        new_axes = tuple(new_ax if i == ax_idx else ax for i, ax in enumerate(self._axes))
+        sizes = tuple(w.size for w in self._weights)
+        new_axes = _grown_axes(self._axes, sizes, axis_name, S2)
         new_weights = tuple(other._weights[0] if i == ax_idx else w for i, w in enumerate(self._weights))
         M = len(self._axes)
         merged_assignments: dict[GenericIndex, np.ndarray] = {}

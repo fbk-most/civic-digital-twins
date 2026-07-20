@@ -103,7 +103,7 @@ def test_axes_two_axes_result_shape():
 
 def test_axes_non_axis_abstract_has_shape_1_1_s():
     """A non-axis abstract index has shape (1, …, 1, S)."""
-    from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+    from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
     from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
 
     I_x = Index("x", None)
@@ -158,7 +158,7 @@ def test_axes_two_axes_additive_formula():
 
 def test_axes_non_axis_factor_marginalised_correctly():
     """Weighted marginalisation over a non-axis index gives the correct mean."""
-    from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
+    from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
     from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
 
     I_x = Index("x", None)
@@ -753,3 +753,23 @@ def test_evaluation_result_full_shape_with_axes():
     ens = DistributionEnsemble(scenario, 7)
     result = ev.evaluate(ensemble=ens)
     assert result.full_shape == (7,)
+
+
+def test_evaluation_result_layout_property():
+    """EvaluationResult.layout exposes the AxisLayout of result arrays."""
+    from scipy import stats  # noqa: PLC0415
+
+    from civic_digital_twins.dt_model.axes import ENSEMBLE  # noqa: PLC0415
+    from civic_digital_twins.dt_model.model.index import DistributionIndex  # noqa: PLC0415
+    from civic_digital_twins.dt_model.simulation.axis_layout import AxisLayout  # noqa: PLC0415
+    from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble  # noqa: PLC0415
+
+    I_x = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    I_result = Index("result", I_x.node * 2.0)
+    model = _make_model(I_x, I_result)
+    scenario = Scenario(model)
+    ev = Evaluation(scenario)
+    result = ev.evaluate(ensemble=DistributionEnsemble(scenario, 7))
+    assert isinstance(result.layout, AxisLayout)
+    assert result.layout.full_shape == (7,)
+    assert [ax.role for ax in result.layout.axes] == [ENSEMBLE]

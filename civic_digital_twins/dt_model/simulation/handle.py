@@ -24,9 +24,9 @@ from typing import Any
 
 import numpy as np
 
+from ..axes import ENSEMBLE, PARAMETER, Axis
 from ..engine.frontend import graph
 from ..engine.numpybackend import executor
-from ..model.axis import ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from .ensemble import BatchDrawable, DistributionEnsemble, FrozenEnsemble
 from .evaluation import Evaluation, EvaluationResult
@@ -103,8 +103,8 @@ def _merge_results(
         axes differ, or if the PARAMETER axis layouts are incompatible.
     """
     # --- Collect ENSEMBLE axes ---
-    ens_1 = [(ax, pos) for ax, pos in r1._axis_layout.items() if ax.role == ENSEMBLE]
-    ens_2 = [(ax, pos) for ax, pos in r2._axis_layout.items() if ax.role == ENSEMBLE]
+    ens_1 = r1.layout.axes_by_role(ENSEMBLE)
+    ens_2 = r2.layout.axes_by_role(ENSEMBLE)
 
     if not ens_1 or not ens_2:
         raise ValueError(
@@ -127,34 +127,30 @@ def _merge_results(
                 f"_merge_results: both results have multiple ENSEMBLE axes {names}; "
                 "specify merge_axis_name= to indicate which axis to grow."
             )
-        grow_entry_1 = next(((ax, pos) for ax, pos in ens_1 if ax.name == merge_axis_name), None)
-        grow_entry_2 = next(((ax, pos) for ax, pos in ens_2 if ax.name == merge_axis_name), None)
-        if grow_entry_1 is None:
+        grow_ax_1 = r1.layout.find_axis(merge_axis_name, ENSEMBLE)
+        grow_ax_2 = r2.layout.find_axis(merge_axis_name, ENSEMBLE)
+        if grow_ax_1 is None:
             raise ValueError(f"_merge_results: no ENSEMBLE axis named {merge_axis_name!r} in r1.")
-        if grow_entry_2 is None:
+        if grow_ax_2 is None:
             raise ValueError(f"_merge_results: no ENSEMBLE axis named {merge_axis_name!r} in r2.")
-        grow_ax_1, ens_pos = grow_entry_1
-        grow_ax_2, ens_pos2 = grow_entry_2
+        ens_pos = r1.layout.position_of(grow_ax_1)
+        ens_pos2 = r2.layout.position_of(grow_ax_2)
         if ens_pos != ens_pos2:
             raise ValueError(
                 f"Growing ENSEMBLE axis {merge_axis_name!r} is at dim {ens_pos} in r1 but dim {ens_pos2} in r2."
             )
 
         # Validate the fixed ENSEMBLE axes match by name, position, and size.
-        def _fixed_ens_sig(axes: list[tuple[Axis, int]], sizes: dict[Axis, int]) -> frozenset[tuple[str, int, int]]:
-            return frozenset((ax.name, pos, sizes[ax]) for ax, pos in axes if ax.name != merge_axis_name)
-
-        if _fixed_ens_sig(ens_1, r1._axis_sizes) != _fixed_ens_sig(ens_2, r2._axis_sizes):
+        fixed_1 = r1.layout.role_signature(ENSEMBLE, exclude_name=merge_axis_name)
+        fixed_2 = r2.layout.role_signature(ENSEMBLE, exclude_name=merge_axis_name)
+        if fixed_1 != fixed_2:
             raise ValueError("_merge_results: fixed ENSEMBLE axis layouts differ between r1 and r2.")
 
-    S1: int = r1._axis_sizes[grow_ax_1]
-    S2: int = r2._axis_sizes[grow_ax_2]
+    S1: int = r1.layout.size_of(grow_ax_1)
+    S2: int = r2.layout.size_of(grow_ax_2)
 
     # --- Validate that PARAMETER axes are compatible ---
-    def _param_sig(layout: dict[Axis, int], sizes: dict[Axis, int]) -> frozenset[tuple[str, object, int, int]]:
-        return frozenset((ax.name, ax.role, pos, sizes[ax]) for ax, pos in layout.items() if ax.role != ENSEMBLE)
-
-    if _param_sig(r1._axis_layout, r1._axis_sizes) != _param_sig(r2._axis_layout, r2._axis_sizes):
+    if r1.layout.parameter_signature() != r2.layout.parameter_signature():
         raise ValueError(
             "_merge_results requires both results to have identical PARAMETER axis layouts. "
             "Ensure both were built from the same plan with the same 'parameters=' dict."
@@ -190,40 +186,28 @@ def _merge_results(
             merged_values[node] = np.concatenate([v1, v2], axis=ens_pos)
 
     # --- Build merged axis metadata ---
-    # Fresh Axis object for the grown dimension (identity-based keys; old object
-    # would carry a stale size and must not be reused).
-    merged_grow_ax = Axis(grow_ax_1.name, ENSEMBLE)
-    merged_axis_layout: dict[Axis, int] = {
-        **{ax: pos for ax, pos in r1._axis_layout.items() if ax is not grow_ax_1},
-        merged_grow_ax: ens_pos,
-    }
-    merged_axis_sizes: dict[Axis, int] = {
-        **{ax: sz for ax, sz in r1._axis_sizes.items() if ax is not grow_ax_1},
-        merged_grow_ax: S1 + S2,
-    }
+    merged_layout = r1.layout.with_grown_axis(grow_ax_1.name, S1 + S2)
 
     # Size-proportional mixture for the growing axis; fixed ENSEMBLE axes
-    # keep their factorised weights from r1 unchanged.
-    w1 = r1._factorized_weights[grow_ax_1]
-    w2 = r2._factorized_weights[grow_ax_2]
+    # keep their factorised weights from r1 unchanged.  (Axis equality is
+    # value-based, so the grown dimension keeps grow_ax_1 as its key.)
+    w1 = r1.factorized_weights[grow_ax_1]
+    w2 = r2.factorized_weights[grow_ax_2]
     alpha = S1 / (S1 + S2)
-    merged_factorized_weights: dict[Axis, np.ndarray] = {
-        **{ax: w for ax, w in r1._factorized_weights.items() if ax is not grow_ax_1},
-        merged_grow_ax: np.concatenate([w1 * alpha, w2 * (1.0 - alpha)]),
-    }
+    merged_factorized_weights: dict[Axis, np.ndarray] = dict(r1.factorized_weights)
+    merged_factorized_weights[grow_ax_1] = np.concatenate([w1 * alpha, w2 * (1.0 - alpha)])
 
     merged_state = executor.State(merged_values)
     # named_axis_values is taken from r1 unchanged.  This is sound because the
-    # _param_sig check above already proved r1 and r2 share identical PARAMETER
-    # axes (name, role, position, size); and _merge_results only ever grows an
-    # ENSEMBLE axis, never a PARAMETER axis.
+    # parameter-signature check above already proved r1 and r2 share identical
+    # PARAMETER axes (name, role, position, size); and _merge_results only ever
+    # grows an ENSEMBLE axis, never a PARAMETER axis.
     return EvaluationResult(
         merged_state,
-        merged_axis_layout,
-        r1._parameter_arrays,
-        axis_sizes=merged_axis_sizes,
+        merged_layout,
+        r1.parameter_values,
         factorized_weights=merged_factorized_weights,
-        named_axis_values=r1._named_axis_values or None,
+        named_axis_values=r1.named_axis_values or None,
     )
 
 
@@ -267,8 +251,8 @@ def _merge_results_param_extend(
     param_name: str = getattr(param_idx, "name", repr(param_idx))
 
     # --- Validate ENSEMBLE axes ---
-    ens_1 = [(ax, pos) for ax, pos in r1._axis_layout.items() if ax.role == ENSEMBLE]
-    ens_2 = [(ax, pos) for ax, pos in r2._axis_layout.items() if ax.role == ENSEMBLE]
+    ens_1 = r1.layout.axes_by_role(ENSEMBLE)
+    ens_2 = r2.layout.axes_by_role(ENSEMBLE)
     if len(ens_1) != 1 or len(ens_2) != 1:
         raise ValueError(
             "_merge_results_param_extend requires exactly one ENSEMBLE axis in each result; "
@@ -278,8 +262,8 @@ def _merge_results_param_extend(
     _, ens_pos2 = ens_2[0]
     if ens_pos != ens_pos2:
         raise ValueError(f"ENSEMBLE axis position mismatch: r1 at dim {ens_pos}, r2 at dim {ens_pos2}.")
-    S = r1._axis_sizes[ax_ens]
-    S2_check = r2._axis_sizes[ens_2[0][0]]
+    S = r1.layout.size_of(ax_ens)
+    S2_check = r2.layout.size_of(ens_2[0][0])
     if S != S2_check:
         raise ValueError(
             f"_merge_results_param_extend requires identical ENSEMBLE sizes; got {S} vs {S2_check}. "
@@ -287,33 +271,24 @@ def _merge_results_param_extend(
         )
 
     # --- Locate the growing PARAMETER axis in r1 ---
-    grow_ax_1: Axis | None = next(
-        (ax for ax, _ in r1._axis_layout.items() if ax.role == PARAMETER and ax.name == param_name),
-        None,
-    )
+    grow_ax_1 = r1.layout.find_axis(param_name, PARAMETER)
     if grow_ax_1 is None:
         raise ValueError(
             f"_merge_results_param_extend: no PARAMETER axis named {param_name!r} in r1. "
             "extra_parameters must contain indexes already present in the initial parameters= dict."
         )
-    param_pos = r1._axis_layout[grow_ax_1]
-    P1 = r1._axis_sizes[grow_ax_1]
+    param_pos = r1.layout.position_of(grow_ax_1)
+    P1 = r1.layout.size_of(grow_ax_1)
 
-    grow_ax_2: Axis | None = next(
-        (ax for ax, _ in r2._axis_layout.items() if ax.role == PARAMETER and ax.name == param_name),
-        None,
-    )
+    grow_ax_2 = r2.layout.find_axis(param_name, PARAMETER)
     if grow_ax_2 is None:
         raise ValueError(f"_merge_results_param_extend: no PARAMETER axis named {param_name!r} in r2.")
-    P2 = r2._axis_sizes[grow_ax_2]
+    P2 = r2.layout.size_of(grow_ax_2)
 
     # --- Validate fixed PARAMETER axes ---
-    def _fixed_sig(layout: dict[Axis, int], sizes: dict[Axis, int]) -> frozenset[tuple[str, int, int]]:
-        return frozenset(
-            (ax.name, pos, sizes[ax]) for ax, pos in layout.items() if ax.role == PARAMETER and ax.name != param_name
-        )
-
-    if _fixed_sig(r1._axis_layout, r1._axis_sizes) != _fixed_sig(r2._axis_layout, r2._axis_sizes):
+    fixed_1 = r1.layout.role_signature(PARAMETER, exclude_name=param_name)
+    fixed_2 = r2.layout.role_signature(PARAMETER, exclude_name=param_name)
+    if fixed_1 != fixed_2:
         raise ValueError("_merge_results_param_extend: fixed PARAMETER axis layouts differ between r1 and r2.")
 
     # --- Concatenate node arrays along the growing PARAMETER axis ---
@@ -337,41 +312,30 @@ def _merge_results_param_extend(
             merged_values[node] = np.concatenate([v1, v2], axis=param_pos)
 
     # --- Build merged axis metadata ---
-    # Fresh Axis identity for the grown dimension (old object would carry stale size).
-    merged_grow_ax = Axis(param_name, PARAMETER)
-    merged_axis_layout: dict[Axis, int] = {}
-    merged_axis_sizes: dict[Axis, int] = {}
-    for ax, pos in r1._axis_layout.items():
-        if ax is grow_ax_1:
-            merged_axis_layout[merged_grow_ax] = pos
-            merged_axis_sizes[merged_grow_ax] = P1 + P2
-        else:
-            merged_axis_layout[ax] = pos
-            merged_axis_sizes[ax] = r1._axis_sizes[ax]
+    merged_layout = r1.layout.with_grown_axis(param_name, P1 + P2)
 
     # Factorised weights: ENSEMBLE axis unchanged.
-    merged_factorized_weights: dict[Axis, np.ndarray] = dict(r1._factorized_weights)
+    merged_factorized_weights: dict[Axis, np.ndarray] = dict(r1.factorized_weights)
 
     # Concatenate the growing parameter's value array.
-    merged_parameter_arrays: dict[GenericIndex, np.ndarray] = dict(r1._parameter_arrays)
-    if param_idx not in r1._parameter_arrays or param_idx not in r2._parameter_arrays:  # pragma: no cover
+    merged_parameter_arrays: dict[GenericIndex, np.ndarray] = dict(r1.parameter_values)
+    if param_idx not in r1.parameter_values or param_idx not in r2.parameter_values:  # pragma: no cover
         raise ValueError(  # pragma: no cover
             f"_merge_results_param_extend: parameter index {param_name!r} is not tracked in "
             "parameter_arrays.  PARAMETER axis extension requires indexes supplied via "
             "parameters=, not parameter_axes=."
         )
     merged_parameter_arrays[param_idx] = np.concatenate(
-        [r1._parameter_arrays[param_idx], r2._parameter_arrays[param_idx]]
+        [r1.parameter_values[param_idx], r2.parameter_values[param_idx]]
     )
 
     merged_state = executor.State(merged_values)
     return EvaluationResult(
         merged_state,
-        merged_axis_layout,
+        merged_layout,
         merged_parameter_arrays,
-        axis_sizes=merged_axis_sizes,
         factorized_weights=merged_factorized_weights,
-        named_axis_values=r1._named_axis_values or None,
+        named_axis_values=r1.named_axis_values or None,
     )
 
 
@@ -391,12 +355,8 @@ def _frozen_ensemble_from_result(
     snapshot is available (e.g. on handles produced by
     :meth:`~simulation.runner.ModelEvaluator.resume`).
     """
-    ens_entries = sorted(
-        ((ax, pos) for ax, pos in result._axis_layout.items() if ax.role == ENSEMBLE),
-        key=lambda t: t[1],
-    )
-    axes = tuple(ax for ax, _ in ens_entries)
-    weights = tuple(result._factorized_weights[ax] for ax in axes)
+    axes = tuple(ax for ax, _ in result.layout.axes_by_role(ENSEMBLE))
+    weights = tuple(result.factorized_weights[ax] for ax in axes)
     n_ens_dims = len(axes)
 
     excluded_ids = frozenset(id(idx) for idx in parameters)

@@ -585,7 +585,7 @@ def test_iter_node_deps_exclusive_multi_clause_where_and_variant_selector():
 
 def test_iter_node_deps_projection_op():
     """function_call reachable through a ProjectionOp (project_using_sum) is claimed."""
-    from civic_digital_twins.dt_model.model.axis import DOMAIN, Axis
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 
     p = graph.placeholder("inp", default_value=1.0)
     fc = graph.function_call("solve", p)

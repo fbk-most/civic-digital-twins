@@ -9,7 +9,9 @@ intended for use in model definitions.  Import it as::
     smoothed = TimeseriesIndex("smoothed", graph.function_call("smooth", demand_ts))
 
 The raw engine path (``dt_model.engine.frontend.graph``) remains available
-for engine-level work (DAG construction, backends, debugging).
+for engine-level work (DAG construction, backends, debugging).  (See the
+README's "Conceptual Overview" for the module-role convention behind this
+layout.)
 """
 # SPDX-License-Identifier: Apache-2.0
 

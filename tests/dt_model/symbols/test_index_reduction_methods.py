@@ -72,7 +72,7 @@ class TestIndexReductionMethodCreation:
     @pytest.mark.parametrize("method,operator_class,name", INDEX_REDUCTION_METHODS)
     def test_method_has_correct_axis(self, method, operator_class, name):
         """Test that reduction method creates operator with the default time axis."""
-        from civic_digital_twins.dt_model.model.axis import DOMAIN, Axis
+        from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 
         idx = Index("test_index", 5.0)
         result = method(idx)

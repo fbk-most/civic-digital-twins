@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `AxisLayout` (`civic_digital_twins.dt_model.simulation.axis_layout`) —
+  centralizes the axis-to-numpy-dimension mapping previously duplicated
+  across `evaluation.py`, `handle.py`, and `runner.py`: canonical
+  PARAMETER→ENSEMBLE→DOMAIN dimension ordering enforced at construction,
+  role queries, merge-signature comparison, `with_grown_axis()`, and dict
+  serialization.  Exported from `civic_digital_twins.dt_model`.
+- `EvaluationResult.layout` and `EvaluationResult.factorized_weights` —
+  public accessors replacing direct access to the private
+  `_axis_layout`/`_axis_sizes`/`_factorized_weights` attributes that
+  `handle.py` and `runner.py` previously reached into (the first two are
+  now removed entirely; see below).
+- `TIME_AXIS` — canonical singleton for the time `DOMAIN` axis, replacing
+  five independent `Axis("time", DOMAIN)` constructions across the engine,
+  model, and simulation layers.  Exported from `civic_digital_twins.dt_model`
+  and `civic_digital_twins.dt_model.axes`.
+- `union_axes()` and `filter_by_role()` in `civic_digital_twins.dt_model.axes`
+  — axis-tuple set operations, consolidating a duplicate `_union_axes()` that
+  previously lived in `engine.frontend.graph`.
+
 ### Changed
 
 - Split CI into `ci-dev.yml` (fast: 3.12 only) and `ci-release.yml` (full:
@@ -59,6 +80,21 @@ prior three releases; see their respective `### Deprecated` sections below).
 - **Breaking:** `EvaluationResult.marginalize()` — use
   `EvaluationResult.expected_value()` instead.
 - **Breaking:** `LambdaAdapter` — use `NumpyBackend.adapt()` instead.
+
+Removed without a prior deprecation cycle:
+
+- **Breaking:** `civic_digital_twins.dt_model.model.axis` module — the
+  re-export shim over `civic_digital_twins.dt_model.axes` was never the
+  documented import path (the top-level `civic_digital_twins.dt_model`
+  re-exports already served as the stable one).  Import `Axis`, `AxisRole`,
+  `DOMAIN`, `PARAMETER`, `ENSEMBLE` from `civic_digital_twins.dt_model`
+  (recommended) or `civic_digital_twins.dt_model.axes` instead.
+- **Breaking:** `EvaluationResult(axis_layout=<dict>, axis_sizes=<dict>)` —
+  the transitional `dict[Axis, int]` + `axis_sizes=` constructor form is
+  gone; `axis_layout=` now requires an `AxisLayout` instance.  Only relevant
+  to code constructing `EvaluationResult` directly, which is not the
+  documented flow (results come from `Evaluation.evaluate()`,
+  `EvaluationHandle`, or `ModelEvaluator.resume()`).
 
 
 ## [0.10.0] - 2026-06-21

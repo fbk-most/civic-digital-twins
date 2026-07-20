@@ -1,6 +1,7 @@
 """Scenario-based simulation and evaluation of digital twin models."""
 # SPDX-License-Identifier: Apache-2.0
 
+from .axis_layout import AxisLayout
 from .ensemble import (
     AxisEnsemble,
     BatchDrawable,
@@ -30,6 +31,7 @@ from .scenario import Scenario
 __all__ = [
     "AsyncEvaluationHandle",
     "AxisEnsemble",
+    "AxisLayout",
     "BatchDrawable",
     "CrossProductEnsemble",
     "DistributionEnsemble",
