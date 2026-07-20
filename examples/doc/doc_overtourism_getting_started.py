@@ -19,7 +19,6 @@ from civic_digital_twins.dt_model import (  # noqa: E402
     CategoricalIndex,
     ConditionalDistributionIndex,
     CrossProductEnsemble,
-    Distribution,
     DistributionIndex,
     DomainValue,
     Evaluation,
@@ -47,8 +46,8 @@ CV_weather = CategoricalIndex(
     {"good": 1 / 3, "unsettled": 1 / 3, "bad": 1 / 3},
 )
 
-assert CV_season.value is None  # placeholder
-assert CV_weather.value is None
+assert CV_season.is_abstract  # placeholder
+assert CV_weather.is_abstract
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +75,7 @@ PV_visitors = ConditionalDistributionIndex(
     visitors_distribution,
 )
 
-assert PV_visitors.value is None  # placeholder (axis in grid evaluation)
+assert PV_visitors.is_abstract  # placeholder (axis in grid evaluation)
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +193,9 @@ field = np.ones(visitors_axis.size)
 for c in model.constraints:
     usage = np.broadcast_to(result[c.usage], result.full_shape)  # (201, 6)
 
-    if isinstance(c.capacity.value, Distribution):
+    if isinstance(c.capacity, DistributionIndex):
         # Probabilistic capacity: probability that usage ≤ capacity
-        mask = 1.0 - c.capacity.value.cdf(usage)
+        mask = 1.0 - c.capacity.frozen_distribution.cdf(usage)
     else:
         cap = np.broadcast_to(result[c.capacity], result.full_shape)
         mask = (usage <= cap).astype(float)

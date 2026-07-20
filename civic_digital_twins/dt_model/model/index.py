@@ -350,14 +350,25 @@ class Index(GenericIndex):
         return self._name
 
     @property
-    def value(self) -> graph.Scalar | graph.Node | None:
-        """The default scalar / formula node, or ``None`` for a bare placeholder."""
-        return self._value
-
-    @property
     def node(self) -> graph.Node:
         """The underlying computation graph node."""
         return self._node
+
+    @property
+    def is_abstract(self) -> bool:
+        """Whether this index requires an external value before evaluation."""
+        return self._value is None
+
+    @property
+    def concrete_default(self) -> graph.Scalar | None:
+        """The index's concrete scalar default, or ``None`` if unset or formula-backed.
+
+        Used by :class:`~simulation.scenario.Scenario` to seed the executor
+        state with each index's default before overrides are applied. Most
+        model-authoring code should not need this — read values through the
+        computation graph (``.node``) instead.
+        """
+        return None if isinstance(self._value, graph.Node) else self._value
 
     def __repr__(self) -> str:
         """Return a string representation of the index."""
@@ -440,14 +451,25 @@ class TimeseriesIndex(GenericIndex):
         return self._name
 
     @property
-    def value(self) -> np.ndarray | graph.Node | None:
-        """The default array / formula node, or ``None`` for a bare placeholder."""
-        return self._value
-
-    @property
     def node(self) -> graph.Node:
         """The underlying computation graph node."""
         return self._node
+
+    @property
+    def is_abstract(self) -> bool:
+        """Whether this index requires an external value before evaluation."""
+        return self._value is None
+
+    @property
+    def concrete_default(self) -> np.ndarray | None:
+        """The index's concrete array default, or ``None`` if unset or formula-backed.
+
+        Used by :class:`~simulation.scenario.Scenario` to seed the executor
+        state with each index's default before overrides are applied. Most
+        model-authoring code should not need this — read values through the
+        computation graph (``.node``) instead.
+        """
+        return None if isinstance(self._value, graph.Node) else self._value
 
     def __repr__(self) -> str:
         """Return a string representation of the timeseries index."""
@@ -476,8 +498,8 @@ class ConstTimeseriesIndex(TimeseriesIndex):
     --------
     >>> import numpy as np
     >>> ts = ConstTimeseriesIndex("demand", np.array([10.0, 20.0, 30.0]))
-    >>> ts.value
-    array([10., 20., 30.])
+    >>> ts
+    const_timeseries_idx([10.0, 20.0, 30.0])
     """
 
     def __init__(self, name: str, value: np.ndarray) -> None:
@@ -541,9 +563,14 @@ class DistributionIndex(Index):
         return dict(self._params)
 
     @property
-    def value(self) -> Distribution:  # type: ignore[override]
-        """The frozen distribution instance."""
+    def frozen_distribution(self) -> Distribution:
+        """The frozen distribution instance sampled by the ensemble."""
         return self._frozen
+
+    @property
+    def is_abstract(self) -> bool:
+        """Always ``True``: a distribution-backed index is always sampled by the ensemble."""
+        return True
 
     def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
         """Draw ``size`` samples from the frozen distribution.

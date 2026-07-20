@@ -50,7 +50,7 @@ def test_ccat_construction_basic():
         factory=_weather_given_season,
     )
     assert ccat.name == "weather_cond"
-    assert ccat.value is None
+    assert ccat.is_abstract
     assert ccat.support == ["sunny", "rainy"]
     assert ccat.parents == [_season]
 
@@ -205,7 +205,7 @@ def test_cdist_construction_basic():
     """ConditionalDistributionIndex constructs with valid arguments."""
     cdist = ConditionalDistributionIndex("temp", parents=[_weather], factory=_dist_given_weather)
     assert cdist.name == "temp"
-    assert cdist.value is None
+    assert cdist.is_abstract
     assert cdist.parents == [_weather]
 
 

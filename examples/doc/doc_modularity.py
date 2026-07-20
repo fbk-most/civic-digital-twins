@@ -478,7 +478,7 @@ peak_factor = Index(
     graph.piecewise((1.8, mode == "bike"), (1.0, True)),  # default: non-bike
 )
 
-assert peak_factor.value is not None
+assert not peak_factor.is_abstract
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +500,7 @@ def _demo_15_piecewise_categorical() -> None:
         ),
     )
 
-    assert peak_factor.value is not None
+    assert not peak_factor.is_abstract
 
 
 # ---------------------------------------------------------------------------

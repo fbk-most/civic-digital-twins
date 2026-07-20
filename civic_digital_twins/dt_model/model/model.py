@@ -10,7 +10,7 @@ from typing import Any
 
 from ..engine.frontend import graph
 from ..engine.numpybackend.executor import Functor
-from .index import DistributionIndex, GenericIndex, Index, TimeseriesIndex
+from .index import GenericIndex, Index, TimeseriesIndex
 
 
 class ModelContractWarning(UserWarning):
@@ -615,9 +615,9 @@ class Model:
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that require external values before evaluation.
 
-        An index is abstract when its ``value`` is ``None`` (explicit
-        placeholder) or a :class:`~.index.Distribution` (needs sampling).
-        Constant and formula-based indexes are concrete and are not returned.
+        Delegates to each index's own :attr:`~.index.Index.is_abstract` /
+        :attr:`~.index.TimeseriesIndex.is_abstract` classification. Constant
+        and formula-based indexes are concrete and are not returned.
 
         Returns
         -------
@@ -631,15 +631,7 @@ class Model:
         as an input (e.g. a distribution-backed behavioural parameter sampled
         internally by the ensemble).
         """
-        result = []
-        for index in self.indexes:
-            if isinstance(index, Index):
-                if index.value is None or isinstance(index, DistributionIndex):
-                    result.append(index)
-            elif isinstance(index, TimeseriesIndex):
-                if index.value is None:
-                    result.append(index)
-        return result
+        return [index for index in self.indexes if isinstance(index, (Index, TimeseriesIndex)) and index.is_abstract]
 
     def is_instantiated(self) -> bool:
         """Return ``True`` when all indexes have concrete, evaluable values.

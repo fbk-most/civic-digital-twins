@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `union_axes()` and `filter_by_role()` in `civic_digital_twins.dt_model.axes`
   — axis-tuple set operations, consolidating a duplicate `_union_axes()` that
   previously lived in `engine.frontend.graph`.
+- `Index.is_abstract` / `TimeseriesIndex.is_abstract` — read-only property
+  replacing ad-hoc `value is None` checks; `DistributionIndex` overrides it
+  to always return `True`. `Model.abstract_indexes()` now delegates to it.
+- `Index.concrete_default` / `TimeseriesIndex.concrete_default` — read-only
+  property returning the concrete scalar/array default, or `None` when the
+  index is a bare placeholder or formula-backed. Replaces `Scenario`'s direct
+  use of `.value` when seeding the executor state.
+- `DistributionIndex.frozen_distribution` — the frozen distribution instance,
+  replacing `DistributionIndex.value` (see below).
 
 ### Changed
 
@@ -95,6 +104,13 @@ Removed without a prior deprecation cycle:
   to code constructing `EvaluationResult` directly, which is not the
   documented flow (results come from `Evaluation.evaluate()`,
   `EvaluationHandle`, or `ModelEvaluator.resume()`).
+- **Breaking:** `Index.value` / `TimeseriesIndex.value` / `DistributionIndex.value`
+  — the raw scalar/node/`None`/`Distribution` union getter is gone. Its
+  ambiguity invited pattern-matching on the runtime type inside `compute()`
+  bodies instead of building a graph formula (found in the wild: an index
+  silently degrading to an unresolved placeholder whenever its input hadn't
+  concretely resolved yet). Use `is_abstract`, `concrete_default`, or
+  `DistributionIndex.frozen_distribution` instead (see above).
 
 
 ## [0.10.0] - 2026-06-21
