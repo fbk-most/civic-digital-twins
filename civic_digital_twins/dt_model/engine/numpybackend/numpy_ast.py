@@ -15,11 +15,8 @@ import ast
 
 import numpy as np
 
-from ...axes import DOMAIN, Axis
+from ...axes import TIME_AXIS
 from ..frontend import graph
-
-_TIME_AXIS = Axis("time", DOMAIN)
-"""The only axis the numpybackend currently supports for ProjectionOp."""
 
 
 class UnsupportedNodeArguments(Exception):
@@ -93,9 +90,9 @@ def _np_attr_name(name: str) -> ast.expr:
 
 
 def _axis_as_tuple(axis: graph.Axis) -> tuple[int, ...]:
-    if axis != _TIME_AXIS:
+    if axis != TIME_AXIS:
         raise UnsupportedNodeArguments(
-            f"numpy_ast: numpybackend only supports projection along {_TIME_AXIS!r}; got {axis!r}"
+            f"numpy_ast: numpybackend only supports projection along {TIME_AXIS!r}; got {axis!r}"
         )
     return (-1,)  # CDT convention: time axis always occupies the last numpy dimension
 

@@ -277,7 +277,7 @@ def test_cpe_implements_axis_ensemble_protocol():
 
 def test_cpe_single_ensemble_axis():
     """CrossProductEnsemble reports exactly one ENSEMBLE axis."""
-    from civic_digital_twins.dt_model.model.axis import ENSEMBLE  # noqa: PLC0415
+    from civic_digital_twins.dt_model.axes import ENSEMBLE  # noqa: PLC0415
 
     season = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
     model = _simple_model(season)

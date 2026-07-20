@@ -193,7 +193,7 @@ def test_scalar_ensemble_broadcasts_with_timeseries():
 
 def test_index_sum_axis_minus1_over_timeseries_with_ensemble():
     """Index.sum() over time axis on timeseries+ensemble: time reduced, shape (*ENSEMBLE, 1)."""
-    from civic_digital_twins.dt_model.model.axis import DOMAIN, Axis
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 
     T = 6
     S = 4

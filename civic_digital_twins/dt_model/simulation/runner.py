@@ -42,11 +42,12 @@ from typing import Any, Generic, Self, TypeVar
 
 import numpy as np
 
+from ..axes import Axis
 from ..engine.numpybackend.executor import Functor, NumpyBackend, State
-from ..model.axis import Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
+from .axis_layout import AxisLayout
 from .ensemble import DistributionEnsemble
 from .evaluation import Evaluation, EvaluationResult
 from .handle import AsyncEvaluationHandle, EvaluationHandle
@@ -290,27 +291,17 @@ def _encode_result(result: EvaluationResult, indexes: Iterable[GenericIndex]) ->
         except KeyError:
             pass  # index not computed in this evaluation
 
-    axis_layout = [
-        [ax.name, ax.role, pos]
-        for ax, pos in result._axis_layout.items()  # type: ignore[attr-defined]
-    ]
-    factorized_weights = {
-        ax.name: _encode_array(w)
-        for ax, w in result._factorized_weights.items()  # type: ignore[attr-defined]
-    }
+    factorized_weights = {ax.name: _encode_array(w) for ax, w in result.factorized_weights.items()}
     parameter_arrays = {idx.name: _encode_array(arr) for idx, arr in result.parameter_values.items()}
     named_axis_values = {name: _encode_array(arr) for name, arr in result.named_axis_values.items()}
-    axis_sizes = {
-        f"{ax.name}:{ax.role}": size
-        for ax, size in result._axis_sizes.items()  # type: ignore[attr-defined]
-    }
+    layout_dict = result.layout.to_dict()
     return {
         "nodes": nodes,
-        "axis_layout": axis_layout,
+        "axis_layout": layout_dict["axis_layout"],
         "factorized_weights": factorized_weights,
         "parameter_arrays": parameter_arrays,
         "named_axis_values": named_axis_values,
-        "axis_sizes": axis_sizes,
+        "axis_sizes": layout_dict["axis_sizes"],
     }
 
 
@@ -339,12 +330,6 @@ def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> Eva
         model, so the result is valid for the current session.
     """
     idx_by_name: dict[str, GenericIndex] = {idx.name: idx for idx in indexes}
-    # factorized_weights is serialised keyed by axis name alone (it only ever holds
-    # ENSEMBLE axes), so we recover each axis's role via this name->role lookup.
-    # This is unambiguous because axis names are globally unique within an
-    # EvaluationResult (see Axis docstring): no two axes — across PARAMETER,
-    # ENSEMBLE, or DOMAIN — share a name, so the lookup cannot collide on role.
-    axis_role: dict[str, str] = {row[0]: row[1] for row in data["axis_layout"]}
 
     state_values: dict = {}
     for name, encoded in data["nodes"].items():
@@ -352,10 +337,17 @@ def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> Eva
             state_values[idx_by_name[name].node] = _decode_array(encoded)
     state = State(values=state_values)
 
-    axis_layout: dict[Axis, int] = {Axis(row[0], row[1]): int(row[2]) for row in data["axis_layout"]}
-    factorized_weights: dict[Axis, np.ndarray] = {
-        Axis(name, axis_role[name]): _decode_array(encoded) for name, encoded in data["factorized_weights"].items()
-    }
+    layout = AxisLayout.from_dict(data)
+    # factorized_weights is serialised keyed by axis name alone (it only ever holds
+    # ENSEMBLE axes); recover each axis (and its role) from the reconstructed
+    # layout.  This is unambiguous because axis names are globally unique within
+    # an EvaluationResult (see Axis docstring): no two axes — across PARAMETER,
+    # ENSEMBLE, or DOMAIN — share a name, so the lookup cannot collide on role.
+    factorized_weights: dict[Axis, np.ndarray] = {}
+    for name, encoded in data["factorized_weights"].items():
+        ax = layout.find_axis(name)
+        assert ax is not None, f"_decode_result: factorized_weights axis {name!r} not found in axis_layout."
+        factorized_weights[ax] = _decode_array(encoded)
     parameter_arrays: dict[GenericIndex, np.ndarray] = {
         idx_by_name[name]: _decode_array(encoded)
         for name, encoded in data["parameter_arrays"].items()
@@ -364,16 +356,11 @@ def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> Eva
     named_axis_values: dict[str, np.ndarray] = {
         name: _decode_array(encoded) for name, encoded in data["named_axis_values"].items()
     }
-    axis_sizes: dict[Axis, int] = {}
-    for key, size in data["axis_sizes"].items():
-        ax_name, ax_role = key.split(":", 1)
-        axis_sizes[Axis(ax_name, ax_role)] = int(size)
 
     return EvaluationResult(
         state=state,
-        axis_layout=axis_layout,
+        axis_layout=layout,
         parameter_arrays=parameter_arrays,
-        axis_sizes=axis_sizes,
         factorized_weights=factorized_weights,
         named_axis_values=named_axis_values,
     )

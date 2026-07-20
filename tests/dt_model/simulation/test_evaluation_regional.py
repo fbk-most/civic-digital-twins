@@ -9,8 +9,8 @@ from scipy import stats
 
 from civic_digital_twins.dt_model import define, inputs, outputs
 from civic_digital_twins.dt_model import graph as _graph
+from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
-from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant

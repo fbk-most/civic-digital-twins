@@ -13,11 +13,8 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 
+from ..axes import TIME_AXIS, Axis
 from ..engine.frontend import graph
-from .axis import DOMAIN, Axis
-
-_TIME_AXIS: Axis = Axis("time", DOMAIN)
-"""Default axis for time-indexed reduction operations."""
 
 
 @runtime_checkable
@@ -194,7 +191,7 @@ class GenericIndex(ABC):
     # Reduction operators
     # ------------------------------------------------------------------
 
-    def sum(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def sum(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that sums this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``, which sums across the
@@ -207,7 +204,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_sum(self.node, axis)
 
-    def mean(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def mean(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -215,7 +212,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_mean(self.node, axis)
 
-    def min(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def min(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the minimum of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -223,7 +220,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_min(self.node, axis)
 
-    def max(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def max(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the maximum of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -231,7 +228,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_max(self.node, axis)
 
-    def std(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def std(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the standard deviation of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -239,7 +236,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_std(self.node, axis)
 
-    def var(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def var(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the variance of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -247,7 +244,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_var(self.node, axis)
 
-    def median(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def median(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the median of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -255,7 +252,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_median(self.node, axis)
 
-    def prod(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def prod(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the product of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -263,7 +260,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_prod(self.node, axis)
 
-    def any(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def any(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that tests if any elements of this index are True over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -271,7 +268,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_any(self.node, axis)
 
-    def all(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def all(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that tests if all elements of this index are True over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -279,7 +276,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_all(self.node, axis)
 
-    def count_nonzero(self, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def count_nonzero(self, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that counts non-zero elements of this index over the given axis.
 
         The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
@@ -287,7 +284,7 @@ class GenericIndex(ABC):
         """
         return graph.project_using_count_nonzero(self.node, axis)
 
-    def quantile(self, q: float, axis: Axis = _TIME_AXIS) -> graph.Node:
+    def quantile(self, q: float, axis: Axis = TIME_AXIS) -> graph.Node:
         """Return a graph node that computes the quantile of this index over the given axis.
 
         Args:

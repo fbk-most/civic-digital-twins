@@ -704,8 +704,10 @@ grid.
 | `result[idx]` | Raw array for `idx` in canonical `(*PARAMETER, *ENSEMBLE)` shape prefix. |
 | `result.expected_value(idx)` | Contract all ENSEMBLE axes using factorized weights; result shape is `(*PARAMETER, *DOMAIN)`. |
 | `result.weights` | Joint weight array (outer product of per-axis weights). |
+| `result.factorized_weights` | Per-ENSEMBLE-axis weight vectors, keyed by `Axis` (`result.weights` is their outer product). |
 | `result.parameter_values` | The `parameters=` dict passed to `evaluate`. |
 | `result.full_shape` | `(*PARAMETER, *ENSEMBLE)` sizes in axis-layout order. |
+| `result.layout` | The `AxisLayout` mapping each `Axis` to its numpy dimension position and size. |
 
 ### End-to-End Example
 
@@ -940,6 +942,13 @@ evaluated.
 ENSEMBLE `Axis` objects, per-axis weight vectors, and a batched
 `assignments()` mapping.  `DistributionEnsemble` and `PartitionedEnsemble`
 implement this protocol.
+
+**AxisLayout**: maps each semantic `Axis` to its numpy dimension position
+and size in a result array, enforcing the canonical
+`(*PARAMETER, *ENSEMBLE, *DOMAIN)` dimension ordering.  Exposed as
+`EvaluationResult.layout`; the single source of truth for axis layout
+consumed by `Evaluation`, `EvaluationHandle`'s merge logic, and
+`ModelEvaluator` resume serialization.
 
 **Ensemble**: a structural `Protocol` for iterables that yield
 `WeightedScenario` tuples.  Used as a common type for ensemble

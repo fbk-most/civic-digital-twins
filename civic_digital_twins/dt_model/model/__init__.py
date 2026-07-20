@@ -1,7 +1,7 @@
 """Model and index types for digital twin models."""
 # SPDX-License-Identifier: Apache-2.0
 
-from .axis import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
+from ..axes import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
 from .contracts import define, expose, functions, inputs, outputs
 from .index import (
     CategoricalIndex,

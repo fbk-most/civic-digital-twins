@@ -7,14 +7,16 @@ from typing import Any
 
 import numpy as np
 
+from ..axes import PARAMETER, TIME_AXIS, Axis
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
-from ..model.axis import DOMAIN, ENSEMBLE, PARAMETER, Axis
 from ..model.index import GenericIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
+from .axis_layout import AxisLayout
 from .ensemble import AxisEnsemble
 from .plan import EvaluationPlan, Region, RegionGuard
+from .region_execution import RegionArrayOps
 from .scenario import Scenario
 
 __all__ = ["EvaluationResult", "Evaluation"]
@@ -31,15 +33,12 @@ class EvaluationResult:
     state:
         The executor state after evaluation.
     axis_layout:
-        Maps each :class:`~dt_model.model.axis.Axis` to its numpy dimension
-        position in result arrays.
+        The :class:`~simulation.axis_layout.AxisLayout` of result arrays.
     parameter_arrays:
         Anonymous PARAMETER-axis arrays from ``parameters=`` (array-valued
         entries only; callable-backed indexes are not included).  Used by
         :meth:`parameter_values_for`.  Empty dict when no anonymous PARAMETER
         axes.
-    axis_sizes:
-        Maps each :class:`~dt_model.model.axis.Axis` to its size.
     factorized_weights:
         Per-ENSEMBLE-axis weight vectors.
     named_axis_values:
@@ -50,22 +49,25 @@ class EvaluationResult:
     def __init__(
         self,
         state: executor.State,
-        axis_layout: dict[Axis, int],
+        axis_layout: AxisLayout,
         parameter_arrays: dict[GenericIndex, np.ndarray],
-        axis_sizes: dict[Axis, int] | None = None,
         factorized_weights: dict[Axis, np.ndarray] | None = None,
         named_axis_values: dict[str, np.ndarray] | None = None,
     ) -> None:
         self._state = state
-        self._axis_layout = axis_layout
+        self._layout = axis_layout
         self._parameter_arrays = parameter_arrays
-        self._axis_sizes: dict[Axis, int] = axis_sizes or {}
         self._factorized_weights: dict[Axis, np.ndarray] = factorized_weights or {}
         self._named_axis_values: dict[str, np.ndarray] = named_axis_values or {}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def layout(self) -> AxisLayout:
+        """The :class:`~simulation.axis_layout.AxisLayout` of result arrays."""
+        return self._layout
 
     @property
     def weights(self) -> np.ndarray:
@@ -80,6 +82,15 @@ class EvaluationResult:
         for w in list(self._factorized_weights.values())[1:]:
             joint = np.multiply.outer(joint, w)
         return joint
+
+    @property
+    def factorized_weights(self) -> dict[Axis, np.ndarray]:
+        """Per-ENSEMBLE-axis weight vectors, keyed by axis.
+
+        The joint scenario weight array (outer product of these vectors) is
+        available via :attr:`weights`.
+        """
+        return self._factorized_weights
 
     @property
     def parameter_values(self) -> dict[GenericIndex, np.ndarray]:
@@ -110,13 +121,7 @@ class EvaluationResult:
     @property
     def full_shape(self) -> tuple[int, ...]:
         """Shape of a fully-broadcast result array in axis-layout order."""
-        n_dims = len(self._axis_layout)
-        if n_dims == 0:
-            return ()
-        shape: list[int] = [0] * n_dims
-        for ax, pos in self._axis_layout.items():
-            shape[pos] = self._axis_sizes[ax]
-        return tuple(shape)
+        return self._layout.full_shape
 
     def __getitem__(self, index: GenericIndex) -> np.ndarray:
         """Return the result array for *index*."""
@@ -125,24 +130,13 @@ class EvaluationResult:
     def _contract_ensemble(self, index: GenericIndex) -> np.ndarray:
         """Contract all ENSEMBLE axes and return the ``(*P, *D)`` array.
 
-        For each ENSEMBLE axis (in descending position order so earlier
-        squeezes do not shift later positions): if the axis size is 1 the
-        singleton is squeezed away directly; otherwise a weighted average is
-        taken.  The result shape is ``(*PARAMETER, *DOMAIN)`` — all DOMAIN
-        dimensions are preserved regardless of size.
+        Delegates to :meth:`~simulation.axis_layout.AxisLayout.contract_ensemble`
+        with this result's factorized weights.  The result shape is
+        ``(*PARAMETER, *DOMAIN)`` — all DOMAIN dimensions are preserved
+        regardless of size.
         """
         arr = np.asarray(self._state.values[index.node])
-        for ax, pos in sorted(
-            ((a, p) for a, p in self._axis_layout.items() if a.role == ENSEMBLE),
-            key=lambda t: t[1],
-            reverse=True,
-        ):
-            arr = (
-                arr.squeeze(axis=pos)
-                if arr.shape[pos] == 1
-                else np.average(arr, weights=self._factorized_weights[ax], axis=pos)
-            )
-        return arr
+        return self._layout.contract_ensemble(arr, self._factorized_weights)
 
     def expected_value(self, index: GenericIndex) -> np.ndarray:
         """Return the typed result for *index* after contracting ENSEMBLE axes.
@@ -162,19 +156,7 @@ class EvaluationResult:
         you need the full ``(*PARAMETER, *DOMAIN)`` shape.
         """
         arr = self._contract_ensemble(index)
-        n_params = sum(1 for ax in self._axis_layout if ax.role == PARAMETER)
-        domain_axes = sorted(
-            [(ax, pos) for ax, pos in self._axis_layout.items() if ax.role == DOMAIN],
-            key=lambda t: t[1],
-        )
-        stray = tuple(
-            n_params + i
-            for i, (ax, _) in enumerate(domain_axes)
-            if ax not in index.output_axes and arr.shape[n_params + i] == 1
-        )
-        if stray:
-            arr = np.squeeze(arr, axis=stray)
-        return arr
+        return self._layout.drop_stray_domain(arr, index.output_axes)
 
 
 class Evaluation:
@@ -573,8 +555,8 @@ class Evaluation:
         k = len(parameter_axes)  # named PARAMETER axes
         m = len(array_params)  # anonymous PARAMETER axes
         n_params = k + m
-        axis_layout: dict[Axis, int] = {}
-        axis_sizes: dict[Axis, int] = {}
+        param_axis_entries: list[tuple[Axis, int]] = []  # named axes first, then anonymous
+        ens_axis_entries: list[tuple[Axis, int]] = []
         factorized_weights: dict[Axis, np.ndarray] = {}
         c_subs: dict[graph.Node, np.ndarray] = {}
         param_nodes: list[graph.Node] = []  # anonymous array param nodes
@@ -584,9 +566,7 @@ class Evaluation:
         # Build broadcast-ready shaped arrays (singleton at every position except own).
         named_shaped: dict[str, np.ndarray] = {}
         for i, (name, arr) in enumerate(parameter_axes.items()):
-            ax = Axis(name, PARAMETER)
-            axis_layout[ax] = i
-            axis_sizes[ax] = arr.size
+            param_axis_entries.append((Axis(name, PARAMETER), arr.size))
             shape = [1] * k
             shape[i] = arr.size
             named_shaped[name] = arr.reshape(shape)
@@ -622,9 +602,7 @@ class Evaluation:
 
         # Anonymous array PARAMETER axes — positions k..k+m-1.
         for j, (idx, arr) in enumerate(array_params.items()):
-            ax = Axis(getattr(idx, "name", f"param_{k + j}"), PARAMETER)
-            axis_layout[ax] = k + j
-            axis_sizes[ax] = arr.size
+            param_axis_entries.append((Axis(getattr(idx, "name", f"param_{k + j}"), PARAMETER), arr.size))
             shape = [1] * n_params
             shape[k + j] = arr.size
             c_subs[idx.node] = arr.reshape(shape)
@@ -636,9 +614,8 @@ class Evaluation:
         if ensemble is not None:
             ens_assignments = ensemble.assignments()
             n_ensemble = len(ensemble.ensemble_axes)
-            for j, (ax, w) in enumerate(zip(ensemble.ensemble_axes, ensemble.ensemble_weights)):
-                axis_layout[ax] = n_params + j
-                axis_sizes[ax] = w.size
+            for ax, w in zip(ensemble.ensemble_axes, ensemble.ensemble_weights):
+                ens_axis_entries.append((ax, w.size))
                 factorized_weights[ax] = w
             for idx, batched in ens_assignments.items():
                 # Prepend n_params PARAMETER singletons so ENSEMBLE arrays
@@ -675,119 +652,15 @@ class Evaluation:
         if backend is not executor.NumpyBackend:
             raise NotImplementedError(f"Backend {backend!r} is not supported; only NumpyBackend is available.")
 
-        n_full = n_params + n_ensemble
-        n_total = n_full + extra_ts
-
-        # Guarded regions operate over the full leading evaluation layout:
-        # (*PARAMETER, *ENSEMBLE).  The helpers below gather/scatter arbitrary
-        # leading-axis coordinates, so selectors may vary along PARAMETER axes
-        # and ensembles may span multiple ENSEMBLE axes.
-        leading_axes = tuple(ax for ax, pos in sorted(axis_layout.items(), key=lambda item: item[1]) if pos < n_full)
-        leading_shape = tuple(axis_sizes[ax] for ax in leading_axes)
-        n_leading = int(np.prod(leading_shape, dtype=np.int64)) if leading_shape else 1
-
-        def _has_domain_axis(node: graph.Node) -> bool:
-            return any(ax.role == DOMAIN for ax in node.output_axes)
-
-        def _normalise_leading(node: graph.Node, value: Any) -> np.ndarray:
-            """Return *value* with explicit leading singleton axes when needed."""
-            arr = np.asarray(value)
-            if n_full == 0 or isinstance(node, graph.variant_selector):
-                return arr
-            has_domain = _has_domain_axis(node)
-            # A raw DOMAIN-only value, e.g. a timeseries constant with shape (T,),
-            # has no explicit PARAMETER/ENSEMBLE dimensions yet.  Prepend them
-            # even when T accidentally equals a leading-axis size.
-            if has_domain and arr.ndim == len(node.output_axes):
-                return arr.reshape((1,) * n_full + arr.shape)
-            if arr.ndim >= n_full and all(arr.shape[i] in {1, leading_shape[i]} for i in range(n_full)):
-                return arr
-            return arr.reshape((1,) * n_full + arr.shape)
-
-        def _broadcast_to_leading(node: graph.Node, value: Any) -> np.ndarray:
-            """Broadcast *value* to ``leading_shape + trailing_shape``."""
-            arr = _normalise_leading(node, value)
-            if n_full == 0 or isinstance(node, graph.variant_selector):
-                return arr
-            target = tuple(leading_shape[i] if arr.shape[i] == 1 else arr.shape[i] for i in range(n_full))
-            return np.broadcast_to(arr, target + arr.shape[n_full:])
-
-        def _leading_mask(selector_node: graph.Node, selector_value: Any, branch_key: str) -> np.ndarray:
-            """Return a boolean mask over the full ``(*PARAMETER, *ENSEMBLE)`` layout."""
-            sel = _broadcast_to_leading(selector_node, selector_value)
-            if n_full == 0:
-                mask = np.asarray(sel == branch_key)
-                if mask.shape != ():
-                    if any(dim > 1 for dim in mask.shape):
-                        raise NotImplementedError(
-                            "Regional execution does not support selectors with non-singleton DOMAIN axes."
-                        )
-                    # Defensive normalisation: a selector that evaluates to a
-                    # singleton (1,) array (rather than a 0-d scalar) under
-                    # n_full==0 with no timeseries does not arise from any
-                    # supported index/selector construction — scalar selectors
-                    # already yield mask.shape == ().  Reachable only by wrapping
-                    # a scalar in a 1-element array via a custom function_call.
-                    mask = mask.reshape(())  # pragma: no cover
-                return mask
-            trailing = sel.shape[n_full:]
-            if trailing:
-                if any(dim > 1 for dim in trailing):
-                    raise NotImplementedError(
-                        "Regional execution does not support selectors with non-singleton DOMAIN axes."
-                    )
-                sel = sel.reshape(sel.shape[:n_full])
-            return np.broadcast_to(sel == branch_key, leading_shape)
-
-        def _gather_leading(node: graph.Node, value: Any, flat_idx: np.ndarray) -> np.ndarray:
-            """Gather selected leading-axis coordinates into a branch-local first axis."""
-            if n_full == 0 or isinstance(node, graph.variant_selector):
-                return np.asarray(value)
-            arr = _broadcast_to_leading(node, value)
-            flat = arr.reshape((n_leading,) + arr.shape[n_full:])
-            return np.take(flat, flat_idx, axis=0)
-
-        def _branch_fill_value(dtype: np.dtype) -> tuple[np.dtype, Any]:
-            """Return an output dtype and inactive-branch fill value for *dtype*."""
-            if dtype.kind in {"f", "c"}:
-                return dtype, np.nan
-            if dtype.kind == "b":
-                return dtype, False
-            if dtype.kind in {"i", "u"}:
-                return dtype, 0
-            return np.dtype(object), None
-
-        def _scatter_leading(node: graph.Node, value: Any, flat_idx: np.ndarray) -> np.ndarray:
-            """Scatter a branch-local value back into the full leading layout."""
-            arr = np.asarray(value)
-            if n_full == 0 or isinstance(node, graph.variant_selector):
-                return arr
-            k = int(flat_idx.size)
-            if arr.ndim == 0:
-                arr = np.broadcast_to(arr, (k,)).copy()
-            elif arr.shape[0] == 1 and k != 1:  # pragma: no cover
-                arr = np.broadcast_to(arr, (k,) + arr.shape[1:]).copy()
-            elif arr.shape[0] != k:  # pragma: no cover
-                # DOMAIN-only values produced inside the branch (shape (T,)) are
-                # invariant across selected leading coordinates.
-                if _has_domain_axis(node):
-                    arr = np.broadcast_to(arr, (k,) + arr.shape).copy()
-                else:
-                    raise ValueError(
-                        f"Regional scatter for node {getattr(node, 'name', repr(node))!r}: "
-                        f"branch result first dimension {arr.shape[0]} does not match selected size {k}."
-                    )
-            if extra_ts and not _has_domain_axis(node) and arr.ndim == 1:
-                arr = arr.reshape(arr.shape + (1,))
-            out_dtype, fill_value = _branch_fill_value(arr.dtype)
-            full_flat = np.full((n_leading,) + arr.shape[1:], fill_value, dtype=out_dtype)
-            full_flat[flat_idx] = arr.astype(out_dtype, copy=False)
-            return full_flat.reshape(leading_shape + arr.shape[1:])
-
-        def _empty_branch_value() -> np.ndarray:
-            """Create a broadcast-compatible inactive value for an unselected branch."""
-            trailing = (1,) if extra_ts else ()
-            return np.full(leading_shape + trailing, np.nan, dtype=float)
+        # Leading evaluation layout: (*PARAMETER, *ENSEMBLE).  The canonical
+        # role ordering is enforced by the AxisLayout constructor; the DOMAIN
+        # time axis is appended after execution, once T is known.  Guarded
+        # regions gather/scatter arbitrary leading-axis coordinates via
+        # RegionArrayOps, so selectors may vary along PARAMETER axes and
+        # ensembles may span multiple ENSEMBLE axes.
+        leading_layout = AxisLayout.build(parameters=param_axis_entries, ensemble=ens_axis_entries)
+        n_total = leading_layout.n_leading + extra_ts
+        region_ops = RegionArrayOps(leading_layout, has_timeseries=_has_timeseries)
 
         # Coverage validation (D_valid): every abstract index must have a value source.
         # We check only abstract indexes (value=None or Distribution-backed) — NOT
@@ -830,10 +703,11 @@ class Evaluation:
                 # guard's selector matches its branch key (AND of all masks).
                 # For single-level plans region.guards has one element; for
                 # nested variants it has one entry per nesting level.
-                mask = np.ones(leading_shape, dtype=bool)
+                mask = np.ones(leading_layout.leading_shape, dtype=bool)
                 for guard in region.guards:
                     sel_val = state.values[guard.selector_node]
-                    mask = mask & np.asarray(_leading_mask(guard.selector_node, sel_val, guard.branch_key))
+                    guard_mask = region_ops.selector_mask(guard.selector_node, sel_val, guard.branch_key)
+                    mask = mask & np.asarray(guard_mask)
                 flat_mask = np.asarray(mask).reshape(-1)
                 branch_idx = np.flatnonzero(flat_mask)
 
@@ -843,7 +717,7 @@ class Evaluation:
                     # arrays so merge-region np.select can still reference them.
                     for node in region.nodes:
                         if node not in state.values:
-                            state.values[node] = _empty_branch_value()
+                            state.values[node] = region_ops.empty_branch_value()
                             substituted_nodes.add(node)  # prevent spurious shape-norm
                     continue
 
@@ -851,7 +725,7 @@ class Evaluation:
                 # value to the matching leading coordinates.  Constants and
                 # structural variant_selector sentinels are carried unchanged.
                 branch_values: dict[graph.Node, np.ndarray] = {
-                    node: _gather_leading(node, value, branch_idx) for node, value in state.values.items()
+                    node: region_ops.gather(node, value, branch_idx) for node, value in state.values.items()
                 }
 
                 branch_state = executor.State(
@@ -866,7 +740,7 @@ class Evaluation:
                 for node in region.nodes:
                     if node not in branch_state.values or node in state.values:
                         continue
-                    state.values[node] = _scatter_leading(node, branch_state.values[node], branch_idx)
+                    state.values[node] = region_ops.scatter(node, branch_state.values[node], branch_idx)
                     substituted_nodes.add(node)  # mark as correctly shaped; skip shape-norm
 
         # All nodes in topological order (for touched-set computation).
@@ -909,11 +783,12 @@ class Evaluation:
                 n_inject = n_total - arr.ndim
                 state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
 
-        # DOMAIN axis tracking: register Axis("time", DOMAIN) in axis_layout
-        # so that every result dimension is named.  T is read post-execution
-        # because abstract TimeseriesIndex nodes are filled at evaluate time.
+        # DOMAIN axis tracking: append TIME_AXIS to the layout so that every
+        # result dimension is named.  T is read post-execution because
+        # abstract TimeseriesIndex nodes are filled at evaluate time.
         # Assumption: T is uniform across all PARAMETER configurations (T is a
         # structural property of the model, not a function of parameter values).
+        result_layout = leading_layout
         if _has_timeseries:
             ts_nodes = [
                 n
@@ -931,9 +806,7 @@ class Evaluation:
                         f"expected T={T}. T must be constant across all PARAMETER "
                         f"configurations (it is a structural model property)."
                     )
-            time_axis = Axis("time", DOMAIN)
-            axis_layout[time_axis] = n_full
-            axis_sizes[time_axis] = T
+            result_layout = leading_layout.with_axis_appended(TIME_AXIS, T)
         if __debug__:
             for node in actual_nodes:
                 assert node in state.values, (
@@ -944,18 +817,16 @@ class Evaluation:
                 assert arr.ndim == n_total, (
                     f"Post-norm: node {getattr(node, 'name', repr(node))!r} ndim={arr.ndim}, expected {n_total}"
                 )
-                for ax, pos in axis_layout.items():
-                    assert arr.shape[pos] in {1, axis_sizes[ax]}, (
-                        f"Post-norm: node {getattr(node, 'name', repr(node))!r} "
-                        f"axis {ax.name!r} at pos {pos}: shape[{pos}]={arr.shape[pos]}, "
-                        f"expected 1 or {axis_sizes[ax]}"
-                    )
+                assert result_layout.compatible_with(arr.shape), (
+                    f"Post-norm: node {getattr(node, 'name', repr(node))!r} "
+                    f"shape {arr.shape} is incompatible with layout {result_layout!r} "
+                    f"(each dim must be 1 or the axis size)"
+                )
 
         return EvaluationResult(
             state,
-            axis_layout,
+            result_layout,
             array_params,
-            axis_sizes=axis_sizes,
             factorized_weights=factorized_weights,
             named_axis_values=parameter_axes if parameter_axes else None,
         )

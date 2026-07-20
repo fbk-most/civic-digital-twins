@@ -8,10 +8,11 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model import define, inputs, outputs
+from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.engine.numpybackend import executor as _executor
-from civic_digital_twins.dt_model.model.axis import ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model.simulation.axis_layout import AxisLayout
 from civic_digital_twins.dt_model.simulation.ensemble import DistributionEnsemble
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation, EvaluationResult
 from civic_digital_twins.dt_model.simulation.handle import EvaluationHandle, _merge_results
@@ -165,7 +166,7 @@ def test_merge_preserves_nonuniform_weights() -> None:
     def _make(ax, sz, w):
         values = {idx.node: np.zeros(sz) for idx in plan.nodes_of_interest}
         state = _executor.State(values)
-        return EvaluationResult(state, {ax: 0}, {}, axis_sizes={ax: sz}, factorized_weights={ax: w})
+        return EvaluationResult(state, AxisLayout([(ax, sz)]), {}, factorized_weights={ax: w})
 
     r1 = _make(ax1, S1, w1)
     r2 = _make(ax2, S2, w2)
@@ -500,15 +501,14 @@ def _make_fake_result(
     ens_sizes: tuple[int, ...],
 ) -> EvaluationResult:
     """Build a minimal EvaluationResult with the given ENSEMBLE axes (no real evaluation)."""
-    axis_layout: dict[Axis, int] = {ax: i for i, ax in enumerate(ens_axes)}
-    axis_sizes: dict[Axis, int] = dict(zip(ens_axes, ens_sizes))
+    layout = AxisLayout.build(ensemble=list(zip(ens_axes, ens_sizes)))
     factorized_weights: dict[Axis, np.ndarray] = {ax: np.full(sz, 1.0 / sz) for ax, sz in zip(ens_axes, ens_sizes)}
     # Populate values for every node of interest with a zero array of the right shape.
     values: dict = {}
     for idx in plan.nodes_of_interest:
         values[idx.node] = np.zeros(ens_sizes)
     state = _executor.State(values)
-    return EvaluationResult(state, axis_layout, {}, axis_sizes=axis_sizes, factorized_weights=factorized_weights)
+    return EvaluationResult(state, layout, {}, factorized_weights=factorized_weights)
 
 
 def test_merge_results_multi_axis_no_name_raises() -> None:
@@ -534,10 +534,10 @@ def test_merge_results_multi_axis_concat() -> None:
     r2 = _make_fake_result(plan, (Axis("ens1", ENSEMBLE), Axis("ens2", ENSEMBLE)), (4, 3))
     merged = _merge_results(r1, r2, plan, merge_axis_name="ens1")
 
-    merged_ens1 = next(ax for ax in merged._axis_sizes if ax.name == "ens1")
-    merged_ens2 = next(ax for ax in merged._axis_sizes if ax.name == "ens2")
-    assert merged._axis_sizes[merged_ens1] == 6
-    assert merged._axis_sizes[merged_ens2] == 3
+    merged_ens1 = next(ax for ax in merged.layout.axes if ax.name == "ens1")
+    merged_ens2 = next(ax for ax in merged.layout.axes if ax.name == "ens2")
+    assert merged.layout.size_of(merged_ens1) == 6
+    assert merged.layout.size_of(merged_ens2) == 3
 
     for noi in plan.nodes_of_interest:
         assert np.asarray(merged._state.values[noi.node]).shape == (6, 3)
@@ -845,16 +845,14 @@ def test_merge_results_growing_axis_at_different_position_raises() -> None:
 
     r1 = EvaluationResult(
         _ex.State(values_r1),
-        {ax_e1_r1: 0, ax_e2_r1: 1},
+        AxisLayout.build(ensemble=[(ax_e1_r1, 2), (ax_e2_r1, 3)]),
         {},
-        axis_sizes={ax_e1_r1: 2, ax_e2_r1: 3},
         factorized_weights={ax_e1_r1: np.full(2, 0.5), ax_e2_r1: np.full(3, 1 / 3)},
     )
     r2 = EvaluationResult(
         _ex.State(values_r2),
-        {ax_e2_r2: 0, ax_e1_r2: 1},
+        AxisLayout.build(ensemble=[(ax_e2_r2, 3), (ax_e1_r2, 2)]),
         {},
-        axis_sizes={ax_e2_r2: 3, ax_e1_r2: 2},
         factorized_weights={ax_e2_r2: np.full(3, 1 / 3), ax_e1_r2: np.full(2, 0.5)},
     )
     # ens1 is at dim 0 in r1 but dim 1 in r2.
@@ -869,8 +867,8 @@ def test_merge_results_growing_axis_at_different_position_raises() -> None:
 
 def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
     """_merge_results_param_extend raises ValueError when r2 lacks the growing PARAMETER axis."""
+    from civic_digital_twins.dt_model.axes import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
-    from civic_digital_twins.dt_model.model.axis import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
     speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=5)
@@ -886,9 +884,8 @@ def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
         values[idx.node] = np.zeros((2, 5))
     r2 = EvaluationResult(
         _ex.State(values),
-        {ax_fake_param: 0, ax_ens: 1},  # ENSEMBLE at dim 1, matching r1
+        AxisLayout.build(parameters=[(ax_fake_param, 2)], ensemble=[(ax_ens, 5)]),  # ENSEMBLE at dim 1, matching r1
         {},
-        axis_sizes={ax_fake_param: 2, ax_ens: 5},
         factorized_weights={ax_fake_param: np.full(2, 0.5), ax_ens: np.full(5, 0.2)},
     )
     # r2 has no PARAMETER axis named "speed" → raises
@@ -899,7 +896,6 @@ def test_merge_results_param_extend_param_axis_missing_in_r2() -> None:
 def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
     """_merge_results_param_extend raises ValueError when ENSEMBLE axis positions differ."""
     from civic_digital_twins.dt_model.engine.numpybackend import executor as _ex  # noqa: PLC0415
-    from civic_digital_twins.dt_model.model.axis import PARAMETER  # noqa: PLC0415
     from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
 
     speed, model, ev, handle = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=5)
@@ -907,18 +903,19 @@ def test_merge_results_param_extend_ensemble_pos_mismatch_raises() -> None:
     r1 = handle.result
     # r1: PARAMETER(speed) at dim 0, ENSEMBLE at dim 1 → ens_pos=1
 
-    # Build r2 with ENSEMBLE at dim 0 (position mismatch vs r1's dim 1).
-    ax_param = Axis("speed", PARAMETER)
+    # Build r2 with ENSEMBLE at dim 0.  Under the canonical role ordering
+    # (PARAMETER before ENSEMBLE, enforced by AxisLayout) a position mismatch
+    # arises from a differing PARAMETER count: r2 has no PARAMETER axis, so
+    # its single ENSEMBLE axis sits at dim 0 versus r1's dim 1.
     ax_ens = Axis("_ensemble", ENSEMBLE)
     values: dict = {}
     for idx in plan.nodes_of_interest:
-        values[idx.node] = np.zeros((5, 2))  # shape (5_ens, 2_param)
+        values[idx.node] = np.zeros((5,))  # shape (5_ens,)
     r2 = EvaluationResult(
         _ex.State(values),
-        {ax_ens: 0, ax_param: 1},  # ENSEMBLE at dim 0, PARAMETER at dim 1
+        AxisLayout.build(ensemble=[(ax_ens, 5)]),  # ENSEMBLE at dim 0 (r1 has it at dim 1)
         {},
-        axis_sizes={ax_ens: 5, ax_param: 2},
-        factorized_weights={ax_ens: np.full(5, 0.2), ax_param: np.full(2, 0.5)},
+        factorized_weights={ax_ens: np.full(5, 0.2)},
     )
     with pytest.raises(ValueError, match="ENSEMBLE axis position mismatch"):
         _merge_results_param_extend(r1, r2, plan, speed)
