@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use of `.value` when seeding the executor state.
 - `DistributionIndex.frozen_distribution` — the frozen distribution instance,
   replacing `DistributionIndex.value` (see below).
+- `ModelContractViolation` — common base for any `Model` I/O contract
+  violation, soft or hard.  `ModelContractWarning` (soft) and the new
+  `ModelContractError` (hard) are now siblings under it, so a single
+  `except ModelContractViolation` catches either severity.  Exported from
+  `civic_digital_twins.dt_model`.
+- `ModelContractError` — base class for hard contract-violation errors,
+  sibling to `ModelContractWarning`.  `InputsContractError` (see below) is
+  its first member.
 
 ### Changed
 
@@ -54,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (previously emitted `DeprecationWarning` and continued).  Passing
   `legacy=True` still works but now itself emits `DeprecationWarning` — the
   escape hatch is staged for removal in a future milestone.
+- **Breaking:** `InputsContractWarning` is renamed to `InputsContractError`
+  and is now raised directly by `Model.__init__` instead of emitted via
+  `warnings.warn` — a constructor parameter holding a `GenericIndex` absent
+  from the declared `Inputs` is a hard error and can no longer be silenced
+  with `warnings.filterwarnings`.  It is no longer a subclass of
+  `ModelContractWarning` (a hard error is not a stricter kind of soft
+  warning); catch `ModelContractError` or the shared `ModelContractViolation`
+  base instead.
 
 ### Removed
 

@@ -16,7 +16,14 @@ from .index import (
     Index,
     TimeseriesIndex,
 )
-from .model import AbstractIndexNotInInputsWarning, InputsContractWarning, Model, ModelContractWarning
+from .model import (
+    AbstractIndexNotInInputsWarning,
+    InputsContractError,
+    Model,
+    ModelContractError,
+    ModelContractViolation,
+    ModelContractWarning,
+)
 from .model_variant import ModelVariant
 
 __all__ = [
@@ -40,8 +47,10 @@ __all__ = [
     "ENSEMBLE",
     "GenericIndex",
     "Index",
-    "InputsContractWarning",
+    "InputsContractError",
     "Model",
+    "ModelContractError",
+    "ModelContractViolation",
     "ModelContractWarning",
     "ModelVariant",
     "PARAMETER",
