@@ -320,9 +320,9 @@ class Scenario:
     def effective_distribution(self, idx: GenericIndex) -> Distribution | None:
         """Return the effective :class:`~model.index.Distribution` for *idx*.
 
-        Checks ``overrides`` first; falls back to ``idx.value`` if that is a
-        :class:`~model.index.Distribution`.  Returns ``None`` when no
-        distribution is configured.
+        Checks ``overrides`` first; falls back to *idx*'s own frozen
+        distribution if it is a :class:`~model.index.DistributionIndex`.
+        Returns ``None`` when no distribution is configured.
 
         Parameters
         ----------
@@ -339,7 +339,7 @@ class Scenario:
         if val is not None:
             return val if isinstance(val, Distribution) else None
         if isinstance(idx, DistributionIndex):
-            return idx.value
+            return idx.frozen_distribution
         return None
 
     def effective_outcomes(self, idx: CategoricalIndex | ConditionalCategoricalIndex) -> dict[str, float] | None:
@@ -444,7 +444,7 @@ class Scenario:
             # Determine the effective value: override takes precedence.
             val: DomainValue | graph.Node | None = self._overrides.get(idx)
             if val is None and isinstance(idx, (Index, TimeseriesIndex)):
-                val = idx.value  # type: ignore[assignment]  # Scalar ⊄ DomainValue
+                val = idx.concrete_default()  # type: ignore[assignment]  # Scalar ⊄ DomainValue
 
             if val is None or isinstance(val, (Distribution, dict, graph.Node)):
                 continue  # no concrete value or formula node; ensemble's responsibility

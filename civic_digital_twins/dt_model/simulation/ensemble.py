@@ -15,7 +15,7 @@ from ..model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
-    Distribution,
+    DistributionIndex,
     GenericIndex,
     Index,
 )
@@ -1067,7 +1067,7 @@ class CrossProductEnsemble:
                 cats_unordered.append(idx)
             elif isinstance(idx, ConditionalDistributionIndex):
                 dists_unordered.append(idx)
-            elif isinstance(idx, Index) and isinstance(idx.value, Distribution):
+            elif isinstance(idx, DistributionIndex):
                 dists_unordered.append(idx)
             # else: plain placeholder Index — skip silently
 

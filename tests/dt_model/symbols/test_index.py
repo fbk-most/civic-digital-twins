@@ -18,16 +18,16 @@ def test_timeseries_index_construction():
     idx = TimeseriesIndex("cap", values)
     assert idx.name == "cap"
     assert isinstance(idx.node, graph.timeseries_placeholder)
-    assert isinstance(idx.value, np.ndarray)
-    assert np.array_equal(idx.value, values)
+    assert isinstance(idx.concrete_default(), np.ndarray)
+    assert np.array_equal(idx.concrete_default(), values)
 
 
 def test_timeseries_index_value_attribute():
-    """Test that the value attribute holds the numpy array."""
+    """Test that concrete_default() holds the numpy array."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
-    assert isinstance(idx.value, np.ndarray)
-    assert np.array_equal(idx.value, values)
+    assert isinstance(idx.concrete_default(), np.ndarray)
+    assert np.array_equal(idx.concrete_default(), values)
 
 
 def test_timeseries_index_evaluation():
@@ -66,7 +66,7 @@ def test_timeseries_index_no_values():
     """Test construction of a TimeseriesIndex with no values (placeholder mode)."""
     idx = TimeseriesIndex("inflow")
     assert isinstance(idx.node, graph.timeseries_placeholder)
-    assert idx.value is None
+    assert idx.is_abstract
 
 
 def test_timeseries_index_placeholder_raises_without_state():
@@ -100,11 +100,12 @@ def test_timeseries_index_str_placeholder():
 
 
 def test_timeseries_index_formula_construction():
-    """TimeseriesIndex accepts a graph.Node and stores it as the node."""
+    """TimeseriesIndex accepts a graph.Node and reuses it directly as its node."""
     ts = TimeseriesIndex("inflow")
-    result = TimeseriesIndex("outflow", ts.node * ts.node)
+    formula = ts.node * ts.node
+    result = TimeseriesIndex("outflow", formula)
     assert isinstance(result.node, graph.multiply)
-    assert isinstance(result.value, graph.Node)
+    assert result.node is formula
 
 
 def test_timeseries_index_formula_str():
@@ -157,14 +158,14 @@ def test_index_scalar_creates_placeholder():
     """Index(scalar) creates a graph.placeholder node (D1a: value lives in model layer)."""
     idx = Index("cost", 8.0)
     assert isinstance(idx.node, graph.placeholder)
-    assert idx.value == 8.0
+    assert idx.concrete_default() == 8.0
 
 
 def test_const_index_scalar_creates_constant():
     """ConstIndex always creates a graph.constant node regardless of D1a."""
     idx = ConstIndex("cost", 8.0)
     assert isinstance(idx.node, graph.constant)
-    assert idx.value == 8.0
+    assert idx.concrete_default() == 8.0
 
 
 def test_timeseries_index_array_creates_timeseries_placeholder():
@@ -172,8 +173,8 @@ def test_timeseries_index_array_creates_timeseries_placeholder():
     arr = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("ts", arr)
     assert isinstance(idx.node, graph.timeseries_placeholder)
-    assert isinstance(idx.value, np.ndarray)
-    assert np.array_equal(idx.value, arr)
+    assert isinstance(idx.concrete_default(), np.ndarray)
+    assert np.array_equal(idx.concrete_default(), arr)
 
 
 def test_const_timeseries_index_creates_timeseries_constant():
@@ -428,9 +429,9 @@ def test_distribution_index_params_property_returns_copy():
 
 
 def test_const_index_value():
-    """ConstIndex.value returns the constant value."""
+    """ConstIndex.concrete_default() returns the constant value."""
     idx = ConstIndex("c", 42.0)
-    assert idx.value == 42.0
+    assert idx.concrete_default() == 42.0
 
 
 def test_const_index_str():
@@ -449,8 +450,8 @@ def test_const_timeseries_index_construction():
     arr = np.array([1.0, 2.0, 3.0])
     ts = ConstTimeseriesIndex("demand", arr)
     assert ts.name == "demand"
-    assert isinstance(ts.value, np.ndarray)
-    assert np.array_equal(ts.value, arr)
+    assert isinstance(ts.concrete_default(), np.ndarray)
+    assert np.array_equal(ts.concrete_default(), arr)
     assert isinstance(ts.node, graph.timeseries_constant)
 
 

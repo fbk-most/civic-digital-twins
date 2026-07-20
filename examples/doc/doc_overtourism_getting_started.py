@@ -19,7 +19,6 @@ from civic_digital_twins.dt_model import (  # noqa: E402
     CategoricalIndex,
     ConditionalDistributionIndex,
     CrossProductEnsemble,
-    Distribution,
     DistributionIndex,
     DomainValue,
     Evaluation,
@@ -194,9 +193,9 @@ field = np.ones(visitors_axis.size)
 for c in model.constraints:
     usage = np.broadcast_to(result[c.usage], result.full_shape)  # (201, 6)
 
-    if isinstance(c.capacity.value, Distribution):
+    if isinstance(c.capacity, DistributionIndex):
         # Probabilistic capacity: probability that usage ≤ capacity
-        mask = 1.0 - c.capacity.value.cdf(usage)
+        mask = 1.0 - c.capacity.frozen_distribution.cdf(usage)
     else:
         cap = np.broadcast_to(result[c.capacity], result.full_shape)
         mask = (usage <= cap).astype(float)

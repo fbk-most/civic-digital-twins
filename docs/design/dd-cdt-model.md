@@ -860,13 +860,13 @@ Multiplying the per-constraint probabilities gives the joint
 *sustainability field* over the grid:
 
 ```python
-from civic_digital_twins.dt_model import Distribution
+from civic_digital_twins.dt_model import DistributionIndex
 
 field = np.ones((tt.size, ee.size))
 for c in model.constraints:
     usage = np.broadcast_to(result[c.usage], result.full_shape)
-    if isinstance(c.capacity.value, Distribution):
-        mask = 1.0 - c.capacity.value.cdf(usage)        # P(usage ≤ capacity)
+    if isinstance(c.capacity, DistributionIndex):
+        mask = 1.0 - c.capacity.frozen_distribution.cdf(usage)  # P(usage ≤ capacity)
     else:
         cap = np.broadcast_to(result[c.capacity], result.full_shape)
         mask = (usage <= cap).astype(float)

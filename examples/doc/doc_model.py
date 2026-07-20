@@ -340,7 +340,7 @@ def _demo_18_19_overtourism() -> None:
         ConditionalDistributionIndex,
         ConstIndex,
         CrossProductEnsemble,
-        Distribution,
+        DistributionIndex,
         Evaluation,
         GenericIndex,
         Index,
@@ -422,8 +422,8 @@ def _demo_18_19_overtourism() -> None:
     field = np.ones((tt.size, ee.size))
     for c in model.constraints:
         usage = np.broadcast_to(result[c.usage], result.full_shape)
-        if isinstance(c.capacity.value, Distribution):
-            mask = 1.0 - c.capacity.value.cdf(usage)
+        if isinstance(c.capacity, DistributionIndex):
+            mask = 1.0 - c.capacity.frozen_distribution.cdf(usage)
         else:
             cap = np.broadcast_to(result[c.capacity], result.full_shape)
             mask = (usage <= cap).astype(float)

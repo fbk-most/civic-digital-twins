@@ -94,7 +94,6 @@ from civic_digital_twins.dt_model import (
     outputs,
     sample_across,
 )
-from civic_digital_twins.dt_model.model.index import Distribution
 from civic_digital_twins.dt_model.simulation.handle import _get_default_executor
 from civic_digital_twins.dt_model.simulation.runner import (
     EvaluationConfig,
@@ -782,8 +781,8 @@ def compute_sustainability_field(
     field_elements: dict = {}
     for c in model.constraints:
         usage = np.broadcast_to(result[c.usage], result.full_shape)
-        if isinstance(c.capacity.value, Distribution):
-            mask = (1.0 - c.capacity.value.cdf(usage)).astype(float)
+        if isinstance(c.capacity, DistributionIndex):
+            mask = (1.0 - c.capacity.frozen_distribution.cdf(usage)).astype(float)
         else:
             cap = np.broadcast_to(result[c.capacity], result.full_shape)
             mask = (usage <= cap).astype(float)

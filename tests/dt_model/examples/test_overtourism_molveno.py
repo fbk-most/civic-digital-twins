@@ -19,7 +19,7 @@ from civic_digital_twins.dt_model import (
     ModelContractWarning,
     Scenario,
 )
-from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
+from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 
 model = MolvenoModel(inputs=MolvenoModel.default_inputs())
 _pvs = [model.inputs.pv_tourists, model.inputs.pv_excursionists]
@@ -46,8 +46,8 @@ def compute_field(model, ensemble, tt, ee):
     for c in model.constraints:
         # Broadcast to full shape in case the formula doesn't depend on all axes.
         usage = np.broadcast_to(result[c.usage], result.full_shape)
-        if isinstance(c.capacity.value, Distribution):
-            mask = (1.0 - c.capacity.value.cdf(usage)).astype(float)
+        if isinstance(c.capacity, DistributionIndex):
+            mask = (1.0 - c.capacity.frozen_distribution.cdf(usage)).astype(float)
         else:
             cap = np.broadcast_to(result[c.capacity], result.full_shape)
             mask = (usage <= cap).astype(float)
