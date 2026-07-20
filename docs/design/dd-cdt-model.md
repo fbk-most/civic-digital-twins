@@ -288,8 +288,8 @@ manual list needed.
 
 **Inputs contract convention**: every `GenericIndex` that is an external input must
 be declared as a field in `Inputs`.  If a `GenericIndex` value is used but absent
-from `Inputs`, an `InputsContractWarning` is emitted naming the offending field (see
-[Contract Warnings](#contract-warnings)).
+from `Inputs`, `InputsContractError` is raised naming the offending field (see
+[Contract Violations](#contract-violations)).
 
 ```python
 from scipy import stats
@@ -462,27 +462,47 @@ base = Scenario(model)                               # uses the model's own valu
 expensive = Scenario(model, overrides={cost: 12.0})   # what-if: cost = 12.0
 ```
 
-## Contract Warnings
+## Contract Violations
 
 [`model/model.py`](../../civic_digital_twins/dt_model/model/model.py)
 
-Both warning classes are exported from `civic_digital_twins.dt_model`.
+All contract-violation classes are exported from `civic_digital_twins.dt_model`.
 
-**`ModelContractWarning(UserWarning)`** — base class for all Model I/O
-contract warnings.  Use
+**`ModelContractViolation(Exception)`** — common base for any contract
+violation, soft or hard.  It inherits from `Exception` (rather than being a
+bare marker) solely so it is itself a valid `except` target; it is never
+raised or emitted directly.  Catch it to handle any contract violation
+regardless of severity:
+
+```python
+try:
+    SomeModel(...)
+except ModelContractViolation:
+    ...
+```
+
+**`ModelContractWarning(ModelContractViolation, UserWarning)`** — base class
+for all *soft* Model I/O contract warnings.  Use
 
 ```python
 import warnings
 warnings.filterwarnings("error", category=ModelContractWarning)
 ```
 
-to promote the entire family of contract warnings into hard errors,
-which is recommended in test suites.
+to promote the remaining soft-warning family into hard errors, which is
+recommended in test suites.
 
-**`InputsContractWarning(ModelContractWarning)`** — emitted when a
+**`ModelContractError(ModelContractViolation)`** — base class for all *hard*
+Model I/O contract errors.  `ModelContractWarning` and `ModelContractError`
+are siblings, not parent/child: a hard error is not a stricter kind of soft
+warning, it is a different thing that happens to share a family lineage.
+
+**`InputsContractError(ModelContractError)`** — raised when a
 `GenericIndex` constructor parameter is absent from the declared
-`Inputs` dataclass.  The warning message names the offending parameter
-precisely so it can be located and added to `Inputs`.
+`Inputs` dataclass.  This is a hard error: `Model` raises it directly
+rather than routing it through `warnings.warn`, so it cannot be silenced
+with `warnings.filterwarnings`.  The message names the offending
+parameter precisely so it can be located and added to `Inputs`.
 
 **`AbstractIndexNotInInputsWarning(ModelContractWarning)`** — emitted when
 an abstract index (one whose value is `None` or a `Distribution`) is not
@@ -491,7 +511,7 @@ outside the model and are therefore inputs by definition.  Currently a soft
 warning for backwards compatibility; planned for promotion to an error in a
 future release.
 
-Example — the following model triggers an `InputsContractWarning`
+Example — the following model raises `InputsContractError`
 because `x` is a `GenericIndex` constructor parameter but is not
 declared in `Inputs`:
 
@@ -509,13 +529,12 @@ class BadModel(Model):
         z: Index
 
     def __init__(self, x: DistributionIndex) -> None:
-        # x is a GenericIndex parameter but not in Inputs — warns!
+        # x is a GenericIndex parameter but not in Inputs — raises!
         z = Index("z", x + x)
         super().__init__("bad", outputs=BadModel.Outputs(z=z))
 ```
 
-Declare an `Inputs` dataclass and pass an instance to silence the
-warning:
+Declare an `Inputs` dataclass and pass an instance to avoid the error:
 
 ```python
 class GoodModel(Model):
@@ -964,9 +983,9 @@ be used to wire indexes between models.
 PARAMETER indexes over a dense grid while the ensemble provides the
 ENSEMBLE abstract index values.
 
-**InputsContractWarning**: a `ModelContractWarning` emitted when a
+**InputsContractError**: a `ModelContractError` raised when a
 `GenericIndex` constructor parameter is absent from the declared
-`Inputs` dataclass; the warning message names the offending parameter.
+`Inputs` dataclass; a hard error naming the offending parameter.
 
 **Inputs**: inner `@dataclass` on a `Model` subclass that declares the
 model's contractual constructor inputs (i.e., the `GenericIndex`

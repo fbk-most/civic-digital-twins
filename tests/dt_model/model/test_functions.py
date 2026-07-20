@@ -375,16 +375,10 @@ def test_evaluation_uses_node_functions():
 def test_evaluation_two_submodels_same_function_name_different_functors():
     """Two sub-models sharing a function name get independent functors via node identity."""
     # Sub-model A: doubles its input.
-    p_a = graph.placeholder("a_inp", default_value=3.0)
-    fc_a = graph.function_call("transform", p_a)
-    a_inp = Index("a_inp", p_a)
-    a_out = Index("a_out", fc_a)
+    a_inp = Index("a_inp", graph.placeholder("a_inp", default_value=3.0))
 
     # Sub-model B: triples its input.
-    p_b = graph.placeholder("b_inp", default_value=5.0)
-    fc_b = graph.function_call("transform", p_b)
-    b_inp = Index("b_inp", p_b)
-    b_out = Index("b_out", fc_b)
+    b_inp = Index("b_inp", graph.placeholder("b_inp", default_value=5.0))
 
     @inputs
     class SingleInputs:
@@ -399,7 +393,8 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
         transform: Any
 
     class SubModel(Model, legacy=True):
-        def __init__(self, inp: Index, out: Index, *, fns: SubF) -> None:
+        def __init__(self, inp: Index, *, fns: SubF) -> None:
+            out = Index(f"{inp.name}_out", graph.function_call("transform", inp.node))
             super().__init__(
                 "Sub",
                 inputs=SingleInputs(inp=inp),
@@ -414,20 +409,20 @@ def test_evaluation_two_submodels_same_function_name_different_functors():
 
     class ParentModel(Model, legacy=True):
         def __init__(self) -> None:
-            self.sub_a = SubModel(a_inp, a_out, fns=SubF(transform=NumpyBackend.adapt(lambda x: x * 2)))
-            self.sub_b = SubModel(b_inp, b_out, fns=SubF(transform=NumpyBackend.adapt(lambda x: x * 3)))
+            self.sub_a = SubModel(a_inp, fns=SubF(transform=NumpyBackend.adapt(lambda x: x * 2)))
+            self.sub_b = SubModel(b_inp, fns=SubF(transform=NumpyBackend.adapt(lambda x: x * 3)))
             super().__init__(
                 "Parent",
-                outputs=ParentOutputs(a_out=a_out, b_out=b_out),
+                outputs=ParentOutputs(a_out=self.sub_a.outputs.out, b_out=self.sub_b.outputs.out),
             )
 
     parent = ParentModel()
     result = Evaluation(Scenario(parent)).evaluate(backend=NumpyBackend)
 
     # sub_a: 3.0 * 2 = 6.0
-    assert float(result[a_out]) == pytest.approx(6.0)
+    assert float(result[parent.outputs.a_out]) == pytest.approx(6.0)
     # sub_b: 5.0 * 3 = 15.0
-    assert float(result[b_out]) == pytest.approx(15.0)
+    assert float(result[parent.outputs.b_out]) == pytest.approx(15.0)
 
 
 # ---------------------------------------------------------------------------

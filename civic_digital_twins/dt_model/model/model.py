@@ -13,16 +13,38 @@ from ..engine.numpybackend.executor import Functor
 from .index import GenericIndex, Index, TimeseriesIndex
 
 
-class ModelContractWarning(UserWarning):
-    """Base class for all :class:`Model` I/O contract warnings.
+class ModelContractViolation(Exception):
+    """Common base for any :class:`Model` I/O contract violation, soft or hard.
 
-    Subclass this to introduce new contract-violation categories.  Using a
-    common base makes it easy to turn *all* contract warnings into errors in a
-    test suite with a single filter::
+    Subclassed by both :class:`ModelContractWarning` (soft, routed through
+    :func:`warnings.warn` and therefore filterable) and
+    :class:`ModelContractError` (hard, always raised directly).  Catch this
+    to handle any contract violation regardless of severity::
+
+        try:
+            SomeModel(...)
+        except ModelContractViolation:
+            ...
+
+    Catching this does not, by itself, turn soft warnings into exceptions —
+    it only catches instances that are already being raised, either because
+    they are hard errors or because a :mod:`warnings` filter escalated them.
+    It inherits from :class:`Exception` (rather than being a bare mixin)
+    solely so that it is itself a valid ``except``/``pytest.raises`` target;
+    it is never raised or emitted directly.
+    """
+
+
+class ModelContractWarning(ModelContractViolation, UserWarning):
+    """Base class for all soft :class:`Model` I/O contract warnings.
+
+    Subclass this to introduce new soft contract-violation categories.  Using
+    a common base lets the remaining soft warnings in the family be turned
+    into errors in a test suite with a single filter::
 
         warnings.filterwarnings("error", category=ModelContractWarning)
 
-    or to silence them all in a legacy codebase::
+    or silenced in a legacy codebase::
 
         warnings.filterwarnings("ignore", category=ModelContractWarning)
 
@@ -30,10 +52,21 @@ class ModelContractWarning(UserWarning):
     """
 
 
-class InputsContractWarning(ModelContractWarning):
-    """Emitted when a :class:`Model` subclass receives an undeclared :class:`~.index.GenericIndex` parameter.
+class ModelContractError(ModelContractViolation):
+    """Base class for all hard :class:`Model` I/O contract errors.
 
-    Specifically, this warning fires when a constructor parameter holds a
+    Subclass this to introduce new hard contract-violation categories.
+    Unlike :class:`ModelContractWarning`, instances are raised directly
+    rather than routed through :func:`warnings.warn`, so they bypass the
+    warnings-filter machinery entirely: ``warnings.filterwarnings`` has no
+    effect on them.  Fix the offending code instead of trying to silence it.
+    """
+
+
+class InputsContractError(ModelContractError):
+    """Raised when a :class:`Model` subclass receives an undeclared :class:`~.index.GenericIndex` parameter.
+
+    Specifically, this is raised when a constructor parameter holds a
     :class:`~.index.GenericIndex` value that is not declared in the ``Inputs``
     dataclass.
 
@@ -47,10 +80,6 @@ class InputsContractWarning(ModelContractWarning):
     ``Expose`` fields are intentionally excluded from this rule: they are
     meant to surface purely internal intermediates and are not part of the
     inter-model wiring contract.
-
-    To silence this warning for a specific model, override ``__init__`` and
-    suppress it with :func:`warnings.filterwarnings` before calling
-    ``super().__init__()``.
     """
 
 
@@ -267,7 +296,7 @@ def _check_inputs_contract(
     caller_cls: type,
     inputs_proxy: IOProxy[Any],
 ) -> None:
-    """Warn if any ``GenericIndex`` constructor parameter is absent from ``inputs``.
+    """Raise if any ``GenericIndex`` constructor parameter is absent from ``inputs``.
 
     Walks the parameter list of *caller_cls*``.__init__`` (excluding ``self``),
     looks up the corresponding value in *caller_frame*'s locals, and checks
@@ -276,7 +305,8 @@ def _check_inputs_contract(
     :class:`~.index.GenericIndex` objects (e.g. ``str``, ``np.ndarray``,
     ``pd.DataFrame``) are silently skipped.
 
-    A :class:`InputsContractWarning` is emitted for each violating parameter.
+    :class:`InputsContractError` is raised, naming every violating
+    parameter, if at least one is found.
 
     Parameters
     ----------
@@ -298,6 +328,7 @@ def _check_inputs_contract(
     # Build the set of all GenericIndex node ids reachable through inputs.
     inputs_ids: set[int] = {id(idx) for idx in inputs_proxy}
 
+    missing: list[str] = []
     for param_name, param in sig.parameters.items():
         if param_name == "self":
             continue
@@ -307,7 +338,6 @@ def _check_inputs_contract(
 
         # Collect all scalar GenericIndex objects from this parameter value.
         # Handles scalar, list[Index], and dict[str, Index] shapes.
-        missing: list[str] = []
         if isinstance(value, GenericIndex):
             if id(value) not in inputs_ids:
                 missing.append(param_name)
@@ -320,15 +350,14 @@ def _check_inputs_contract(
                 if isinstance(item, GenericIndex) and id(item) not in inputs_ids:
                     missing.append(f"{param_name}[{k!r}]")
 
-        for entry in missing:
-            warnings.warn(
-                f"{caller_cls.__name__}: parameter {entry!r} holds a GenericIndex "
-                f"that is not declared in Inputs.  "
-                f"Add it as a field of {caller_cls.__name__}.Inputs and include it "
-                f"in the inputs=... passed to super().__init__().",
-                InputsContractWarning,
-                stacklevel=4,
-            )
+    if missing:
+        names = ", ".join(repr(entry) for entry in missing)
+        raise InputsContractError(
+            f"{caller_cls.__name__}: parameter(s) {names} hold a GenericIndex "
+            f"that is not declared in Inputs.  "
+            f"Add each to a field of {caller_cls.__name__}.Inputs and include it "
+            f"in the inputs=... passed to super().__init__()."
+        )
 
 
 def _collect_indexes(
@@ -490,9 +519,7 @@ class Model:
     At construction time, :class:`Model` checks this convention
     automatically: if a constructor parameter holds a
     :class:`~.index.GenericIndex` value that is absent from the declared
-    ``Inputs``, an :class:`InputsContractWarning` is emitted.  The warning
-    is a soft reminder rather than an error, so existing models continue to
-    work while the contract is incrementally tightened.
+    ``Inputs``, :class:`InputsContractError` is raised.
     """
 
     def __init_subclass__(cls, *, legacy: bool = False, **kwargs: Any) -> None:
