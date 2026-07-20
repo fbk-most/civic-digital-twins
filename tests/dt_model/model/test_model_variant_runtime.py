@@ -28,8 +28,7 @@ class _BikeModel(Model):
 
     def compute(self, inputs: Inputs) -> Outputs:
         """Compute throughput/emissions for the bike variant."""
-        cap_val = inputs.capacity.value
-        throughput = Index("throughput", float(cap_val) * 1.0 if isinstance(cap_val, (int, float)) else None)
+        throughput = Index("throughput", inputs.capacity * 1.0)
         emissions = Index("emissions", 0.0)
         return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
@@ -47,8 +46,7 @@ class _TrainModel(Model):
 
     def compute(self, inputs: Inputs) -> Outputs:
         """Compute throughput/emissions for the train variant."""
-        cap_val = inputs.capacity.value
-        throughput = Index("throughput", float(cap_val) * 10.0 if isinstance(cap_val, (int, float)) else None)
+        throughput = Index("throughput", inputs.capacity * 10.0)
         emissions = Index("emissions", 50.0)
         return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 

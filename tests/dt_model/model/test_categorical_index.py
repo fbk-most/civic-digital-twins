@@ -17,7 +17,7 @@ def test_construction_basic():
     """CategoricalIndex constructs with valid outcomes."""
     ci = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
     assert ci.name == "mode"
-    assert ci.value is None  # always abstract
+    assert ci.is_abstract  # always abstract
 
 
 def test_node_is_placeholder():
@@ -43,7 +43,7 @@ def test_outcomes_returns_copy():
 def test_is_abstract():
     """CategoricalIndex is treated as abstract (value is None)."""
     ci = CategoricalIndex("mode", {"a": 1.0})
-    assert ci.value is None
+    assert ci.is_abstract
 
 
 def test_repr():

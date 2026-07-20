@@ -4,10 +4,12 @@
 
 import pytest
 
-from civic_digital_twins.dt_model import define, expose, inputs, outputs
+from civic_digital_twins.dt_model import NumpyBackend, define, expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
+from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
 # Shared fixtures — two concrete Model subclasses with the same I/O contract
@@ -29,8 +31,7 @@ class _BikeModel(Model):
 
     def compute(self, inputs: Inputs) -> Outputs:
         """Compute throughput/emissions for the bike variant."""
-        cap_val = inputs.capacity.value
-        throughput = Index("throughput", float(cap_val) * 1.0 if isinstance(cap_val, (int, float)) else None)
+        throughput = Index("throughput", inputs.capacity * 1.0)
         emissions = Index("emissions", 0.0)
         return _BikeModel.Outputs(throughput=throughput, emissions=emissions)
 
@@ -50,8 +51,7 @@ class _TrainModel(Model):
 
     def compute(self, inputs: Inputs) -> Outputs:
         """Compute throughput/emissions for the train variant."""
-        cap_val = inputs.capacity.value
-        throughput = Index("throughput", float(cap_val) * 10.0 if isinstance(cap_val, (int, float)) else None)
+        throughput = Index("throughput", inputs.capacity * 10.0)
         emissions = Index("emissions", 50.0)
         return _TrainModel.Outputs(throughput=throughput, emissions=emissions)
 
@@ -125,14 +125,14 @@ def test_static_selector_bike_outputs():
     """Active variant's outputs are accessible through ModelVariant."""
     mv = ModelVariant("Transport", _make_variants(), selector="bike")
     # BikeModel sets emissions=0.0
-    assert mv.outputs.emissions.value == 0.0
+    assert mv.outputs.emissions.concrete_default == 0.0
 
 
 def test_static_selector_train_outputs():
     """Static 'train' selector delegates to TrainModel."""
     mv = ModelVariant("Transport", _make_variants(), selector="train")
     # TrainModel sets emissions=50.0
-    assert mv.outputs.emissions.value == 50.0
+    assert mv.outputs.emissions.concrete_default == 50.0
 
 
 def test_static_selector_unknown_key_raises():
@@ -170,7 +170,8 @@ def test_outputs_proxy_delegates_to_active_variant():
     variants = _make_variants()
     mv = ModelVariant("Transport", variants, selector="train")
     # TrainModel throughput = capacity * 10 = 500 * 10 = 5000
-    assert mv.outputs.throughput.value == 5000.0
+    result = Evaluation(Scenario(mv)).evaluate(backend=NumpyBackend)
+    assert float(result[mv.outputs.throughput]) == pytest.approx(5000.0)
 
 
 def test_expose_proxy_delegates_to_active_variant():
@@ -401,8 +402,7 @@ class _ExposeModel(Model, legacy=True):
         Outputs = _ExposeModel.Outputs
         Expose = _ExposeModel.Expose
 
-        cap_val = capacity.value
-        throughput = Index("throughput", float(cap_val) if isinstance(cap_val, (int, float)) else None)
+        throughput = Index("throughput", capacity * 1.0)
         emissions = Index("emissions", 0.0)
         ratio = Index("ratio_" + label, 1.0)
 
@@ -424,7 +424,7 @@ def test_expose_proxy_field_accessible_on_active_variant():
     }
     mv = ModelVariant("ExposeGroup", variants, selector="a")
     # The expose.ratio of variant "a" should be accessible.
-    assert mv.expose.ratio.value == 1.0
+    assert mv.expose.ratio.concrete_default == 1.0
 
 
 def test_expose_indexes_not_in_inactive_variant():

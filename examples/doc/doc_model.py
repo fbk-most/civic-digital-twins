@@ -38,10 +38,10 @@ def _demo_00_index_modes() -> None:
     # Explicit placeholder (resolved by the caller)
     demand = Index("demand", None)
 
-    assert cap_dist.value is not None
-    assert mu.value is not None
-    assert cap.value == 500.0
-    assert demand.value is None
+    assert cap_dist.frozen_distribution is not None
+    assert mu.frozen_distribution is not None
+    assert cap.concrete_default == 500.0
+    assert demand.is_abstract
     _ = load
 
 
@@ -56,7 +56,7 @@ def _demo_01_categorical_index() -> None:
 
     mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
 
-    assert mode.value is None
+    assert mode.is_abstract
     assert mode.support == ["bike", "train"]
 
 
@@ -76,7 +76,7 @@ def _demo_03_conditional_categorical_index() -> None:
 
     cv_weekend = ConditionalCategoricalIndex("weekend", [cv_season], ["yes", "no"], weekend_probs)
 
-    assert cv_weekend.value is None  # abstract
+    assert cv_weekend.is_abstract  # abstract
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ def _demo_04_conditional_distribution_index() -> None:
 
     pv_load = ConditionalDistributionIndex("load", [cv_weather], load_dist)
 
-    assert pv_load.value is None  # abstract — resolved per-scenario by the ensemble
+    assert pv_load.is_abstract  # abstract — resolved per-scenario by the ensemble
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +119,8 @@ def _demo_02_timeseries_index() -> None:
     # Placeholder (externally supplied)
     demand_ts = TimeseriesIndex("demand_ts")
 
-    assert flow.value is not None
-    assert demand_ts.value is None
+    assert flow.concrete_default is not None
+    assert demand_ts.is_abstract
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +340,7 @@ def _demo_18_19_overtourism() -> None:
         ConditionalDistributionIndex,
         ConstIndex,
         CrossProductEnsemble,
-        Distribution,
+        DistributionIndex,
         Evaluation,
         GenericIndex,
         Index,
@@ -422,8 +422,8 @@ def _demo_18_19_overtourism() -> None:
     field = np.ones((tt.size, ee.size))
     for c in model.constraints:
         usage = np.broadcast_to(result[c.usage], result.full_shape)
-        if isinstance(c.capacity.value, Distribution):
-            mask = 1.0 - c.capacity.value.cdf(usage)
+        if isinstance(c.capacity, DistributionIndex):
+            mask = 1.0 - c.capacity.frozen_distribution.cdf(usage)
         else:
             cap = np.broadcast_to(result[c.capacity], result.full_shape)
             mask = (usage <= cap).astype(float)
