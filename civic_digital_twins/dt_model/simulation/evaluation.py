@@ -80,11 +80,14 @@ class EvaluationResult:
         """The :class:`~simulation.axis_layout.AxisLayout` of result arrays."""
         return self._layout
 
-    # Transitional views over the layout, kept while handle.py and runner.py
-    # still consume the dict form; to be removed at the end of the refactor.
+    # Transitional views, kept only for one lingering test assertion
+    # (test_evaluation_handle.py); to be deleted at step 12 together with the
+    # dict-accepting constructor form, once that assertion is migrated.
+    # _axis_layout has no readers left (handle.py and runner.py are fully
+    # migrated onto .layout) — excluded from coverage until its step-12 removal.
 
     @property
-    def _axis_layout(self) -> dict[Axis, int]:
+    def _axis_layout(self) -> dict[Axis, int]:  # pragma: no cover
         return self._layout.positions
 
     @property
