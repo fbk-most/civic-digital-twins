@@ -546,23 +546,12 @@ raises `InputsContractError`.
 
 This is a **hard error**, and deliberately *not* a subclass of `ModelContractWarning`: `Model` raises
 it directly rather than routing it through `warnings.warn`, so it cannot be silenced with
-`warnings.filterwarnings`.  Fix the offending `__init__` instead.  Other, still-soft members of the
-contract-warning family can be escalated during development:
+`warnings.filterwarnings`.  Fix the offending `__init__` instead.  `AbstractIndexNotInInputsError`
+(the other member of the contract-violation family, raised when an abstract index is not declared in
+`Inputs`) is likewise a hard error, not a soft warning to escalate.
 
-```python
-import warnings
-
-from civic_digital_twins.dt_model import ModelContractWarning
-
-with warnings.catch_warnings():
-    # InputsContractError is already a hard error; this escalates the
-    # remaining soft warnings still in the family.
-    warnings.filterwarnings("error", category=ModelContractWarning)
-```
-
-`InputsContractError` and `ModelContractWarning`'s subclasses are siblings under `ModelContractViolation`,
-so a single `except ModelContractViolation` catches any contract violation regardless of severity —
-hard error or (once escalated) soft warning alike.
+`InputsContractError` and `AbstractIndexNotInInputsError` are siblings under `ModelContractViolation`,
+so a single `except ModelContractViolation` catches either regardless of which one fires.
 
 ---
 

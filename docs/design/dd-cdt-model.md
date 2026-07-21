@@ -482,15 +482,11 @@ except ModelContractViolation:
 ```
 
 **`ModelContractWarning(ModelContractViolation, UserWarning)`** — base class
-for all *soft* Model I/O contract warnings.  Use
-
-```python
-import warnings
-warnings.filterwarnings("error", category=ModelContractWarning)
-```
-
-to promote the remaining soft-warning family into hard errors, which is
-recommended in test suites.
+for *soft* Model I/O contract warnings, filterable via
+`warnings.filterwarnings`.  It currently has no concrete members — both
+`InputsContractError` and `AbstractIndexNotInInputsError` (below) are hard
+errors — but remains the extension point for any future contract violation
+that should stay soft rather than fatal.
 
 **`ModelContractError(ModelContractViolation)`** — base class for all *hard*
 Model I/O contract errors.  `ModelContractWarning` and `ModelContractError`
@@ -516,15 +512,11 @@ because `x` is a `GenericIndex` constructor parameter but is not
 declared in `Inputs`:
 
 ```python
-from dataclasses import dataclass
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model, outputs
 
-from scipy import stats
+class BadModel(Model, legacy=True):
 
-from civic_digital_twins.dt_model import DistributionIndex, Index, Model
-
-class BadModel(Model):
-
-    @dataclass
+    @outputs
     class Outputs:
         z: Index
 
@@ -537,13 +529,15 @@ class BadModel(Model):
 Declare an `Inputs` dataclass and pass an instance to avoid the error:
 
 ```python
-class GoodModel(Model):
+from civic_digital_twins.dt_model import DistributionIndex, Index, Model, inputs, outputs
 
-    @dataclass
+class GoodModel(Model, legacy=True):
+
+    @inputs
     class Inputs:
         x: DistributionIndex
 
-    @dataclass
+    @outputs
     class Outputs:
         z: Index
 
