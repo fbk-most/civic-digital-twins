@@ -5,7 +5,7 @@ from .axes import DOMAIN, ENSEMBLE, PARAMETER, TIME_AXIS, Axis, AxisRole
 from .engine.frontend.graph import HasNode
 from .engine.numpybackend.executor import Functor, NumpyBackend
 from .model import (
-    AbstractIndexNotInInputsWarning,
+    AbstractIndexNotInInputsError,
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
@@ -59,7 +59,7 @@ from .simulation import (
 )
 
 __all__ = [
-    "AbstractIndexNotInInputsWarning",
+    "AbstractIndexNotInInputsError",
     "Functor",
     "HasNode",
     "Axis",

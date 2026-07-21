@@ -11,7 +11,7 @@ from scipy import stats
 from civic_digital_twins.dt_model import expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import (
-    AbstractIndexNotInInputsWarning,
+    AbstractIndexNotInInputsError,
     InputsContractError,
     IOProxy,
     Model,
@@ -119,12 +119,12 @@ def test_abstract_indexes_includes_timeseries_placeholder():
 
 
 # ---------------------------------------------------------------------------
-# AbstractIndexNotInInputsWarning — convention check
+# AbstractIndexNotInInputsError — convention check (hard error)
 # ---------------------------------------------------------------------------
 
 
-def test_abstract_index_not_in_inputs_warning_fires_for_unresolved_output():
-    """Warn when an Output holds a genuine unresolved abstract Index absent from Inputs."""
+def test_abstract_index_not_in_inputs_error_raised_for_unresolved_output():
+    """Raise when an Output holds a genuine unresolved abstract Index absent from Inputs."""
 
     class _Bad(Model, legacy=True):
         @outputs
@@ -135,12 +135,33 @@ def test_abstract_index_not_in_inputs_warning_fires_for_unresolved_output():
             placeholder = Index("dangling", None)
             super().__init__("Bad", outputs=_Bad.Outputs(placeholder=placeholder))
 
-    with pytest.warns(AbstractIndexNotInInputsWarning, match="'dangling'"):
+    with pytest.raises(AbstractIndexNotInInputsError, match="'dangling'"):
         _Bad()
 
 
-def test_abstract_index_not_in_inputs_no_warning_when_declared():
-    """No warning when the abstract Output index is also declared in Inputs."""
+def test_abstract_index_not_in_inputs_error_names_every_missing_index():
+    """Raise once, naming every undeclared abstract Output index."""
+
+    class _Bad(Model, legacy=True):
+        @outputs
+        class Outputs:
+            first: Index
+            second: Index
+
+        def __init__(self) -> None:
+            first = Index("first_dangling", None)
+            second = Index("second_dangling", None)
+            super().__init__("Bad", outputs=_Bad.Outputs(first=first, second=second))
+
+    with pytest.raises(AbstractIndexNotInInputsError) as excinfo:
+        _Bad()
+    message = str(excinfo.value)
+    assert "'first_dangling'" in message
+    assert "'second_dangling'" in message
+
+
+def test_abstract_index_not_in_inputs_no_error_when_declared():
+    """No error when the abstract Output index is also declared in Inputs."""
 
     class _Good(Model, legacy=True):
         @inputs
@@ -159,11 +180,7 @@ def test_abstract_index_not_in_inputs_no_warning_when_declared():
                 outputs=_Good.Outputs(placeholder=placeholder),
             )
 
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", AbstractIndexNotInInputsWarning)
-        _Good()  # must not raise
+    _Good()  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -294,10 +311,16 @@ def test_inputs_contract_error_is_subclass_of_model_contract_error_not_warning()
     assert not issubclass(InputsContractError, ModelContractWarning)
 
 
-def test_inputs_contract_error_and_abstract_index_warning_share_violation_base():
-    """Both severities are ModelContractViolation, enabling a single unified except clause."""
+def test_inputs_contract_error_and_abstract_index_error_share_violation_base():
+    """Both are ModelContractViolation, enabling a single unified except clause."""
     assert issubclass(InputsContractError, ModelContractViolation)
-    assert issubclass(AbstractIndexNotInInputsWarning, ModelContractViolation)
+    assert issubclass(AbstractIndexNotInInputsError, ModelContractViolation)
+
+
+def test_abstract_index_not_in_inputs_error_is_subclass_of_model_contract_error_not_warning():
+    """AbstractIndexNotInInputsError is a ModelContractError, not a ModelContractWarning."""
+    assert issubclass(AbstractIndexNotInInputsError, ModelContractError)
+    assert not issubclass(AbstractIndexNotInInputsError, ModelContractWarning)
 
 
 def test_model_contract_error_base_catches_inputs_contract_error():
@@ -342,8 +365,8 @@ def test_model_contract_violation_catches_inputs_contract_error():
         _Bad(received)
 
 
-def test_model_contract_violation_catches_abstract_index_warning_once_escalated():
-    """ModelContractViolation also catches the soft AbstractIndexNotInInputsWarning once escalated."""
+def test_model_contract_violation_catches_abstract_index_not_in_inputs_error():
+    """Catching ModelContractViolation also catches the hard-error AbstractIndexNotInInputsError."""
 
     class _Bad(Model, legacy=True):
         @outputs
@@ -354,12 +377,8 @@ def test_model_contract_violation_catches_abstract_index_warning_once_escalated(
             placeholder = Index("dangling", None)
             super().__init__("Bad", outputs=_Bad.Outputs(placeholder=placeholder))
 
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", AbstractIndexNotInInputsWarning)
-        with pytest.raises(ModelContractViolation):
-            _Bad()
+    with pytest.raises(ModelContractViolation):
+        _Bad()
 
 
 # ---------------------------------------------------------------------------
