@@ -13,12 +13,14 @@ import dataclasses
 import functools
 import sys
 import typing
-from collections.abc import Iterator
-from typing import Any, Literal
+from collections.abc import Callable, Iterator
+from typing import Any, Literal, TypeVar, dataclass_transform, overload
 
 from .index import GenericIndex
 
 __all__ = ["define", "expose", "functions", "inputs", "outputs"]
+
+_T = TypeVar("_T")
 
 _MISSING = object()
 
@@ -179,8 +181,13 @@ def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
     raise TypeError(f"{cls_name}.{field_name}: expected GenericIndex (or list/dict thereof), got {type(val).__name__}")
 
 
-def _make_io_decorator(marker: str) -> Any:
-    """Return a decorator that wraps ``@dataclass`` and validates ``GenericIndex`` fields."""
+def _make_io_decorator(marker: str):
+    """Return a decorator that wraps ``@dataclass`` and validates ``GenericIndex`` fields.
+
+    The return type is intentionally left to inference so that the overloaded,
+    ``@dataclass_transform``-marked ``entry_point`` type is preserved for callers
+    (annotating it ``Any`` would erase the decorated class to ``Any``).
+    """
 
     def decorator(cls: type) -> type:
         cls = dataclasses.dataclass(cls)
@@ -197,7 +204,19 @@ def _make_io_decorator(marker: str) -> Any:
         setattr(cls, marker, True)
         return cls
 
-    def entry_point(_cls: type | None = None) -> Any:
+    # @dataclass_transform lets Pyright synthesize the wrapped @dataclass
+    # __init__ from the decorated class's own fields, so that constructing an
+    # @inputs/@outputs/@expose class (e.g. ``Model.Inputs(x=...)``) is fully
+    # type-checked at call sites without ``# type: ignore[call-arg]``.  It is a
+    # static-only marker: ``entry_point`` is returned unchanged at runtime.  The
+    # overloads keep the identity of the decorated class (``type[_T]``) so that
+    # accessing it through a typed model does not collapse to ``Any``.
+    @overload
+    def entry_point(_cls: type[_T]) -> type[_T]: ...
+    @overload
+    def entry_point(_cls: None = ...) -> Callable[[type[_T]], type[_T]]: ...
+    @dataclass_transform(field_specifiers=(dataclasses.field, dataclasses.Field))
+    def entry_point(_cls: Any = None) -> Any:
         if _cls is not None:
             return decorator(_cls)
         return decorator
@@ -271,7 +290,7 @@ Passing a plain ``@dataclass`` instance as ``expose=`` to
 # ---------------------------------------------------------------------------
 
 
-def define(name: str) -> Any:
+def define(name: str) -> Callable[[type[_T]], type[_T]]:
     """Declare a leaf :class:`~.model.Model` subclass via a ``compute()`` method.
 
     Generates a typed ``__init__(self, inputs: Inputs)`` (plus ``fns: Functions``
@@ -351,7 +370,7 @@ def define(name: str) -> Any:
         ``Expose``.
     """
 
-    def decorator(cls: type) -> type:
+    def decorator(cls: Any) -> Any:
         # Validate class structure at decoration time.
         if "compute" not in cls.__dict__:
             raise TypeError(f"@define({name!r}) requires {cls.__name__} to define a compute() method.")

@@ -99,7 +99,7 @@ def test_define_get_type_hints_fallback():
 
     # The class was decorated successfully; instantiate to confirm.
     x = Index("x", 1.0)
-    m = M(inputs=M.Inputs(x=x))  # type: ignore[call-arg]
+    m = M(inputs=M.Inputs(x=x))
     assert m.outputs.y is not None
 
 
@@ -144,7 +144,7 @@ def test_define_with_functions_and_expose():
             return M.Outputs(y=y_idx), M.Expose(z=z_idx)
 
     functor = NumpyBackend.adapt(lambda x: x * 2)
-    m = M(inputs=M.Inputs(x=x_idx), fns=M.Functions(double=functor))  # type: ignore[call-arg]
+    m = M(inputs=M.Inputs(x=x_idx), fns=M.Functions(double=functor))
 
     result = Evaluation(Scenario(m)).evaluate(backend=NumpyBackend)
     assert float(result[y_idx]) == pytest.approx(6.0)
@@ -193,5 +193,5 @@ def test_define_empty_inputs_with_functions():
             """Return a constant output."""
             return M.Outputs(y=Index("y", 1.0))
 
-    m = M(fns=M.Functions(f=NumpyBackend.adapt(lambda: None)))  # type: ignore[call-arg]
+    m = M(fns=M.Functions(f=NumpyBackend.adapt(lambda x: x)))
     assert m.outputs.y is not None

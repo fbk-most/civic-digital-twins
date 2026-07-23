@@ -46,6 +46,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ModelContractError` — base class for hard contract-violation errors,
   sibling to `ModelContractWarning`.  `InputsContractError` (see below) is
   its first member.
+- `InputsTypeMismatchError` / `FunctionsTypeMismatchError` — new
+  `ModelContractError` subclasses raised by `Model.__init__` whenever a
+  constructor's `inputs`/`fns` value is a valid dataclass/`Functions`
+  instance but belongs to a different model than the one being
+  constructed (including same-shaped siblings — previously a silent
+  miswiring with no signal at all). 
+- `@define`, `@inputs`, `@outputs`, and `@expose` are now
+  identity-preserving decorators (previously annotated `-> Any`, which
+  erased every decorated model to `Any` and disabled all Pyright
+  checking on construction). `Model.Inputs`/`.Outputs`/`.Expose` keep
+  their real type and are checked at call sites. `Model` itself carries
+  a permissive `TYPE_CHECKING` constructor floor so `Model(inputs=...)`
+  type-checks by default with no per-model annotation required; a model
+  that wants full static argument checking can add its own `TYPE_CHECKING`
+  `__init__` stub to override the floor.
 
 ### Changed
 
@@ -136,6 +151,17 @@ Removed without a prior deprecation cycle:
   silently degrading to an unresolved placeholder whenever its input hadn't
   concretely resolved yet). Use `is_abstract`, `concrete_default`, or
   `DistributionIndex.frozen_distribution` instead (see above).
+
+### Fixed
+
+- `Index(name, value)` — passing another `Index` (or subclass, e.g.
+  `ConstIndex`) as `value` now correctly reuses its underlying `.node` as
+  a formula (matching how the arithmetic operators already unwrap
+  indexes); previously it was silently stored as an opaque "concrete
+  scalar" default, producing a bare, unrelated placeholder node instead
+  of the intended formula. A differently-shaped `GenericIndex` sibling
+  (e.g. `TimeseriesIndex`) passed the same way is now rejected with
+  `TypeError` rather than silently mismatching shapes.
 
 
 ## [0.10.0] - 2026-06-21

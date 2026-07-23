@@ -61,7 +61,7 @@ class _ConstModel(Model):
 
 def _make_simple() -> tuple[Index, _SimpleModel]:
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
-    model = _SimpleModel(inputs=_SimpleModel.Inputs(x=x))  # type: ignore[call-arg]
+    model = _SimpleModel(inputs=_SimpleModel.Inputs(x=x))
     return x, model
 
 

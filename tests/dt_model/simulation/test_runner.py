@@ -70,7 +70,7 @@ class _SimpleModel(Model):
 def _make_simple_model() -> tuple[Index, _SimpleModel]:
     """Return a (x_index, model) pair ready for evaluation."""
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
-    return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))  # type: ignore[call-arg]
+    return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))
 
 
 def _make_result_from(model: Model | ModelVariant, size: int = 10) -> EvaluationResult:
@@ -105,7 +105,7 @@ class _ScalarModel(Model):
 def _make_scalar_model() -> tuple[Index, _ScalarModel]:
     """Return (cost_index, model) where cost is a plain scalar Index."""
     cost = Index("cost", 8.0)
-    return cost, _ScalarModel(inputs=_ScalarModel.Inputs(cost=cost))  # type: ignore[call-arg]
+    return cost, _ScalarModel(inputs=_ScalarModel.Inputs(cost=cost))
 
 
 # ---------------------------------------------------------------------------

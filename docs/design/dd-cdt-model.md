@@ -322,6 +322,63 @@ print(m.is_instantiated())    # False
 See [dd-cdt-modularity.md](dd-cdt-modularity.md) for the full `@define`/`compute()` guide,
 including `@expose`, `@functions`, `default_inputs()`, and composite ("root") models.
 
+### Pyright and `@define` constructors
+
+`@define` generates `__init__` at runtime from `compute()`'s signature, so
+Pyright cannot see it from the class's own annotations. You do **not** need to
+declare anything for construction to type-check: `Model` exposes a permissive
+constructor "floor" to the type checker, so `DemoModel(inputs=...)` is green by
+default. Defining a model stays as simple as `@define` + `compute()` — no extra
+typing boilerplate, no extra concepts to learn.
+
+What each layer catches:
+
+| Mistake | Static (no stub) | Runtime | Static (opt-in stub) |
+|---|---|---|---|
+| Bad `Inputs` field — wrong name/type, missing (`Inputs(nope=…)`) | ✅ always[^1] | ✅ | ✅ |
+| Unknown kwarg / wrong arity (`Model(bogus=…)`) | ✅ | ✅ | ✅ |
+| Non-dataclass `inputs` (`Model(inputs=1)`) | ✅ | ✅ | ✅ |
+| **Wrong model's `Inputs`** (a valid dataclass, wrong model) | ❌ | ✅ `InputsTypeMismatchError` | ✅ |
+
+[^1]: `Inputs`/`Outputs`/`Expose` construction is `@dataclass_transform`-checked,
+so their fields are validated statically regardless of the stub.
+
+The floor is typed as "any dataclass" (not `Any`), so non-dataclass garbage is
+rejected by default; the one gap it *cannot* close is telling one model's
+`Inputs` from another's (both are dataclasses). That default deliberately trades
+that last check for zero authoring burden (in the spirit of Python's gradual
+typing — how strict the constructor is checked is left to you). Two mechanisms
+cover it:
+
+- **Runtime (always on).** Passing the wrong model's `Inputs` — even one that
+  coincidentally has the same fields — raises `InputsTypeMismatchError` at
+  construction. This is universal; it needs no annotation and catches the
+  subtle mistakes a permissive static floor cannot. The same applies to a
+  model's `@functions`: a `fns` value that isn't the model's declared
+  `Functions` raises `FunctionsTypeMismatchError`.
+- **Static (opt-in).** If you want a model's constructor *statically* checked —
+  so a wrong `Inputs` is flagged by Pyright before anything runs — add a
+  `TYPE_CHECKING`-guarded `__init__` matching `compute()`'s signature:
+
+```python
+from typing import TYPE_CHECKING
+
+@define("Demo")
+class DemoModel(Model):
+    # ... Inputs / Outputs as before ...
+
+    # Optional: opt in to full static constructor checking.
+    if TYPE_CHECKING:
+        def __init__(self, inputs: Inputs) -> None: ...
+
+    # ... compute() as before ...
+```
+
+This block is invisible at runtime — `@define`'s generated `__init__` still
+runs — and only informs Pyright, overriding the permissive floor with the
+model's exact `Inputs` type. Add it to the models where a compile-time guarantee
+earns its keep; leave it off everywhere else and rely on the runtime check.
+
 ### Direct subclassing with `legacy=True`
 
 For composite models that wire sub-models together, or any model that cannot be expressed

@@ -489,6 +489,13 @@ def test_index_rejects_distribution():
         Index("x", dist)  # type: ignore[arg-type]
 
 
+def test_index_rejects_timeseries_index():
+    """Index rejects a differently-shaped sibling (TimeseriesIndex) rather than silently misfiring."""
+    ts = TimeseriesIndex("t", np.array([1.0, 2.0, 3.0]))
+    with pytest.raises(TypeError, match="TimeseriesIndex"):
+        Index("x", ts)  # type: ignore[arg-type]
+
+
 def test_index_repr_formula_mode():
     """Index repr shows '<formula>' when the value is a graph node."""
     n = graph.constant(42.0)
