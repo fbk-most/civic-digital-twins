@@ -146,8 +146,8 @@ _PLACEHOLDER_RE = re.compile(r"^\s*[\w.]+\s*=\s*\.\.\.\s*$")
 _PRINT_STMT_RE = re.compile(r"^\s*print\s*\(")
 
 # Trailing inline comment:  <code>  # …   (any whitespace before #, space after)
-# The PEP 8 pattern ``\s+#\s`` matches ``# scalar``, ``# noqa: F841``, etc.
-# while avoiding bare ``#noqa`` (no space) and in-string ``#`` tokens.
+# The PEP 8 pattern ``\s+#\s`` matches ``# scalar``, ``# type: ignore``, etc.
+# while avoiding a bare ``#`` glued to code (no space) and in-string ``#`` tokens.
 # Stripping these from both doc and script lines prevents helper annotations
 # from reducing the match ratio against lines that lack such annotations.
 _INLINE_COMMENT_RE = re.compile(r"\s+#\s.*$")
