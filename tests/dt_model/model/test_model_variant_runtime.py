@@ -53,8 +53,8 @@ class _TrainModel(Model):
 
 def _make_variants() -> dict[str, Model]:
     return {
-        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=Index("capacity", 100.0))),  # type: ignore[call-arg]
-        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=Index("capacity", 100.0))),
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),
     }
 
 
@@ -85,8 +85,8 @@ def test_runtime_inputs_proxies_first_variant():
     mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))
     mv = ModelVariant(
         "Transport",
         {"bike": bike, "train": train},
@@ -111,8 +111,8 @@ def test_runtime_abstract_indexes_includes_variant_abstract_indexes():
     mv = ModelVariant(
         "Transport",
         {
-            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),  # type: ignore[call-arg]
-            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),
+            "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),
         },
         selector=mode,
     )
@@ -225,8 +225,8 @@ def test_runtime_getattr_forwards_to_first_variant():
     mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))
     mv = ModelVariant(
         "Transport",
         {"bike": bike, "train": train},

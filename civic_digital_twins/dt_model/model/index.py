@@ -310,7 +310,12 @@ class Index(GenericIndex):
     * **Placeholder** — ``Index("cost", None)``: no default; value must be
       supplied via Scenario or ``parameters=`` before evaluation.
     * **Formula** — ``Index("cost", formula_node)``: computed by the engine;
-      no external injection needed.
+      no external injection needed.  Another :class:`Index` (or a subclass,
+      e.g. :class:`ConstIndex`) is also accepted here and coerced to its
+      underlying ``.node`` (reusing the formula), the same unwrapping the
+      arithmetic operators perform. A sibling type carrying a different
+      shape — :class:`TimeseriesIndex` — is deliberately *not* accepted;
+      mixing shapes this way is almost always a mistake, not a formula reuse.
 
     For distribution-backed indexes use :class:`DistributionIndex`.
     """
@@ -318,9 +323,29 @@ class Index(GenericIndex):
     def __init__(
         self,
         name: str,
-        value: graph.Scalar | graph.Node | None,
+        value: "graph.Scalar | graph.Node | Index | None",
     ) -> None:
         self._name = name
+
+        # Coerce another Index to its underlying node so a formula that reuses
+        # it (``Index("y", inp.x)``) is treated as formula-backed, matching how
+        # the arithmetic operators unwrap indexes via _node_of. Scoped to
+        # Index (not the broader GenericIndex) so that passing a
+        # differently-shaped sibling like TimeseriesIndex is a static/runtime
+        # error rather than a silent shape mismatch.
+        if isinstance(value, Index):
+            value = value.node
+        elif isinstance(value, GenericIndex):
+            # A differently-shaped sibling (e.g. TimeseriesIndex) is rejected
+            # explicitly rather than falling through to the "concrete scalar"
+            # branch below, which would silently store the index object
+            # itself as the default value — the same degenerate-semantics bug
+            # the Index coercion above exists to avoid, just for a mismatched
+            # shape instead of a missing ``.node``.
+            raise TypeError(
+                f"Index {name!r} cannot be initialised from a {type(value).__name__}. "
+                f"Pass its .node explicitly if the shape mismatch is intentional."
+            )
 
         if isinstance(value, Distribution):
             raise TypeError(

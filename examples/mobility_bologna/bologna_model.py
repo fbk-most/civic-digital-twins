@@ -614,7 +614,7 @@ class BolognaModel(Model):
         ts_starting = ConstTimeseriesIndex("staring", vehicle_starting)
 
         inflow = InflowModel(
-            inputs=InflowModel.Inputs(  # type: ignore[call-arg]
+            inputs=InflowModel.Inputs(
                 ts_inflow=ts_inflow,
                 ts_starting=ts_starting,
                 ts=ts,
@@ -631,7 +631,7 @@ class BolognaModel(Model):
             )
         )
 
-        traffic = TrafficModel(  # type: ignore[call-arg]
+        traffic = TrafficModel(
             inputs=TrafficModel.Inputs(
                 ts_inflow=ts_inflow,
                 ts_starting=ts_starting,
@@ -642,7 +642,7 @@ class BolognaModel(Model):
         )
 
         emissions = EmissionsModel(
-            inputs=EmissionsModel.Inputs(  # type: ignore[call-arg]
+            inputs=EmissionsModel.Inputs(
                 ts=ts,
                 i_p_start_time=inputs.i_p_start_time,
                 i_p_end_time=inputs.i_p_end_time,
