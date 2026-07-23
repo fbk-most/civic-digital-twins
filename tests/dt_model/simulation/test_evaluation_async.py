@@ -42,7 +42,7 @@ class _SimpleModel(Model):
 
 def _make_simple() -> tuple[Index, _SimpleModel]:
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
-    return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))  # type: ignore[call-arg]
+    return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))
 
 
 # ---------------------------------------------------------------------------

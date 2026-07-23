@@ -18,7 +18,9 @@ from .index import (
 )
 from .model import (
     AbstractIndexNotInInputsError,
+    FunctionsTypeMismatchError,
     InputsContractError,
+    InputsTypeMismatchError,
     Model,
     ModelContractError,
     ModelContractViolation,
@@ -45,9 +47,11 @@ __all__ = [
     "DomainValue",
     "DOMAIN",
     "ENSEMBLE",
+    "FunctionsTypeMismatchError",
     "GenericIndex",
     "Index",
     "InputsContractError",
+    "InputsTypeMismatchError",
     "Model",
     "ModelContractError",
     "ModelContractViolation",

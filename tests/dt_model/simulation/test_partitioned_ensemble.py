@@ -41,7 +41,7 @@ class _TestModel(Model):
 
 
 def _make_model(*indexes: GenericIndex) -> Model:
-    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))  # type: ignore[call-arg]
+    return _TestModel(inputs=_TestModel.Inputs(indexes=list(indexes)))
 
 
 # ---------------------------------------------------------------------------

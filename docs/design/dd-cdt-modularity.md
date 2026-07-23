@@ -168,6 +168,13 @@ a `GenericIndex` is passed to the constructor but absent from the `Inputs` decla
 3. Passes the result of `compute()` to `super().__init__()`, wiring outputs and expose
    into the model automatically.
 
+Because this `__init__` is generated at runtime, Pyright cannot see it; a
+permissive constructor floor keeps `Model(inputs=...)` green by default, with a
+runtime `InputsTypeMismatchError` and an opt-in static stub as the stricter
+tiers — see
+[Pyright and `@define` constructors](dd-cdt-model.md#pyright-and-define-constructors)
+in dd-cdt-model.md.
+
 The `compute()` method is the factory: it creates index nodes from the inputs and returns an
 `Outputs` instance (or a `(Outputs, Expose)` tuple when `@expose` is used):
 

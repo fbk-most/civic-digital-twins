@@ -61,8 +61,8 @@ _CAPACITY_VALUE = 100.0
 def _make_mv_with_mode(mode: CategoricalIndex) -> ModelVariant:
     cap_bike = Index("capacity", _CAPACITY_VALUE)
     cap_train = Index("capacity", _CAPACITY_VALUE)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))
     return ModelVariant(
         "Transport",
         {"bike": bike, "train": train},
@@ -200,8 +200,8 @@ def test_selector_index_accessible_in_result():
 def _make_presence_mv(mode: CategoricalIndex) -> tuple[Index, ModelVariant]:
     """ModelVariant where both sub-models scale a shared presence axis."""
     presence = Index("presence", None)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))
     mv = ModelVariant(
         "Transport",
         {"bike": bike, "train": train},
@@ -273,8 +273,8 @@ def test_grid_mode_node_selector_from_axis():
             ("bike", True),
         ]
     )
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=presence))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=presence))
     mv = ModelVariant(
         "Transport",
         {"bike": bike, "train": train},

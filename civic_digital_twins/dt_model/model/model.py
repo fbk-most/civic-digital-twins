@@ -6,7 +6,7 @@ import dataclasses
 import inspect
 import warnings
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from ..engine.frontend import graph
 from ..engine.numpybackend.executor import Functor
@@ -94,6 +94,43 @@ class AbstractIndexNotInInputsError(ModelContractError):
 
     The canonical fix is to declare the abstract index as a field of
     ``Inputs`` and wire it through ``super().__init__(inputs=Inputs(...))``.
+    """
+
+
+class InputsTypeMismatchError(ModelContractError):
+    """Raised when the ``inputs`` argument is not an instance of the subclass's own ``Inputs``.
+
+    Specifically, this is raised when the ``inputs`` value passed to a
+    :class:`Model` subclass's constructor is not an instance of that
+    subclass's own declared ``Inputs`` dataclass — most commonly, passing
+    another model's ``Inputs`` by mistake (e.g. ``ParkingModel(inputs=
+    OtherModel.Inputs(...))``).
+
+    This check exists because two unrelated ``Inputs`` dataclasses can
+    coincidentally share the same field names and types, in which case the
+    mistake would not otherwise raise at all: the wrong data would be
+    silently wired into the model.  Checking the type explicitly turns that
+    silent miswiring (or a confusing :class:`AttributeError` deep inside
+    ``compute()``, when the shapes differ) into an immediate, unambiguous
+    error at the model boundary.
+    """
+
+
+class FunctionsTypeMismatchError(ModelContractError):
+    """Raised when the ``functions`` argument is not an instance of the subclass's own ``Functions``.
+
+    The :class:`Functions` analogue of :class:`InputsTypeMismatchError`:
+    raised when a model that declares a ``@functions`` inner class is
+    constructed with a ``fns``/``functions`` value that is not an instance of
+    that declared ``Functions`` class — most commonly another model's
+    ``Functions`` by mistake, or an unrelated object.
+
+    Without this check the mistake is *silently* absorbed: a value lacking the
+    ``_is_functions`` marker is dropped entirely (the model's own function map
+    stays empty), and a different model's ``Functions`` is accepted and mapped
+    by field name — either way the failure only surfaces much later, as a
+    missing-function error at evaluation time, far from its cause.  Checking
+    the type at construction turns that into an immediate, located error.
     """
 
 
@@ -514,7 +551,12 @@ class Model:
     At construction time, :class:`Model` checks this convention
     automatically: if a constructor parameter holds a
     :class:`~.index.GenericIndex` value that is absent from the declared
-    ``Inputs``, :class:`InputsContractError` is raised.
+    ``Inputs``, :class:`InputsContractError` is raised.  Separately, if the
+    ``inputs`` argument itself is not an instance of the subclass's own
+    ``Inputs`` (e.g. a different model's ``Inputs`` passed by mistake),
+    :class:`InputsTypeMismatchError` is raised; likewise, if the
+    ``functions`` argument is not an instance of the subclass's own declared
+    ``Functions``, :class:`FunctionsTypeMismatchError` is raised.
     """
 
     def __init_subclass__(cls, *, legacy: bool = False, **kwargs: Any) -> None:
@@ -555,7 +597,7 @@ class Model:
                 stacklevel=2,
             )
 
-    def __init__(
+    def __init__(  # pyright: ignore[reportRedeclaration]
         self,
         name: str,
         *,
@@ -566,11 +608,36 @@ class Model:
     ) -> None:
         self.name = name
 
+        concrete_cls = type(self)
+        if concrete_cls is not Model and inputs is not None:
+            _declared_inputs_cls = concrete_cls.__dict__.get("Inputs")
+            if _declared_inputs_cls is not None and not isinstance(inputs, _declared_inputs_cls):
+                raise InputsTypeMismatchError(
+                    f"{concrete_cls.__name__} expected inputs of type "
+                    f"{_declared_inputs_cls.__qualname__}, got "
+                    f"{type(inputs).__qualname__} instead."
+                )
+
+        if concrete_cls is not Model and functions is not None:
+            _declared_functions_cls = concrete_cls.__dict__.get("Functions")
+            if _declared_functions_cls is not None and not isinstance(functions, _declared_functions_cls):
+                raise FunctionsTypeMismatchError(
+                    f"{concrete_cls.__name__} expected functions of type "
+                    f"{_declared_functions_cls.__qualname__}, got "
+                    f"{type(functions).__qualname__} instead."
+                )
+
         self.indexes = _collect_indexes(inputs, outputs, expose)
 
-        self.inputs = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])  # type: ignore[assignment]
-        self.outputs = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])  # type: ignore[assignment]
-        self.expose = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])  # type: ignore[assignment]
+        # Typed as Any (not IOProxy): these are read-only, attribute-access
+        # dynamic proxies whose field access already yields Any, and declaring
+        # them Any lets an @expose contract surface a sub-model's outputs/expose
+        # proxy into a field annotated with the wrapped dataclass type (e.g.
+        # ``parking: ParkingModel.Outputs``) without leaking the internal
+        # IOProxy type into user-facing annotations.
+        self.inputs: Any = _proxy_from_dataclass(inputs) if inputs is not None else IOProxy([])
+        self.outputs: Any = _proxy_from_dataclass(outputs) if outputs is not None else IOProxy([])
+        self.expose: Any = _proxy_from_dataclass(expose) if expose is not None else IOProxy([])
 
         # Build node-function map: collect sub-model claims first, then this
         # model's own @functions declarations (closest-ancestor wins).
@@ -586,7 +653,6 @@ class Model:
         # (the subclass __init__ that called super().__init__()) and warn
         # for any parameter whose value is a GenericIndex not found in
         # self.inputs.  The check is skipped for Model itself.
-        concrete_cls = type(self)
         if concrete_cls is not Model:
             frame = inspect.currentframe()
             caller_frame = frame.f_back if frame is not None else None
@@ -633,6 +699,81 @@ class Model:
                     f"in Inputs. Abstract indexes receive their values from outside the "
                     f"model and must be declared in Inputs."
                 )
+
+    if TYPE_CHECKING:  # pragma: no cover
+
+        class _DataclassInstance(Protocol):
+            """Structural match for *any* dataclass instance.
+
+            ``@inputs``/``@outputs``/``@expose`` are ``@dataclass_transform``
+            decorators, so Pyright sees their instances as dataclasses and
+            hence as matching this protocol.  Using it (instead of ``Any``)
+            for the floor's ``inputs``/``outputs``/``expose`` lets the checker
+            reject non-dataclass garbage (``inputs=1``, ``inputs="x"``) by
+            default, while still accepting every real ``Inputs`` regardless of
+            which model it belongs to.
+            """
+
+            __dataclass_fields__: ClassVar[dict[str, Any]]
+
+        # Permissive constructor "floor" for static type checking only.
+        #
+        # ``@define`` synthesizes each subclass's ``__init__`` at *runtime*
+        # (from ``compute()``'s signature), so Pyright never sees it and falls
+        # back to this base signature.  It intentionally accepts every real
+        # call shape — the ``@define`` form ``Model(inputs=..., fns=...)`` and
+        # the base/``legacy=True`` form ``Model(name=..., functions=...)`` — so
+        # that *constructing a model is green by default, with no per-model
+        # annotation required*.  Both keyword names are real: the base
+        # ``Model.__init__`` above uses ``functions``, while ``@define``'s
+        # synthesized ``__init__`` uses ``fns`` — a model built either way must
+        # type-check here, so both are listed.
+        #
+        # ``inputs``/``outputs``/``expose`` must always be passed by keyword
+        # (every real call site does this); the floor does not accept them
+        # positionally, so ``name`` can stay ``str`` instead of ``Any`` and
+        # reject obviously-wrong first arguments.
+        #
+        # It is only a *floor*: it rejects non-dataclass ``inputs`` and unknown
+        # keywords/arity, but does not know *which* model's ``Inputs`` is
+        # correct (an ``Outputs`` instance would also pass here). Two
+        # mechanisms cover that finer check:
+        #   * runtime — ``InputsTypeMismatchError`` (raised above) catches a
+        #     mismatched/cross-model ``Inputs`` for every model, always;
+        #   * static (opt-in) — a model that wants full constructor checking
+        #     adds its own ``if TYPE_CHECKING: def __init__(self, inputs:
+        #     Inputs) -> None: ...`` stub, which overrides this floor.
+        #
+        # It obscures the real ``__init__`` above (hence the scoped
+        # ``reportRedeclaration`` ignore there); the real one still runs.
+        def __init__(
+            self,
+            name: str = "",
+            *,
+            inputs: _DataclassInstance | None = ...,
+            outputs: _DataclassInstance | None = ...,
+            expose: _DataclassInstance | None = ...,
+            # ``functions``/``fns`` stay ``Any``: the ``@functions`` class is
+            # hand-built (not a dataclass), so it does not match the protocol.
+            #
+            # They are also kept as two separate parameters rather than
+            # unified into one: they are both real, independently load-bearing
+            # runtime keyword names, not an artifact of this stub. The base
+            # ``Model.__init__`` above takes ``functions`` (used by every
+            # legacy hand-written ``__init__`` that forwards to
+            # ``super().__init__(..., functions=fns)``); ``@define``'s
+            # synthesized ``__init__`` takes ``fns`` (used by every
+            # ``@define`` + ``@functions`` construction call, including
+            # production examples). Renaming either to unify them would be a
+            # breaking change to one of those two real call shapes, for a
+            # purely cosmetic gain here. The ``functions`` name only exists
+            # because of the ``legacy=True`` escape hatch, which is already
+            # deprecated and staged for removal — once it is gone, this
+            # parameter (and this split) goes with it for free. Tracked as a
+            # follow-up, together with ``legacy=True`` removal itself.
+            functions: Any = ...,
+            fns: Any = ...,
+        ) -> None: ...
 
     def abstract_indexes(self) -> list[GenericIndex]:
         """Return indexes that require external values before evaluation.

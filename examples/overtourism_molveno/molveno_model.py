@@ -504,7 +504,7 @@ class MolvenoModel(Model):
     def compute(self, inputs: Inputs) -> tuple[Outputs, Expose]:
         """Wire concern sub-models from inputs."""
         parking = ParkingModel(
-            inputs=ParkingModel.Inputs(  # type: ignore[call-arg]
+            inputs=ParkingModel.Inputs(
                 pv_tourists=inputs.pv_tourists,
                 pv_excursionists=inputs.pv_excursionists,
                 cv_weather=inputs.cv_weather,
@@ -518,7 +518,7 @@ class MolvenoModel(Model):
             )
         )
         beach = BeachModel(
-            inputs=BeachModel.Inputs(  # type: ignore[call-arg]
+            inputs=BeachModel.Inputs(
                 pv_tourists=inputs.pv_tourists,
                 pv_excursionists=inputs.pv_excursionists,
                 cv_weather=inputs.cv_weather,
@@ -530,7 +530,7 @@ class MolvenoModel(Model):
             )
         )
         accommodation = AccommodationModel(
-            inputs=AccommodationModel.Inputs(  # type: ignore[call-arg]
+            inputs=AccommodationModel.Inputs(
                 pv_tourists=inputs.pv_tourists,
                 i_u_tourists_accommodation=inputs.i_u_tourists_accommodation,
                 i_xa_tourists_accommodation=inputs.i_xa_tourists_accommodation,
@@ -538,7 +538,7 @@ class MolvenoModel(Model):
             )
         )
         food = FoodModel(
-            inputs=FoodModel.Inputs(  # type: ignore[call-arg]
+            inputs=FoodModel.Inputs(
                 pv_tourists=inputs.pv_tourists,
                 pv_excursionists=inputs.pv_excursionists,
                 cv_weather=inputs.cv_weather,

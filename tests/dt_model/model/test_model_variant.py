@@ -61,8 +61,8 @@ def _make_variants() -> dict[str, Model]:
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
     return {
-        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
-        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),
     }
 
 
@@ -157,8 +157,8 @@ def test_inputs_proxy_delegates_to_active_variant():
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
     variants = {
-        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
-        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),  # type: ignore[call-arg]
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     # inputs.capacity should be the bike model's capacity index (same object)
@@ -187,8 +187,8 @@ def test_indexes_delegates_to_active_variant_only():
     """Indexes list contains only the active variant's indexes."""
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))
     mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
 
     # The bike model's indexes must all appear (identity check — __eq__ returns a Node).
@@ -205,8 +205,8 @@ def test_inactive_variant_indexes_accessible_via_variants_key():
     """Inactive variant's indexes are reachable via variants["key"]."""
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))  # type: ignore[call-arg]
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train))
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
     mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
 
     # The train capacity is NOT in mv.indexes (identity check — __eq__ returns a Node).
@@ -220,8 +220,8 @@ def test_abstract_indexes_delegates_to_active_variant():
     """abstract_indexes() delegates to the active variant."""
     cap_placeholder = Index("capacity", None)
     variants = {
-        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),  # type: ignore[call-arg]
-        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     abstract = mv.abstract_indexes()
@@ -233,8 +233,8 @@ def test_is_instantiated_delegates_to_active_variant():
     """is_instantiated() delegates to the active variant."""
     cap_concrete = Index("capacity", 100.0)
     variants = {
-        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_concrete)),  # type: ignore[call-arg]
-        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_concrete)),
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     assert mv.is_instantiated()
@@ -244,8 +244,8 @@ def test_is_not_instantiated_when_active_has_placeholder():
     """is_instantiated() returns False when the active variant has a placeholder."""
     cap_placeholder = Index("capacity", None)
     variants = {
-        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),  # type: ignore[call-arg]
-        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),  # type: ignore[call-arg]
+        "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_placeholder)),
+        "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0))),
     }
     mv = ModelVariant("Transport", variants, selector="bike")
     assert not mv.is_instantiated()
@@ -259,8 +259,8 @@ def test_is_not_instantiated_when_active_has_placeholder():
 def test_direct_attribute_access_forwards_to_active_variant():
     """Attribute access for unknown names is forwarded to the active Model."""
     cap_bike = Index("capacity", 100.0)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0)))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("capacity", 500.0)))
     mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
     # 'name' is defined directly on ModelVariant, not proxied.
     assert mv.name == "Transport"
@@ -289,8 +289,8 @@ def test_variants_dict_contains_all_keys():
 def test_variants_dict_gives_access_to_model_instances():
     """variants["key"] returns the original Model instance."""
     cap_bike = Index("capacity", 100.0)
-    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))  # type: ignore[call-arg]
-    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("c", 1.0)))  # type: ignore[call-arg]
+    bike = _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike))
+    train = _TrainModel(inputs=_TrainModel.Inputs(capacity=Index("c", 1.0)))
     mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
     assert mv.variants["bike"] is bike
 
@@ -307,8 +307,8 @@ def test_mismatched_outputs_raises_value_error():
         ModelVariant(
             "Transport",
             {
-                "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap)),  # type: ignore[call-arg]
-                "other": _OtherOutputsModel(inputs=_OtherOutputsModel.Inputs(capacity=Index("capacity", 200.0))),  # type: ignore[call-arg]
+                "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap)),
+                "other": _OtherOutputsModel(inputs=_OtherOutputsModel.Inputs(capacity=Index("capacity", 200.0))),
             },
             selector="bike",
         )
@@ -322,8 +322,8 @@ def test_mismatched_inputs_is_allowed():
     mv = ModelVariant(
         "Transport",
         {
-            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
-            "extra": _ExtraInputModel(inputs=_ExtraInputModel.Inputs(capacity=cap_extra, bonus=bonus)),  # type: ignore[call-arg]
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),
+            "extra": _ExtraInputModel(inputs=_ExtraInputModel.Inputs(capacity=cap_extra, bonus=bonus)),
         },
         selector="bike",
     )
@@ -341,8 +341,8 @@ def test_runtime_inputs_union_includes_all_variant_fields():
     mv = ModelVariant(
         "Transport",
         {
-            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),  # type: ignore[call-arg]
-            "extra": _ExtraInputModel(inputs=_ExtraInputModel.Inputs(capacity=cap_extra, bonus=bonus)),  # type: ignore[call-arg]
+            "bike": _BikeModel(inputs=_BikeModel.Inputs(capacity=cap_bike)),
+            "extra": _ExtraInputModel(inputs=_ExtraInputModel.Inputs(capacity=cap_extra, bonus=bonus)),
         },
         selector=mode,
     )

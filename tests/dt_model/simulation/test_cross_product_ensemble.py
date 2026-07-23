@@ -46,7 +46,7 @@ class _M(Model):
 
 def _simple_model(*abstract_indexes: GenericIndex) -> Model:
     """Return a minimal Model wrapping the given abstract indexes."""
-    return _M(inputs=_M.Inputs(indexes=list(abstract_indexes)))  # type: ignore[call-arg]
+    return _M(inputs=_M.Inputs(indexes=list(abstract_indexes)))
 
 
 # ---------------------------------------------------------------------------

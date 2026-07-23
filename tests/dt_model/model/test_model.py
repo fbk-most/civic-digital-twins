@@ -8,11 +8,13 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model import expose, inputs, outputs
-from civic_digital_twins.dt_model.model.index import Distribution, Index, TimeseriesIndex
+from civic_digital_twins.dt_model import expose, functions, inputs, outputs
+from civic_digital_twins.dt_model.model.index import Distribution, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import (
     AbstractIndexNotInInputsError,
+    FunctionsTypeMismatchError,
     InputsContractError,
+    InputsTypeMismatchError,
     IOProxy,
     Model,
     ModelContractError,
@@ -305,6 +307,200 @@ def test_inputs_contract_no_error_for_base_model():
     Model("base", outputs=None)  # must not raise
 
 
+# ---------------------------------------------------------------------------
+# InputsTypeMismatchError — wrong model's Inputs passed (hard error)
+# ---------------------------------------------------------------------------
+
+
+def test_inputs_type_mismatch_raises_for_wrong_model_inputs():
+    """Raise when constructed with another model's Inputs instance."""
+
+    class _Alpha(Model, legacy=True):
+        @inputs
+        class Inputs:
+            x: Index
+
+        def __init__(self, inputs: "_Alpha.Inputs") -> None:
+            super().__init__("Alpha", inputs=inputs)
+
+    class _Beta(Model, legacy=True):
+        @inputs
+        class Inputs:
+            y: Index
+
+        def __init__(self, inputs: "_Beta.Inputs") -> None:
+            super().__init__("Beta", inputs=inputs)
+
+    wrong = _Beta.Inputs(y=Index("y", 1.0))
+    with pytest.raises(InputsTypeMismatchError, match="Alpha"):
+        _Alpha(wrong)  # type: ignore[arg-type]
+
+
+def test_inputs_type_mismatch_raises_even_when_shapes_coincide():
+    """Raise even when the wrong Inputs class happens to share the same field shape.
+
+    Without an explicit class check, two structurally-identical but unrelated
+    Inputs classes could be swapped with no error at all — the wrong data
+    would silently flow into the model.
+    """
+
+    class _Alpha(Model, legacy=True):
+        @inputs
+        class Inputs:
+            v: Index
+
+        def __init__(self, inputs: "_Alpha.Inputs") -> None:
+            super().__init__("Alpha", inputs=inputs)
+
+    class _Gamma(Model, legacy=True):
+        @inputs
+        class Inputs:
+            v: Index  # same field name and type as _Alpha.Inputs
+
+        def __init__(self, inputs: "_Gamma.Inputs") -> None:
+            super().__init__("Gamma", inputs=inputs)
+
+    same_shape_wrong = _Gamma.Inputs(v=Index("v", 1.0))
+    with pytest.raises(InputsTypeMismatchError):
+        _Alpha(same_shape_wrong)  # type: ignore[arg-type]
+
+
+def test_inputs_type_mismatch_no_error_when_correct():
+    """No error when constructed with the model's own Inputs instance."""
+
+    class _Alpha(Model, legacy=True):
+        @inputs
+        class Inputs:
+            x: Index
+
+        def __init__(self, inputs: "_Alpha.Inputs") -> None:
+            super().__init__("Alpha", inputs=inputs)
+
+    _Alpha(_Alpha.Inputs(x=Index("x", 1.0)))  # must not raise
+
+
+def test_inputs_type_mismatch_no_error_when_inputs_not_declared():
+    """No error when the subclass declares no Inputs class at all (nothing to check against)."""
+
+    @dataclasses.dataclass
+    class _SomeInputs:
+        x: Index
+
+    class _NoInputs(Model, legacy=True):
+        def __init__(self) -> None:
+            super().__init__("NoInputs", inputs=_SomeInputs(x=Index("x", 1.0)))
+
+    _NoInputs()  # must not raise
+
+
+def test_inputs_type_mismatch_error_is_subclass_of_model_contract_error_not_warning():
+    """InputsTypeMismatchError is a ModelContractError, not a ModelContractWarning."""
+    assert issubclass(InputsTypeMismatchError, ModelContractError)
+    assert not issubclass(InputsTypeMismatchError, ModelContractWarning)
+
+
+def test_inputs_type_mismatch_error_shares_violation_base():
+    """InputsTypeMismatchError is a ModelContractViolation, enabling a unified except clause."""
+    assert issubclass(InputsTypeMismatchError, ModelContractViolation)
+
+
+# ---------------------------------------------------------------------------
+# FunctionsTypeMismatchError — wrong model's Functions passed (hard error)
+# ---------------------------------------------------------------------------
+
+
+def test_functions_type_mismatch_raises_for_wrong_model_functions():
+    """Raise when constructed with another model's Functions instance."""
+
+    class _AlphaF(Model, legacy=True):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @functions
+        class Functions:
+            pass
+
+        def __init__(self, inputs: "_AlphaF.Inputs", fns: "_AlphaF.Functions") -> None:
+            super().__init__("AlphaF", inputs=inputs, functions=fns)
+
+    class _BetaF(Model, legacy=True):
+        @inputs
+        class Inputs:
+            y: Index
+
+        @functions
+        class Functions:
+            pass
+
+        def __init__(self, inputs: "_BetaF.Inputs", fns: "_BetaF.Functions") -> None:
+            super().__init__("BetaF", inputs=inputs, functions=fns)
+
+    wrong = _BetaF.Functions()
+    with pytest.raises(FunctionsTypeMismatchError, match="AlphaF"):
+        _AlphaF(_AlphaF.Inputs(x=Index("x", 1.0)), wrong)  # type: ignore[arg-type]
+
+
+def test_functions_type_mismatch_raises_for_non_functions_object():
+    """Raise — rather than silently drop — when passed an object that is not the declared Functions."""
+
+    class _AlphaF(Model, legacy=True):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @functions
+        class Functions:
+            pass
+
+        def __init__(self, inputs: "_AlphaF.Inputs", fns: object) -> None:
+            super().__init__("AlphaF", inputs=inputs, functions=fns)
+
+    with pytest.raises(FunctionsTypeMismatchError):
+        _AlphaF(_AlphaF.Inputs(x=Index("x", 1.0)), object())
+
+
+def test_functions_type_mismatch_no_error_when_correct():
+    """No error when constructed with the model's own Functions instance."""
+
+    class _AlphaF(Model, legacy=True):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @functions
+        class Functions:
+            pass
+
+        def __init__(self, inputs: "_AlphaF.Inputs", fns: "_AlphaF.Functions") -> None:
+            super().__init__("AlphaF", inputs=inputs, functions=fns)
+
+    _AlphaF(_AlphaF.Inputs(x=Index("x", 1.0)), _AlphaF.Functions())  # must not raise
+
+
+def test_functions_type_mismatch_no_error_when_functions_not_declared():
+    """No error when the subclass declares no Functions class at all (nothing to check against)."""
+
+    class _NoFns(Model, legacy=True):
+        @inputs
+        class Inputs:
+            x: Index
+
+        def __init__(self, inputs: "_NoFns.Inputs") -> None:
+            # A functions value is passed even though this class declares no
+            # ``Functions``; with nothing to check against, it is left alone.
+            super().__init__("NoFns", inputs=inputs, functions=object())
+
+    _NoFns(_NoFns.Inputs(x=Index("x", 1.0)))  # must not raise
+
+
+def test_functions_type_mismatch_error_shares_violation_base():
+    """FunctionsTypeMismatchError is a ModelContractError/Violation, not a warning."""
+    assert issubclass(FunctionsTypeMismatchError, ModelContractError)
+    assert issubclass(FunctionsTypeMismatchError, ModelContractViolation)
+    assert not issubclass(FunctionsTypeMismatchError, ModelContractWarning)
+
+
 def test_inputs_contract_error_is_subclass_of_model_contract_error_not_warning():
     """InputsContractError is a ModelContractError, not a ModelContractWarning."""
     assert issubclass(InputsContractError, ModelContractError)
@@ -533,7 +729,7 @@ def test_dropped_concrete_submodel_index_raises_at_construction():
 
         def __init__(self) -> None:
             k = Index("k", 0.5)  # concrete value, will be in inner.indexes
-            self.inner = InnerModel(InnerModel.Inputs(k=k))
+            self.inner = InnerModel(inputs=InnerModel.Inputs(k=k))
             super().__init__(
                 "Outer",
                 inputs=OuterModel.Inputs(),
@@ -574,7 +770,7 @@ def test_dropped_concrete_submodel_index_error_names_culprits():
         def __init__(self) -> None:
             alpha = Index("alpha_param", 1.0)
             beta = Index("beta_param", 2.0)
-            self.inner = _Inner(_Inner.Inputs(alpha=alpha, beta=beta))
+            self.inner = _Inner(inputs=_Inner.Inputs(alpha=alpha, beta=beta))
             super().__init__(
                 "Outer2",
                 inputs=_Outer.Inputs(),
@@ -614,11 +810,11 @@ def test_concrete_submodel_index_in_parent_expose_does_not_raise():
 
         @expose
         class Expose:
-            domain_indexes: list[Index]
+            domain_indexes: list[GenericIndex]
 
         def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
             k = Index("k", 0.5)
-            inner = _InnerOK(_InnerOK.Inputs(k=k))
+            inner = _InnerOK(inputs=_InnerOK.Inputs(k=k))
             self.inner = inner
             return (
                 _OuterOK.Outputs(result=inner.outputs.result),
@@ -659,7 +855,7 @@ def test_const_index_in_submodel_does_not_raise():
 
         def __init__(self) -> None:
             k = ConstIndex("k", 0.5)  # value baked into graph — exempt from check
-            self.inner = _InnerConst(_InnerConst.Inputs(k=k))
+            self.inner = _InnerConst(inputs=_InnerConst.Inputs(k=k))
             super().__init__(
                 "OuterConst",
                 inputs=_OuterConst.Inputs(),

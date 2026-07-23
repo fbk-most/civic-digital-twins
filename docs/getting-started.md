@@ -86,6 +86,12 @@ co2_model.is_instantiated()    # → False
 > removal in a future milestone.  See [dd-cdt-model.md](design/dd-cdt-model.md)
 > for details.
 
+> **Note:** `@define` generates `__init__` at runtime. `Co2Model(inputs=...)`
+> type-checks by default; a wrong `Inputs` is caught at runtime by
+> `InputsTypeMismatchError`, and you can opt in to full static constructor
+> checking. See [Pyright and `@define`
+> constructors](design/dd-cdt-model.md#pyright-and-define-constructors).
+
 ## 2 — Build an ensemble
 
 Wrap the model in a `Scenario`, then build an ensemble.  `DistributionEnsemble`
