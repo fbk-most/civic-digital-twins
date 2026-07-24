@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Axis layout centralization**
+
 - `AxisLayout` (`civic_digital_twins.dt_model.simulation.axis_layout`) —
   centralizes the axis-to-numpy-dimension mapping previously duplicated
   across `evaluation.py`, `handle.py`, and `runner.py`: canonical
@@ -29,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `union_axes()` and `filter_by_role()` in `civic_digital_twins.dt_model.axes`
   — axis-tuple set operations, consolidating a duplicate `_union_axes()` that
   previously lived in `engine.frontend.graph`.
+
+**Index value-access refactor**
+
 - `Index.is_abstract` / `TimeseriesIndex.is_abstract` — read-only property
   replacing ad-hoc `value is None` checks; `DistributionIndex` overrides it
   to always return `True`. `Model.abstract_indexes()` now delegates to it.
@@ -38,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use of `.value` when seeding the executor state.
 - `DistributionIndex.frozen_distribution` — the frozen distribution instance,
   replacing `DistributionIndex.value` (see below).
+
+**Model contract violation hierarchy**
+
 - `ModelContractViolation` — common base for any `Model` I/O contract
   violation, soft or hard.  `ModelContractWarning` (soft) and the new
   `ModelContractError` (hard) are now siblings under it, so a single
@@ -51,7 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructor's `inputs`/`fns` value is a valid dataclass/`Functions`
   instance but belongs to a different model than the one being
   constructed (including same-shaped siblings — previously a silent
-  miswiring with no signal at all). 
+  miswiring with no signal at all).
+
+**Pyright-checked `@define` constructors**
+
 - `@define`, `@inputs`, `@outputs`, and `@expose` are now
   identity-preserving decorators (previously annotated `-> Any`, which
   erased every decorated model to `Any` and disabled all Pyright
@@ -64,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+**CI and tooling**
+
 - Split CI into `ci-dev.yml` (fast: 3.12 only) and `ci-release.yml` (full:
   all Python versions, doc/domain examples, SPDX, audit, build smoke test).
   Added `+dev` version-marker checks to both workflows.
@@ -72,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patch: ≥90%). Coverage is uploaded from `main` pushes only.
 - Updated `README.md` and `AGENTS.md` to document the explicit `dev` branch
   model and the two-step development/release process.
+
+**Model contract enforcement**
+
 - **Breaking:** A `Model` subclass that defines `__init__` directly without
   passing `legacy=True` now raises `TypeError` at class-definition time
   (previously emitted `DeprecationWarning` and continued).  Passing
@@ -91,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index absent from the declared `Inputs` is a hard error and can no longer
   be silenced with `warnings.filterwarnings`.  It is no longer a subclass of
   `ModelContractWarning`; catch `ModelContractError` or the shared
-  `ModelContractViolation` base instead.  
+  `ModelContractViolation` base instead.
 - `ModelContractWarning` currently has no concrete members but remains
   available for future soft violations.
 

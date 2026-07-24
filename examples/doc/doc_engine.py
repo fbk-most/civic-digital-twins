@@ -158,7 +158,7 @@ def _demo_ssa_and_sorting() -> None:
     n4 = graph.exp(node=n1, name="")
     n5 = graph.constant(value=55, name="")
     n6 = graph.divide(left=n5, right=n1, name="")
-    n7 = graph.add(left=n4, right=n6, name="c")  # block 10: print(c) — named root
+    n7 = graph.add(left=n4, right=n6, name="")  # block 10: print(c) — unnamed root
 
     assert n3 is not None
 

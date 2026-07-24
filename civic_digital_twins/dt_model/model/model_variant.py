@@ -90,10 +90,13 @@ class ModelVariant:
 
     **Architectural note**
 
-    The static / runtime distinction is a deliberate v0.8.x simplification.
-    Post-0.8.x, a constant-folding engine could represent static mode as a
-    ``constant(key)`` selector feeding the same runtime structure, unifying
-    both paths.
+    The static / runtime distinction is a deliberate simplification: the
+    engine has no constant-folding pass, so there is no way to unify them
+    today.  If it ever gained one, static mode could in principle become an
+    optimised degenerate case of the runtime representation — a
+    ``constant(key)`` selector feeding the same merged-graph machinery,
+    folded down to the single active branch at build time — but this is
+    unrealized future work with no concrete plan.
 
     Examples
     --------
