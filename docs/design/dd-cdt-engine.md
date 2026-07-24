@@ -6,7 +6,7 @@
 |--------------|------------------------------------------------|
 | Author       | [@bassosimone](https://github.com/bassosimone) |
 | Co-authors   | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-05-07                                     |
+| Last-Updated | 2026-07-24                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -67,8 +67,9 @@ its evaluation). The evaluation algorithm uses a Python-based interpreter
 that maps nodes to the corresponding NumPy operations, reads required node
 values from the State, and writes results back to the State. Each node is
 evaluated at most once. An experimental JIT compilation strategy using
-[Numba](https://github.com/numba/numba) is developed in a separate branch;
-see [#54](https://github.com/fbk-most/civic-digital-twins/issues/54).
+[Numba](https://github.com/numba/numba) is explored on the
+`experimental/jit` branch; see draft [#109](https://github.com/fbk-most/civic-digital-twins/pull/109).
+There is no active work on this track at the moment.
 
 ## End-To-End Example
 
@@ -415,30 +416,28 @@ evaluation grids).
 
 #### Axis Reduction Operators
 
-All axis reduction operators reduce `node` along `axis` with the reduced axis *preserved*
-as size 1 (keepdims semantics).
+All axis reduction operators reduce `node` along a semantic
+[`Axis`](../../civic_digital_twins/dt_model/axes.py),
+with the reduced axis *preserved* as size 1 (keepdims
+semantics). There is no default; callers always pass `axis=` explicitly,
+e.g. `axis=TIME_AXIS`. The NumPy backend currently only supports
+reducing along `TIME_AXIS` — passing any other `Axis` raises
+`UnsupportedOperation` at evaluation time.
 
 | Operation | NumPy Equivalent | Description |
 | --------- | --------------- | ----------- |
-| `graph.project_using_sum(node, axis=-1)` | `np.sum(..., keepdims=True)` | Sum reduction |
-| `graph.project_using_mean(node, axis=-1)` | `np.mean(..., keepdims=True)` | Mean reduction |
-| `graph.project_using_min(node, axis=-1)` | `np.min(..., keepdims=True)` | Minimum reduction |
-| `graph.project_using_max(node, axis=-1)` | `np.max(..., keepdims=True)` | Maximum reduction |
-| `graph.project_using_std(node, axis=-1)` | `np.std(..., keepdims=True)` | Standard deviation |
-| `graph.project_using_var(node, axis=-1)` | `np.var(..., keepdims=True)` | Variance |
-| `graph.project_using_median(node, axis=-1)` | `np.median(..., keepdims=True)` | Median |
-| `graph.project_using_prod(node, axis=-1)` | `np.prod(..., keepdims=True)` | Product reduction |
-| `graph.project_using_any(node, axis=-1)` | `np.any(..., keepdims=True)` | Logical OR reduction |
-| `graph.project_using_all(node, axis=-1)` | `np.all(..., keepdims=True)` | Logical AND reduction |
-| `graph.project_using_count_nonzero(node, axis=-1)` | `np.count_nonzero(..., keepdims=True)` | Count non-zero elements |
-| `graph.project_using_quantile(node, axis=-1, q=0.5)` | `np.quantile(..., q, keepdims=True)` | Quantile (with q parameter) |
-
-#### Axis Reshaping Operators
-
-| Operation | Description |
-| --------- | ----------- |
-| `graph.expand_dims(node, axis)` | Insert a new size-1 axis at position `axis` (equivalent to `np.expand_dims`). |
-| `graph.squeeze(node, axis)` | Remove the size-1 axis at position `axis` (equivalent to `np.squeeze`). |
+| `graph.project_using_sum(node, axis=TIME_AXIS)` | `np.sum(..., keepdims=True)` | Sum reduction |
+| `graph.project_using_mean(node, axis=TIME_AXIS)` | `np.mean(..., keepdims=True)` | Mean reduction |
+| `graph.project_using_min(node, axis=TIME_AXIS)` | `np.min(..., keepdims=True)` | Minimum reduction |
+| `graph.project_using_max(node, axis=TIME_AXIS)` | `np.max(..., keepdims=True)` | Maximum reduction |
+| `graph.project_using_std(node, axis=TIME_AXIS)` | `np.std(..., keepdims=True)` | Standard deviation |
+| `graph.project_using_var(node, axis=TIME_AXIS)` | `np.var(..., keepdims=True)` | Variance |
+| `graph.project_using_median(node, axis=TIME_AXIS)` | `np.median(..., keepdims=True)` | Median |
+| `graph.project_using_prod(node, axis=TIME_AXIS)` | `np.prod(..., keepdims=True)` | Product reduction |
+| `graph.project_using_any(node, axis=TIME_AXIS)` | `np.any(..., keepdims=True)` | Logical OR reduction |
+| `graph.project_using_all(node, axis=TIME_AXIS)` | `np.all(..., keepdims=True)` | Logical AND reduction |
+| `graph.project_using_count_nonzero(node, axis=TIME_AXIS)` | `np.count_nonzero(..., keepdims=True)` | Count non-zero elements |
+| `graph.project_using_quantile(node, axis=TIME_AXIS, q=0.5)` | `np.quantile(..., q, keepdims=True)` | Quantile (with q parameter) |
 
 #### Index Methods (High-Level API)
 
@@ -450,7 +449,21 @@ way to use axis reduction operations at the model layer.
 > **Note on keepdims semantics.**
 > All axis reduction operations always preserve the reduced axis as a size-1 dimension.
 > Callers that previously relied on axis *collapsing* (the 0.5.0 default)
-> must now use `np.squeeze` or `graph.squeeze` on the result.
+> must now use `np.squeeze` on the result.
+
+#### Accepting Index-Like Objects: the `HasNode` Protocol
+
+Graph-building functions (e.g. arithmetic operators, `graph.function_call`)
+accept a `HasNode[T]` object anywhere a `Node[T]` is expected — a
+`@runtime_checkable` `Protocol` for anything exposing a `.node` property.
+Every [`GenericIndex`](dd-cdt-model.md#genericindex) subclass in `dt_model`
+(the model layer's `Index`/`TimeseriesIndex`/etc. hierarchy — see
+`dd-cdt-model.md`) implements it, so callers can pass an `Index`/
+`TimeseriesIndex` object directly (e.g. `a + some_index`) without manually
+unwrapping `some_index.node` first; the frontend's `ensure_node()` helper
+already does this unwrapping at runtime, and
+`HasNode` exists purely to make static type checkers accept the same
+call sites.
 
 ## Printing DAG Nodes
 
@@ -491,13 +504,16 @@ So far, we have dumped constants and placeholders, which are
 simple to understand. If we `print(c)`, instead, we get:
 
 ```python
-n7 = graph.add(left=n4, right=n6, name="c")
+n7 = graph.add(left=n4, right=n6, name="")
 ```
 
-This tells us that `c` corresponds to a node with ID `7` that
-performs the sum of nodes `4` and `6`. However, we cannot
-see nodes `4` and `6` just by dumping `c`. To see what it means
-to compute `c`, we need topological sorting, which is the
+This tells us that the node with ID `7` performs the sum of nodes
+`4` and `6`. Note that `name` is empty: unlike `n1`'s `"a"` and
+`c`'s Python variable name, node names are *not* auto-populated from
+the assigned Python identifier — `c` only carries a `name` if one is
+passed explicitly, hence `graph.exp(a) + 55 / a` gives an unnamed node.
+We cannot see nodes `4` and `6` just by dumping `c`. To see what it
+means to compute `c`, we need topological sorting, which is the
 topic covered by the next section.
 
 By the way, this code-like representation of a node where we have:
@@ -573,6 +589,13 @@ we are basically selecting the subgraph tree rooted in `c`.
 With topological sorting, we have a powerful and sufficient way of transforming
 a DAG into an actionable sequence of operations that the executor can evaluate
 step by step.
+
+`linearize.forest` also accepts an optional `boundary: set[graph.Node] | None`
+keyword argument: traversal stops at any node in `boundary` instead of
+recursing into its operands. This is used to linearize a partial subgraph —
+e.g. for incremental/regional evaluation, where a previously evaluated
+sub-tree's root nodes are passed as the boundary so they are treated as
+already-computed leaves rather than being re-visited.
 
 ## numpybackend/executor.py: NumPy Evaluator Interface
 
@@ -903,6 +926,19 @@ n7 = scale3(n1, n2, k2=n3, k3=n4, scaled2=n6)
 #1417
 ```
 
+### Node-Identity-Keyed Functions: `State.node_functions`
+
+Besides the name-keyed `functions` dict shown above (implicit,
+evaluate-time binding — a function is looked up by the string name passed
+to `graph.function_call`), `State` also accepts `node_functions: dict[graph.Node, Functor]`,
+which binds a functor to a specific node's *identity* instead of a name.
+`node_functions` is checked first, before falling back to `functions`, so
+two independently-constructed sub-models that both call
+`graph.function_call("same_name", ...)` can each be wired to their own
+functor without colliding — this is how the `@functions` model-layer
+contract decorator (construction-time binding) coexists with the
+evaluate-time `functions=` dict shown here.
+
 ## Error Handling
 
 - The topological sorting algorithm will detect cycles
@@ -938,8 +974,9 @@ evaluating the resulting sequence of nodes with a Python-based NumPy interpreter
 This design enables debuggability (via `DTMODEL_ENGINE_FLAGS=trace`),
 extensibility (user-defined functions via `function_call`), and a clean
 separation between the frontend DSL and the NumPy backend.  An experimental
-JIT compilation path using Numba is tracked in
-[#54](https://github.com/fbk-most/civic-digital-twins/issues/54).
+JIT compilation path using Numba is explored on the `experimental/jit`
+branch; see draft [#109](https://github.com/fbk-most/civic-digital-twins/pull/109).
+There is no active work on this track at the moment.
 
 ## Appendix
 

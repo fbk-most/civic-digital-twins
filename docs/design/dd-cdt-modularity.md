@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-21                                     |
+| Last-Updated | 2026-07-24                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -172,7 +172,7 @@ Because this `__init__` is generated at runtime, Pyright cannot see it; a
 permissive constructor floor keeps `Model(inputs=...)` green by default, with a
 runtime `InputsTypeMismatchError` and an opt-in static stub as the stricter
 tiers — see
-[Pyright and `@define` constructors](dd-cdt-model.md#pyright-and-define-constructors)
+[Static checking with Pyright](dd-cdt-model.md#static-checking-with-pyright)
 in dd-cdt-model.md.
 
 The `compute()` method is the factory: it creates index nodes from the inputs and returns an
@@ -302,8 +302,9 @@ registered functor.  `NumpyBackend.adapt(fn)` wraps a plain NumPy function as a 
 ### `legacy=True` — opting out of `@define`
 
 Models with complex construction logic that cannot be expressed in `compute()` can opt out by passing
-`legacy=True` to the base class.  This suppresses the `DeprecationWarning` that `Model` emits when a
-hand-written `__init__` is detected and no `@define` is present.
+`legacy=True` to the base class.  A subclass that defines `__init__` directly *without* `legacy=True`
+raises `TypeError` at class-definition time.  `legacy=True` is itself the deprecated escape hatch: passing
+it emits a `DeprecationWarning` and is staged for removal in a future milestone.
 
 A `legacy=True` model **must still** declare `@inputs`, `@outputs`, and `@expose` inner classes and
 construct them correctly; the `InputsContractError` mechanism still applies.  See "Inputs Contract
@@ -729,6 +730,10 @@ can be combined with numeric PARAMETER axes for a 2-D grid.  Variant sub-models 
 accept the numeric index as an abstract input:
 
 ```python
+# CategoricalIndex is always abstract (a placeholder node, see dd-cdt-model.md);
+# the outcome weights are required at construction but go unused on this fully
+# deterministic path — parameters= supplies the swept values directly.
+mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
 presence = Index("presence", None)  # abstract — swept by the grid
 mv_grid = ModelVariant(
     "TransportGrid",
@@ -794,6 +799,36 @@ peak_factor = Index(
 
 `season == "summer"` produces a `graph.equal` node that the engine evaluates as a boolean mask
 per scenario; this broadcasts correctly against scalar or timeseries formula branches.
+
+#### Nesting `ModelVariant`s and regional evaluation
+
+A variant in `variants={…}` may itself be a `ModelVariant` (runtime mode), so variant selection
+composes: a top-level "transport mode" choice can each recurse into its own "provider" choice,
+and so on. `Model.__init__` and `ModelVariant.__init__` both accept a nested `ModelVariant`
+wherever they accept a `Model`.
+
+By default, `Evaluation` evaluates the merged graph as a single unit
+(`build_plan(strategy="monolithic")`, the default): every branch of every nested variant is
+computed for every scenario, and inactive branches are masked out afterwards. For a deeply
+nested `ModelVariant`, this means paying the evaluation cost of branches that are never
+selected. `Evaluation.build_plan(nodes_of_interest, strategy="regional")` instead partitions the
+merged graph into an `EvaluationPlan` — a DAG of `Region`s (see
+[`simulation/plan.py`](../../civic_digital_twins/dt_model/simulation/plan.py)) split recursively
+at each nesting level's variant-selector boundary: nodes shared before the selector form one
+region, each variant branch recurses into its own guarded region, and the branches remerge into a
+final guarded region. `Evaluation.execute_plan(plan, ensemble=…)` then evaluates only the regions
+whose guards match a given scenario.
+
+This also changes how sampling works: `DistributionEnsemble` built against a regional plan
+performs *per-scope sampling* — an abstract index inside a variant branch is only sampled within
+that branch's scope, rather than drawn once globally and then masked out for scenarios where the
+branch is inactive. `EvaluationPlan.scoped_abstract_indexes(scenario)` is what groups a scenario's
+abstract indexes by the region-guard chain that owns them.
+
+`strategy="regional"` requires the model to actually contain a runtime-mode `ModelVariant`
+(`build_plan` raises `ValueError` otherwise — use `strategy="monolithic"` for plain models); for
+models without nested variants the two strategies produce identical results, so `"monolithic"`
+remains the default.
 
 ---
 
@@ -1234,11 +1269,13 @@ result   = Evaluation(scenario).evaluate(ensemble=ensemble)
 total_inflow_modified = result.expected_value(m.outputs.total_modified_inflow)
 total_emissions       = result.expected_value(m.outputs.total_emissions)
 
-# Access raw timeseries through expose
-# modified_inflow depends on stochastic inputs → one timeseries per Monte Carlo sample
+# Access raw timeseries through expose. `result[...]` returns the raw
+# broadcast array — it never drops axes, unlike `expected_value()`.
+# modified_inflow depends on stochastic inputs → a full-size ENSEMBLE axis
 modified_inflow_ts = result[m.expose.modified_inflow]    # shape (S, T): S samples × T time-steps
-# ts_inflow is a ConstTimeseriesIndex (no stochastic dependency) → single timeseries
-reference_inflow   = result[m.expose.ts_inflow]          # shape (T,):  no sample axis
+# ts_inflow is a ConstTimeseriesIndex (no stochastic dependency) → same value
+# broadcast across every sample, so the ENSEMBLE axis stays but shrinks to size 1
+reference_inflow   = result[m.expose.ts_inflow]          # shape (1, T): singleton ENSEMBLE axis, not squeezed away
 
 # What-if scenario — override index values via Scenario(overrides=…)
 # The model graph (m) is reused; only the injected cost values change.
@@ -1294,8 +1331,9 @@ def define(name: str) -> Callable[[type[Model]], type[Model]]:
 ```
 
 The generated `__init__` signature matches the declared `Inputs` (and `Functions` if present).
-`legacy=True` on the base class suppresses the `DeprecationWarning` for hand-written `__init__`
-methods.
+A subclass that defines `__init__` directly *without* `legacy=True` raises `TypeError` at
+class-definition time; `legacy=True` is itself the deprecated escape hatch — passing it emits a
+`DeprecationWarning` and is staged for removal in a future milestone.
 
 ### `@inputs`, `@outputs`, `@expose`, `@functions`
 
@@ -1329,11 +1367,11 @@ class Model:
     def __init__(
         self,
         name: str,
-        indexes: list[GenericIndex] | None = None,  # deprecated
         *,
-        inputs:  Any | None = None,
-        outputs: Any | None = None,
-        expose:  Any | None = None,
+        inputs:    Any | None = None,
+        outputs:   Any | None = None,
+        expose:    Any | None = None,
+        functions: Any | None = None,
     ) -> None: ...
 
     def abstract_indexes(self) -> list[GenericIndex]: ...
@@ -1345,16 +1383,17 @@ class Model:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | `str` | Human-readable name.  Used in `repr` and error messages. |
-| `indexes` | `list[GenericIndex]` | *Deprecated.*  Explicit flat index list.  Emits `DeprecationWarning`.  Omit when using the dataclass API. |
-| `inputs` | dataclass instance | Instance of the `Inputs` inner dataclass. |
+| `inputs` | dataclass instance | Instance of the `Inputs` inner dataclass.  Raises `InputsTypeMismatchError` if it belongs to a different model. |
 | `outputs` | dataclass instance | Instance of the `Outputs` inner dataclass. |
 | `expose` | dataclass instance | Instance of the `Expose` inner dataclass.  Optional. |
+| `functions` | `@functions`-decorated dataclass instance | Instance of the `Functions` inner dataclass.  Optional.  Raises `FunctionsTypeMismatchError` if it belongs to a different model. |
 
 **`abstract_indexes() -> list[GenericIndex]`**
 
-Returns all indexes whose `value` is `None` (explicit placeholder) or a `Distribution` (needs
-sampling).  Constant and formula-based indexes are concrete and are not returned.  Used by
-`DistributionEnsemble` and `Evaluation` to determine which indexes must be supplied by the ensemble.
+Returns all indexes whose `is_abstract` property is `True` — a bare placeholder (no formula, no
+concrete value) or a `DistributionIndex`.  Constant and formula-based indexes are concrete and are
+not returned.  Used by `DistributionEnsemble` and `Evaluation` to determine which indexes must be
+supplied by the ensemble.
 
 **`is_instantiated() -> bool`**
 
@@ -1373,12 +1412,12 @@ identity (first-seen wins).  The result is a flat `list[GenericIndex]` in declar
 ```python
 class ModelVariant:
     name:     str
-    variants: dict[str, Model]
+    variants: dict[str, Model | ModelVariant]
 
     def __init__(
         self,
         name: str,
-        variants: Mapping[str, Model],
+        variants: Mapping[str, Model | ModelVariant],
         selector: str | CategoricalIndex | graph.Node,
     ) -> None: ...
 
@@ -1409,7 +1448,7 @@ class ModelVariant:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | `str` | Human-readable name for the variant group. |
-| `variants` | `Mapping[str, Model]` | Non-empty mapping from string key to constructed `Model` instance. |
+| `variants` | `Mapping[str, Model \| ModelVariant]` | Non-empty mapping from string key to a constructed `Model` (or nested `ModelVariant`, for recursive composition). |
 | `selector` | `str` | *(Static mode)* Key of the variant to activate.  Resolved once at construction time. |
 | `selector` | `CategoricalIndex` | *(Runtime mode)* Probabilistic selector; sampled per scenario by `DistributionEnsemble`. |
 | `selector` | `graph.Node` | *(Runtime mode)* Derived selector; must produce a string matching a variant key per scenario. |
@@ -1428,7 +1467,7 @@ class ModelVariant:
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `name` | `str` | Name passed at construction. |
-| `variants` | `dict[str, Model]` | Full mapping of all variants (active and inactive). |
+| `variants` | `dict[str, Model \| ModelVariant]` | Full mapping of all variants (active and inactive). |
 
 **Proxy attributes — static mode** (delegate to the active variant)
 
@@ -1569,6 +1608,12 @@ class InputsContractError(ModelContractError):
 
 class AbstractIndexNotInInputsError(ModelContractError):
     """Raised when an abstract index is not reachable via the model's Inputs."""
+
+class InputsTypeMismatchError(ModelContractError):
+    """Raised when `inputs` is a valid dataclass instance, but belongs to a different model."""
+
+class FunctionsTypeMismatchError(ModelContractError):
+    """Raised when `functions` is not an instance of the model's own declared Functions class."""
 ```
 
 `ModelContractWarning` and `ModelContractError` are siblings, not parent/child: a hard error is not a
@@ -1577,10 +1622,15 @@ family lineage.  `ModelContractViolation` exists purely so that a single `except
 it inherits from `Exception` (rather than being a bare marker) precisely so it is itself a valid
 `except`/`pytest.raises` target, but it is never raised or emitted directly.
 
-Both `InputsContractError` and `AbstractIndexNotInInputsError` are raised directly (hard errors,
-unaffected by `warnings.filterwarnings`).  `ModelContractWarning` currently has no concrete members —
-it remains the extension point for any future *soft* contract violation that should stay filterable
-rather than fatal.
+`InputsContractError`, `AbstractIndexNotInInputsError`, `InputsTypeMismatchError`, and
+`FunctionsTypeMismatchError` are all raised directly (hard errors, unaffected by
+`warnings.filterwarnings`).  The first two catch a *missing* declaration (a `GenericIndex`/abstract
+index not reachable via `Inputs`); the mismatch pair instead catches passing a validly-typed but
+*wrong* `Inputs`/`Functions` instance — e.g. another model's — which no amount of declaring can
+prevent, since both are equally valid dataclasses to a static type checker (see [Static checking
+with Pyright](dd-cdt-model.md#static-checking-with-pyright) in dd-cdt-model.md).
+`ModelContractWarning` currently has no concrete members — it remains the extension point for any
+future *soft* contract violation that should stay filterable rather than fatal.
 
 To catch *any* contract violation regardless of severity, catch `ModelContractViolation` instead:
 
@@ -1674,10 +1724,17 @@ run (e.g. different transport assumptions for different cities).
 
 Runtime mode (`selector: CategoricalIndex | graph.Node`) builds a full merged graph at construction
 time so that `mv.outputs.x` is always a real `Index` node that can be wired into parent model
-formulas.  At evaluation time the engine uses a stratified split-dispatch-merge path that evaluates
-each variant in isolation with only its own scenario slice — zero wasted computation.  The two modes
-are deliberately separate code paths in v0.8.x.  Post-0.8.x, when the engine gains constant-folding,
-the static case could become an optimised degenerate case of the runtime representation.
+formulas.  By default (`strategy="monolithic"`, what `Evaluation.evaluate()` uses) every branch is
+evaluated for every scenario and inactive branches are masked out afterwards; opting into
+`strategy="regional"` (see [Nesting `ModelVariant`s and regional
+evaluation](#nesting-modelvariants-and-regional-evaluation)) instead evaluates each variant branch
+only for its own scenario slice — zero wasted computation, at the cost of an explicit `build_plan`/
+`execute_plan` call instead of plain `evaluate()`.  The two modes are deliberately separate code
+paths today, not a temporary gap: the engine has no constant-folding pass, so there is currently no
+way to unify them.  If the engine ever gained one, static mode could in principle become an
+optimised degenerate case of the runtime representation — a `constant(key)` selector feeding the
+same merged-graph machinery, folded down to the single active branch at build time — but this is
+unrealized future work with no concrete plan or tracking issue.
 
 ### Why are only `outputs` field names required to match across variants?
 
