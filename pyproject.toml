@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 name = "civic-digital-twins"
 
 # Current version
-version = "0.11.0+dev"
+version = "0.11.0"
 
 # Short description of the project
 description = "Civic-Digital-Twins Modeling Framework"
