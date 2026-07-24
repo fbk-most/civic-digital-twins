@@ -44,7 +44,7 @@ import numpy as np
 
 from ..axes import Axis
 from ..engine.numpybackend.executor import Functor, NumpyBackend, State
-from ..model.index import GenericIndex
+from ..model.index import DistributionIndex, GenericIndex, Index, TimeseriesIndex
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .axis_layout import AxisLayout
@@ -827,6 +827,22 @@ def _format_value(val: Any) -> str:
     return str(val)
 
 
+def _own_index_value(idx: GenericIndex) -> Any:
+    """Return *idx*'s own default value, mirroring the pre-#211 ``.value`` semantics.
+
+    Used by :meth:`ModelEvaluator.get_index_diffs` and
+    :meth:`ModelEvaluator.get_model_values` as the no-override baseline: the
+    frozen distribution for a :class:`~model.index.DistributionIndex`, else
+    the concrete scalar/array default (``None`` when abstract or
+    formula-backed).
+    """
+    if isinstance(idx, DistributionIndex):
+        return idx.frozen_distribution
+    if isinstance(idx, (Index, TimeseriesIndex)):
+        return idx.concrete_default
+    return None
+
+
 # ---------------------------------------------------------------------------
 # ModelEvaluator
 # ---------------------------------------------------------------------------
@@ -1197,7 +1213,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             empty dict when no overrides are active.
         """
         return {
-            idx.name: f"was {_format_value(getattr(idx, 'value', None))} \u2192 now {_format_value(override_val)}"
+            idx.name: f"was {_format_value(_own_index_value(idx))} \u2192 now {_format_value(override_val)}"
             for idx, override_val in scenario.overrides.items()
         }
 
@@ -1205,8 +1221,9 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         """Return the effective value of every model index under *scenario*.
 
         For indexes that have an active override the override value is
-        returned; for all others the model's own ``idx.value`` is used
-        (which may be ``None`` for abstract indexes with no override).
+        returned; for all others the index's own default value is used via
+        :func:`_own_index_value` (which may be ``None`` for abstract indexes
+        with no override).
 
         Parameters
         ----------
@@ -1219,9 +1236,7 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             ``{index_name: effective_value}`` for every index in the model.
         """
         active = scenario.overrides
-        return {
-            idx.name: (active[idx] if idx in active else getattr(idx, "value", None)) for idx in self._model.indexes
-        }
+        return {idx.name: (active[idx] if idx in active else _own_index_value(idx)) for idx in self._model.indexes}
 
     # ------------------------------------------------------------------
     # Resume template method
