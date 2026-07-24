@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-08                                     |
+| Last-Updated | 2026-07-24                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -89,8 +89,8 @@ co2_model.is_instantiated()    # → False
 > **Note:** `@define` generates `__init__` at runtime. `Co2Model(inputs=...)`
 > type-checks by default; a wrong `Inputs` is caught at runtime by
 > `InputsTypeMismatchError`, and you can opt in to full static constructor
-> checking. See [Pyright and `@define`
-> constructors](design/dd-cdt-model.md#pyright-and-define-constructors).
+> checking. See [Static checking with
+> Pyright](design/dd-cdt-model.md#static-checking-with-pyright).
 
 ## 2 — Build an ensemble
 
@@ -173,6 +173,16 @@ result = Evaluation(Scenario(ts_model)).evaluate(
     },
 )
 ```
+
+Binding `functions=` at evaluation time is convenient for a one-off script, but the
+binding is invisible to the model's declared interface. Composable or reusable
+sub-models instead declare a `@functions` inner class; `@define` then passes the
+functor to `compute()` as a keyword argument, and the caller supplies it at
+construction time via `fns=Model.Functions(...)`. This is the pattern used by
+[`examples/mobility_bologna/bologna_model.py`](../examples/mobility_bologna/bologna_model.py);
+see [`@functions` — typed functor
+injection](design/dd-cdt-modularity.md#functions--typed-functor-injection) for
+details.
 
 ---
 

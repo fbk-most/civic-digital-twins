@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-08                                     |
+| Last-Updated | 2026-07-24                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -37,9 +37,8 @@ fully concrete.
 *value overrides* that shadow the model's own index values — a concrete
 scalar, array, distribution, or restricted categorical support, depending
 on the index kind.  It is the canonical first argument to every ensemble
-class and to `Evaluation`: `model → Scenario(model, overrides={…}) →
-ensemble + Evaluation(scenario)`.  Ensembles sample
-`scenario.abstract_indexes()`, not the model's own, so an override can turn
+class and to `Evaluation`: `model → Scenario(model, overrides={…}) → ensemble + Evaluation(scenario)`.  Ensembles 
+sample `scenario.abstract_indexes()`, not the model's own, so an override can turn
 an abstract index concrete (removing it from sampling) or replace its
 distribution/support.
 
@@ -132,6 +131,13 @@ load = Index("load", mu * cap)
 # Explicit placeholder (resolved by the caller)
 demand = Index("demand", None)
 ```
+
+Passing another `Index` (or one of its subclasses, e.g. `ConstIndex`) as
+`value` reuses its underlying `graph.Node` as a formula, exactly like
+`Index("load", mu * cap)` above — `Index("y", x)` and `Index("y", x.node)`
+are equivalent. Passing a differently-shaped `GenericIndex` sibling
+instead — e.g. a `TimeseriesIndex`, whose values don't share `Index`'s
+scalar shape — raises `TypeError`.
 
 `DistributionIndex(name, distribution, params)` accepts any callable that
 returns a `Distribution`-conformant object (e.g. any `scipy.stats`
@@ -319,65 +325,10 @@ print(m.abstract_indexes())   # [x, y]  — derived automatically
 print(m.is_instantiated())    # False
 ```
 
-See [dd-cdt-modularity.md](dd-cdt-modularity.md) for the full `@define`/`compute()` guide,
-including `@expose`, `@functions`, `default_inputs()`, and composite ("root") models.
-
-### Pyright and `@define` constructors
-
-`@define` generates `__init__` at runtime from `compute()`'s signature, so
-Pyright cannot see it from the class's own annotations. You do **not** need to
-declare anything for construction to type-check: `Model` exposes a permissive
-constructor "floor" to the type checker, so `DemoModel(inputs=...)` is green by
-default. Defining a model stays as simple as `@define` + `compute()` — no extra
-typing boilerplate, no extra concepts to learn.
-
-What each layer catches:
-
-| Mistake | Static (no stub) | Runtime | Static (opt-in stub) |
-|---|---|---|---|
-| Bad `Inputs` field — wrong name/type, missing (`Inputs(nope=…)`) | ✅ always[^1] | ✅ | ✅ |
-| Unknown kwarg / wrong arity (`Model(bogus=…)`) | ✅ | ✅ | ✅ |
-| Non-dataclass `inputs` (`Model(inputs=1)`) | ✅ | ✅ | ✅ |
-| **Wrong model's `Inputs`** (a valid dataclass, wrong model) | ❌ | ✅ `InputsTypeMismatchError` | ✅ |
-
-[^1]: `Inputs`/`Outputs`/`Expose` construction is `@dataclass_transform`-checked,
-so their fields are validated statically regardless of the stub.
-
-The floor is typed as "any dataclass" (not `Any`), so non-dataclass garbage is
-rejected by default; the one gap it *cannot* close is telling one model's
-`Inputs` from another's (both are dataclasses). That default deliberately trades
-that last check for zero authoring burden (in the spirit of Python's gradual
-typing — how strict the constructor is checked is left to you). Two mechanisms
-cover it:
-
-- **Runtime (always on).** Passing the wrong model's `Inputs` — even one that
-  coincidentally has the same fields — raises `InputsTypeMismatchError` at
-  construction. This is universal; it needs no annotation and catches the
-  subtle mistakes a permissive static floor cannot. The same applies to a
-  model's `@functions`: a `fns` value that isn't the model's declared
-  `Functions` raises `FunctionsTypeMismatchError`.
-- **Static (opt-in).** If you want a model's constructor *statically* checked —
-  so a wrong `Inputs` is flagged by Pyright before anything runs — add a
-  `TYPE_CHECKING`-guarded `__init__` matching `compute()`'s signature:
-
-```python
-from typing import TYPE_CHECKING
-
-@define("Demo")
-class DemoModel(Model):
-    # ... Inputs / Outputs as before ...
-
-    # Optional: opt in to full static constructor checking.
-    if TYPE_CHECKING:
-        def __init__(self, inputs: Inputs) -> None: ...
-
-    # ... compute() as before ...
-```
-
-This block is invisible at runtime — `@define`'s generated `__init__` still
-runs — and only informs Pyright, overriding the permissive floor with the
-model's exact `Inputs` type. Add it to the models where a compile-time guarantee
-earns its keep; leave it off everywhere else and rely on the runtime check.
+This is enough to define a single leaf model. For advanced topics not
+covered here — `@expose`, `@functions`, `default_inputs()`, and composite
+("root") models that wire several sub-models together — see the full
+`@define`/`compute()` guide in [dd-cdt-modularity.md](dd-cdt-modularity.md).
 
 ### Direct subclassing with `legacy=True`
 
@@ -392,7 +343,7 @@ class CompositeModel(Model, legacy=True):
     ...
 ```
 
-See [dd-cdt-modularity.md § Composite models](dd-cdt-modularity.md#composite-models-the-bologna-example)
+See [dd-cdt-modularity.md § Worked Example: Bologna Mobility Model](dd-cdt-modularity.md#worked-example-bologna-mobility-model)
 for a worked example.
 
 Models can be subclassed to add domain-specific structure (labeled
@@ -408,7 +359,7 @@ class ModelVariant:
     def __init__(
         self,
         name: str,
-        variants: Mapping[str, Model],
+        variants: Mapping[str, Model | ModelVariant],
         selector: str | CategoricalIndex | graph.Node,
     ) -> None: ...
 
@@ -419,7 +370,8 @@ class ModelVariant:
 ```
 
 `ModelVariant` selects among pre-constructed `Model` instances that share the same `outputs` field
-names.  It operates in two modes:
+names.  A variant may itself be a `ModelVariant`, enabling nested/recursive composition — see
+[`dd-cdt-modularity.md`](dd-cdt-modularity.md) for that case.  It operates in two modes:
 
 **Static mode** (`selector: str`) — the active variant is resolved once at construction time.
 `ModelVariant` acts as a fully transparent proxy for the active variant; all attribute access
@@ -552,17 +504,29 @@ warning, it is a different thing that happens to share a family lineage.
 
 **`InputsContractError(ModelContractError)`** — raised when a
 `GenericIndex` constructor parameter is absent from the declared
-`Inputs` dataclass.  This is a hard error: `Model` raises it directly
-rather than routing it through `warnings.warn`, so it cannot be silenced
-with `warnings.filterwarnings`.  The message names the offending
+`Inputs` dataclass.  The message names the offending
 parameter precisely so it can be located and added to `Inputs`.
 
 **`AbstractIndexNotInInputsError(ModelContractError)`** — raised when an
 abstract index (one whose value is `None` or a `Distribution`) is not
 reachable via `self.inputs`.  Abstract indexes receive their values from
-outside the model and are therefore inputs by definition.  Like
-`InputsContractError`, this is a hard error: `Model` raises it directly and
-it cannot be silenced with `warnings.filterwarnings`.
+outside the model and are therefore inputs by definition.  
+
+**`InputsTypeMismatchError(ModelContractError)`** — raised when the
+`inputs` passed to a model's constructor is a valid `Inputs`-shaped
+dataclass instance, but belongs to a *different* model — including a
+same-shaped sibling that Python's structural typing can't tell apart.
+Unlike the two errors above, this doesn't reflect a missing declaration;
+it catches wiring mistakes such as passing `OtherModel.Inputs(...)` where
+`ThisModel.Inputs(...)` was meant.
+
+**`FunctionsTypeMismatchError(ModelContractError)`** — the same check for
+`@functions`: raised when the `fns` value passed at construction is not
+an instance of the model's own declared `Functions` class.
+
+Both mismatch checks are always on and need no annotation — see
+[Static checking with Pyright](#static-checking-with-pyright) below for
+how they relate to what a type checker can catch ahead of time.
 
 Example — the following model raises `InputsContractError`
 because `x` is a `GenericIndex` constructor parameter but is not
@@ -606,6 +570,50 @@ class GoodModel(Model, legacy=True):
             outputs=GoodModel.Outputs(z=z),
         )
 ```
+
+### Static checking with Pyright
+
+Everything above happens at *runtime* — the moment a model is constructed,
+with no setup required. Pyright can catch some of the same mistakes
+*before* the code even runs, but with a caveat: `@define` generates
+`__init__` at runtime from `compute()`'s signature, so Pyright cannot see
+it from the class's own annotations. To keep `@define` + `compute()`
+free of extra typing boilerplate, `Model` instead exposes a permissive
+constructor "floor" to the type checker: `DemoModel(inputs=...)`
+type-checks by default, with no per-model annotation needed.
+
+This floor already catches most mistakes statically — an unknown keyword
+argument, or passing something that isn't a dataclass at all. The one
+thing it *can't* tell apart is one model's `Inputs` from another's, since
+both are equally valid dataclasses to the type checker. That's exactly
+the gap `InputsTypeMismatchError`/`FunctionsTypeMismatchError` close at
+runtime (above), so nothing is silently missed — the floor just trades
+that one static check for zero authoring burden, in the spirit of
+Python's gradual typing.
+
+If a particular model's constructor is important enough to warrant a
+compile-time guarantee too, add a `TYPE_CHECKING`-guarded `__init__`
+matching `compute()`'s signature:
+
+```python
+from typing import TYPE_CHECKING
+
+@define("Demo")
+class DemoModel(Model):
+    # ... Inputs / Outputs as before ...
+
+    # Optional: opt in to full static constructor checking.
+    if TYPE_CHECKING:
+        def __init__(self, inputs: Inputs) -> None: ...
+
+    # ... compute() as before ...
+```
+
+This block is invisible at runtime — `@define`'s generated `__init__`
+still runs — and only informs Pyright, overriding the permissive floor
+with the model's exact `Inputs` type. Add it where a compile-time
+guarantee earns its keep; leave it off everywhere else and rely on the
+runtime check.
 
 ## Ensemble
 

@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-06-21                                     |
+| Last-Updated | 2026-07-24                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -103,6 +103,7 @@ Index                        │  ✓     ✗      ✗         ✗              
 TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗               ✗
 ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗               ✗
 DistributionIndex            │  ✗     ✗      ✗         ✓              ✗               ✗
+ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗               ✗
 CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**             ✓***
 ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗               ✗
 
@@ -112,6 +113,9 @@ ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              
 ```
 
 `ConstIndex` and `ConstTimeseriesIndex` cannot be overridden.
+`ConditionalDistributionIndex` cannot be overridden either — the conditional
+mapping lives in the model's factory; use a `ModelVariant` with a different
+factory instead.
 
 ### Parameter axes
 
@@ -425,15 +429,28 @@ class Scenario:
     def __init__(
         self,
         model: Model | ModelVariant,
-        overrides: dict[GenericIndex, DomainValue] = {},
-        parameter_axes: list[GenericIndex] = [],
-    ): ...
+        overrides: dict[GenericIndex, DomainValue] | None = None,
+        parameter_axes: Iterable[GenericIndex] | None = None,
+    ) -> None: ...
 
-    def abstract_indexes(self) -> frozenset[GenericIndex]: ...
-    def base_substitutions(self) -> dict[graph.Node, Any]: ...
+    def abstract_indexes(self) -> list[GenericIndex]: ...
+    def base_substitutions(self) -> dict[graph.Node, np.ndarray]: ...
     def effective_distribution(self, idx: GenericIndex) -> Distribution | None: ...
-    def effective_outcomes(self, idx: CategoricalIndex) -> dict[str, float]: ...
+    def effective_outcomes(
+        self, idx: CategoricalIndex | ConditionalCategoricalIndex
+    ) -> dict[str, float] | None: ...
 ```
+
+### `EvaluationResult`
+
+Returned by `Evaluation.evaluate()` / `Evaluation.execute_plan()`, and exposed as
+`EvaluationHandle.result` / `IncrementalRun.result`.  See
+[`EvaluationResult`](dd-cdt-model.md#evaluationresult) in dd-cdt-model.md for the full
+reference (`result[idx]`, `expected_value()`, `weights`, `factorized_weights`,
+`parameter_values`, `full_shape`, `layout`).  `layout` exposes the `AxisLayout` that
+enforces the canonical `(*PARAMETER, *ENSEMBLE, *DOMAIN)` dimension ordering used
+throughout this document — see the
+[AxisLayout glossary entry](dd-cdt-model.md#glossary) there.
 
 ### `EvaluationHandle`
 
@@ -451,6 +468,8 @@ class EvaluationHandle:
         parameter_axes: dict[str, np.ndarray] | None = None,
         strategy: str = "monolithic",
         rng: np.random.Generator | None = None,
+        functions: dict[str, executor.Functor] | None = None,
+        backend: type[executor.NumpyBackend] = executor.NumpyBackend,
     ) -> EvaluationHandle: ...
 
     @property
@@ -519,8 +538,12 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
     def run_async(self, scenario: Scenario, config: EvaluationConfig) -> ModelRunHandle[OutputT]: ...
 
     # Incremental (resumable via snapshot(resumable=True)):
-    def start(self, scenario: Scenario, config: EvaluationConfig) -> IncrementalRun[OutputT]: ...
-    def resume(self, scenario: Scenario, output: OutputT, config: EvaluationConfig) -> IncrementalRun[OutputT]: ...
+    def start(
+        self, scenario: Scenario, config: EvaluationConfig, *, rng: np.random.Generator | None = None
+    ) -> IncrementalRun[OutputT]: ...
+    def resume(
+        self, scenario: Scenario, output: OutputT, config: EvaluationConfig, *, rng: np.random.Generator | None = None
+    ) -> IncrementalRun[OutputT]: ...
 
     # Advanced: encode result into output as resume payload
     def attach_resume(self, output: ModelOutput, result: EvaluationResult) -> None: ...

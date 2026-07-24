@@ -42,10 +42,10 @@ print(state.get_node_value(c))  # 7.0
 See [docs/design/dd-cdt-engine.md](docs/design/dd-cdt-engine.md) for a
 full description of the engine.
 
-### Model / simulation layer
+### Model layer
 
-The model layer (`civic_digital_twins.dt_model`) provides higher-level
-abstractions built on top of the engine:
+The model layer (`civic_digital_twins.dt_model.model`) provides typed
+building blocks for defining a digital-twin model on top of the engine:
 
 - **`Index`** / **`TimeseriesIndex`** — named wrappers around graph nodes.
   An index can be a constant, a distribution (sampled at evaluation time),
@@ -58,12 +58,6 @@ abstractions built on top of the engine:
 - **`ModelVariant`** — selects among pre-constructed `Model` implementations
   sharing the same I/O contract.  The active variant is resolved by a string
   key (static) or a `CategoricalIndex`/graph node (runtime dispatch).
-- **`Scenario`** — wraps a model with optional value overrides and parameter
-  axes; the canonical first argument to `Evaluation` and all ensemble classes.
-- **`Evaluation`** — evaluates a model over a sequence of *weighted
-  scenarios*, each of which maps every abstract index to a concrete value.
-- **`Ensemble`** / **`WeightedScenario`** — a protocol and type alias that
-  define the scenario contract consumed by `Evaluation`.
 
 ```python
 from scipy import stats
@@ -92,51 +86,63 @@ model = ExampleModel(inputs=ExampleModel.Inputs(
 ```
 
 See [docs/design/dd-cdt-model.md](docs/design/dd-cdt-model.md) for the full
-reference: index types, `Model` API, `ModelVariant`, `Evaluation`, and the
-domain modeling pattern.
+reference: index types, `Model` API, `ModelVariant`, and the domain modeling
+pattern; see [docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md)
+for multi-model composition and decomposition patterns.
 
-### Top-level modules: `axes` and `graph`
+### Simulation layer
 
-Besides the layer subpackages, `civic_digital_twins.dt_model` hosts two
-top-level modules with distinct, deliberate roles:
+The simulation layer (`civic_digital_twins.dt_model.simulation`) runs a
+model against one or more scenarios:
 
-- **`dt_model.axes`** is the *canonical home* of the cross-cutting axis
-  vocabulary: `Axis`, `AxisRole`, the role constants (`DOMAIN`, `PARAMETER`,
-  `ENSEMBLE`), the `TIME_AXIS` singleton, and axis set operations.  Axes are
-  shared by all three layers, so they live above them; every internal module
-  imports axis symbols from here.  User code can equivalently use the
-  top-level re-exports 
-  (`from civic_digital_twins.dt_model import Axis, TIME_AXIS`).
-- **`dt_model.graph`** is a *curated user façade* over the engine-owned
-  `engine.frontend.graph`: it re-exports only the node builders meant for
-  use in model definitions.  Internal code imports the engine module
-  directly — the façade is intentionally narrow and is not widened to serve
-  internal needs.
+- **`Scenario`** — wraps a model with optional value overrides and parameter
+  axes; the canonical first argument to `Evaluation` and all ensemble classes.
+- **`Evaluation`** — evaluates a model over a sequence of *weighted
+  scenarios*, each of which maps every abstract index to a concrete value,
+  and returns an `EvaluationResult`.
+- **`Ensemble`** / **`WeightedScenario`** — a protocol and type alias that
+  define the scenario contract consumed by `Evaluation`; concrete
+  implementations (`DistributionEnsemble`, `CrossProductEnsemble`, …) draw
+  or enumerate scenarios.
 
-A new top-level module should fit one of these two roles: canonical home for
-cross-cutting vocabulary, or curated façade over a layer-owned module.
+See [docs/design/dd-cdt-simulation.md](docs/design/dd-cdt-simulation.md) for
+the full reference: `Scenario`, ensembles, `Evaluation`, `EvaluationResult`,
+`EvaluationHandle`, and `ModelEvaluator` — the higher-level runner used by
+the worked examples (see Usage patterns below).
+
+Besides the three layer subpackages, `civic_digital_twins.dt_model` hosts two
+top-level modules (`axes`, `graph`) with narrowly-scoped, deliberate roles —
+see [civic_digital_twins/dt_model/README.md](civic_digital_twins/dt_model/README.md)
+for the package-layout policy.
 
 ### Usage patterns
 
-The `examples/` directory contains two illustrative examples, distinguished
-by whether the model has external categorical context.  Both use the
+The `examples/` directory contains two worked examples, both driven through
+a domain-specific `ModelEvaluator` subclass
+(`civic_digital_twins.dt_model.simulation.runner`) rather than calling
+`Evaluation` directly: `evaluator.evaluate(Scenario(model, ...),
+EvaluationConfig(...))` runs the engine internally and returns a
+domain-specific `ModelOutput` — a JSON-serialisable, optionally resumable
+summary — rather than a raw `EvaluationResult`.  Both use the
 `@define`/`compute()` API (`@inputs`, `@outputs`, `@expose`, `ModelVariant`) —
 see [docs/design/dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md).
 
-**Direct pattern** (`examples/mobility_bologna/`) — no context variables.
-Uncertainty enters only through `DistributionIndex` parameters.
-`DistributionEnsemble` draws *S* Monte-Carlo samples to produce weighted
-scenarios; `Evaluation.evaluate()` runs the engine and returns an
-`EvaluationResult`.
+They differ in whether the model has *context variables*: categorical
+scenario factors outside the modeller's control (e.g. season, weather),
+as opposed to `DistributionIndex` parameters, which represent uncertainty
+the modeller chooses to sample directly.
+
+**Direct pattern** (`examples/mobility_bologna/`) — no context variables,
+only `DistributionIndex` parameters.  `DistributionEnsemble` draws *S*
+Monte-Carlo samples to produce weighted scenarios.
 
 **Context-variable pattern** (`examples/overtourism_molveno/`) — the model
-has categorical scenario factors outside the modeller's control (season,
-weather, …), expressed as `CategoricalIndex`, and quantities whose
-distribution depends on context, expressed as
-`ConditionalDistributionIndex`.  `CrossProductEnsemble` enumerates the
-context combinations into weighted scenarios; presence quantities are
-swept over a multi-dimensional grid via
-`Evaluation.evaluate(parameters={pv: array, …})`.
+has categorical context variables (season, weather, …), expressed as
+`CategoricalIndex`, and quantities whose distribution depends on that
+context, expressed as `ConditionalDistributionIndex`.  Internally,
+`CrossProductEnsemble` enumerates the context combinations into weighted
+scenarios, and presence quantities are swept over a multi-dimensional grid
+via `Evaluation.evaluate(parameters={pv: array, …})`.
 
 ## Installation
 

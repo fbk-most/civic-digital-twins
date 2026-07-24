@@ -22,7 +22,7 @@ executor.evaluate_nodes(state, *linearize.forest(c))
 assert float(state.get_node_value(c)) == 7.0  # 7.0
 
 # ---------------------------------------------------------------------------
-# README — Model / simulation layer snippet
+# README — Model layer snippet
 # ---------------------------------------------------------------------------
 
 
