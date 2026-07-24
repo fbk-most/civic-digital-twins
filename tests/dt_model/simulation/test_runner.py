@@ -67,7 +67,7 @@ class _SimpleModel(Model):
         return _SimpleModel.Outputs(y=y)
 
 
-def _make_simple_model() -> tuple[Index, _SimpleModel]:
+def _make_simple_model() -> tuple[DistributionIndex, _SimpleModel]:
     """Return a (x_index, model) pair ready for evaluation."""
     x = DistributionIndex("x", stats.norm, {"loc": 5.0, "scale": 1.0})
     return x, _SimpleModel(inputs=_SimpleModel.Inputs(x=x))
@@ -656,6 +656,15 @@ class TestGetIndexDiffs:
         assert "now" in diffs[cost.name]
         assert "99.0" in diffs[cost.name]
 
+    def test_diff_string_for_distribution_override(self) -> None:
+        """Override of a DistributionIndex shows the original frozen distribution, not '(none)'."""
+        x, model = _make_simple_model()
+        new_dist = stats.norm(loc=1.0, scale=1.0)
+        scenario = Scenario(model, overrides={x: new_dist})  # type: ignore[arg-type]
+        evaluator = _MinimalEvaluator(model)
+        diffs = evaluator.get_index_diffs(scenario)
+        assert diffs[x.name] == f"was {_format_value(x.frozen_distribution)} → now {_format_value(new_dist)}"
+
     def test_diff_keys_match_overridden_indexes(self) -> None:
         """Diff dict has exactly one key per overridden index."""
         cost, model = _make_scalar_model()
@@ -679,9 +688,9 @@ class TestGetModelValues:
         evaluator = _MinimalEvaluator(model)
         values = evaluator.get_model_values(Scenario(model))
         # x is abstract (DistributionIndex) → value is the frozen distribution
-        # y is concrete (Index computed from x) → value is a graph node, idx.value is None
-        assert x.name in values
-        assert "y" in values
+        assert values[x.name] is x.frozen_distribution
+        # y is concrete (Index computed from x) → formula-backed, idx.concrete_default is None
+        assert values["y"] is None
 
     def test_returns_override_for_overridden_index(self) -> None:
         """Override value is returned instead of the model default."""
