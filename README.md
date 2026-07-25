@@ -311,24 +311,41 @@ Perform the following steps on the `dev` branch before opening the
    `<!-- SPDX-License-Identifier: Apache-2.0 -->` (Markdown) to any file
    that is missing the header.
 
-8. Commit the release preparation:
+8. Commit the release preparation. The `Release-PR: true` trailer tells
+   `CI (dev)` to skip the `+dev` marker check for this specific commit — see
+   [`ci-dev.yml`](.github/workflows/ci-dev.yml):
    ```bash
    git add pyproject.toml uv.lock CHANGELOG.md docs/
-   git commit -m "chore: prepare v<version> release"
+   git commit -m "$(cat <<'EOF'
+   chore: prepare v<version> release
+
+   Release-PR: true
+   EOF
+   )"
    git push origin dev
    ```
 
 Open the PR from `dev` to `main`. The `CI (release)` workflow runs the full
 verification suite automatically (all Python versions, doc examples, domain
 examples, SPDX headers, dependency audit, build smoke test). Merge once it
-is green.
+is green, using **"Create a merge commit"** (the only method `main`'s
+ruleset allows) — this keeps `dev`'s commit history intact and attached to
+`main`, so the next release's `dev → main` diff only shows genuinely new
+commits.
 
 ### Step 3 — Tagging and publishing
 
-After the `dev → main` PR is merged:
-
+After the `dev → main` PR is merged, GitHub may have auto-deleted `dev`
+(if `delete_branch_on_merge` is enabled). Restore it from the merge
+commit before continuing — either click **"Restore branch"** on the merged
+PR page, or recreate it locally:
 ```bash
 git checkout main && git pull
+git push origin main:refs/heads/dev
+```
+
+Then tag and push the release:
+```bash
 git tag v<version> && git push origin main v<version>
 ```
 
@@ -379,7 +396,11 @@ git push origin dev
 > Rulesets) to require `CI (dev)` to pass before merging into `dev`, and all
 > `CI (release)` jobs to pass before merging into `main`. Direct pushes to
 > `main` should be blocked; maintainers should be allowed to bypass `dev`
-> protection for post-release bump commits.
+> protection for post-release bump commits. `main`'s ruleset must allow only
+> the `merge` method (no squash/rebase) and must not require linear history —
+> squashing or rebasing the `dev → main` PR mints new commit SHAs unrelated
+> to `dev`'s own commits, which detaches `dev` from `main`'s history and
+> makes every subsequent `dev → main` diff re-show already-released commits.
 
 ## Documentation
 
