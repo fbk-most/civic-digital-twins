@@ -13,7 +13,10 @@ on:
 jobs:
   # ── Version sanity ───────────────────────────────────────────────────────────
   # The dev branch must always carry a +dev version marker so that the
-  # development build is never confused with a published release.
+  # development build is never confused with a published release. The one
+  # expected exception is the release-prep commit (see README.md Step 2),
+  # which strips +dev right before the dev -> main PR; it's tagged with a
+  # `Release-PR: true` trailer so this check knows to skip it.
   version-check:
     name: Version has +dev marker
     runs-on: ubuntu-latest
@@ -23,6 +26,11 @@ jobs:
 
       - name: Assert version contains +dev
         run: |
+          if git log -1 --format=%B | grep -q 'Release-PR: true'; then
+            echo "Release-PR trailer found on HEAD commit; skipping +dev check."
+            exit 0
+          fi
+
           version=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "Version: $version"
           if ! echo "$version" | grep -q '+dev'; then
