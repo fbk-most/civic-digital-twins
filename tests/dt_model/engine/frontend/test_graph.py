@@ -631,6 +631,60 @@ def test_timeseries_constant_identity():
     assert hash(n1) != hash(n2)
 
 
+# ---------------------------------------------------------------------------
+# Generic array_constant / array_placeholder nodes
+# ---------------------------------------------------------------------------
+
+
+def test_array_constant_output_axes():
+    """array_constant.output_axes returns the declared axes tuple, in order."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    node = graph.array_constant([[1.0, 2.0], [3.0, 4.0]], axes=(x, y), name="grid")
+    assert node.output_axes == (x, y)
+    assert isinstance(node.values, Iterable)
+    assert list(node.values) == [[1.0, 2.0], [3.0, 4.0]]
+
+
+def test_array_constant_no_axes():
+    """array_constant with no declared axes has empty output_axes (scalar-like)."""
+    node = graph.array_constant(1.0)
+    assert node.output_axes == ()
+
+
+def test_array_placeholder_output_axes():
+    """array_placeholder.output_axes returns the declared axes tuple, in order."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    node = graph.array_placeholder("field", axes=(x, y))
+    assert node.name == "field"
+    assert node.output_axes == (x, y)
+
+
+def test_array_placeholder_no_axes():
+    """array_placeholder with no declared axes has empty output_axes."""
+    node = graph.array_placeholder("scalar_ph")
+    assert node.output_axes == ()
+
+
+def test_timeseries_nodes_are_array_node_subclasses():
+    """timeseries_constant/placeholder specialize array_constant/placeholder."""
+    tc = graph.timeseries_constant([1.0, 2.0, 3.0])
+    tp = graph.timeseries_placeholder("ts")
+    assert isinstance(tc, graph.array_constant)
+    assert isinstance(tp, graph.array_placeholder)
+
+
+def test_timeseries_output_axes_unchanged():
+    """timeseries_constant/placeholder still report exactly (TIME_AXIS,)."""
+    from civic_digital_twins.dt_model.axes import TIME_AXIS
+
+    tc = graph.timeseries_constant([1.0, 2.0, 3.0])
+    tp = graph.timeseries_placeholder("ts")
+    assert tc.output_axes == (TIME_AXIS,)
+    assert tp.output_axes == (TIME_AXIS,)
+
+
 def test_negate_creation():
     """Test creation of a negate node."""
     n = graph.constant(3.0)

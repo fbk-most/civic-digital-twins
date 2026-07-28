@@ -8,6 +8,12 @@ from civic_digital_twins.dt_model.axes import (
     PARAMETER,
     TIME_AXIS,
     Axis,
+    DomainAxis,
+    MeshType,
+    SequenceType,
+    SetType,
+    SpaceType,
+    TimeType,
     filter_by_role,
     union_axes,
 )
@@ -74,6 +80,96 @@ class TestFilterByRole:
         """Any iterable of axes is accepted, not just tuples."""
         p = Axis("p", PARAMETER)
         assert filter_by_role(iter([p, TIME_AXIS]), DOMAIN) == (TIME_AXIS,)
+
+
+class TestDomainAxis:
+    """DomainAxis equality/hash invariant and type-carrying behaviour."""
+
+    def test_equals_plain_axis_of_same_name_and_role(self):
+        """A typed DomainAxis compares equal to a plain untyped Axis (load-bearing)."""
+        typed = DomainAxis("time", type=TimeType())
+        assert typed == Axis("time", DOMAIN)
+        assert Axis("time", DOMAIN) == typed
+        assert hash(typed) == hash(Axis("time", DOMAIN))
+
+    def test_type_is_excluded_from_equality(self):
+        """Two DomainAxis instances with different types still compare equal."""
+        a = DomainAxis("space", type=SpaceType(spacing=2.0))
+        b = DomainAxis("space", type=None)
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_role_is_fixed_to_domain(self):
+        """DomainAxis always has role DOMAIN regardless of the type given."""
+        ax = DomainAxis("cell", type=None)
+        assert ax.role == DOMAIN
+
+    def test_default_type_is_none(self):
+        """An untyped DomainAxis stores type=None."""
+        ax = DomainAxis("region")
+        assert ax.type is None
+
+    def test_repr_roundtrip(self):
+        """DomainAxis.__repr__ is executable and reconstructs an equal instance."""
+        ax = DomainAxis("x", type=SpaceType(spacing=5.0, boundary="wrap"))
+        ctx = {"DomainAxis": DomainAxis, "SpaceType": SpaceType}
+        rebuilt = eval(repr(ax), ctx)  # noqa: S307
+        assert rebuilt == ax
+        assert isinstance(rebuilt.type, SpaceType)
+        assert rebuilt.type.spacing == 5.0
+        assert rebuilt.type.boundary == "wrap"
+
+
+class TestTimeAxisTyped:
+    """TIME_AXIS is now a typed DomainAxis but keeps full backward compatibility."""
+
+    def test_time_axis_is_domain_axis(self):
+        """TIME_AXIS is a DomainAxis carrying a TimeType."""
+        assert isinstance(TIME_AXIS, DomainAxis)
+        assert isinstance(TIME_AXIS.type, TimeType)
+
+    def test_time_axis_still_equals_plain_axis(self):
+        """TIME_AXIS still equals and hashes as a plain Axis("time", DOMAIN)."""
+        assert TIME_AXIS == Axis("time", DOMAIN)
+        assert hash(TIME_AXIS) == hash(Axis("time", DOMAIN))
+
+
+class TestDomainTypeLattice:
+    """DomainType concrete marker classes are metadata-only carriers."""
+
+    def test_set_type_repr_roundtrip(self):
+        """SetType is a parameterless marker."""
+        assert repr(SetType()) == "SetType()"
+
+    def test_sequence_type_defaults(self):
+        """SequenceType defaults to non-periodic."""
+        assert SequenceType().periodic is False
+        assert SequenceType(periodic=True).periodic is True
+
+    def test_time_type_is_a_sequence_type(self):
+        """TimeType extends SequenceType (lattice: SequenceType subset of TimeType)."""
+        t = TimeType(periodic=True)
+        assert isinstance(t, SequenceType)
+        assert t.periodic is True
+
+    def test_space_type_is_a_sequence_type(self):
+        """SpaceType extends SequenceType and carries a metric + boundary."""
+        s = SpaceType(spacing=2.5, boundary="constant")
+        assert isinstance(s, SequenceType)
+        assert s.spacing == 2.5
+        assert s.boundary == "constant"
+
+    def test_space_type_defaults(self):
+        """SpaceType defaults to unit spacing and reflect boundary."""
+        s = SpaceType()
+        assert s.spacing == 1.0
+        assert s.boundary == "reflect"
+
+    def test_mesh_type_carries_adjacency(self):
+        """MeshType stores an opaque adjacency structure."""
+        adj = {"a": ["b"]}
+        m = MeshType(adjacency=adj)
+        assert m.adjacency is adj
 
 
 class TestTopLevelExports:

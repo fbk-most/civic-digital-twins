@@ -59,6 +59,16 @@ def test_leaf_nodes() -> None:
     _assert_roundtrip(graph.timeseries_placeholder("tp"))
 
 
+def test_array_nodes() -> None:
+    """Round-trip test for the generic array_constant / array_placeholder nodes."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    _assert_roundtrip(graph.array_constant([[1.0, 2.0], [3.0, 4.0]], axes=(x_axis, y_axis), name="grid"))
+    _assert_roundtrip(graph.array_placeholder("field", axes=(x_axis, y_axis)))
+    _assert_roundtrip(graph.array_constant(1.0))
+    _assert_roundtrip(graph.array_placeholder("noaxes"))
+
+
 # ---------------------------------------------------------------------------
 # Unary ops
 # ---------------------------------------------------------------------------
@@ -206,6 +216,8 @@ _TESTED_TYPES: frozenset[type] = frozenset(
     {
         graph.constant,
         graph.placeholder,
+        graph.array_constant,
+        graph.array_placeholder,
         graph.timeseries_constant,
         graph.timeseries_placeholder,
         graph.negate,

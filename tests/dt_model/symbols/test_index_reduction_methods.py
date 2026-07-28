@@ -84,8 +84,8 @@ class TestTimeseriesIndexReductionExecution:
 
     Uses :class:`~model.index.ConstTimeseriesIndex` so the graph node is a
     ``timeseries_constant`` and can be evaluated without state injection.
-    ``TimeseriesIndex(arr)`` now produces a ``timeseries_placeholder`` (D1a);
-    direct evaluation of its reduction nodes requires the placeholder value to
+    ``TimeseriesIndex(arr)`` produces a ``timeseries_placeholder``; direct
+    evaluation of its reduction nodes requires the placeholder value to
     be present in the executor state — see :class:`TestBatchedReductionExecution`
     for that pattern.
     """

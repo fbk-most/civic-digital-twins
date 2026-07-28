@@ -13,7 +13,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 
-from ..axes import TIME_AXIS, Axis
+from ..axes import DOMAIN, TIME_AXIS, Axis, filter_by_role
 from ..engine.frontend import graph
 
 
@@ -191,109 +191,149 @@ class GenericIndex(ABC):
     # Reduction operators
     # ------------------------------------------------------------------
 
-    def sum(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def _resolve_reduction_axis(self, axis: Axis | None) -> Axis:
+        """Resolve the axis to reduce, defaulting to the index's unique DOMAIN axis.
+
+        When *axis* is given it is used verbatim. When it is ``None``:
+
+        * exactly one DOMAIN axis → that axis (a timeseries index has exactly
+          one, time, so its reductions keep defaulting to time as before);
+        * more than one DOMAIN axis → no unambiguous default, so an explicit
+          ``axis=`` is required and a ``ValueError`` is raised;
+        * no DOMAIN axis → fall back to the time axis, preserving the legacy
+          "reduce the last dimension" convention for untyped/scalar indexes.
+          Tightening this to also require an explicit axis is deferred to the
+          label-driven executor step, where the choice actually bites.
+        """
+        if axis is not None:
+            return axis
+        domain_axes = filter_by_role(self.node.output_axes, DOMAIN)
+        if len(domain_axes) == 1:
+            return domain_axes[0]
+        if not domain_axes:
+            return TIME_AXIS
+        raise ValueError(
+            f"{type(self).__name__} reduction needs an explicit axis=: this index carries "
+            f"{len(domain_axes)} DOMAIN axes {[ax.name for ax in domain_axes]}, "
+            f"so there is no unique default axis to reduce over."
+        )
+
+    def sum(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that sums this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``, which sums across the
-        time dimension.  The reduced axis is always preserved as size 1,
+        The default axis is the index's sole DOMAIN axis (for a timeseries
+        index, ``Axis("time", DOMAIN)``); an index carrying several DOMAIN
+        axes must pass ``axis=`` explicitly.  The reduced axis is always
+        preserved as size 1,
         ensuring the result broadcasts correctly against both plain timeseries
         ``(T,)`` and ensemble-batched timeseries ``(size, T)``:
 
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
-        return graph.project_using_sum(self.node, axis)
+        return graph.project_using_sum(self.node, self._resolve_reduction_axis(axis))
 
-    def mean(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def mean(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_mean(self.node, axis)
+        return graph.project_using_mean(self.node, self._resolve_reduction_axis(axis))
 
-    def min(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def min(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the minimum of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_min(self.node, axis)
+        return graph.project_using_min(self.node, self._resolve_reduction_axis(axis))
 
-    def max(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def max(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the maximum of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_max(self.node, axis)
+        return graph.project_using_max(self.node, self._resolve_reduction_axis(axis))
 
-    def std(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def std(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the standard deviation of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_std(self.node, axis)
+        return graph.project_using_std(self.node, self._resolve_reduction_axis(axis))
 
-    def var(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def var(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the variance of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_var(self.node, axis)
+        return graph.project_using_var(self.node, self._resolve_reduction_axis(axis))
 
-    def median(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def median(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the median of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_median(self.node, axis)
+        return graph.project_using_median(self.node, self._resolve_reduction_axis(axis))
 
-    def prod(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def prod(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the product of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_prod(self.node, axis)
+        return graph.project_using_prod(self.node, self._resolve_reduction_axis(axis))
 
-    def any(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def any(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if any elements of this index are True over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_any(self.node, axis)
+        return graph.project_using_any(self.node, self._resolve_reduction_axis(axis))
 
-    def all(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def all(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if all elements of this index are True over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_all(self.node, axis)
+        return graph.project_using_all(self.node, self._resolve_reduction_axis(axis))
 
-    def count_nonzero(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def count_nonzero(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that counts non-zero elements of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_count_nonzero(self.node, axis)
+        return graph.project_using_count_nonzero(self.node, self._resolve_reduction_axis(axis))
 
-    def quantile(self, q: float, axis: Axis = TIME_AXIS) -> graph.Node:
+    def quantile(self, q: float, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the quantile of this index over the given axis.
 
         Args:
             q: Quantile level in the range [0, 1]. For example, 0.5 for the median,
                0.95 for the 95th percentile.
-            axis: Semantic axis along which to compute the quantile (default:
-                ``Axis("time", DOMAIN)``).
+            axis: Semantic axis along which to compute the quantile. Defaults
+                to the index's sole DOMAIN axis (time, for a timeseries
+                index); required when the index carries several.
         """
-        return graph.project_using_quantile(self.node, axis, q)
+        return graph.project_using_quantile(self.node, self._resolve_reduction_axis(axis), q)
 
 
 class Index(GenericIndex):
@@ -427,12 +467,181 @@ class ConstIndex(Index):
         return f"const_idx({self._value!r})"
 
 
-class TimeseriesIndex(GenericIndex):
+class DomainIndex(GenericIndex):
+    """Domain-carrying quantity over an arbitrary, ordered tuple of DOMAIN axes.
+
+    Generalization of :class:`TimeseriesIndex`: rather than being hard-wired
+    to the time axis, a ``DomainIndex`` declares its own domain signature via
+    ``axes=`` at construction time. :class:`TimeseriesIndex` is re-expressed
+    as the ``axes=(TIME_AXIS,)`` specialization of this class; the
+    value-source modes below (fixed array / placeholder / formula) are
+    orthogonal to the domain signature, so a future stochastic source could
+    apply to any ``axes=`` combination without a new subclass per shape.
+
+    At least one DOMAIN axis is required — an axis-less ``DomainIndex`` would
+    be a scalar :class:`Index` in disguise. For a value that is a fixed
+    constant of the model (not overridable per scenario), use
+    :class:`ConstDomainIndex`.
+
+    Three modes mirror :class:`TimeseriesIndex`:
+
+    * **Fixed array** — ``DomainIndex(name, array, axes=(x, y))``
+      Node is an ``array_placeholder``; the array is the default, injected
+      by :class:`~simulation.scenario.Scenario` at evaluation time. Per-axis
+      sizes are deduced from the array's shape (zipped against *axes* in
+      declaration order, so the array rank must match the number of axes).
+    * **Placeholder** — ``DomainIndex(name, axes=(x, y))``
+      Node is an ``array_placeholder``; value must be supplied via Scenario
+      or ``parameters=`` before evaluation. Per-axis sizes are then deduced
+      from the supplied value (a later step's concern).
+    * **Formula** — ``DomainIndex(name, formula_node, axes=(x, y))``
+      Node is the formula node directly; value is computed by the engine.
+      *axes* is stored as the declared signature but is not verified
+      against ``formula_node.output_axes`` in this step (that
+      verify-not-override check lands with the #184 guardrails).
+
+    Parameters
+    ----------
+    name:
+        Human-readable name for this index.
+    value:
+        See the three modes above.
+    axes:
+        Ordered, non-empty tuple of DOMAIN axes declared for this index.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        value: np.ndarray | graph.Node | None = None,
+        *,
+        axes: tuple[Axis, ...],
+    ) -> None:
+        if not axes:
+            raise ValueError(f"DomainIndex {name!r} must declare at least one DOMAIN axis")
+        self._name = name
+        self._axes = axes
+
+        # Formula node: reuse it directly as this index's node.
+        if isinstance(value, graph.Node):
+            value.maybe_set_name(name)
+            self._value: np.ndarray | graph.Node | None = value
+            self._node: graph.Node = value
+            self._sizes: dict[str, int] = {}
+
+        # Concrete array: placeholder injected by Scenario at evaluation time.
+        elif value is not None:
+            arr = np.asarray(value)
+            self._value = arr
+            self._node = self._make_placeholder_node(name, axes)
+            self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+
+        # Bare placeholder.
+        else:
+            self._value = None
+            self._node = self._make_placeholder_node(name, axes)
+            self._sizes = {}
+
+    @staticmethod
+    def _make_placeholder_node(name: str, axes: tuple[Axis, ...]) -> graph.Node:
+        """Build the placeholder graph node for the fixed-array/bare-placeholder modes.
+
+        Overridden by :class:`TimeseriesIndex` to construct a
+        ``graph.timeseries_placeholder`` instead of a generic
+        ``graph.array_placeholder``, so its node type is unchanged.
+        """
+        return graph.array_placeholder(name, axes)
+
+    @property
+    def name(self) -> str:
+        """The human-readable name of the index."""
+        return self._name
+
+    @property
+    def node(self) -> graph.Node:
+        """The underlying computation graph node."""
+        return self._node
+
+    @property
+    def axes(self) -> tuple[Axis, ...]:
+        """The declared domain axes for this index, in order."""
+        return self._axes
+
+    @property
+    def sizes(self) -> dict[str, int]:
+        """Per-axis-name sizes deduced from a concrete array; empty otherwise."""
+        return dict(self._sizes)
+
+    @property
+    def is_abstract(self) -> bool:
+        """Whether this index requires an external value before evaluation."""
+        return self._value is None
+
+    @property
+    def concrete_default(self) -> np.ndarray | None:
+        """The index's concrete array default, or ``None`` if unset or formula-backed.
+
+        Used by :class:`~simulation.scenario.Scenario` to seed the executor
+        state with each index's default before overrides are applied. Most
+        model-authoring code should not need this — read values through the
+        computation graph (``.node``) instead.
+        """
+        return None if isinstance(self._value, graph.Node) else self._value
+
+    def __repr__(self) -> str:
+        """Return a string representation of the index."""
+        if self._value is None:
+            return f"domain_idx({self._name!r}, placeholder, axes={self._axes!r})"
+        if isinstance(self._value, np.ndarray):
+            return f"domain_idx({self._name!r}, {self._value.tolist()!r}, axes={self._axes!r})"
+        return f"domain_idx({self._name!r}, <formula>, axes={self._axes!r})"
+
+
+class ConstDomainIndex(DomainIndex):
+    """DomainIndex baked into the graph as an ``array_constant``.
+
+    Generic-domain analogue of :class:`ConstTimeseriesIndex`. Whereas a
+    fixed-array :class:`DomainIndex` builds an overwritable ``array_placeholder``
+    (its array is a default that a Scenario may replace), a ``ConstDomainIndex``
+    bakes its values into an ``array_constant`` node: the value is permanently
+    fixed and cannot be overridden per scenario. Choosing between the two is a
+    modeling decision about whether a domain field is a constant of the model
+    or a scenario-varying input. Immutable after construction.
+
+    Parameters
+    ----------
+    name:
+        Human-readable name for this index.
+    value:
+        Fixed array carrying the declared *axes*, in order. Its rank must
+        match the number of axes.
+    axes:
+        Ordered, non-empty tuple of DOMAIN axes declared for this index.
+    """
+
+    def __init__(self, name: str, value: np.ndarray, *, axes: tuple[Axis, ...]) -> None:
+        if not axes:
+            raise ValueError(f"ConstDomainIndex {name!r} must declare at least one DOMAIN axis")
+        # Bypass DomainIndex.__init__: it would create an array_placeholder first.
+        self._name = name
+        self._axes: tuple[Axis, ...] = axes
+        arr = np.asarray(value)
+        self._value: np.ndarray | graph.Node | None = arr
+        self._node: graph.Node = graph.array_constant(arr, axes, name)
+        self._sizes: dict[str, int] = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+
+    def __repr__(self) -> str:
+        """Return a string representation of the constant domain index."""
+        assert isinstance(self._value, np.ndarray)
+        return f"const_domain_idx({self._name!r}, {self._value.tolist()!r}, axes={self._axes!r})"
+
+
+class TimeseriesIndex(DomainIndex):
     """Time-indexed quantity.
 
-    Sibling of :class:`Index` (both extend :class:`GenericIndex` directly);
-    not a subclass — ``Index`` is scalar-valued, ``TimeseriesIndex`` carries
-    a DOMAIN (time) axis.  Immutable after construction.
+    Specialization of :class:`DomainIndex` fixing ``axes=(TIME_AXIS,)``: a
+    thin backward-compatible convenience over the generic domain-carrying
+    index, not a new concept. Immutable after construction.
 
     Three modes mirror :class:`Index`:
 
@@ -451,50 +660,12 @@ class TimeseriesIndex(GenericIndex):
         name: str,
         value: np.ndarray | graph.Node | None = None,
     ) -> None:
-        self._name = name
+        super().__init__(name, value, axes=(TIME_AXIS,))
 
-        # Formula node: reuse it directly as this index's node.
-        if isinstance(value, graph.Node):
-            value.maybe_set_name(name)
-            self._value: np.ndarray | graph.Node | None = value
-            self._node: graph.Node = value
-
-        # Concrete array: placeholder injected by Scenario at evaluation time.
-        elif value is not None:
-            arr = np.asarray(value)
-            self._value = arr
-            self._node = graph.timeseries_placeholder(name)
-
-        # Bare placeholder.
-        else:
-            self._value = None
-            self._node = graph.timeseries_placeholder(name)
-
-    @property
-    def name(self) -> str:
-        """The human-readable name of the index."""
-        return self._name
-
-    @property
-    def node(self) -> graph.Node:
-        """The underlying computation graph node."""
-        return self._node
-
-    @property
-    def is_abstract(self) -> bool:
-        """Whether this index requires an external value before evaluation."""
-        return self._value is None
-
-    @property
-    def concrete_default(self) -> np.ndarray | None:
-        """The index's concrete array default, or ``None`` if unset or formula-backed.
-
-        Used by :class:`~simulation.scenario.Scenario` to seed the executor
-        state with each index's default before overrides are applied. Most
-        model-authoring code should not need this — read values through the
-        computation graph (``.node``) instead.
-        """
-        return None if isinstance(self._value, graph.Node) else self._value
+    @staticmethod
+    def _make_placeholder_node(name: str, axes: tuple[Axis, ...]) -> graph.Node:
+        """Build the placeholder node as a ``timeseries_placeholder`` (time-axis parity)."""
+        return graph.timeseries_placeholder(name)
 
     def __repr__(self) -> str:
         """Return a string representation of the timeseries index."""
@@ -530,9 +701,11 @@ class ConstTimeseriesIndex(TimeseriesIndex):
     def __init__(self, name: str, value: np.ndarray) -> None:
         # Bypass TimeseriesIndex.__init__: it would create a timeseries_placeholder first.
         self._name = name
+        self._axes: tuple[Axis, ...] = (TIME_AXIS,)
         arr = np.asarray(value)
         self._value: np.ndarray | graph.Node | None = arr
         self._node: graph.Node = graph.timeseries_constant(arr, name)
+        self._sizes: dict[str, int] = {TIME_AXIS.name: arr.shape[-1]} if arr.ndim else {}
 
     def __repr__(self) -> str:
         """Return a string representation of the constant timeseries index."""

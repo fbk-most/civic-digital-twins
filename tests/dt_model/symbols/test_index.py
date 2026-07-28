@@ -6,14 +6,23 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, GenericIndex, Index, TimeseriesIndex
+from civic_digital_twins.dt_model import (
+    ConstDomainIndex,
+    ConstIndex,
+    ConstTimeseriesIndex,
+    DomainIndex,
+    GenericIndex,
+    Index,
+    TimeseriesIndex,
+)
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, ConditionalCategoricalIndex, DistributionIndex
 
 
 def test_timeseries_index_construction():
-    """Test basic construction of a TimeseriesIndex — node is timeseries_placeholder (D1a)."""
+    """Test basic construction of a TimeseriesIndex — node is timeseries_placeholder."""
     values = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("cap", values)
     assert idx.name == "cap"
@@ -33,7 +42,7 @@ def test_timeseries_index_value_attribute():
 
 
 def test_timeseries_index_evaluation():
-    """Test that the TimeseriesIndex node evaluates to its values when state is provided (D1a)."""
+    """Test that the TimeseriesIndex node evaluates to its values when state is provided."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
     plan = linearize.forest(idx.node)
@@ -49,7 +58,7 @@ def test_timeseries_index_str():
 
 
 def test_timeseries_index_in_arithmetic():
-    """Test that a TimeseriesIndex node participates correctly in formulas (D1a: state provided)."""
+    """Test that a TimeseriesIndex node participates correctly in formulas (state provided)."""
     values = np.array([10.0, 20.0, 30.0])
     idx = TimeseriesIndex("cap", values)
     halved = idx.node * graph.constant(0.5)
@@ -152,26 +161,26 @@ def test_timeseries_index_formula_via_operators():
 
 
 # ---------------------------------------------------------------------------
-# D1a: placeholder-based node behavior tests
+# Placeholder-based node behavior tests
 # ---------------------------------------------------------------------------
 
 
 def test_index_scalar_creates_placeholder():
-    """Index(scalar) creates a graph.placeholder node (D1a: value lives in model layer)."""
+    """Index(scalar) creates a graph.placeholder node (value lives in model layer)."""
     idx = Index("cost", 8.0)
     assert isinstance(idx.node, graph.placeholder)
     assert idx.concrete_default == 8.0
 
 
 def test_const_index_scalar_creates_constant():
-    """ConstIndex always creates a graph.constant node regardless of D1a."""
+    """ConstIndex always creates a graph.constant node regardless of the argument type."""
     idx = ConstIndex("cost", 8.0)
     assert isinstance(idx.node, graph.constant)
     assert idx.concrete_default == 8.0
 
 
 def test_timeseries_index_array_creates_timeseries_placeholder():
-    """TimeseriesIndex(arr) creates a timeseries_placeholder node (D1a)."""
+    """TimeseriesIndex(arr) creates a timeseries_placeholder node."""
     arr = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("ts", arr)
     assert isinstance(idx.node, graph.timeseries_placeholder)
@@ -185,6 +194,197 @@ def test_const_timeseries_index_creates_timeseries_constant():
     arr = np.array([1.0, 2.0, 3.0])
     idx = ConstTimeseriesIndex("ts", arr)
     assert isinstance(idx.node, graph.timeseries_constant)
+
+
+# ---------------------------------------------------------------------------
+# TimeseriesIndex / ConstTimeseriesIndex as DomainIndex specializations
+#
+# Regression suite for time-only parity: TimeseriesIndex became a
+# DomainIndex subclass in this step, but its public API/behaviour must be
+# unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_timeseries_index_is_domain_index():
+    """TimeseriesIndex is now a DomainIndex specialization."""
+    assert issubclass(TimeseriesIndex, DomainIndex)
+    assert isinstance(TimeseriesIndex("ts", np.array([1.0])), DomainIndex)
+
+
+def test_timeseries_index_output_axes_is_time_axis():
+    """TimeseriesIndex.output_axes is exactly (TIME_AXIS,) in every mode."""
+    from civic_digital_twins.dt_model.axes import TIME_AXIS
+
+    placeholder_idx = TimeseriesIndex("inflow")
+    array_idx = TimeseriesIndex("cap", np.array([1.0, 2.0, 3.0]))
+    formula_idx = TimeseriesIndex("outflow", array_idx.node * graph.constant(2.0))
+    const_idx = ConstTimeseriesIndex("demand", np.array([1.0, 2.0]))
+
+    assert placeholder_idx.output_axes == (TIME_AXIS,)
+    assert array_idx.output_axes == (TIME_AXIS,)
+    assert formula_idx.output_axes == (TIME_AXIS,)
+    assert const_idx.output_axes == (TIME_AXIS,)
+
+
+def test_timeseries_index_repr_unchanged():
+    """TimeseriesIndex/ConstTimeseriesIndex __repr__ strings are unchanged."""
+    assert str(TimeseriesIndex("inflow")) == "timeseries_idx(placeholder)"
+    assert str(TimeseriesIndex("cap", np.array([1.0, 2.0]))) == "timeseries_idx([1.0, 2.0])"
+    assert str(ConstTimeseriesIndex("demand", np.array([10.0, 20.0]))) == "const_timeseries_idx([10.0, 20.0])"
+
+
+def test_const_timeseries_index_node_still_timeseries_constant_exact_type():
+    """ConstTimeseriesIndex.node's exact type is unchanged (executor dispatch relies on this)."""
+    idx = ConstTimeseriesIndex("demand", np.array([1.0, 2.0, 3.0]))
+    assert type(idx.node) is graph.timeseries_constant
+
+
+# ---------------------------------------------------------------------------
+# DomainIndex — generic domain-carrying index
+# ---------------------------------------------------------------------------
+
+
+def test_domain_index_fixed_array_creates_array_placeholder_and_deduces_sizes():
+    """DomainIndex(array, axes=...) creates an array_placeholder and deduces per-axis sizes."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    idx = DomainIndex("field", arr, axes=(x, y))
+    assert idx.name == "field"
+    assert type(idx.node) is graph.array_placeholder
+    assert idx.output_axes == (x, y)
+    assert idx.axes == (x, y)
+    assert idx.sizes == {"x": 2, "y": 3}
+    default = idx.concrete_default
+    assert isinstance(default, np.ndarray)
+    assert np.array_equal(default, arr)
+    assert idx.is_abstract is False
+
+
+def test_domain_index_bare_placeholder():
+    """DomainIndex(axes=...) with no value is a bare placeholder (abstract)."""
+    x = Axis("x", DOMAIN)
+    idx = DomainIndex("field", axes=(x,))
+    assert type(idx.node) is graph.array_placeholder
+    assert idx.output_axes == (x,)
+    assert idx.is_abstract is True
+    assert idx.concrete_default is None
+    assert idx.sizes == {}
+
+
+def test_domain_index_requires_at_least_one_axis():
+    """DomainIndex must declare at least one DOMAIN axis (an axis-less one is a scalar Index)."""
+    with pytest.raises(ValueError, match="at least one DOMAIN axis"):
+        DomainIndex("field", np.array([1.0]), axes=())
+    # axes is a required keyword: omitting it entirely is a TypeError.
+    with pytest.raises(TypeError):
+        DomainIndex("field")  # type: ignore[call-arg]
+
+
+def test_domain_index_formula_mode():
+    """DomainIndex(formula_node, axes=...) reuses the formula node directly."""
+    x = Axis("x", DOMAIN)
+    base = DomainIndex("base", np.array([1.0, 2.0]), axes=(x,))
+    formula = DomainIndex("derived", base.node * graph.constant(2.0), axes=(x,))
+    assert formula.node is not base.node
+    assert isinstance(formula.node, graph.multiply)
+    assert formula.is_abstract is False
+    assert formula.concrete_default is None
+
+
+def test_domain_index_repr_covers_all_modes():
+    """DomainIndex repr distinguishes placeholder, fixed-array, and formula modes."""
+    x = Axis("x", DOMAIN)
+    axes_repr = f"axes={(x,)!r}"
+    assert repr(DomainIndex("f", axes=(x,))) == f"domain_idx('f', placeholder, {axes_repr})"
+    assert repr(DomainIndex("f", np.array([1.0, 2.0]), axes=(x,))) == f"domain_idx('f', [1.0, 2.0], {axes_repr})"
+    formula = DomainIndex("f", DomainIndex("b", np.array([1.0]), axes=(x,)).node + graph.constant(1.0), axes=(x,))
+    assert repr(formula) == f"domain_idx('f', <formula>, {axes_repr})"
+
+
+def test_domain_index_is_generic_index_not_domain_index_special_cased():
+    """DomainIndex is a plain GenericIndex sibling, like TimeseriesIndex."""
+    assert issubclass(DomainIndex, GenericIndex)
+    idx = DomainIndex("field", axes=(Axis("x", DOMAIN),))
+    assert isinstance(idx, GenericIndex)
+
+
+def test_domain_index_evaluation():
+    """A fixed-array DomainIndex evaluates to its provided values."""
+    x = Axis("x", DOMAIN)
+    arr = np.array([1.0, 2.0, 3.0])
+    idx = DomainIndex("field", arr, axes=(x,))
+    plan = linearize.forest(idx.node)
+    state = executor.State({idx.node: arr})
+    executor.evaluate_nodes(state, *plan)
+    assert np.array_equal(state.values[idx.node], arr)
+
+
+# ---------------------------------------------------------------------------
+# Reduction-axis default resolution
+# ---------------------------------------------------------------------------
+
+
+def test_reduction_defaults_to_unique_non_time_domain_axis():
+    """On a single-DOMAIN-axis index, a no-axis reduction defaults to that axis, not time."""
+    x = Axis("x", DOMAIN)
+    idx = DomainIndex("field", np.array([1.0, 2.0, 3.0]), axes=(x,))
+    node = idx.sum()
+    assert isinstance(node, graph.project_using_sum)
+    assert node.axis == x
+
+
+def test_reduction_requires_explicit_axis_when_multiple_domain_axes():
+    """On a multi-DOMAIN-axis index, a no-axis reduction is ambiguous and raises."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    idx = DomainIndex("field", np.array([[1.0, 2.0], [3.0, 4.0]]), axes=(x, y))
+    with pytest.raises(ValueError, match="explicit axis="):
+        idx.sum()
+    # An explicit axis resolves the ambiguity.
+    node = idx.sum(axis=y)
+    assert isinstance(node, graph.project_using_sum)
+    assert node.axis == y
+
+
+def test_reduction_zero_domain_axes_falls_back_to_time():
+    """A scalar/untyped index keeps the legacy time-axis default (reduce last dimension)."""
+    idx = Index("scalar", 5.0)
+    node = idx.sum()
+    assert isinstance(node, graph.project_using_sum)
+    assert node.axis == TIME_AXIS
+
+
+# ---------------------------------------------------------------------------
+# ConstDomainIndex — value baked into the graph as an array_constant
+# ---------------------------------------------------------------------------
+
+
+def test_const_domain_index_creates_array_constant():
+    """ConstDomainIndex bakes its values into an array_constant node carrying its axes."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    idx = ConstDomainIndex("field", arr, axes=(x, y))
+    assert type(idx.node) is graph.array_constant
+    assert idx.output_axes == (x, y)
+    assert idx.axes == (x, y)
+    assert idx.sizes == {"x": 2, "y": 3}
+    assert idx.is_abstract is False
+    assert issubclass(ConstDomainIndex, DomainIndex)
+
+
+def test_const_domain_index_requires_at_least_one_axis():
+    """ConstDomainIndex, like DomainIndex, requires at least one DOMAIN axis."""
+    with pytest.raises(ValueError, match="at least one DOMAIN axis"):
+        ConstDomainIndex("field", np.array([1.0]), axes=())
+
+
+def test_const_domain_index_repr_roundtrips_axes():
+    """ConstDomainIndex repr surfaces name, values, and declared axes."""
+    x = Axis("x", DOMAIN)
+    idx = ConstDomainIndex("field", np.array([1.0, 2.0]), axes=(x,))
+    assert repr(idx) == f"const_domain_idx('field', [1.0, 2.0], axes={(x,)!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +521,7 @@ def test_index_mul_index():
 
 
 def test_timeseries_index_arithmetic():
-    """TimeseriesIndex participates in formulas without .node access (D1a: state provided)."""
+    """TimeseriesIndex participates in formulas without .node access (state provided)."""
     arr = np.array([1.0, 2.0, 3.0])
     ts = TimeseriesIndex("ts", arr)
     node = ts * 2.0
@@ -382,7 +582,7 @@ def test_index_neg_returns_negate_node():
 
 
 def test_index_neg_evaluates_correctly():
-    """__neg__ evaluates to the element-wise negation of the index values (D1a: state provided)."""
+    """__neg__ evaluates to the element-wise negation of the index values (state provided)."""
     arr = np.array([1.0, -2.0, 3.0])
     ts = TimeseriesIndex("ts", arr)
     neg_node = -ts

@@ -1,7 +1,21 @@
 """Digital twin modeling and simulation library."""
 # SPDX-License-Identifier: Apache-2.0
 
-from .axes import DOMAIN, ENSEMBLE, PARAMETER, TIME_AXIS, Axis, AxisRole
+from .axes import (
+    DOMAIN,
+    ENSEMBLE,
+    PARAMETER,
+    TIME_AXIS,
+    Axis,
+    AxisRole,
+    DomainAxis,
+    DomainType,
+    MeshType,
+    SequenceType,
+    SetType,
+    SpaceType,
+    TimeType,
+)
 from .engine.frontend.graph import HasNode
 from .engine.numpybackend.executor import Functor, NumpyBackend
 from .model import (
@@ -9,10 +23,12 @@ from .model import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
+    ConstDomainIndex,
     ConstIndex,
     ConstTimeseriesIndex,
     Distribution,
     DistributionIndex,
+    DomainIndex,
     DomainValue,
     FunctionsTypeMismatchError,
     GenericIndex,
@@ -73,6 +89,7 @@ __all__ = [
     "CategoricalIndex",
     "ConditionalCategoricalIndex",
     "ConditionalDistributionIndex",
+    "ConstDomainIndex",
     "ConstIndex",
     "ConstTimeseriesIndex",
     "CrossProductEnsemble",
@@ -80,6 +97,9 @@ __all__ = [
     "DOMAIN",
     "DistributionEnsemble",
     "DistributionIndex",
+    "DomainAxis",
+    "DomainIndex",
+    "DomainType",
     "DomainValue",
     "ENSEMBLE",
     "Ensemble",
@@ -96,6 +116,11 @@ __all__ = [
     "InputsContractError",
     "InputsTypeMismatchError",
     "IncompatibleResultError",
+    "MeshType",
+    "SequenceType",
+    "SetType",
+    "SpaceType",
+    "TimeType",
     "define",
     "expose",
     "functions",

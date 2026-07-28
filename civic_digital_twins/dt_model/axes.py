@@ -10,6 +10,7 @@ Overview" for the module-role convention behind this layout.)
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable
+from typing import Literal, Protocol
 
 __all__ = [
     "AxisRole",
@@ -17,6 +18,13 @@ __all__ = [
     "PARAMETER",
     "ENSEMBLE",
     "Axis",
+    "DomainAxis",
+    "DomainType",
+    "SetType",
+    "SequenceType",
+    "TimeType",
+    "SpaceType",
+    "MeshType",
     "TIME_AXIS",
     "filter_by_role",
     "union_axes",
@@ -77,13 +85,165 @@ class Axis:
         return f"Axis({self.name!r}, role={self.role!r})"
 
 
-TIME_AXIS: Axis = Axis("time", DOMAIN)
+class DomainAxis(Axis):
+    """A DOMAIN axis carrying an optional static domain type.
+
+    ``DomainAxis`` adds exactly one piece of static modeling metadata over
+    :class:`Axis`: a :class:`DomainType` describing what operator vocabulary
+    the axis supports (unordered set, ordered sequence, time, space, ...).
+    Like ``role``, ``type`` is immutable and functionally determined by the
+    axis ``name`` — it is not runtime/execution state. In particular ``size``
+    deliberately stays off the axis: an axis identifies a dimension, while its
+    extent is a per-result concern that lives in the execution layout.
+
+    Identity is load-bearing and inherited unchanged from :class:`Axis`:
+    equality and hashing stay on ``(name, role)`` only. ``type`` is
+    deliberately *excluded* from ``__eq__``/``__hash__`` so a ``DomainAxis``
+    remains interchangeable with a plain ``Axis(name, DOMAIN)`` — required
+    for ``AxisLayout`` lookups, ``union_axes`` dedup, and cross-version
+    serialization round-trips (a snapshot saved with an untyped axis must
+    still match the live typed singleton).
+
+    Parameters
+    ----------
+    name:
+        See :class:`Axis`.
+    type:
+        Optional :class:`DomainType` instance (e.g. ``TimeType()``,
+        ``SpaceType(spacing=10.0)``). ``None`` means "untyped", which the
+        type lattice treats as :class:`SequenceType` by default.
+    """
+
+    __slots__ = ("type",)
+
+    def __init__(self, name: str, *, type: "DomainType | None" = None) -> None:
+        super().__init__(name, DOMAIN)
+        self.type = type
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"DomainAxis({self.name!r}, type={self.type!r})"
+
+
+class DomainType(Protocol):
+    """Capability descriptor a :class:`DomainAxis` carries; operators dispatch on it.
+
+    Reductions and element-wise operations are universal for any domain
+    axis. Higher-level operations are gated by the concrete type, forming a
+    lattice: ``SetType`` (reductions + selection only) is extended by
+    ``SequenceType`` (adds shift/lag/cumulative/diff for ordered 1-D
+    domains), which is in turn extended by ``TimeType`` (+ calendar /
+    periodicity) and ``SpaceType`` (+ a metric for gradient/laplacian).
+
+    This is a metadata-only protocol in this step: the gated operator
+    vocabulary itself is introduced in a later step. An untyped
+    (``type=None``) :class:`DomainAxis` behaves as :class:`SequenceType`.
+    """
+
+
+class SetType:
+    """Unordered domain: reductions and selection only."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return "SetType()"
+
+
+class SequenceType:
+    """Ordered, 1-D domain: adds shift/lag/cumulative/diff.
+
+    Parameters
+    ----------
+    periodic:
+        Whether the sequence wraps around (circular shift/roll) rather
+        than being fill-padded at the boundary.
+    """
+
+    __slots__ = ("periodic",)
+
+    def __init__(self, periodic: bool = False) -> None:
+        self.periodic = periodic
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"SequenceType(periodic={self.periodic!r})"
+
+
+class TimeType(SequenceType):
+    """:class:`SequenceType` specialized for calendar / periodic time.
+
+    ``periodic=True`` is the circular-shift convention used by recurrences
+    such as a periodic ``np.roll``-based solver.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"TimeType(periodic={self.periodic!r})"
+
+
+class SpaceType(SequenceType):
+    """:class:`SequenceType` with a metric (grid spacing) and boundary condition.
+
+    Parameters
+    ----------
+    spacing:
+        Grid spacing used by finite-difference operators (gradient,
+        laplacian).
+    boundary:
+        Boundary-condition policy for neighbourhood operators: one of
+        ``"reflect"``, ``"constant"``, ``"wrap"``, ``"nearest"``. The value
+        is validated at authoring time by the ``Literal`` annotation; the
+        finite-difference operators that consume it own the runtime semantics.
+    """
+
+    __slots__ = ("spacing", "boundary")
+
+    def __init__(
+        self,
+        spacing: float = 1.0,
+        boundary: Literal["reflect", "constant", "wrap", "nearest"] = "reflect",
+    ) -> None:
+        super().__init__(periodic=False)
+        self.spacing = spacing
+        self.boundary = boundary
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r})"
+
+
+class MeshType:
+    """Irregular domain of N cells with explicit adjacency (graph Laplacian).
+
+    Parameters
+    ----------
+    adjacency:
+        Opaque adjacency structure (e.g. a sparse matrix) consumed by
+        graph-Laplacian operators. Not interpreted in this step.
+    """
+
+    __slots__ = ("adjacency",)
+
+    def __init__(self, adjacency: object = None) -> None:
+        self.adjacency = adjacency
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"MeshType(adjacency={self.adjacency!r})"
+
+
+TIME_AXIS: DomainAxis = DomainAxis("time", type=TimeType())
 """Singleton for the time DOMAIN axis carried by timeseries nodes.
 
 This is the canonical instance: every module that needs the time axis must
 import it from here rather than constructing ``Axis("time", DOMAIN)`` locally.
 (Value-based equality makes local copies *work*, but a single singleton keeps
-the definition in one place.)
+the definition in one place.) It still compares and hashes equal to a plain
+``Axis("time", DOMAIN)`` — see :class:`DomainAxis`.
 """
 
 
