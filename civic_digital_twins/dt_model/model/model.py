@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from ..engine.frontend import graph
 from ..engine.numpybackend.executor import Functor
-from .index import GenericIndex, Index, TimeseriesIndex
+from .index import GenericIndex, Index
 
 
 class ModelContractViolation(Exception):
@@ -794,7 +794,7 @@ class Model:
         as an input (e.g. a distribution-backed behavioural parameter sampled
         internally by the ensemble).
         """
-        return [index for index in self.indexes if isinstance(index, (Index, TimeseriesIndex)) and index.is_abstract]
+        return [index for index in self.indexes if isinstance(index, Index) and index.is_abstract]
 
     def is_instantiated(self) -> bool:
         """Return ``True`` when all indexes have concrete, evaluable values.

@@ -13,7 +13,6 @@ from ..model.index import (
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
     ConstIndex,
-    ConstTimeseriesIndex,
     Distribution,
     DistributionIndex,
     DomainValue,
@@ -166,7 +165,7 @@ class Scenario:
 
         for idx, val in self._overrides.items():
             # Structural constants cannot be overridden.
-            if isinstance(idx, (ConstIndex, ConstTimeseriesIndex)):
+            if isinstance(idx, ConstIndex):
                 raise TypeError(
                     f"Index {idx.name!r} is a structural constant and cannot be overridden in a Scenario. "
                     f"Use Index / TimeseriesIndex for values that vary between scenarios."
@@ -438,12 +437,12 @@ class Scenario:
         """
         subs: dict[graph.Node, np.ndarray] = {}
         for idx in self._model.indexes:
-            if isinstance(idx, (ConstIndex, ConstTimeseriesIndex)):
+            if isinstance(idx, ConstIndex):
                 continue  # value already baked into the graph as a constant node
 
             # Determine the effective value: override takes precedence.
             val: DomainValue | graph.Node | None = self._overrides.get(idx)
-            if val is None and isinstance(idx, (Index, TimeseriesIndex)):
+            if val is None and isinstance(idx, Index):
                 val = idx.concrete_default  # type: ignore[assignment]  # Scalar ⊄ DomainValue
 
             if val is None or isinstance(val, (Distribution, dict, graph.Node)):

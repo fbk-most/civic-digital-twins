@@ -514,14 +514,15 @@ class Evaluation:
             )
 
         # Validate that parameters= does not contain constant-node indexes.
-        # ConstIndex and ConstTimeseriesIndex bake their value into a graph.constant
-        # node; the executor evaluates constant nodes directly and never consults
-        # state.values, so substituting them has no effect.  Placeholder-backed
-        # indexes (Index, DistributionIndex, TimeseriesIndex — with or without a
-        # default value) are fine because the executor does read their state entry.
-        from ..model.index import ConstIndex, ConstTimeseriesIndex
+        # ConstIndex (including its ConstTimeseriesIndex specialization) bakes its
+        # value into a constant node; the executor evaluates constant nodes directly
+        # and never consults state.values, so substituting them has no effect.
+        # Placeholder-backed indexes (Index, DistributionIndex, TimeseriesIndex —
+        # with or without a default value) are fine because the executor does read
+        # their state entry.
+        from ..model.index import ConstIndex
 
-        const_params = [idx for idx in parameters if isinstance(idx, (ConstIndex, ConstTimeseriesIndex))]
+        const_params = [idx for idx in parameters if isinstance(idx, ConstIndex)]
         if const_params:
             names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in const_params)
             raise ValueError(

@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**Multi-domain axes (work in progress)**
+
+- `DomainAxis` — an `Axis` carrying a static domain `type` from the new
+  `DomainType` lattice (`SetType` ⊂ `SequenceType` ⊂ `TimeType`/`SpaceType`).
+  `type` is metadata only: axis identity stays `(name, role)`, so a typed axis
+  still compares and hashes equal to a plain `Axis` with the same name and
+  role (serialization round-trips unaffected).  `TIME_AXIS` is now
+  `DomainAxis("time", type=TimeType())`.
+- `graph.array_placeholder` / `graph.array_constant` — generic
+  domain-carrying graph nodes that mint their declared `output_axes`.  Until
+  now only `timeseries_placeholder`/`timeseries_constant` minted an axis, and
+  always `TIME_AXIS`; a non-time DOMAIN axis was not constructible.
+- `Index` and `ConstIndex` accept an optional `axes=` tuple of DOMAIN axes,
+  making them domain-carrying:
+  `Index("field", arr, axes=(x, y))`, `ConstIndex("field", arr, axes=(x, y))`.
+  Per-axis sizes are deduced by zipping `axes` against the array's shape, so
+  the array's rank must match the number of axes.  `Index.axes`,
+  `Index.sizes`, and `ConstIndex.sizes` are new read-only accessors.
+  `Index` is now documented as *any* index, scalar or domain-carrying — its
+  shape is **declared** via `axes=` when the value is injected (concrete or
+  placeholder) and **derived** from the graph when the value is a formula.  In
+  formula mode `axes=` is a declaration of intent about the formula's inferred
+  `output_axes`; it is not yet verified.
+
+### Changed
+
+- `GenericIndex` reductions (`.sum()`, `.mean()`, …) default to the index's
+  **unique** DOMAIN axis rather than always the time axis.  An index carrying
+  several DOMAIN axes must now pass `axis=` explicitly (`ValueError`
+  otherwise).  Time-only models are unaffected, and an index carrying no
+  DOMAIN axis keeps the legacy time-axis default for now.
+- `TimeseriesIndex` is now a specialization of `Index` fixing
+  `axes=(TIME_AXIS,)` (previously a sibling class).  `isinstance(ts, Index)`
+  is therefore `True` where it used to be `False`.  Its constructor, node
+  types, `repr`, and behaviour are unchanged.
+- `Index(name, other_index)` now unwraps **any** `GenericIndex` to its
+  underlying `.node`, reusing the formula.  Previously passing a
+  `TimeseriesIndex` raised `TypeError`.  The old guard inspected the wrapper
+  class rather than the value's shape, so it rejected the explicit case while
+  admitting the equivalent implicit one (`Index("y", ts_a / ts_b)`).
+- `ConstTimeseriesIndex` now derives from `ConstIndex` as well as
+  `TimeseriesIndex` — it is `ConstIndex(axes=(TIME_AXIS,))`, so the const and
+  non-const hierarchies are parallel.  `isinstance(cts, ConstIndex)` and
+  `isinstance(cts, Index)` are now `True`; `isinstance(cts, TimeseriesIndex)`
+  remains `True`, keeping `TimeseriesIndex` usable as the "time-shaped,
+  whatever the value source" annotation in model `Inputs`/`Outputs`
+  contracts.  Its constructor, node type, and `repr` are unchanged.
+
 ## [0.11.0] - 2026-07-24
 
 ### Added

@@ -337,55 +337,68 @@ class GenericIndex(ABC):
 
 
 class Index(GenericIndex):
-    """Scalar-valued index variable.
+    """Index variable, scalar or domain-carrying.
+
+    An ``Index`` is *any* index. Its shape is **declared** via ``axes=`` when
+    the value comes from outside (concrete/placeholder — nothing else can know
+    it) and **derived** from the computation graph when the value is computed
+    by a formula (the graph already knows it exactly, via
+    :attr:`~GenericIndex.output_axes`).
 
     Immutable after construction: ``name``, ``value``, and ``node`` are
     read-only.  To vary an index value across runs, use
     :class:`~simulation.scenario.Scenario`.
 
-    Three modes:
+    Value-source modes — orthogonal to the domain signature, so each applies
+    with or without ``axes=``:
 
-    * **Concrete** — ``Index("cost", 8.0)``: scalar default; node is a
-      ``graph.placeholder`` filled by Scenario at evaluation time.
-    * **Placeholder** — ``Index("cost", None)``: no default; value must be
-      supplied via Scenario or ``parameters=`` before evaluation.
+    * **Concrete** — ``Index("cost", 8.0)`` (scalar; node is a
+      ``graph.placeholder``) or ``Index("field", arr, axes=(x, y))`` (node is
+      an ``array_placeholder``, per-axis sizes deduced by zipping *axes*
+      against the array's shape in declaration order, so the array's rank must
+      match the number of axes). The value is a default, injected by Scenario
+      at evaluation time.
+    * **Placeholder** — ``Index("cost")`` / ``Index("field", axes=(x, y))``:
+      no default; value must be supplied via Scenario or ``parameters=``
+      before evaluation.
     * **Formula** — ``Index("cost", formula_node)``: computed by the engine;
-      no external injection needed.  Another :class:`Index` (or a subclass,
-      e.g. :class:`ConstIndex`) is also accepted here and coerced to its
-      underlying ``.node`` (reusing the formula), the same unwrapping the
-      arithmetic operators perform. A sibling type carrying a different
-      shape — :class:`TimeseriesIndex` — is deliberately *not* accepted;
-      mixing shapes this way is almost always a mistake, not a formula reuse.
+      no external injection needed. Another :class:`GenericIndex` is also
+      accepted here and unwrapped to its underlying ``.node`` (reusing the
+      formula), the same unwrapping the arithmetic operators perform.
+
+    In formula mode ``axes=`` is an optional *assertion* about the formula's
+    inferred ``output_axes`` — ``None`` declares nothing, ``()`` declares the
+    result scalar. It is stored but not yet verified (that check is the #184
+    guardrail).
 
     For distribution-backed indexes use :class:`DistributionIndex`.
     """
 
+    # Instance state, declared once here rather than in whichever __init__
+    # branch happens to run first.  Subclasses that deliberately bypass
+    # Index.__init__ (ConstIndex and its specializations, which build a
+    # constant node instead of a placeholder) must set all five.
+    _name: str
+    _axes: tuple[Axis, ...] | None
+    _value: "graph.Scalar | np.ndarray | graph.Node | None"
+    _node: graph.Node
+    _sizes: dict[str, int]
+
     def __init__(
         self,
         name: str,
-        value: "graph.Scalar | graph.Node | Index | None",
+        value: "graph.Scalar | np.ndarray | graph.Node | GenericIndex | None" = None,
+        *,
+        axes: tuple[Axis, ...] | None = None,
     ) -> None:
         self._name = name
+        self._axes = axes
 
-        # Coerce another Index to its underlying node so a formula that reuses
-        # it (``Index("y", inp.x)``) is treated as formula-backed, matching how
-        # the arithmetic operators unwrap indexes via _node_of. Scoped to
-        # Index (not the broader GenericIndex) so that passing a
-        # differently-shaped sibling like TimeseriesIndex is a static/runtime
-        # error rather than a silent shape mismatch.
-        if isinstance(value, Index):
+        # Unwrap a sibling index to its underlying node so a formula that
+        # reuses it (``Index("y", inp.x)``) is treated as formula-backed,
+        # matching how the arithmetic operators unwrap indexes via _node_of.
+        if isinstance(value, GenericIndex):
             value = value.node
-        elif isinstance(value, GenericIndex):
-            # A differently-shaped sibling (e.g. TimeseriesIndex) is rejected
-            # explicitly rather than falling through to the "concrete scalar"
-            # branch below, which would silently store the index object
-            # itself as the default value — the same degenerate-semantics bug
-            # the Index coercion above exists to avoid, just for a mismatched
-            # shape instead of a missing ``.node``.
-            raise TypeError(
-                f"Index {name!r} cannot be initialised from a {type(value).__name__}. "
-                f"Pass its .node explicitly if the shape mismatch is intentional."
-            )
 
         if isinstance(value, Distribution):
             raise TypeError(
@@ -393,158 +406,36 @@ class Index(GenericIndex):
                 f"Use DistributionIndex for distribution-backed indexes."
             )
 
-        # Formula node: reuse it directly as this index's node.
+        # Formula node: reuse it directly as this index's node. Any declared
+        # *axes* is an assertion about its inferred output_axes, not an
+        # override — sizes come from the graph, never from the declaration.
         if isinstance(value, graph.Node):
             value.maybe_set_name(name)
-            self._value: graph.Scalar | graph.Node | None = value
-            self._node: graph.Node = value
-
-        # Concrete scalar: placeholder injected by Scenario at evaluation time.
-        elif value is not None:
             self._value = value
-            self._node = graph.placeholder(name)
+            self._node = value
+            self._sizes = {}
 
-        # Bare placeholder.
-        else:
-            self._value = None
-            self._node = graph.placeholder(name)
-
-    @property
-    def name(self) -> str:
-        """The human-readable name of the index."""
-        return self._name
-
-    @property
-    def node(self) -> graph.Node:
-        """The underlying computation graph node."""
-        return self._node
-
-    @property
-    def is_abstract(self) -> bool:
-        """Whether this index requires an external value before evaluation."""
-        return self._value is None
-
-    @property
-    def concrete_default(self) -> graph.Scalar | None:
-        """The index's concrete scalar default, or ``None`` if unset or formula-backed.
-
-        Used by :class:`~simulation.scenario.Scenario` to seed the executor
-        state with each index's default before overrides are applied. Most
-        model-authoring code should not need this — read values through the
-        computation graph (``.node``) instead.
-        """
-        return None if isinstance(self._value, graph.Node) else self._value
-
-    def __repr__(self) -> str:
-        """Return a string representation of the index."""
-        if self._value is None:
-            return f"idx({self._name!r})"
-        if isinstance(self._value, graph.Node):
-            return f"idx({self._name!r}, <formula>)"
-        return f"idx({self._name!r}, {self._value!r})"
-
-
-class ConstIndex(Index):
-    """Index baked into the computation graph as a ``graph.constant``.
-
-    Immutable after construction; the node is permanently fixed.  Use this
-    when the value is a structural constant (e.g. a unit conversion factor),
-    not a scenario parameter.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        value: float,
-    ) -> None:
-        # Bypass Index.__init__: it would create a placeholder node first.
-        self._name = name
-        self._value: graph.Scalar | graph.Node | None = value
-        self._node: graph.Node = graph.constant(value, name)
-
-    def __repr__(self) -> str:
-        """Return a string representation of the constant index."""
-        return f"const_idx({self._value!r})"
-
-
-class DomainIndex(GenericIndex):
-    """Domain-carrying quantity over an arbitrary, ordered tuple of DOMAIN axes.
-
-    Generalization of :class:`TimeseriesIndex`: rather than being hard-wired
-    to the time axis, a ``DomainIndex`` declares its own domain signature via
-    ``axes=`` at construction time. :class:`TimeseriesIndex` is re-expressed
-    as the ``axes=(TIME_AXIS,)`` specialization of this class; the
-    value-source modes below (fixed array / placeholder / formula) are
-    orthogonal to the domain signature, so a future stochastic source could
-    apply to any ``axes=`` combination without a new subclass per shape.
-
-    At least one DOMAIN axis is required — an axis-less ``DomainIndex`` would
-    be a scalar :class:`Index` in disguise. For a value that is a fixed
-    constant of the model (not overridable per scenario), use
-    :class:`ConstDomainIndex`.
-
-    Three modes mirror :class:`TimeseriesIndex`:
-
-    * **Fixed array** — ``DomainIndex(name, array, axes=(x, y))``
-      Node is an ``array_placeholder``; the array is the default, injected
-      by :class:`~simulation.scenario.Scenario` at evaluation time. Per-axis
-      sizes are deduced from the array's shape (zipped against *axes* in
-      declaration order, so the array rank must match the number of axes).
-    * **Placeholder** — ``DomainIndex(name, axes=(x, y))``
-      Node is an ``array_placeholder``; value must be supplied via Scenario
-      or ``parameters=`` before evaluation. Per-axis sizes are then deduced
-      from the supplied value (a later step's concern).
-    * **Formula** — ``DomainIndex(name, formula_node, axes=(x, y))``
-      Node is the formula node directly; value is computed by the engine.
-      *axes* is stored as the declared signature but is not verified
-      against ``formula_node.output_axes`` in this step (that
-      verify-not-override check lands with the #184 guardrails).
-
-    Parameters
-    ----------
-    name:
-        Human-readable name for this index.
-    value:
-        See the three modes above.
-    axes:
-        Ordered, non-empty tuple of DOMAIN axes declared for this index.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        value: np.ndarray | graph.Node | None = None,
-        *,
-        axes: tuple[Axis, ...],
-    ) -> None:
-        if not axes:
-            raise ValueError(f"DomainIndex {name!r} must declare at least one DOMAIN axis")
-        self._name = name
-        self._axes = axes
-
-        # Formula node: reuse it directly as this index's node.
-        if isinstance(value, graph.Node):
-            value.maybe_set_name(name)
-            self._value: np.ndarray | graph.Node | None = value
-            self._node: graph.Node = value
-            self._sizes: dict[str, int] = {}
-
-        # Concrete array: placeholder injected by Scenario at evaluation time.
+        # Concrete value: placeholder injected by Scenario at evaluation time.
         elif value is not None:
-            arr = np.asarray(value)
-            self._value = arr
-            self._node = self._make_placeholder_node(name, axes)
-            self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+            if axes:
+                arr = np.asarray(value)
+                self._value = arr
+                self._node = self._make_placeholder_node(name, axes)
+                self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+            else:
+                self._value = value
+                self._node = graph.placeholder(name)
+                self._sizes = {}
 
         # Bare placeholder.
         else:
             self._value = None
-            self._node = self._make_placeholder_node(name, axes)
+            self._node = self._make_placeholder_node(name, axes) if axes else graph.placeholder(name)
             self._sizes = {}
 
     @staticmethod
     def _make_placeholder_node(name: str, axes: tuple[Axis, ...]) -> graph.Node:
-        """Build the placeholder graph node for the fixed-array/bare-placeholder modes.
+        """Build the placeholder node for the concrete/bare-placeholder modes.
 
         Overridden by :class:`TimeseriesIndex` to construct a
         ``graph.timeseries_placeholder`` instead of a generic
@@ -563,8 +454,14 @@ class DomainIndex(GenericIndex):
         return self._node
 
     @property
-    def axes(self) -> tuple[Axis, ...]:
-        """The declared domain axes for this index, in order."""
+    def axes(self) -> tuple[Axis, ...] | None:
+        """The domain axes *declared* for this index, in order, or ``None``.
+
+        ``None`` means no declaration was made: for an injected value that
+        implies a scalar, and for a formula it means the shape is left to
+        graph inference. Read :attr:`~GenericIndex.output_axes` for the axes
+        the value actually carries.
+        """
         return self._axes
 
     @property
@@ -578,8 +475,8 @@ class DomainIndex(GenericIndex):
         return self._value is None
 
     @property
-    def concrete_default(self) -> np.ndarray | None:
-        """The index's concrete array default, or ``None`` if unset or formula-backed.
+    def concrete_default(self) -> "graph.Scalar | np.ndarray | None":
+        """The index's concrete default, or ``None`` if unset or formula-backed.
 
         Used by :class:`~simulation.scenario.Scenario` to seed the executor
         state with each index's default before overrides are applied. Most
@@ -590,58 +487,79 @@ class DomainIndex(GenericIndex):
 
     def __repr__(self) -> str:
         """Return a string representation of the index."""
+        if self._axes:
+            axes_suffix = f", axes={self._axes!r}"
+            if self._value is None:
+                return f"idx({self._name!r}, placeholder{axes_suffix})"
+            if isinstance(self._value, graph.Node):
+                return f"idx({self._name!r}, <formula>{axes_suffix})"
+            return f"idx({self._name!r}, {np.asarray(self._value).tolist()!r}{axes_suffix})"
         if self._value is None:
-            return f"domain_idx({self._name!r}, placeholder, axes={self._axes!r})"
-        if isinstance(self._value, np.ndarray):
-            return f"domain_idx({self._name!r}, {self._value.tolist()!r}, axes={self._axes!r})"
-        return f"domain_idx({self._name!r}, <formula>, axes={self._axes!r})"
+            return f"idx({self._name!r})"
+        if isinstance(self._value, graph.Node):
+            return f"idx({self._name!r}, <formula>)"
+        return f"idx({self._name!r}, {self._value!r})"
 
 
-class ConstDomainIndex(DomainIndex):
-    """DomainIndex baked into the graph as an ``array_constant``.
+class ConstIndex(Index):
+    """Index baked into the computation graph as a constant node.
 
-    Generic-domain analogue of :class:`ConstTimeseriesIndex`. Whereas a
-    fixed-array :class:`DomainIndex` builds an overwritable ``array_placeholder``
-    (its array is a default that a Scenario may replace), a ``ConstDomainIndex``
-    bakes its values into an ``array_constant`` node: the value is permanently
-    fixed and cannot be overridden per scenario. Choosing between the two is a
-    modeling decision about whether a domain field is a constant of the model
-    or a scenario-varying input. Immutable after construction.
+    Whereas a concrete :class:`Index` builds an overwritable placeholder (its
+    value is a default a Scenario may replace), a ``ConstIndex`` bakes its
+    value into a constant node: it is permanently fixed and cannot be
+    overridden per scenario. Choosing between the two is a modeling decision
+    about whether the value is a structural constant of the model (e.g. a unit
+    conversion factor) or a scenario-varying input.
 
-    Parameters
-    ----------
-    name:
-        Human-readable name for this index.
-    value:
-        Fixed array carrying the declared *axes*, in order. Its rank must
-        match the number of axes.
-    axes:
-        Ordered, non-empty tuple of DOMAIN axes declared for this index.
+    Like :class:`Index`, it is scalar by default and domain-carrying when
+    ``axes=`` is declared (``ConstIndex("field", arr, axes=(x, y))``, whose
+    array rank must match the number of axes). Immutable after construction.
     """
 
-    def __init__(self, name: str, value: np.ndarray, *, axes: tuple[Axis, ...]) -> None:
-        if not axes:
-            raise ValueError(f"ConstDomainIndex {name!r} must declare at least one DOMAIN axis")
-        # Bypass DomainIndex.__init__: it would create an array_placeholder first.
+    def __init__(
+        self,
+        name: str,
+        value: "float | np.ndarray",
+        *,
+        axes: tuple[Axis, ...] | None = None,
+    ) -> None:
+        # Bypass Index.__init__: it would create a placeholder node first.
         self._name = name
-        self._axes: tuple[Axis, ...] = axes
-        arr = np.asarray(value)
-        self._value: np.ndarray | graph.Node | None = arr
-        self._node: graph.Node = graph.array_constant(arr, axes, name)
-        self._sizes: dict[str, int] = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+        self._axes = axes
+        if axes:
+            arr = np.asarray(value)
+            self._value = arr
+            self._node = self._make_constant_node(arr, axes, name)
+            self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+        else:
+            self._value = cast(graph.Scalar, value)
+            self._node = graph.constant(self._value, name)
+            self._sizes = {}
+
+    @staticmethod
+    def _make_constant_node(value: np.ndarray, axes: tuple[Axis, ...], name: str) -> graph.Node:
+        """Build the constant node for the domain-carrying mode.
+
+        Overridden by :class:`ConstTimeseriesIndex` to construct a
+        ``graph.timeseries_constant`` instead of a generic
+        ``graph.array_constant``, so its node type is unchanged.
+        """
+        return graph.array_constant(value, axes, name)
 
     def __repr__(self) -> str:
-        """Return a string representation of the constant domain index."""
-        assert isinstance(self._value, np.ndarray)
-        return f"const_domain_idx({self._name!r}, {self._value.tolist()!r}, axes={self._axes!r})"
+        """Return a string representation of the constant index."""
+        if self._axes:
+            return f"const_idx({self._name!r}, {np.asarray(self._value).tolist()!r}, axes={self._axes!r})"
+        return f"const_idx({self._value!r})"
 
 
-class TimeseriesIndex(DomainIndex):
+class TimeseriesIndex(Index):
     """Time-indexed quantity.
 
-    Specialization of :class:`DomainIndex` fixing ``axes=(TIME_AXIS,)``: a
-    thin backward-compatible convenience over the generic domain-carrying
-    index, not a new concept. Immutable after construction.
+    Specialization of :class:`Index` fixing ``axes=(TIME_AXIS,)``: a thin
+    backward-compatible convenience over the generic domain-carrying index,
+    not a new concept, and the model for any future named-shape convenience.
+    Immutable after construction.
 
     Three modes mirror :class:`Index`:
 
@@ -676,11 +594,20 @@ class TimeseriesIndex(DomainIndex):
         return "timeseries_idx(<formula>)"
 
 
-class ConstTimeseriesIndex(TimeseriesIndex):
-    """TimeseriesIndex baked into the graph as a ``timeseries_constant``.
+class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
+    """ConstIndex baked into the graph as a ``timeseries_constant``.
 
-    Timeseries analogue of :class:`ConstIndex`.  Immutable after
-    construction; the node is permanently fixed.
+    Specialization of :class:`ConstIndex` fixing ``axes=(TIME_AXIS,)``.
+    Immutable after construction; the node is permanently fixed.
+
+    It is *also* a :class:`TimeseriesIndex`, deliberately: that is the type
+    that means "time-shaped, whatever the value source", and it is what model
+    ``Inputs``/``Outputs`` contracts annotate a time-shaped field with. Only
+    :class:`ConstIndex` participates in behavioural dispatch (Scenario refuses
+    to override a structural constant before any timeseries-specific
+    validation is reached), so the second base is a shape declaration, not a
+    behavioural one. Construction resolves to :meth:`ConstIndex.__init__`,
+    which builds the node directly.
 
     Parameters
     ----------
@@ -699,13 +626,12 @@ class ConstTimeseriesIndex(TimeseriesIndex):
     """
 
     def __init__(self, name: str, value: np.ndarray) -> None:
-        # Bypass TimeseriesIndex.__init__: it would create a timeseries_placeholder first.
-        self._name = name
-        self._axes: tuple[Axis, ...] = (TIME_AXIS,)
-        arr = np.asarray(value)
-        self._value: np.ndarray | graph.Node | None = arr
-        self._node: graph.Node = graph.timeseries_constant(arr, name)
-        self._sizes: dict[str, int] = {TIME_AXIS.name: arr.shape[-1]} if arr.ndim else {}
+        super().__init__(name, value, axes=(TIME_AXIS,))
+
+    @staticmethod
+    def _make_constant_node(value: np.ndarray, axes: tuple[Axis, ...], name: str) -> graph.Node:
+        """Build the constant node as a ``timeseries_constant`` (time-axis parity)."""
+        return graph.timeseries_constant(value, name)
 
     def __repr__(self) -> str:
         """Return a string representation of the constant timeseries index."""
