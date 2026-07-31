@@ -56,25 +56,27 @@ class TrafficModel(Model):
     class Inputs:
         ts_inflow:         TimeseriesIndex
         ts_starting:       TimeseriesIndex
-        modified_inflow:   Index
-        modified_starting: Index
+        modified_inflow:   TimeseriesIndex
+        modified_starting: TimeseriesIndex
 
     @outputs
     class Outputs:
         traffic:                TimeseriesIndex
         modified_traffic:       TimeseriesIndex
         total_modified_traffic: Index
-        inflow_ratio:           Index
-        starting_ratio:         Index
-        traffic_ratio:          Index
+        inflow_ratio:           TimeseriesIndex
+        starting_ratio:         TimeseriesIndex
+        traffic_ratio:          TimeseriesIndex
 
     def compute(self, inputs: Inputs) -> Outputs:
         traffic = TimeseriesIndex("reference traffic", inputs.ts_inflow + inputs.ts_starting)
         modified_traffic = TimeseriesIndex("modified traffic", inputs.modified_inflow + inputs.modified_starting)
+        # One aggregate over the whole horizon; every other output stays per-hour,
+        # so the policy's effect can be read at the peak rather than averaged away.
         total_modified_traffic = Index("total modified traffic", modified_traffic.sum())
-        inflow_ratio     = Index("inflow ratio", inputs.ts_inflow / inputs.modified_inflow)
-        starting_ratio   = Index("starting ratio", inputs.ts_starting / inputs.modified_starting)
-        traffic_ratio    = Index("traffic ratio", traffic / modified_traffic)
+        inflow_ratio     = TimeseriesIndex("inflow ratio", inputs.modified_inflow / inputs.ts_inflow)
+        starting_ratio   = TimeseriesIndex("starting ratio", inputs.modified_starting / inputs.ts_starting)
+        traffic_ratio    = TimeseriesIndex("traffic ratio", modified_traffic / traffic)
         return TrafficModel.Outputs(
             traffic=traffic,
             modified_traffic=modified_traffic,
@@ -87,8 +89,10 @@ class TrafficModel(Model):
 
 ts_in = TimeseriesIndex("inflow", np.array([10.0, 20.0, 30.0]))
 ts_st = TimeseriesIndex("starting", np.array([5.0, 10.0, 15.0]))
-mod_in = Index("modified_inflow", 0.9)
-mod_st = Index("modified_starting", 0.95)
+# A congestion charge that bites only as traffic builds: no effect in the first
+# hour, -10% then -20% on inflow, and a weaker -5% / -10% on starting vehicles.
+mod_in = TimeseriesIndex("modified_inflow", np.array([10.0, 18.0, 24.0]))
+mod_st = TimeseriesIndex("modified_starting", np.array([5.0, 9.5, 13.5]))
 m = TrafficModel(inputs=TrafficModel.Inputs(
     ts_inflow=ts_in,
     ts_starting=ts_st,
@@ -115,8 +119,8 @@ def _demo_02_level1_access() -> None:
     """Block 02: Level 1 contractual attribute access."""
     ts_i = TimeseriesIndex("ts_inflow_demo", np.array([10.0, 20.0, 30.0]))
     ts_s = TimeseriesIndex("ts_starting_demo", np.array([5.0, 10.0, 15.0]))
-    mod_i = Index("mod_inflow_demo", 0.9)
-    mod_s = Index("mod_starting_demo", 0.95)
+    mod_i = TimeseriesIndex("mod_inflow_demo", np.array([10.0, 18.0, 24.0]))
+    mod_s = TimeseriesIndex("mod_starting_demo", np.array([5.0, 9.5, 13.5]))
     traffic = TrafficModel(inputs=TrafficModel.Inputs(
         ts_inflow=ts_i,
         ts_starting=ts_s,

@@ -7,6 +7,7 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
+    AxesInferenceWarning,
     ConstIndex,
     ConstTimeseriesIndex,
     GenericIndex,
@@ -337,6 +338,148 @@ def test_index_unwraps_any_generic_index_to_its_node():
     reused = Index("reused", ts)
     assert reused.node is ts.node
     assert reused.output_axes == (TIME_AXIS,)
+
+
+# ---------------------------------------------------------------------------
+# Formula-mode axes= verification (verify, never override)
+# ---------------------------------------------------------------------------
+
+
+def test_index_formula_axes_mismatch_raises():
+    """A declared axes= that contradicts the formula's inferred axes raises ValueError."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    base = Index("base", np.array([1.0, 2.0]), axes=(x,))
+    with pytest.raises(ValueError, match="do not match"):
+        Index("derived", base.node * graph.constant(2.0), axes=(y,))
+
+
+def test_index_formula_axes_compared_as_a_set():
+    """Declared axes are matched as a set — inferred order is a traversal artifact."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    a = Index("a", np.array([1.0, 2.0]), axes=(x,))
+    b = Index("b", np.array([1.0, 2.0, 3.0]), axes=(y,))
+    formula = a.node * b.node
+    assert formula.output_axes == (x, y)
+    # The reversed declaration is equally valid: the formula could as easily
+    # have been written b * a, which infers (y, x) for the same value.
+    idx = Index("outer", formula, axes=(y, x))
+    assert idx.axes == (y, x)
+    assert idx.output_axes == (x, y)
+
+
+def test_index_formula_empty_axes_asserts_scalar():
+    """axes=() on a formula asserts the result is scalar, and fails when it is not."""
+    x = Axis("x", DOMAIN)
+    scalar = Index("scalar", graph.constant(1.0) + graph.constant(2.0), axes=())
+    assert scalar.output_axes == ()
+    base = Index("base", np.array([1.0, 2.0]), axes=(x,))
+    with pytest.raises(ValueError, match="do not match"):
+        Index("not_scalar", base.node * graph.constant(2.0), axes=())
+
+
+def test_index_formula_undeclared_axes_are_not_verified():
+    """axes=None declares nothing: the formula's inferred axes are accepted as-is."""
+    x = Axis("x", DOMAIN)
+    base = Index("base", np.array([1.0, 2.0]), axes=(x,))
+    derived = Index("derived", base.node * graph.constant(2.0))
+    assert derived.axes is None
+    assert derived.output_axes == (x,)
+
+
+def test_timeseries_index_formula_verifies_the_time_axis():
+    """TimeseriesIndex fixes axes=(TIME_AXIS,), so a non-time formula is rejected."""
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0]))
+    TimeseriesIndex("scaled", ts.node * graph.constant(2.0))
+    with pytest.raises(ValueError, match="do not match"):
+        TimeseriesIndex("collapsed", graph.constant(1.0) + graph.constant(2.0))
+
+
+# ---------------------------------------------------------------------------
+# Surprising-inference warning on undeclared formulas
+# ---------------------------------------------------------------------------
+
+
+def test_index_warns_on_emergent_outer_product():
+    """Combining operands with disjoint axes broadens the result and warns."""
+    space = Axis("space", DOMAIN)
+    time_series = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    field = Index("b", np.array([1.0, 2.0, 3.0]), axes=(space,))
+    with pytest.warns(AxesInferenceWarning, match="broader than any single operand"):
+        Index("c", time_series.node * field.node)
+
+
+def test_index_declared_axes_suppress_the_warning(recwarn):
+    """Declaring axes= states the intent, so the outer product is no longer surprising."""
+    space = Axis("space", DOMAIN)
+    time_series = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    field = Index("b", np.array([1.0, 2.0, 3.0]), axes=(space,))
+    Index("c", time_series.node * field.node, axes=(TIME_AXIS, space))
+    assert len(recwarn) == 0
+
+
+def test_index_shared_axes_do_not_warn(recwarn):
+    """Operands that already carry the result's axes produce nothing new to flag."""
+    a = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    b = TimeseriesIndex("b", np.array([3.0, 4.0]))
+    Index("c", a.node + b.node)
+    assert len(recwarn) == 0
+
+
+def test_index_scalar_broadcast_does_not_warn(recwarn):
+    """Broadcasting a scalar against a domain-carrying operand introduces no new axis."""
+    a = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    Index("c", a.node + graph.constant(5.0))
+    assert len(recwarn) == 0
+
+
+def test_index_warns_on_emergent_outer_product_in_a_where():
+    """The warning covers where(), not just binary operators."""
+    space = Axis("space", DOMAIN)
+    time_series = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    field = Index("b", np.array([1.0, 2.0, 3.0]), axes=(space,))
+    cond = graph.greater(time_series.node, graph.constant(0.0))
+    with pytest.warns(AxesInferenceWarning):
+        Index("c", graph.where(cond, field.node, graph.constant(0.0)))
+
+
+def test_index_warns_on_emergent_outer_product_in_a_piecewise():
+    """The warning covers multi-clause nodes such as graph.piecewise."""
+    space = Axis("space", DOMAIN)
+    time_series = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    field = Index("b", np.array([1.0, 2.0, 3.0]), axes=(space,))
+    with pytest.warns(AxesInferenceWarning):
+        Index("c", graph.piecewise((field.node, time_series.node > 0.0), (0.0, True)))
+
+
+def test_index_piecewise_over_one_axis_does_not_warn(recwarn):
+    """A piecewise whose clauses all live on the same axis introduces nothing new."""
+    time_series = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    Index("c", graph.piecewise((time_series.node, time_series.node > 0.0), (0.0, True)))
+    assert len(recwarn) == 0
+
+
+def test_index_unsigned_function_call_warns():
+    """A function_call's union may over-estimate, so an unsigned one always warns."""
+    a = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    with pytest.warns(AxesInferenceWarning, match="function_call"):
+        Index("r", graph.function_call("reduce", a.node))
+
+
+def test_index_scalar_function_call_does_not_warn(recwarn):
+    """A function_call over scalar arguments has an empty union: nothing to over-estimate."""
+    Index("r", graph.function_call("scale", graph.constant(2.0)))
+    assert len(recwarn) == 0
+
+
+def test_index_signed_function_call_does_not_warn(recwarn):
+    """A functor declaring output_axes makes the inference exact, so no warning."""
+    a = TimeseriesIndex("a", np.array([1.0, 2.0]))
+    functor = executor.NumpyBackend.adapt(lambda x: x.sum(axis=-1), output_axes=())
+    reduced = Index("r", graph.function_call("reduce", a.node, functor=functor))
+    assert reduced.output_axes == ()
+    assert len(recwarn) == 0
 
 
 # ---------------------------------------------------------------------------

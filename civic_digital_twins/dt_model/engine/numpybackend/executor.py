@@ -25,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from ...axes import TIME_AXIS
+from ...axes import TIME_AXIS, Axis
 from .. import compileflags
 from ..frontend import graph
 from . import numpy_ast
@@ -331,7 +331,19 @@ class PlaceholderValueNotProvided(Exception):
 
 @runtime_checkable
 class Functor(Protocol):
-    """A user-defined callable integrated into the DAG."""
+    """A user-defined callable integrated into the DAG.
+
+    ``output_axes``/``input_axes`` are an optional declared axis signature,
+    set via :meth:`NumpyBackend.adapt`. Passing the functor to
+    :class:`~..frontend.graph.function_call` as ``functor=`` makes
+    ``output_axes`` replace that node's conservative axis-union inference, and
+    verifies ``input_axes`` against the actual call arguments at graph-build
+    time. Both are ``None`` for an unsigned functor — the common case, which
+    keeps the conservative-union behaviour.
+    """
+
+    output_axes: tuple[Axis, ...] | None
+    input_axes: tuple[tuple[Axis, ...], ...] | None
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         """Execute the user defined function."""
@@ -341,8 +353,16 @@ class Functor(Protocol):
 class _NumpyFunctor:
     """A callable bound to the numpy array convention (internal implementation)."""
 
-    def __init__(self, fn: Callable[..., np.ndarray]) -> None:
+    def __init__(
+        self,
+        fn: Callable[..., np.ndarray],
+        *,
+        output_axes: tuple[Axis, ...] | None = None,
+        input_axes: tuple[tuple[Axis, ...], ...] | None = None,
+    ) -> None:
         self._fn = fn
+        self.output_axes = output_axes
+        self.input_axes = input_axes
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         return self._fn(*args, **kwargs)
@@ -366,13 +386,22 @@ class NumpyBackend:
     """
 
     @staticmethod
-    def adapt(fn: Callable[..., np.ndarray]) -> Functor:
+    def adapt(
+        fn: Callable[..., np.ndarray],
+        *,
+        output_axes: tuple[Axis, ...] | None = None,
+        input_axes: tuple[tuple[Axis, ...], ...] | None = None,
+    ) -> Functor:
         """Bind *fn* to the numpy array convention.
 
         The callable must accept and return :class:`numpy.ndarray` values.
         Returns a :class:`Functor` wrapping *fn*.
+
+        *output_axes*/*input_axes* declare an optional axis signature (see
+        :class:`Functor`); pass the returned functor to
+        ``graph.function_call(..., functor=...)`` to make use of it.
         """
-        return _NumpyFunctor(fn)
+        return _NumpyFunctor(fn, output_axes=output_axes, input_axes=input_axes)
 
 
 # Belt-and-suspenders: assert at import time that _NumpyFunctor satisfies Functor.

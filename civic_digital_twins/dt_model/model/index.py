@@ -7,6 +7,7 @@ be a constant, a distribution, or a symbolic expression.
 """
 # SPDX-License-Identifier: Apache-2.0
 
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol, cast, runtime_checkable
@@ -15,6 +16,96 @@ import numpy as np
 
 from ..axes import DOMAIN, TIME_AXIS, Axis, filter_by_role
 from ..engine.frontend import graph
+
+
+class AxesInferenceWarning(UserWarning):
+    """Warns that a formula's inferred axes are unlikely to be what was intended.
+
+    Emitted when an undeclared formula-backed index combines operands in a way
+    that broadens the result's axes (see :class:`Index`). The trigger is a
+    heuristic, not a contract: silence it for a formula that is deliberately an
+    outer product either by declaring ``axes=`` on the index — which states the
+    intent and is verified — or by filtering this category.
+    """
+
+
+def _combining_operand_axes(node: graph.Node) -> list[tuple[Axis, ...]] | None:
+    """Return each operand's own axes for a combining node, or ``None`` if it is not one.
+
+    "Combining" means a node whose ``output_axes`` is the union of several
+    independently axis-carrying operands — ``BinaryOp``, ``where``, and
+    ``MultiClauseOp``. Those are the only shapes that can produce the emergent
+    outer product :func:`_surprising_axes_reason` looks for.
+    """
+    if isinstance(node, graph.BinaryOp):
+        return [node.left.output_axes, node.right.output_axes]
+    if isinstance(node, graph.where):
+        return [node.condition.output_axes, node.then.output_axes, node.otherwise.output_axes]
+    if isinstance(node, graph.MultiClauseOp):
+        operand_axes = [ax for cond, val in node.clauses for ax in (cond.output_axes, val.output_axes)]
+        operand_axes.append(node.default_value.output_axes)
+        return operand_axes
+    return None
+
+
+def _surprising_axes_reason(node: graph.Node) -> str | None:
+    """Return why *node*'s inferred axes may be unintended, or ``None`` if they look fine.
+
+    Two independent triggers:
+
+    * **Emergent outer product** — a combining node whose result axes are a
+      strict superset of *every* operand's own axes. No operand already
+      carried the full result, so the extra axes emerged from combining
+      disjoint contributions (``a:(time,) * b:(space,)`` -> ``(time, space)``).
+      Broadcasting a scalar, or combining operands that already share the
+      result's axes, is not surprising and does not trigger.
+    * **Unsigned function_call** — a ``function_call`` with non-empty axes and
+      no functor-declared ``output_axes``. Its inference is a conservative
+      union, so it over-estimates whenever the function reduces an axis — even
+      when only one axis is involved.
+    """
+    if isinstance(node, graph.function_call):
+        if node.output_axes and not node.has_declared_output_axes:
+            return "function_call axis inference is a conservative union and may over-estimate"
+        return None
+    operand_axes = _combining_operand_axes(node)
+    if operand_axes is None:
+        return None
+    result = set(node.output_axes)
+    if all(set(operand) != result for operand in operand_axes):
+        return "combining operands with disjoint axes produced a result broader than any single operand"
+    return None
+
+
+def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], inferred: tuple[Axis, ...]) -> None:
+    """Raise ``ValueError`` unless *declared* and *inferred* hold the same axes.
+
+    Compared as **sets**: the order of a formula's inferred ``output_axes`` is
+    an artifact of how ``union_axes`` walked the operands (``a * b`` and
+    ``b * a`` order the same result differently), so it carries no meaning to
+    assert against. Contrast the injected-value modes, where *axes* is zipped
+    positionally against the array's shape and order is load-bearing.
+    """
+    if set(declared) != set(inferred):
+        raise ValueError(
+            f"{owner}: declared axes {declared!r} do not match the formula's inferred "
+            f"output_axes {inferred!r} (compared as sets, order is not significant). "
+            f"Declaring axes verifies the formula, it cannot relabel it — fix whichever "
+            f"of the two is wrong."
+        )
+
+
+def _warn_if_axes_surprising(owner: str, node: graph.Node) -> None:
+    """Emit :class:`AxesInferenceWarning` if *node*'s inferred axes look unintended."""
+    reason = _surprising_axes_reason(node)
+    if reason is not None:
+        warnings.warn(
+            f"{owner}: inferred output_axes={node.output_axes!r} — {reason}. "
+            f"Pass axes=... to declare the result explicitly (it is verified against "
+            f"the formula), or restructure the formula to avoid combining the axes.",
+            AxesInferenceWarning,
+            stacklevel=3,
+        )
 
 
 @runtime_checkable
@@ -368,8 +459,17 @@ class Index(GenericIndex):
 
     In formula mode ``axes=`` is an optional *assertion* about the formula's
     inferred ``output_axes`` — ``None`` declares nothing, ``()`` declares the
-    result scalar. It is stored but not yet verified (that check is the #184
-    guardrail).
+    result scalar, ``(x, y)`` declares those axes. It is a **verification, not
+    an override**: a mismatch raises ``ValueError``, and there is no mechanism
+    to relabel a formula's axes. The comparison is by **set**, since a
+    formula's axis order is a traversal artifact rather than something the
+    author chose (contrast the injected modes above, where order is zipped
+    against the array's shape and does matter).
+
+    Declaring ``axes=`` on a formula is also how you state intent: an
+    undeclared formula whose inferred axes look accidental — an outer product
+    emerging from operands with disjoint axes, or an unsigned ``function_call``
+    whose union may over-estimate — raises :class:`AxesInferenceWarning`.
 
     For distribution-backed indexes use :class:`DistributionIndex`.
     """
@@ -414,6 +514,10 @@ class Index(GenericIndex):
             self._value = value
             self._node = value
             self._sizes = {}
+            if axes is not None:
+                _verify_declared_axes(f"{type(self).__name__} {name!r}", axes, value.output_axes)
+            else:
+                _warn_if_axes_surprising(f"{type(self).__name__} {name!r}", value)
 
         # Concrete value: placeholder injected by Scenario at evaluation time.
         elif value is not None:

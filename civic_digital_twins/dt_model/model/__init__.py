@@ -4,6 +4,7 @@
 from ..axes import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
 from .contracts import define, expose, functions, inputs, outputs
 from .index import (
+    AxesInferenceWarning,
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
@@ -30,6 +31,7 @@ from .model_variant import ModelVariant
 
 __all__ = [
     "AbstractIndexNotInInputsError",
+    "AxesInferenceWarning",
     "Axis",
     "define",
     "expose",

@@ -20,6 +20,7 @@ from .engine.frontend.graph import HasNode
 from .engine.numpybackend.executor import Functor, NumpyBackend
 from .model import (
     AbstractIndexNotInInputsError,
+    AxesInferenceWarning,
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
@@ -76,6 +77,7 @@ from .simulation import (
 
 __all__ = [
     "AbstractIndexNotInInputsError",
+    "AxesInferenceWarning",
     "Functor",
     "HasNode",
     "Axis",

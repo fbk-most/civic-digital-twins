@@ -6,6 +6,8 @@ import subprocess
 import textwrap
 from collections.abc import Iterable
 
+import pytest
+
 from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
@@ -933,3 +935,64 @@ def test_where_output_axes_propagates_time_axis():
     default = graph.constant(0.0)
     w = graph.where(cond, ts, default)
     assert time_axis in w.output_axes
+
+
+# ---------------------------------------------------------------------------
+# function_call functor axis signature
+# ---------------------------------------------------------------------------
+
+
+class _SignedFunctor:
+    """Minimal stand-in for executor.Functor exposing a declared axis signature."""
+
+    def __init__(self, output_axes=None, input_axes=None):
+        self.output_axes = output_axes
+        self.input_axes = input_axes
+
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+def test_function_call_without_functor_falls_back_to_conservative_union():
+    """With no functor, output_axes stays the conservative union of the input axes."""
+    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    fc = graph.function_call("reduce", ts)
+    assert fc.output_axes == ts.output_axes
+    assert fc.has_declared_output_axes is False
+
+
+def test_function_call_functor_output_axes_replaces_the_union():
+    """A functor declaring output_axes makes the inference exact instead of conservative."""
+    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    fc = graph.function_call("reduce", ts, functor=_SignedFunctor(output_axes=()))
+    assert fc.output_axes == ()
+    assert fc.has_declared_output_axes is True
+
+
+def test_function_call_functor_input_axes_verified_at_build_time():
+    """A declared input_axes that contradicts the actual arguments raises at graph-build time."""
+    time_axis = Axis("time", DOMAIN)
+    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    # The functor claims a scalar input, but ts carries the time axis.
+    with pytest.raises(ValueError, match="input_axes"):
+        graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((),)))
+    # A matching signature is accepted.
+    graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((time_axis,),)))
+
+
+def test_function_call_functor_input_axes_covers_keyword_arguments():
+    """input_axes entries line up with positional arguments first, then keyword ones."""
+    time_axis = Axis("time", DOMAIN)
+    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    scalar = graph.constant(1.0)
+    functor = _SignedFunctor(input_axes=((time_axis,), ()))
+    graph.function_call("blend", ts, weight=scalar, functor=functor)
+    with pytest.raises(ValueError, match="input_axes"):
+        graph.function_call("blend", scalar, weight=ts, functor=functor)
+
+
+def test_function_call_functor_input_axes_arity_mismatch_raises():
+    """A declared input_axes with the wrong number of entries raises ValueError."""
+    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    with pytest.raises(ValueError, match="input_axes"):
+        graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((), ())))

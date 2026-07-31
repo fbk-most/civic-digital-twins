@@ -1271,6 +1271,21 @@ class project_using_quantile[T](ProjectionOp[T]):
 # User-defined functions
 
 
+@runtime_checkable
+class HasAxisSignature(Protocol):
+    """Protocol for objects declaring an axis signature for a user-defined function.
+
+    Matches :class:`~..numpybackend.executor.Functor` structurally, without
+    importing it — the frontend must not depend on a specific backend. Any
+    object exposing these two attributes (e.g. one returned by
+    ``NumpyBackend.adapt(fn, output_axes=..., input_axes=...)``) can be passed
+    as ``functor=`` to :class:`function_call`.
+    """
+
+    output_axes: tuple[Axis, ...] | None
+    input_axes: tuple[tuple[Axis, ...], ...] | None
+
+
 class function_call[T](Node[T]):
     """
     Represent calling a user-defined function.
@@ -1279,17 +1294,57 @@ class function_call[T](Node[T]):
 
     When evaluating the DAG, the programmer is responsible for
     providing the corresponding function binding.
+
+    By default ``output_axes`` is the conservative union of all input axes,
+    which can over-estimate — a function that reduces its input still reports
+    the reduced axis. Passing the bound ``functor=`` (the same object later
+    supplied at evaluation time) makes the inference exact: a declared
+    ``output_axes`` replaces the union, and a declared ``input_axes`` is
+    checked against the actual arguments right here, so a shape mismatch is a
+    graph-build error rather than a latent bug surfacing at evaluation.
     """
 
-    def __init__(self, name: str, *args: Node[T] | HasNode[T], **kwargs: Node[T] | HasNode[T]) -> None:
+    def __init__(
+        self,
+        name: str,
+        *args: Node[T] | HasNode[T],
+        functor: HasAxisSignature | None = None,
+        **kwargs: Node[T] | HasNode[T],
+    ) -> None:
         super().__init__(name)
         self.args = tuple(ensure_node(a) for a in args)
         self.kwargs = {k: ensure_node(v) for k, v in kwargs.items()}
+        self._declared_output_axes = functor.output_axes if functor is not None else None
+        declared_input_axes = functor.input_axes if functor is not None else None
+        if declared_input_axes is not None:
+            self._check_input_axes(name, declared_input_axes)
+
+    def _check_input_axes(self, name: str, declared: tuple[tuple[Axis, ...], ...]) -> None:
+        """Verify each argument's axes against the functor's declared ``input_axes``."""
+        actual = (*self.args, *self.kwargs.values())
+        if len(declared) != len(actual):
+            raise ValueError(
+                f"function_call {name!r}: the functor declares input_axes for "
+                f"{len(declared)} argument(s) but {len(actual)} were provided"
+            )
+        for position, (arg, expected) in enumerate(zip(actual, declared, strict=True)):
+            if arg.output_axes != expected:
+                raise ValueError(
+                    f"function_call {name!r}: argument {position} carries output_axes="
+                    f"{arg.output_axes!r}, but the functor declares input_axes[{position}]={expected!r}"
+                )
 
     @property
     def output_axes(self) -> tuple[Axis, ...]:
-        """Return the union of all input axes (conservative)."""
+        """Return the functor's declared output axes, else the conservative union of input axes."""
+        if self._declared_output_axes is not None:
+            return self._declared_output_axes
         return union_axes(*(a.output_axes for a in self.args), *(v.output_axes for v in self.kwargs.values()))
+
+    @property
+    def has_declared_output_axes(self) -> bool:
+        """Whether a functor declaring explicit ``output_axes`` was supplied at construction."""
+        return self._declared_output_axes is not None
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""

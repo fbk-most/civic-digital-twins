@@ -31,12 +31,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Index.sizes`, and `ConstIndex.sizes` are new read-only accessors.
   `Index` is now documented as *any* index, scalar or domain-carrying — its
   shape is **declared** via `axes=` when the value is injected (concrete or
-  placeholder) and **derived** from the graph when the value is a formula.  In
-  formula mode `axes=` is a declaration of intent about the formula's inferred
-  `output_axes`; it is not yet verified.
+  placeholder) and **derived** from the graph when the value is a formula.
+- `NumpyBackend.adapt(fn, output_axes=..., input_axes=...)` — an optional
+  declared axis signature for a user-defined function, surfaced as the new
+  `Functor.output_axes`/`Functor.input_axes` attributes.  Pass the bound
+  functor to `graph.function_call(..., functor=...)` to use it: `output_axes`
+  replaces that node's conservative axis-union inference (which over-estimates
+  whenever the function reduces an axis), and `input_axes` is verified against
+  the actual arguments, so a shape mismatch raises `ValueError` at graph-build
+  time instead of surfacing at evaluation.  `graph.function_call` also gains
+  `has_declared_output_axes`, and `graph.HasAxisSignature` is the structural
+  protocol the `functor=` argument accepts.
+- `AxesInferenceWarning` (a `UserWarning`) — raised when an undeclared
+  formula-backed index has inferred axes that are unlikely to be intended:
+  an outer product emerging from operands with *disjoint* axes
+  (`a:(time,) * b:(space,)` → `(time, space)`, over `BinaryOp`, `where`, and
+  multi-clause nodes), or an unsigned `function_call` whose union may
+  over-estimate.  Broadcasting a scalar, or combining operands that already
+  share the result's axes, does not trigger it.  Declaring `axes=` states the
+  intent and silences the warning; so does filtering the category.
 
 ### Changed
 
+- Formula-mode `axes=` on `Index` (and therefore the `axes=(TIME_AXIS,)` that
+  `TimeseriesIndex` fixes) is **verified** against the formula's inferred
+  `output_axes`; a mismatch raises `ValueError`.  It is a verification, not an
+  override: there is no mechanism to relabel a formula's axes.  The comparison
+  is by **set** — a formula's axis order is an artifact of how the inference
+  walked the operands (`a * b` and `b * a` order the same result differently),
+  so it carries no intent to assert against.  Injected values are unaffected:
+  there `axes=` stays ordered, since it is zipped against the array's shape.
+  A `TimeseriesIndex` wrapping a formula that does not carry the time axis now
+  raises where it was previously silently accepted.
+- The `Functor` protocol gained the `output_axes`/`input_axes` attributes, so a
+  *hand-rolled* functor (one not produced by `NumpyBackend.adapt`) must now
+  declare them — set both to `None` to keep the previous behaviour.  Runtime is
+  unaffected; nothing checks the protocol at runtime.
 - `GenericIndex` reductions (`.sum()`, `.mean()`, …) default to the index's
   **unique** DOMAIN axis rather than always the time axis.  An index carrying
   several DOMAIN axes must now pass `axis=` explicitly (`ValueError`
