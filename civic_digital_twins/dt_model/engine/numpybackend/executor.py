@@ -333,6 +333,20 @@ class PlaceholderValueNotProvided(Exception):
     """Raised when a required placeholder value is not provided in the state."""
 
 
+class InvalidFunctionResult(Exception):
+    """Raised when a user-defined function returns a non-numeric value.
+
+    A function bound via :meth:`NumpyBackend.adapt` must return a concrete
+    numeric value (a numpy array/scalar, or a plain ``int``/``float``/``bool``).
+    Returning a ``graph.Node`` — typically because a ``GenericIndex``/``Index``
+    leaked into the function's closure or data instead of being unwrapped to a
+    concrete value before use — would otherwise be stored as the node's
+    "evaluated" value and silently propagate as symbolic graph construction
+    through every downstream numpy operation, since ``graph.Node`` defines its
+    own arithmetic dunder methods.
+    """
+
+
 @runtime_checkable
 class Functor(Protocol):
     """A user-defined callable integrated into the DAG."""
@@ -656,7 +670,20 @@ def _eval_function(state: State, node: graph.Node) -> np.ndarray:
         function = state.functions.get(node.name)
     if function is None:
         raise FunctionNotFound(f"executor: cannot find functor for: {node.name}")
-    return function(*args, **kwargs)
+    result = function(*args, **kwargs)
+    if isinstance(result, graph.Node):
+        raise InvalidFunctionResult(
+            f"executor: function '{node.name}' returned a graph.Node ({result!r}) instead of "
+            "a concrete value. This usually means a GenericIndex/Index (or its .node) leaked "
+            "into the function's closure or data and was used in arithmetic instead of being "
+            "unwrapped to a concrete value beforehand."
+        )
+    if not isinstance(result, (np.ndarray, np.generic, int, float, bool)):
+        raise InvalidFunctionResult(
+            f"executor: function '{node.name}' returned {type(result).__name__}, expected a "
+            "numpy array/scalar, int, float, or bool."
+        )
+    return result
 
 
 def _eval_variant_selector_noop(_state: State, _node: graph.Node) -> np.ndarray:
