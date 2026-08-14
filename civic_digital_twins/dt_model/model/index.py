@@ -321,9 +321,24 @@ class Index(GenericIndex):
     def __init__(
         self,
         name: str,
-        value: graph.Scalar | graph.Node | None,
+        value: "graph.Scalar | graph.Node | Index | None",
     ) -> None:
         self._name = name
+
+        # Coerce another Index to its underlying node so a formula that reuses
+        # it (``Index("y", inp.x)``) is treated as formula-backed, matching how
+        # the arithmetic operators unwrap indexes via _node_of.
+        if isinstance(value, Index):
+            value = value.node
+        elif isinstance(value, GenericIndex):
+            # A differently-shaped sibling (e.g. TimeseriesIndex) is rejected
+            # explicitly rather than falling through to the "concrete scalar"
+            # branch below, which would silently store the index object
+            # itself as the default value.
+            raise TypeError(
+                f"Index {name!r} cannot be initialised from a {type(value).__name__}. "
+                f"Pass its .node explicitly if the shape mismatch is intentional."
+            )
 
         if isinstance(value, Distribution):
             raise TypeError(
@@ -416,9 +431,25 @@ class TimeseriesIndex(GenericIndex):
     def __init__(
         self,
         name: str,
-        value: np.ndarray | graph.Node | None = None,
+        value: "np.ndarray | graph.Node | TimeseriesIndex | None" = None,
     ) -> None:
         self._name = name
+
+        # Coerce another TimeseriesIndex to its underlying node so a formula
+        # that reuses it (``TimeseriesIndex("y", inp.x)``) is treated as
+        # formula-backed, mirroring how Index unwraps a nested Index above.
+        if isinstance(value, TimeseriesIndex):
+            value = value.node
+        elif isinstance(value, GenericIndex):
+            # A differently-shaped sibling (e.g. Index) is rejected explicitly
+            # rather than falling through to the "concrete array" branch
+            # below, which would silently wrap the index object itself (via
+            # np.asarray) as the default value and mint a disconnected,
+            # orphaned placeholder node.
+            raise TypeError(
+                f"TimeseriesIndex {name!r} cannot be initialised from a {type(value).__name__}. "
+                f"Pass its .node explicitly if the shape mismatch is intentional."
+            )
 
         # Formula node: reuse it directly as this index's node.
         if isinstance(value, graph.Node):
