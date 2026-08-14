@@ -719,3 +719,36 @@ def test_evaluation_raises_when_parameter_axes_not_in_parameters():
     ens = CrossProductEnsemble(scenario)  # pv excluded from ensemble
     with pytest.raises(ValueError, match="parameter_axes"):
         Evaluation(scenario).evaluate(ensemble=ens)  # pv not in parameters=
+
+
+# ---------------------------------------------------------------------------
+# A node shared by two Index/TimeseriesIndex wrappers must not be
+# double-processed by shape normalisation.
+# ---------------------------------------------------------------------------
+
+
+def test_shared_node_across_two_index_wrappers_does_not_corrupt_shape():
+    """Two different index objects sharing one node must not break shape normalisation.
+
+    Regression test for https://github.com/fbk-most/civic-digital-twins/issues/224.
+    A TimeseriesIndex wrapping another index's `.node` (to give it its own identity —
+    a pattern the model layer explicitly supports, see issue #223) makes the same
+    underlying graph node reachable from `model.indexes` twice, once per wrapper.
+    `_execute_plan`'s shape-normalisation loop used to iterate this un-deduplicated
+    list and reshape the node twice, tripping its own ndim assertion on the second
+    pass whenever an ENSEMBLE/PARAMETER axis is present (has_timeseries=True).
+    """
+    ts_starting = TimeseriesIndex("base starting", np.array([1.0, 2.0, 3.0]))
+    # Reuse ts_starting's node so `modified_starting` has its own Index identity
+    # while sharing the same underlying graph node — exactly the pattern used in
+    # AreaVerde's CordonModifiedFlowsModel.
+    modified_starting = TimeseriesIndex("modified starting", ts_starting.node)
+    noise = DistributionIndex("noise", stats.norm, {"loc": 0.0, "scale": 1.0})
+
+    model = _make_model(ts_starting, modified_starting, noise)
+    scenario = Scenario(model)
+    ens = DistributionEnsemble(scenario, size=5, rng=np.random.default_rng(42))
+
+    ev = Evaluation(scenario).evaluate(ensemble=ens)
+    assert ev[modified_starting].shape == (1, 3)
+    np.testing.assert_array_equal(ev[modified_starting][0], np.array([1.0, 2.0, 3.0]))

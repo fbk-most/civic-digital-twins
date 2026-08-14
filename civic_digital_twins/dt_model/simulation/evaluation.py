@@ -348,7 +348,11 @@ class Evaluation:
         if nodes_of_interest is None:
             nodes_of_interest = list(self.model.indexes)
 
-        actual_nodes = [idx.node for idx in nodes_of_interest]
+        # Deduplicate by node identity: two different Index/TimeseriesIndex
+        # objects may legitimately share the same underlying graph node (e.g.
+        # an index re-wrapping another index's .node to give it its own
+        # identity). See _execute_plan's actual_nodes for why this matters.
+        actual_nodes = list(dict.fromkeys(idx.node for idx in nodes_of_interest))
         linearized_nodes = linearize.forest(*actual_nodes)
         has_timeseries = any(
             isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)) for node in linearized_nodes
@@ -593,7 +597,13 @@ class Evaluation:
         backend: type[executor.NumpyBackend],
     ) -> EvaluationResult:
         """Execute an :class:`~simulation.plan.EvaluationPlan`."""
-        actual_nodes = [idx.node for idx in plan.nodes_of_interest]
+        # Deduplicate by node identity: two different Index/TimeseriesIndex
+        # objects may legitimately share the same underlying graph node (e.g.
+        # an index re-wrapping another index's .node to give it its own
+        # identity). Without this, the shape-normalisation loop below would
+        # process such a shared node twice, reshaping it once and then
+        # tripping its own ndim assertion on the second pass.
+        actual_nodes = list(dict.fromkeys(idx.node for idx in plan.nodes_of_interest))
         _raw_scenario_subs = self._scenario.base_substitutions()
         # Filter out entries where base_substitutions() wrapped a graph.Node as a numpy
         # object array — this happens for formula-based Index instances whose `.value`
