@@ -1,4 +1,9 @@
-# CI for releases: runs on every push to `main` and on pull requests targeting `main`.
+# CI for releases: runs on every push to `main` and on pull requests targeting
+# `main`, plus the same for `hotfix/**`/`backport/**` maintenance branches (see
+# the "Hotfix and backport releases" section of the README) — and manually
+# against any ref via workflow_dispatch, as a bootstrap/fallback verification
+# path for the very first PR into a new maintenance branch (before that
+# branch's own copy of this trigger exists to fire automatically).
 # Scope: full release gate — all Python versions, doc examples, domain examples,
 # SPDX headers, dependency audit, build smoke test, and coverage upload.
 #
@@ -14,9 +19,10 @@ name: CI (release)
 
 on:
   push:
-    branches: [main]
+    branches: [main, "hotfix/**", "backport/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "hotfix/**", "backport/**"]
+  workflow_dispatch: {}
 
 jobs:
   # ── Version sanity ───────────────────────────────────────────────────────────

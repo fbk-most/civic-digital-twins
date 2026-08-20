@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-08-20
+
+### Fixed
+
+- **Executor**: a `NumpyBackend`-adapted function returning a `graph.Node`
+  (or any other non-numeric value) instead of a concrete number now raises
+  `executor.InvalidFunctionResult` immediately, instead of silently storing
+  the `Node` as the node's evaluated value and letting every downstream
+  computation go symbolic without warning — e.g. when a closure accidentally
+  captures `Index` objects instead of plain floats (#222).
+- **`TimeseriesIndex`**: initializing from another `TimeseriesIndex` now
+  correctly shares the underlying graph node instead of silently minting a
+  disconnected, orphaned placeholder node; initializing from a
+  differently-shaped sibling (`Index`) now raises `TypeError` instead of
+  silently misbehaving (#223). `Index` already had this behavior.
+- **`Evaluation`**: `_execute_plan`'s shape-normalisation pass no longer
+  double-processes a graph node that is legitimately shared by two
+  different `Index`/`TimeseriesIndex` wrappers, which previously could
+  raise a spurious `AssertionError` ("unexpected ndim=2") (#224).
+
 ## [0.11.0] - 2026-07-24
 
 ### Added
@@ -993,7 +1013,8 @@ All new axis reduction operators have corresponding convenience methods on `Gene
 
 ## [0.5.0] - 2025-07-14
 
-[Unreleased]: https://github.com/fbk-most/civic-digital-twins/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/fbk-most/civic-digital-twins/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/fbk-most/civic-digital-twins/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/fbk-most/civic-digital-twins/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/fbk-most/civic-digital-twins/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/fbk-most/civic-digital-twins/compare/v0.8.1...v0.9.0

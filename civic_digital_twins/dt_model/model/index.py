@@ -444,14 +444,33 @@ class TimeseriesIndex(GenericIndex):
       Scenario or ``parameters=`` before evaluation.
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
       Node is the formula node directly; value is computed by the engine.
+      Another :class:`TimeseriesIndex` is also accepted here and coerced to
+      its underlying ``.node`` (reusing the formula). A sibling type
+      carrying a different shape — :class:`Index` — is deliberately *not*
+      accepted; mixing shapes this way is almost always a mistake, not a
+      formula reuse.
     """
 
     def __init__(
         self,
         name: str,
-        value: np.ndarray | graph.Node | None = None,
+        value: "np.ndarray | graph.Node | TimeseriesIndex | None" = None,
     ) -> None:
         self._name = name
+
+        # Coerce another TimeseriesIndex to its underlying node so a formula
+        # that reuses it is treated as formula-backed, mirroring Index's
+        # unwrap of a sibling Index. Scoped to TimeseriesIndex (not the
+        # broader GenericIndex) so that passing a differently-shaped sibling
+        # like Index is a static/runtime error rather than a silent shape
+        # mismatch.
+        if isinstance(value, TimeseriesIndex):
+            value = value.node
+        elif isinstance(value, GenericIndex):
+            raise TypeError(
+                f"TimeseriesIndex {name!r} cannot be initialised from a {type(value).__name__}. "
+                f"Pass its .node explicitly if the shape mismatch is intentional."
+            )
 
         # Formula node: reuse it directly as this index's node.
         if isinstance(value, graph.Node):
