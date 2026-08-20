@@ -3,12 +3,15 @@
 
 name: Tests
 
-# Triggers: run the workflow on push or PR targeting the main branch
+# Triggers: run the workflow on push or PR targeting the main branch, or
+# manually against any ref (used for backport/maintenance branches, which
+# intentionally never push to or PR against main).
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   test:
