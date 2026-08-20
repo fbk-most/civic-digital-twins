@@ -496,6 +496,42 @@ def test_index_rejects_timeseries_index():
         Index("x", ts)  # type: ignore[arg-type]
 
 
+def test_index_unwraps_nested_index():
+    """Index(name, other_index) shares other_index's node instead of orphaning a new one."""
+    base = Index("base", None)
+    copy = Index("copy", base)
+    assert copy.node is base.node
+
+
+def test_timeseries_index_unwraps_nested_timeseries_index():
+    """TimeseriesIndex(name, other_ts_index) shares other's node instead of orphaning a new one.
+
+    Regression test for https://github.com/fbk-most/civic-digital-twins/issues/223: before the
+    fix, TimeseriesIndex.__init__ had no unwrap logic for a nested GenericIndex, so passing
+    another TimeseriesIndex (instead of its .node) fell through to np.asarray(other_index),
+    which silently wrapped the whole object in a 0-d dtype=object array and minted a brand-new,
+    disconnected timeseries_placeholder node.
+    """
+    ts_base = TimeseriesIndex("ts_base")
+    ts_copy = TimeseriesIndex("ts_copy", ts_base)
+    assert ts_copy.node is ts_base.node
+    assert ts_copy.concrete_default is None
+
+
+def test_timeseries_index_unwraps_nested_timeseries_index_with_default():
+    """The unwrap also covers a base index that carries a concrete default array."""
+    ts_base = TimeseriesIndex("ts_base", np.array([1.0, 2.0, 3.0]))
+    ts_copy = TimeseriesIndex("ts_copy", ts_base)
+    assert ts_copy.node is ts_base.node
+
+
+def test_timeseries_index_rejects_mismatched_generic_index():
+    """TimeseriesIndex(name, a_scalar_index) raises TypeError instead of silently misbehaving."""
+    idx = Index("x", 1.0)
+    with pytest.raises(TypeError, match="from a Index"):
+        TimeseriesIndex("bad", idx)  # type: ignore[arg-type]
+
+
 def test_index_repr_formula_mode():
     """Index repr shows '<formula>' when the value is a graph node."""
     n = graph.constant(42.0)
