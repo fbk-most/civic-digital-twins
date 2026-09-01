@@ -25,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from ...axes import TIME_AXIS, Axis
+from ...axes import Axis, domain_axis_position
 from .. import compileflags
 from ..frontend import graph
 from . import numpy_ast
@@ -260,13 +260,14 @@ _projection_operations: dict[type[graph.Node], _ProjectionOpFunc] = {
 }
 """Maps a projection op in the graph domain to the corresponding numpy operation.
 
-All projection operations reduce along numpy axis ``-1`` (CDT convention:
-the DOMAIN axis always occupies the last numpy dimension).
+Each operation takes the operand and the numpy dimension to reduce.  That
+dimension is resolved per node from the op's *named* axis (see
+:func:`_eval_projection_op`), not hard-coded.
 
 Add entries to this table to support more projection operations."""
 
 
-def _print_graph_node(node: graph.Node) -> None:
+def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = numpy_ast.DEFAULT_DOMAIN_AXES) -> None:
     """Print a node before evaluation."""
     # 1. print the original DAG node as a comment so we can always
     # understand what is the specific node leading to this.
@@ -277,7 +278,7 @@ def _print_graph_node(node: graph.Node) -> None:
     if not isinstance(
         node, (graph.constant, graph.placeholder, graph.timeseries_constant, graph.timeseries_placeholder)
     ):
-        print(numpy_ast.graph_node_to_numpy_code(node))
+        print(numpy_ast.graph_node_to_numpy_code(node, domain_axes=domain_axes))
 
 
 def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
@@ -434,6 +435,10 @@ class State:
             construction-time binding via ``@functions`` contract).  Checked
             before ``functions`` so that two sub-models sharing the same
             function name each receive their own functor.
+        domain_axes: the DOMAIN axes this evaluation carries, in canonical
+            (layout) order.  They occupy the trailing numpy dimensions, and
+            projections resolve their named axis against this tuple.  Defaults
+            to the time axis alone, which is what every time-only model needs.
 
     Notes
     -----
@@ -451,13 +456,14 @@ class State:
     flags: int = compileflags.defaults
     functions: dict[str, Functor] = field(default_factory=dict)
     node_functions: dict[graph.Node, Functor] = field(default_factory=dict)
+    domain_axes: tuple[Axis, ...] = numpy_ast.DEFAULT_DOMAIN_AXES
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                _print_graph_node(node)
+                _print_graph_node(node, self.domain_axes)
                 _print_evaluated_node(node, self.values[node])
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
@@ -538,7 +544,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     flags = node.flags | state.flags
     tracing = flags & compileflags.TRACE
     if tracing:
-        _print_graph_node(node)
+        _print_graph_node(node, state.domain_axes)
 
     # 3. evaluate the node
     result = _evaluate(state, node)
@@ -629,23 +635,27 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
 
 
 def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
-    """Evaluate a ProjectionOp node.
+    """Evaluate a ProjectionOp node, reducing along the node's named axis.
 
-    The numpybackend maps ``Axis("time", DOMAIN)`` to numpy axis ``-1``
-    (CDT convention: the time axis always occupies the last numpy dimension).
-    Projecting along any other axis is not supported and raises immediately,
-    so that a future second DOMAIN axis cannot silently produce wrong results.
+    The axis is resolved to a numpy dimension through
+    :func:`~...axes.domain_axis_position`, against the DOMAIN axes this
+    evaluation declares (:attr:`State.domain_axes`).  Reducing an axis the
+    evaluation does not carry raises rather than silently reducing the wrong
+    dimension.
     """
     node = cast(graph.ProjectionOp, node)
-    if node.axis != TIME_AXIS:
+    try:
+        position = domain_axis_position(state.domain_axes, node.axis)
+    except ValueError:
         raise UnsupportedOperation(
-            f"executor: numpybackend only supports projection along {TIME_AXIS!r}; got {node.axis!r}"
-        )
+            f"executor: numpybackend only supports projection along this evaluation's DOMAIN axes "
+            f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
+        ) from None
     operand = state.get_node_value(node.node)
     if isinstance(node, graph.project_using_quantile):
-        return _reduce_quantile(operand, -1, node.q)
+        return _reduce_quantile(operand, position, node.q)
     try:
-        return _projection_operations[type(node)](operand, -1)
+        return _projection_operations[type(node)](operand, position)
     except KeyError:
         raise UnsupportedOperation(f"executor: unsupported projection operation: {type(node)}")
 

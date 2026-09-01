@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.axes import PARAMETER, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, PARAMETER, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -615,7 +615,7 @@ def test_neg_operator_evaluation():
 
 
 def test_projection_op_unsupported_axis_raises():
-    """Executor raises UnsupportedOperation when a ProjectionOp uses a non-time axis."""
+    """Executor raises UnsupportedOperation projecting an axis the evaluation does not carry."""
     node = graph.constant(1.0)
     bad_axis = Axis("space", PARAMETER)
     proj = graph.project_using_sum(node, axis=bad_axis)
@@ -624,3 +624,38 @@ def test_projection_op_unsupported_axis_raises():
     executor.evaluate_nodes(state, *plan[:-1])  # evaluate prerequisites
     with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
         executor.evaluate_nodes(state, proj)
+
+
+def test_projection_resolves_each_declared_domain_axis_to_its_position():
+    """With several DOMAIN axes, each projection reduces the dimension its axis names."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    # Layout (x, y): x is the second-to-last numpy dim, y the last.
+    values = np.arange(6.0).reshape(2, 3)
+    p = graph.placeholder("field")
+
+    for axis, expected in ((x, values.sum(axis=-2, keepdims=True)), (y, values.sum(axis=-1, keepdims=True))):
+        proj = graph.project_using_sum(p, axis=axis)
+        state = executor.State({p: values}, domain_axes=(x, y))
+        executor.evaluate_nodes(state, *linearize.forest(proj))
+        assert np.array_equal(state.values[proj], expected)
+
+
+def test_projection_along_a_non_time_domain_axis():
+    """A model with no time axis at all can still reduce along its own DOMAIN axis."""
+    space = Axis("space", DOMAIN)
+    p = graph.placeholder("field")
+    proj = graph.project_using_sum(p, axis=space)
+    state = executor.State({p: np.array([1.0, 2.0, 3.0])}, domain_axes=(space,))
+    executor.evaluate_nodes(state, *linearize.forest(proj))
+    assert np.array_equal(state.values[proj], np.array([6.0]))
+
+
+def test_projection_rejects_an_axis_outside_the_declared_domain_axes():
+    """Declaring domain_axes narrows what is projectable: time is not implicitly available."""
+    space = Axis("space", DOMAIN)
+    p = graph.placeholder("field")
+    proj = graph.project_using_sum(p, axis=TIME_AXIS)
+    state = executor.State({p: np.array([1.0, 2.0])}, domain_axes=(space,))
+    with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
+        executor.evaluate_nodes(state, *linearize.forest(proj))

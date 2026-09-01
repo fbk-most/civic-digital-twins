@@ -42,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time instead of surfacing at evaluation.  `graph.function_call` also gains
   `has_declared_output_axes`, and `graph.HasAxisSignature` is the structural
   protocol the `functor=` argument accepts.
+- `axes.domain_axis_position(domain_axes, axis)` — maps a named DOMAIN axis to
+  its numpy dimension.  CDT lays arrays out as `(*PARAMETER, *ENSEMBLE,
+  *DOMAIN)`, so DOMAIN axes are trailing and the index is returned as a
+  *negative* offset, which stays valid whatever leading dimensions an array
+  carries mid-evaluation (arrays are right-aligned by broadcasting and are not
+  padded to a uniform rank until after execution).
+- `executor.State.domain_axes` — the DOMAIN axes an evaluation carries, in
+  canonical layout order; defaults to `(TIME_AXIS,)`.  Projections now resolve
+  their *named* axis against it instead of hard-coding numpy axis `-1`, so a
+  model can reduce along a non-time DOMAIN axis, and one carrying several
+  reduces the dimension its axis actually names.  Reducing an axis the
+  evaluation does not carry raises `UnsupportedOperation` rather than silently
+  reducing the wrong dimension.  `numpy_ast.graph_node_to_ast_stmt` and
+  `graph_node_to_numpy_code` take a matching `domain_axes=` keyword, so the
+  generated debug source agrees with what the executor does.
 - `AxesInferenceWarning` (a `UserWarning`) — raised when an undeclared
   formula-backed index has inferred axes that are unlikely to be intended:
   an outer product emerging from operands with *disjoint* axes

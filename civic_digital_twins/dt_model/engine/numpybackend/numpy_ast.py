@@ -12,11 +12,21 @@ making it easy to inspect and verify graph construction.
 # SPDX-License-Identifier: Apache-2.0
 
 import ast
+from collections.abc import Sequence
 
 import numpy as np
 
-from ...axes import TIME_AXIS
+from ...axes import TIME_AXIS, domain_axis_position
 from ..frontend import graph
+
+DEFAULT_DOMAIN_AXES: tuple[graph.Axis, ...] = (TIME_AXIS,)
+"""DOMAIN axes assumed when a caller does not supply the evaluation's own.
+
+Time-only models are the overwhelmingly common case and were the *only* case
+before multi-domain support, so defaulting here keeps every existing caller —
+and the ``repr`` round-trips that :mod:`.executor` prints under ``TRACE`` —
+behaving exactly as they did.
+"""
 
 
 class UnsupportedNodeArguments(Exception):
@@ -89,12 +99,14 @@ def _np_attr_name(name: str) -> ast.expr:
     return ast.Attribute(value=ast.Name(id="np", ctx=ast.Load()), attr=name, ctx=ast.Load())
 
 
-def _axis_as_tuple(axis: graph.Axis) -> tuple[int, ...]:
-    if axis != TIME_AXIS:
+def _axis_as_tuple(axis: graph.Axis, domain_axes: Sequence[graph.Axis]) -> tuple[int, ...]:
+    try:
+        return (domain_axis_position(domain_axes, axis),)
+    except ValueError:
         raise UnsupportedNodeArguments(
-            f"numpy_ast: numpybackend only supports projection along {TIME_AXIS!r}; got {axis!r}"
-        )
-    return (-1,)  # CDT convention: time axis always occupies the last numpy dimension
+            f"numpy_ast: numpybackend only supports projection along this evaluation's DOMAIN axes "
+            f"{[ax.name for ax in domain_axes]}; got {axis!r}"
+        ) from None
 
 
 def _np_ndarray_to_ast_expr(value: graph.Scalar | list) -> ast.expr:
@@ -104,7 +116,12 @@ def _np_ndarray_to_ast_expr(value: graph.Scalar | list) -> ast.expr:
         return ast.Constant(value=value)
 
 
-def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) -> ast.stmt:
+def graph_node_to_ast_stmt(
+    node: graph.Node,
+    value: np.ndarray | None = None,
+    *,
+    domain_axes: Sequence[graph.Axis] = DEFAULT_DOMAIN_AXES,
+) -> ast.stmt:
     """Transform a graph.Node to a Python AST assignment statement.
 
     The value is only required for placeholder nodes (``graph.placeholder``
@@ -119,7 +136,7 @@ def graph_node_to_ast_stmt(node: graph.Node, value: np.ndarray | None = None) ->
         assert value is None
         expr = _graph_function_to_ast_expr(node)
     else:
-        expr = _simple_graph_node_to_ast_expr(node, value)
+        expr = _simple_graph_node_to_ast_expr(node, value, domain_axes)
 
     # 2. assign the result of the function call
     assign = ast.Assign(
@@ -152,7 +169,11 @@ def _graph_function_to_ast_expr(node: graph.function_call) -> ast.expr:
     return ast.Call(func=ast.Name(id=opname, ctx=ast.Load()), args=posargs, keywords=kwargs)
 
 
-def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = None) -> ast.expr:
+def _simple_graph_node_to_ast_expr(
+    node: graph.Node,
+    value: np.ndarray | None = None,
+    domain_axes: Sequence[graph.Axis] = DEFAULT_DOMAIN_AXES,
+) -> ast.expr:
     _placeholders = (graph.placeholder, graph.timeseries_placeholder)
 
     # 0. ensure value is only given for placeholder nodes
@@ -212,7 +233,8 @@ def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = 
         if isinstance(node, graph.project_using_quantile):
             # For quantile, the q parameter comes first
             posargs.insert(0, ast.Constant(value=node.q))
-        kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in _axis_as_tuple(node.axis)])))
+        positions = _axis_as_tuple(node.axis, domain_axes)
+        kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in positions])))
         if isinstance(
             node,
             (
@@ -240,10 +262,15 @@ def _simple_graph_node_to_ast_expr(node: graph.Node, value: np.ndarray | None = 
     return ast.Call(func=_np_attr_name(opname), args=posargs, keywords=kwargs)
 
 
-def graph_node_to_numpy_code(node: graph.Node, value: np.ndarray | None = None) -> str:
+def graph_node_to_numpy_code(
+    node: graph.Node,
+    value: np.ndarray | None = None,
+    *,
+    domain_axes: Sequence[graph.Axis] = DEFAULT_DOMAIN_AXES,
+) -> str:
     """Transform a node to NumPy source code.
 
     This is mainly useful for debugging: the returned string shows the
     exact NumPy call that would evaluate the given graph node.
     """
-    return ast.unparse(graph_node_to_ast_stmt(node, value))
+    return ast.unparse(graph_node_to_ast_stmt(node, value, domain_axes=domain_axes))

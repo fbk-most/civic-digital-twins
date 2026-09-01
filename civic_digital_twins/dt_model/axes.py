@@ -9,7 +9,7 @@ Overview" for the module-role convention behind this layout.)
 
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Literal, Protocol
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "SpaceType",
     "MeshType",
     "TIME_AXIS",
+    "domain_axis_position",
     "filter_by_role",
     "union_axes",
 ]
@@ -245,6 +246,44 @@ import it from here rather than constructing ``Axis("time", DOMAIN)`` locally.
 the definition in one place.) It still compares and hashes equal to a plain
 ``Axis("time", DOMAIN)`` — see :class:`DomainAxis`.
 """
+
+
+def domain_axis_position(domain_axes: Sequence[Axis], axis: Axis) -> int:
+    """Return the numpy dimension index of *axis* within the trailing DOMAIN block.
+
+    CDT lays arrays out as ``(*PARAMETER, *ENSEMBLE, *DOMAIN)``, so the DOMAIN
+    axes always occupy the **last** ``len(domain_axes)`` dimensions, in the
+    order given.  Because they are trailing, the index is returned as a
+    **negative** offset from the end, which stays valid no matter how many
+    leading dimensions a particular array happens to carry — arrays are
+    right-aligned by numpy broadcasting, and mid-evaluation they have not yet
+    been padded to a uniform rank.
+
+    This generalizes the previous hard-coded ``-1``: with a single DOMAIN axis
+    the sole axis is at ``-1``, exactly as before.
+
+    Parameters
+    ----------
+    domain_axes:
+        The evaluation's DOMAIN axes in canonical (layout) order.
+    axis:
+        The axis to locate.
+
+    Returns
+    -------
+    The negative numpy dimension index of *axis*.
+
+    Raises
+    ------
+    ValueError:
+        If *axis* is not one of *domain_axes*.  Callers translate this into
+        whichever "unsupported" error their layer reports.
+    """
+    try:
+        position = list(domain_axes).index(axis)
+    except ValueError:
+        raise ValueError(f"axis {axis!r} is not one of the DOMAIN axes {[ax.name for ax in domain_axes]}") from None
+    return position - len(domain_axes)
 
 
 def union_axes(*seqs: tuple[Axis, ...]) -> tuple[Axis, ...]:

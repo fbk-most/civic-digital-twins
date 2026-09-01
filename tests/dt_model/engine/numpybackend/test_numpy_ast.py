@@ -124,7 +124,7 @@ def test_project_using_quantile_numpy_ast():
 
 
 def test_axis_as_tuple_unsupported_axis_raises():
-    """graph_node_to_ast_stmt raises UnsupportedNodeArguments for non-time axes."""
+    """graph_node_to_ast_stmt rejects an axis outside the caller's DOMAIN axes."""
     from civic_digital_twins.dt_model.axes import PARAMETER
 
     k = graph.constant(1.0)
@@ -132,3 +132,20 @@ def test_axis_as_tuple_unsupported_axis_raises():
     proj = graph.project_using_sum(k, axis=bad_axis)
     with pytest.raises(numpy_ast.UnsupportedNodeArguments, match="numpybackend only supports projection"):
         numpy_ast.graph_node_to_ast_stmt(proj)
+
+
+def test_generated_code_resolves_each_domain_axis_to_its_position():
+    """Generated numpy code names the dimension the projection's axis maps to."""
+    from civic_digital_twins.dt_model.axes import DOMAIN
+
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    k = graph.constant(1.0)
+
+    proj_x = graph.project_using_sum(k, axis=x)
+    code_x = numpy_ast.graph_node_to_numpy_code(proj_x, domain_axes=(x, y))
+    assert code_x == f"n{proj_x.id} = np.sum(n{k.id}, axis=(-2,), keepdims=True)"
+
+    proj_y = graph.project_using_sum(k, axis=y)
+    code_y = numpy_ast.graph_node_to_numpy_code(proj_y, domain_axes=(x, y))
+    assert code_y == f"n{proj_y.id} = np.sum(n{k.id}, axis=(-1,), keepdims=True)"

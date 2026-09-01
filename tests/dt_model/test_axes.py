@@ -14,6 +14,7 @@ from civic_digital_twins.dt_model.axes import (
     SetType,
     SpaceType,
     TimeType,
+    domain_axis_position,
     filter_by_role,
     union_axes,
 )
@@ -181,3 +182,43 @@ class TestTopLevelExports:
 
         assert dt.TIME_AXIS is TIME_AXIS
         assert dt.Axis is Axis
+
+
+class TestDomainAxisPosition:
+    """Mapping a named DOMAIN axis to its trailing numpy dimension."""
+
+    def test_sole_axis_is_the_last_dimension(self):
+        """One DOMAIN axis sits at -1 — the convention that used to be hard-coded."""
+        assert domain_axis_position((TIME_AXIS,), TIME_AXIS) == -1
+
+    def test_positions_count_back_from_the_end(self):
+        """Axes map to trailing dimensions in the order given."""
+        x, y, z = Axis("x", DOMAIN), Axis("y", DOMAIN), Axis("z", DOMAIN)
+        assert domain_axis_position((x, y, z), x) == -3
+        assert domain_axis_position((x, y, z), y) == -2
+        assert domain_axis_position((x, y, z), z) == -1
+
+    def test_negative_indexing_survives_extra_leading_dimensions(self):
+        """The position stays correct however many PARAMETER/ENSEMBLE dims precede it."""
+        import numpy as np
+
+        x, y = Axis("x", DOMAIN), Axis("y", DOMAIN)
+        # Same trailing (2, 3) DOMAIN block under different leading ranks.
+        for shape in ((2, 3), (5, 2, 3), (7, 5, 2, 3)):
+            arr = np.zeros(shape)
+            assert arr.shape[domain_axis_position((x, y), x)] == 2
+            assert arr.shape[domain_axis_position((x, y), y)] == 3
+
+    def test_unknown_axis_raises_value_error(self):
+        """An axis the evaluation does not carry has no position."""
+        import pytest
+
+        with pytest.raises(ValueError, match="not one of the DOMAIN axes"):
+            domain_axis_position((TIME_AXIS,), Axis("space", DOMAIN))
+
+    def test_empty_domain_axes_raises(self):
+        """With no DOMAIN axes nothing is projectable."""
+        import pytest
+
+        with pytest.raises(ValueError, match="not one of the DOMAIN axes"):
+            domain_axis_position((), TIME_AXIS)
