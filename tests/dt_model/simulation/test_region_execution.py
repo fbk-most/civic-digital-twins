@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.axes import ENSEMBLE, PARAMETER, Axis
+from civic_digital_twins.dt_model.axes import ENSEMBLE, PARAMETER, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.simulation.axis_layout import AxisLayout
 from civic_digital_twins.dt_model.simulation.region_execution import RegionArrayOps
@@ -13,9 +13,9 @@ from civic_digital_twins.dt_model.simulation.region_execution import RegionArray
 P1 = Axis("p1", PARAMETER)
 E1 = Axis("e1", ENSEMBLE)
 
-LEAD = RegionArrayOps(AxisLayout([(P1, 2), (E1, 3)]), has_timeseries=False)
-LEAD_TS = RegionArrayOps(AxisLayout([(P1, 2), (E1, 3)]), has_timeseries=True)
-SCALAR = RegionArrayOps(AxisLayout([]), has_timeseries=False)
+LEAD = RegionArrayOps(AxisLayout([(P1, 2), (E1, 3)]), domain_axes=())
+LEAD_TS = RegionArrayOps(AxisLayout([(P1, 2), (E1, 3)]), domain_axes=(TIME_AXIS,))
+SCALAR = RegionArrayOps(AxisLayout([]), domain_axes=())
 
 
 def _selector() -> graph.Node:

@@ -25,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from ...axes import Axis, domain_axis_position
+from ...axes import DOMAIN, Axis, domain_axis_position
 from .. import compileflags
 from ..frontend import graph
 from . import numpy_ast
@@ -569,14 +569,89 @@ evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
-def _eval_timeseries_constant(_: State, node: graph.Node) -> np.ndarray:
+def _eval_timeseries_constant(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.timeseries_constant, node)
-    return np.asarray(node.values)
+    return align_to_domain_block(np.asarray(node.values), node.output_axes, state.domain_axes)
 
 
 def _eval_timeseries_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.timeseries_placeholder, node)
     raise PlaceholderValueNotProvided(f"executor: no value provided for timeseries placeholder '{node.name}'")
+
+
+def align_to_domain_block(
+    arr: np.ndarray,
+    node_axes: tuple[Axis, ...],
+    domain_axes: tuple[Axis, ...],
+) -> np.ndarray:
+    """Reshape *arr* so its DOMAIN axes sit at their canonical trailing positions.
+
+    Mid-evaluation, arrays have heterogeneous ranks and numpy aligns them from
+    the right.  With a single DOMAIN axis that is harmless — everything that
+    carries it has it last.  With several, an array carrying only the *first*
+    domain axis would right-align onto the *last* one and silently compute
+    nonsense.  So each value is padded to the full domain block, size 1 for the
+    axes it does not carry, and permuted into canonical order for those it does.
+
+    Only leaves need this: once every leaf is aligned, broadcasting preserves
+    dimension positions, so every computed node is canonically ordered too.
+    That is why ``output_axes`` on a computed node is read as a *set* — the
+    layout, not the traversal, decides positions.
+
+    Parameters
+    ----------
+    arr:
+        Value whose trailing dimensions are its own DOMAIN axes, in
+        *node_axes* order.  Leading dimensions are preserved untouched.
+    node_axes:
+        The node's own axes; non-DOMAIN entries are ignored.
+    domain_axes:
+        The evaluation's DOMAIN axes in canonical order.
+
+    Returns
+    -------
+    *arr* reshaped so its trailing ``len(domain_axes)`` dimensions correspond
+    to *domain_axes* positionally.
+    """
+    own = [ax for ax in node_axes if ax.role == DOMAIN]
+    unknown = [ax for ax in own if ax not in domain_axes]
+    if unknown:
+        raise UnsupportedOperation(
+            f"executor: node carries DOMAIN axes {[ax.name for ax in unknown]} that are not among "
+            f"this evaluation's axes {[ax.name for ax in domain_axes]} — the layout cannot place them"
+        )
+    if not domain_axes:
+        return arr
+    n = len(own)
+    leading = arr.shape[: arr.ndim - n]
+    ordered = [ax for ax in domain_axes if ax in own]
+    if ordered != own:
+        base = arr.ndim - n
+        arr = np.moveaxis(arr, [base + own.index(ax) for ax in ordered], [base + i for i in range(n)])
+    present = arr.shape[arr.ndim - n :] if n else ()
+    target: list[int] = []
+    consumed = 0
+    for ax in domain_axes:
+        if consumed < n and ordered[consumed] == ax:
+            target.append(present[consumed])
+            consumed += 1
+        else:
+            target.append(1)
+    return arr.reshape(leading + tuple(target))
+
+
+def _eval_array_constant(state: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.array_constant, node)
+    return align_to_domain_block(np.asarray(node.values), node.output_axes, state.domain_axes)
+
+
+def _eval_array_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
+    # Reached only when the state carries no value for this placeholder.
+    node = cast(graph.array_placeholder, node)
+    raise PlaceholderValueNotProvided(
+        f"executor: no value provided for array placeholder '{node.name}' "
+        f"over axes {[ax.name for ax in node.output_axes]}"
+    )
 
 
 def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
@@ -690,8 +765,12 @@ def _eval_variant_selector_noop(_state: State, _node: graph.Node) -> np.ndarray:
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
+    # timeseries_* are subclasses of array_* and must be matched first, so their
+    # (unchanged) diagnostics keep naming a timeseries rather than a bare array.
     (graph.timeseries_constant, _eval_timeseries_constant),
     (graph.timeseries_placeholder, _eval_timeseries_placeholder_default),
+    (graph.array_constant, _eval_array_constant),
+    (graph.array_placeholder, _eval_array_placeholder_default),
     (graph.constant, _eval_constant_op),
     (graph.placeholder, _eval_placeholder_default),
     (graph.BinaryOp, _eval_binary_op),

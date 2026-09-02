@@ -57,6 +57,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reducing the wrong dimension.  `numpy_ast.graph_node_to_ast_stmt` and
   `graph_node_to_numpy_code` take a matching `domain_axes=` keyword, so the
   generated debug source agrees with what the executor does.
+- **Models can now carry several DOMAIN axes end to end.** A model built from
+  `Index`/`ConstIndex` with `axes=(x, y)` evaluates, reduces, and reports a
+  result layout naming every dimension — previously such a model could be
+  constructed but not evaluated (a non-time array node had no executor
+  evaluator, and the pipeline reserved at most one trailing DOMAIN dimension).
+  Reductions target the axis they *name* rather than the last dimension, and
+  `Scenario` accepts an override for a domain-carrying index as an ndarray
+  whose rank matches its declared axes.
+- `executor.align_to_domain_block(arr, node_axes, domain_axes)` — pads a value
+  to the evaluation's full DOMAIN block (size 1 for axes it does not carry) and
+  permutes the axes it does carry into canonical order.  Needed because numpy
+  right-aligns operands: without it an `(x,)`-shaped value in an `(x, y)` model
+  would broadcast onto `y`.  Only leaves need aligning; broadcasting then
+  preserves positions for every computed node.
 - `AxesInferenceWarning` (a `UserWarning`) — raised when an undeclared
   formula-backed index has inferred axes that are unlikely to be intended:
   an outer product emerging from operands with *disjoint* axes
@@ -68,6 +82,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Region.has_timeseries: bool` is now `Region.domain_axes: tuple[Axis, ...]`,
+  and `RegionArrayOps(..., has_timeseries=)` is now `domain_axes=`.  A boolean
+  could only express "zero or one trailing DOMAIN dimension"; the layout needs
+  to know *which* axes, in what order.  DOMAIN axes are ordered canonically by
+  axis name — deriving the order from graph traversal would make a result's
+  dimension order depend on how a formula happened to be written, so commuting
+  a multiplication would reshuffle it.
+- The `Scenario` override check for a domain-carrying index reports the
+  declared rank and axis names (`must be a 2-D ndarray over axes (x, y)`)
+  instead of the `TimeseriesIndex`-specific "must be a 1-D ndarray".
 - Formula-mode `axes=` on `Index` (and therefore the `axes=(TIME_AXIS,)` that
   `TimeseriesIndex` fixes) is **verified** against the formula's inferred
   `output_axes`; a mismatch raises `ValueError`.  It is a verification, not an

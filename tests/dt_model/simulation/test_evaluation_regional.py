@@ -1568,8 +1568,8 @@ def test_scoped_abstract_indexes_raises_on_overlap():
         model=m,
         nodes_of_interest=(x, y),
         regions=(
-            Region(nodes=(x.node,), has_timeseries=False, guards=()),
-            Region(nodes=(x.node, y.node), has_timeseries=False, guards=()),
+            Region(nodes=(x.node,), domain_axes=(), guards=()),
+            Region(nodes=(x.node, y.node), domain_axes=(), guards=()),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
@@ -1809,8 +1809,8 @@ def test_scoped_abstract_indexes_unions_same_guards_regions() -> None:
         model=m,
         nodes_of_interest=(x, y),
         regions=(
-            Region(nodes=(x.node,), has_timeseries=False, guards=()),
-            Region(nodes=(y.node,), has_timeseries=False, guards=()),
+            Region(nodes=(x.node,), domain_axes=(), guards=()),
+            Region(nodes=(y.node,), domain_axes=(), guards=()),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
@@ -1854,8 +1854,8 @@ def test_scoped_sampling_defensive_wrong_order_plan_raises() -> None:
         model=mv,
         nodes_of_interest=(mv.outputs.throughput,),
         regions=(
-            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(bike_guard,)),
-            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
+            Region(nodes=(weather_bike.node,), domain_axes=(), guards=(bike_guard,)),
+            Region(nodes=(mode.node,), domain_axes=(), guards=()),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
@@ -1880,8 +1880,8 @@ def test_scoped_sampling_empty_active_positions() -> None:
         model=mv,
         nodes_of_interest=(mv.outputs.throughput,),
         regions=(
-            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
-            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(unmatched_guard,)),
+            Region(nodes=(mode.node,), domain_axes=(), guards=()),
+            Region(nodes=(weather_bike.node,), domain_axes=(), guards=(unmatched_guard,)),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
