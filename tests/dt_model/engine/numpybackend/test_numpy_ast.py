@@ -82,18 +82,20 @@ def test_round_trip():
     time_axis = Axis("time", DOMAIN)
 
     node = graph.project_using_sum(k, axis=time_axis)
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sum(n{k.id}, axis=(-1,), keepdims=True)"
+    code = numpy_ast.graph_node_to_numpy_code(node, domain_axes=(time_axis,))
+    assert code == f"n{node.id} = np.sum(n{k.id}, axis=(-1,), keepdims=True)"
 
     node = graph.project_using_mean(k, axis=time_axis)
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.mean(n{k.id}, axis=(-1,), keepdims=True)"
+    code = numpy_ast.graph_node_to_numpy_code(node, domain_axes=(time_axis,))
+    assert code == f"n{node.id} = np.mean(n{k.id}, axis=(-1,), keepdims=True)"
 
     node = graph.function_call("foo", k, p, k=k, p=p)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = foo(n{k.id}, n{p.id}, k=n{k.id}, p=n{p.id})"
 
-    ts = graph.timeseries_constant([1.0, 2.0, 3.0])
+    ts = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,))
     assert numpy_ast.graph_node_to_numpy_code(ts) == f"n{ts.id} = np.asarray([1.0, 2.0, 3.0])"
 
-    tsp = graph.timeseries_placeholder("ts")
+    tsp = graph.array_placeholder("ts", axes=(time_axis,))
     tsp_value = np.asarray([4.0, 5.0])
     assert numpy_ast.graph_node_to_numpy_code(tsp, tsp_value) == f"n{tsp.id} = np.asarray([4.0, 5.0])"
 
@@ -119,7 +121,7 @@ def test_project_using_quantile_numpy_ast():
     k = graph.constant(10)
     time_axis = Axis("time", DOMAIN)
     node = graph.project_using_quantile(k, axis=time_axis, q=0.95)
-    code = numpy_ast.graph_node_to_numpy_code(node)
+    code = numpy_ast.graph_node_to_numpy_code(node, domain_axes=(time_axis,))
     assert code == f"n{node.id} = np.quantile(0.95, n{k.id}, axis=(-1,), keepdims=True)"
 
 
@@ -149,3 +151,22 @@ def test_generated_code_resolves_each_domain_axis_to_its_position():
     proj_y = graph.project_using_sum(k, axis=y)
     code_y = numpy_ast.graph_node_to_numpy_code(proj_y, domain_axes=(x, y))
     assert code_y == f"n{proj_y.id} = np.sum(n{k.id}, axis=(-1,), keepdims=True)"
+
+
+def test_generic_array_constant_generates_code():
+    """A non-time array_constant is code-generatable, so multi-domain graphs can be traced."""
+    from civic_digital_twins.dt_model.axes import DOMAIN
+
+    x, y = Axis("x", DOMAIN), Axis("y", DOMAIN)
+    node = graph.array_constant([[1.0, 2.0], [3.0, 4.0]], (x, y), "field")
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.asarray([[1.0, 2.0], [3.0, 4.0]])"
+
+
+def test_generic_array_placeholder_generates_code():
+    """A non-time array_placeholder renders the value supplied for it."""
+    from civic_digital_twins.dt_model.axes import DOMAIN
+
+    x = Axis("x", DOMAIN)
+    node = graph.array_placeholder("field", (x,))
+    code = numpy_ast.graph_node_to_numpy_code(node, np.array([1.0, 2.0]))
+    assert code == f"n{node.id} = np.asarray([1.0, 2.0])"

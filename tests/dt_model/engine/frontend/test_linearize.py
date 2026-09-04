@@ -190,7 +190,7 @@ def test_axes_operations():
     x = graph.placeholder("x")
     time_axis = Axis("time", DOMAIN)
 
-    ts = graph.timeseries_constant([1.0, 2.0, 3.0])
+    ts = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,))
     reduced = graph.project_using_sum(ts, axis=time_axis)
     result = graph.add(x, reduced)
 

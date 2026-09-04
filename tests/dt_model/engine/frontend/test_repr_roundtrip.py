@@ -16,7 +16,7 @@ where ``body(r)`` strips the leading ``nX = `` assignment.
 
 from typing import Any
 
-from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis, DomainAxis, TimeType
 from civic_digital_twins.dt_model.engine.frontend import graph
 
 
@@ -36,7 +36,7 @@ def _assert_roundtrip(node: graph.Node, extra_ctx: dict[str, Any] | None = None)
     Exec's ``repr(node)`` in a context that contains ``graph``, ``Axis``,
     and all provided dependency nodes, then checks body equality.
     """
-    ctx: dict[str, Any] = {"graph": graph, "Axis": Axis}
+    ctx: dict[str, Any] = {"graph": graph, "Axis": Axis, "DomainAxis": DomainAxis, "TimeType": TimeType}
     if extra_ctx:
         ctx.update(extra_ctx)
     exec(repr(node), ctx)  # noqa: S102
@@ -55,8 +55,6 @@ def test_leaf_nodes() -> None:
     _assert_roundtrip(graph.constant(3.14))
     _assert_roundtrip(graph.placeholder("p", default_value=11))
     _assert_roundtrip(graph.placeholder("q"))
-    _assert_roundtrip(graph.timeseries_constant([1.0, 2.0, 3.0], name="ts"))
-    _assert_roundtrip(graph.timeseries_placeholder("tp"))
 
 
 def test_array_nodes() -> None:
@@ -218,8 +216,6 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.placeholder,
         graph.array_constant,
         graph.array_placeholder,
-        graph.timeseries_constant,
-        graph.timeseries_placeholder,
         graph.negate,
         graph.logical_not,
         graph.exp,

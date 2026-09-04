@@ -7,8 +7,8 @@ to NumPy primitives, albeit with minor naming differences.
 This module provides:
 
 1. Basic node types for constants and placeholders
-2. Domain-carrying node types (array_constant, array_placeholder) and their
-   timeseries specializations (timeseries_constant, timeseries_placeholder)
+2. Domain-carrying node types (array_constant, array_placeholder), shaped by
+   an ``axes=`` tuple — for instance, a timeseries is ``axes=(TIME_AXIS,)``
 3. Arithmetic operations (add, subtract, multiply, divide, power, negate)
 4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
 5. Logical operations (and, or, xor, not)
@@ -55,7 +55,7 @@ Here's an example of what you can do with this module:
     >>>
     >>> # Project to a lower-dimensional space by summing over the time axis
     >>> time_axis = Axis("time", DOMAIN)
-    >>> ts = graph.timeseries_constant([1.0, 2.0, 3.0])
+    >>> ts = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,))
     >>> f = graph.project_using_sum(ts, axis=time_axis)
 
 Like TensorFlow, we support placeholders. That is, variables with a given
@@ -181,7 +181,7 @@ from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
-from ...axes import TIME_AXIS, Axis, union_axes
+from ...axes import Axis, union_axes
 from .. import atomic, compileflags
 
 Scalar = bool | float | int | str
@@ -494,10 +494,11 @@ class placeholder[T](Node[T]):
 class array_constant[T](Node[T]):
     """A node holding a fixed array of values carrying declared domain axes.
 
-    Generalization of :class:`timeseries_constant` to an arbitrary, ordered
-    tuple of DOMAIN axes.  ``values`` is stored as-is.  The executor is
-    responsible for converting it to a
-    concrete array when the node is evaluated — consistent with how
+    A timeseries is a common case (``axes=(TIME_AXIS,)``), but time is one
+    domain axis among several — a grid or space-time node is no less
+    fundamental — so shape lives in ``axes`` rather than in the node type.
+    ``values`` is stored as-is.  The executor is responsible for converting it
+    to a concrete array when the node is evaluated — consistent with how
     ``constant`` stores its scalar value without conversion.
 
     Args:
@@ -524,9 +525,6 @@ class array_constant[T](Node[T]):
 class array_placeholder[T](Node[T]):
     """Named placeholder for an array value carrying declared domain axes.
 
-    Generalization of :class:`timeseries_placeholder` to an arbitrary,
-    ordered tuple of DOMAIN axes.
-
     Args:
         name: The name of the placeholder.
         axes: The domain axes carried by the value provided at evaluation
@@ -545,45 +543,6 @@ class array_placeholder[T](Node[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.array_placeholder(name={self.name!r}, axes={self._axes!r})"
-
-
-class timeseries_constant[T](array_constant[T]):
-    """A node holding a fixed sequence of values indexed by time.
-
-    Specialization of :class:`array_constant` fixing ``axes=(TIME_AXIS,)``:
-    a thin backward-compatible convenience over the generic node (and the
-    node type the executor still dispatches on), not a new concept.
-
-    Args:
-        values: Array-like of shape (T,) containing the timeseries values.
-        name: Optional name for the node.
-    """
-
-    def __init__(self, values: ArrayLike, name: str = "") -> None:
-        super().__init__(values, axes=(TIME_AXIS,), name=name)
-
-    def __repr__(self) -> str:
-        """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_constant(values={self.values!r}, name={self.name!r})"
-
-
-class timeseries_placeholder[T](array_placeholder[T]):
-    """Named placeholder for a timeseries value to be provided during evaluation.
-
-    Specialization of :class:`array_placeholder` fixing ``axes=(TIME_AXIS,)``:
-    a thin backward-compatible convenience over the generic node (and the
-    node type the executor still dispatches on), not a new concept.
-
-    Args:
-        name: The name of the placeholder.
-    """
-
-    def __init__(self, name: str) -> None:
-        super().__init__(name, axes=(TIME_AXIS,))
-
-    def __repr__(self) -> str:
-        """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_placeholder(name={self.name!r})"
 
 
 class BinaryOp[T](Node[T]):

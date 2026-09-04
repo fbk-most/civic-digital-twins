@@ -49,12 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries mid-evaluation (arrays are right-aligned by broadcasting and are not
   padded to a uniform rank until after execution).
 - `executor.State.domain_axes` — the DOMAIN axes an evaluation carries, in
-  canonical layout order; defaults to `(TIME_AXIS,)`.  Projections now resolve
-  their *named* axis against it instead of hard-coding numpy axis `-1`, so a
-  model can reduce along a non-time DOMAIN axis, and one carrying several
-  reduces the dimension its axis actually names.  Reducing an axis the
-  evaluation does not carry raises `UnsupportedOperation` rather than silently
-  reducing the wrong dimension.  `numpy_ast.graph_node_to_ast_stmt` and
+  canonical layout order; defaults to `()`.  Projections now resolve their
+  *named* axis against it instead of hard-coding numpy axis `-1`, so a model
+  can reduce along a non-time DOMAIN axis, and one carrying several reduces
+  the dimension its axis actually names.  Reducing an axis the evaluation does
+  not carry raises `UnsupportedOperation` rather than silently reducing the
+  wrong dimension.  `numpy_ast.graph_node_to_ast_stmt` and
   `graph_node_to_numpy_code` take a matching `domain_axes=` keyword, so the
   generated debug source agrees with what the executor does.
 - **Models can now carry several DOMAIN axes end to end.** A model built from
@@ -82,6 +82,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed `graph.timeseries_constant` and `graph.timeseries_placeholder`.**
+  They were reduced to thin factory functions building an `array_constant` /
+  `array_placeholder` with `axes=(TIME_AXIS,)`, and are now gone entirely:
+  construct the generic node with `axes=(TIME_AXIS,)` directly. `graph.py`
+  itself no longer imports `TIME_AXIS` — the engine frontend carries no
+  axis-specific knowledge. Time is one domain axis among several, so shape
+  belongs in `axes` rather than in a factory (or class) per shape.
+- **Removed `numpy_ast.DEFAULT_DOMAIN_AXES`.** `graph_node_to_ast_stmt` and
+  `graph_node_to_numpy_code`'s `domain_axes=` keyword now defaults to `()`
+  instead of `(TIME_AXIS,)`; callers tracing a time-only graph must pass
+  `domain_axes=(TIME_AXIS,)` explicitly.
+- `executor.State.domain_axes` now defaults to `()` instead of `(TIME_AXIS,)`.
+  Constructing a `State` directly to evaluate a time-carrying node (a
+  reduction, or an `array_constant`/`array_placeholder` leaf) now requires
+  passing `domain_axes=(TIME_AXIS,)` explicitly; values already present in
+  `State.values` are unaffected, since they never go through domain-axis
+  alignment. This also fixed a latent bug in `handle.py`'s ensemble/parameter
+  merge paths, which built a fresh `State` without propagating the source
+  result's `domain_axes` — silently correct only because every merge so far
+  happened to be time-only.
+- `GenericIndex` reductions on an index carrying **no** DOMAIN axis now raise
+  `ValueError` instead of silently defaulting to the time axis.  That fallback
+  reproduced a "reduce the last dimension" convention from when every array was
+  a timeseries; the executor now reduces the dimension an axis *names*, so it
+  would have asked for a time axis the evaluation need not carry.  Declare the
+  index's shape with `axes=`, or pass `axis=` explicitly.
+- The model contract's dropped-index check now also covers domain-carrying
+  placeholders.  An `Index(axes=(x,))` created inside `compute()` but never
+  surfaced via `Inputs`/`Outputs`/`Expose` was previously not reported, and
+  surfaced much later as an opaque missing-value error during evaluation.
+- Multi-domain graphs can be traced: `numpy_ast` had no entry for the generic
+  array nodes, so `DTMODEL_ENGINE_FLAGS=trace` raised `UnsupportedNodeType` on
+  any model carrying a non-time DOMAIN axis.
 - `Region.has_timeseries: bool` is now `Region.domain_axes: tuple[Axis, ...]`,
   and `RegionArrayOps(..., has_timeseries=)` is now `domain_axes=`.  A boolean
   could only express "zero or one trailing DOMAIN dimension"; the layout needs

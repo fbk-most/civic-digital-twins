@@ -267,7 +267,7 @@ dimension is resolved per node from the op's *named* axis (see
 Add entries to this table to support more projection operations."""
 
 
-def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = numpy_ast.DEFAULT_DOMAIN_AXES) -> None:
+def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = ()) -> None:
     """Print a node before evaluation."""
     # 1. print the original DAG node as a comment so we can always
     # understand what is the specific node leading to this.
@@ -275,9 +275,7 @@ def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = numpy_as
 
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
-    if not isinstance(
-        node, (graph.constant, graph.placeholder, graph.timeseries_constant, graph.timeseries_placeholder)
-    ):
+    if not isinstance(node, (graph.constant, graph.placeholder, graph.array_constant, graph.array_placeholder)):
         print(numpy_ast.graph_node_to_numpy_code(node, domain_axes=domain_axes))
 
 
@@ -438,7 +436,7 @@ class State:
         domain_axes: the DOMAIN axes this evaluation carries, in canonical
             (layout) order.  They occupy the trailing numpy dimensions, and
             projections resolve their named axis against this tuple.  Defaults
-            to the time axis alone, which is what every time-only model needs.
+            to empty (no DOMAIN axes); a time-only model passes ``(TIME_AXIS,)``.
 
     Notes
     -----
@@ -456,7 +454,7 @@ class State:
     flags: int = compileflags.defaults
     functions: dict[str, Functor] = field(default_factory=dict)
     node_functions: dict[graph.Node, Functor] = field(default_factory=dict)
-    domain_axes: tuple[Axis, ...] = numpy_ast.DEFAULT_DOMAIN_AXES
+    domain_axes: tuple[Axis, ...] = ()
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
@@ -567,16 +565,6 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
 
 evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
-
-
-def _eval_timeseries_constant(state: State, node: graph.Node) -> np.ndarray:
-    node = cast(graph.timeseries_constant, node)
-    return align_to_domain_block(np.asarray(node.values), node.output_axes, state.domain_axes)
-
-
-def _eval_timeseries_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
-    node = cast(graph.timeseries_placeholder, node)
-    raise PlaceholderValueNotProvided(f"executor: no value provided for timeseries placeholder '{node.name}'")
 
 
 def align_to_domain_block(
@@ -765,10 +753,6 @@ def _eval_variant_selector_noop(_state: State, _node: graph.Node) -> np.ndarray:
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
-    # timeseries_* are subclasses of array_* and must be matched first, so their
-    # (unchanged) diagnostics keep naming a timeseries rather than a bare array.
-    (graph.timeseries_constant, _eval_timeseries_constant),
-    (graph.timeseries_placeholder, _eval_timeseries_placeholder_default),
     (graph.array_constant, _eval_array_constant),
     (graph.array_placeholder, _eval_array_placeholder_default),
     (graph.constant, _eval_constant_op),

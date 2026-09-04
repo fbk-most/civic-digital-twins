@@ -229,9 +229,9 @@ in `graph.piecewise` guards.
 
 | `values` type | Mode | graph node created |
 | ------------- | ---- | ------------------ |
-| `np.ndarray` | fixed array | `graph.timeseries_constant` |
+| `np.ndarray` | fixed array | `graph.array_placeholder` over `axes=(TIME_AXIS,)`; the array is the default, seeded via `Index.concrete_default` and overridable by Scenario |
 | `graph.Node` | formula | the node itself |
-| `None` (default) | placeholder | `graph.timeseries_placeholder` |
+| `None` (default) | placeholder | `graph.array_placeholder` over `axes=(TIME_AXIS,)` |
 
 ```python
 import numpy as np

@@ -197,7 +197,7 @@ def _merge_results(
     merged_factorized_weights: dict[Axis, np.ndarray] = dict(r1.factorized_weights)
     merged_factorized_weights[grow_ax_1] = np.concatenate([w1 * alpha, w2 * (1.0 - alpha)])
 
-    merged_state = executor.State(merged_values)
+    merged_state = executor.State(merged_values, domain_axes=r1._state.domain_axes)
     # named_axis_values is taken from r1 unchanged.  This is sound because the
     # parameter-signature check above already proved r1 and r2 share identical
     # PARAMETER axes (name, role, position, size); and _merge_results only ever
@@ -329,7 +329,7 @@ def _merge_results_param_extend(
         [r1.parameter_values[param_idx], r2.parameter_values[param_idx]]
     )
 
-    merged_state = executor.State(merged_values)
+    merged_state = executor.State(merged_values, domain_axes=r1._state.domain_axes)
     return EvaluationResult(
         merged_state,
         merged_layout,

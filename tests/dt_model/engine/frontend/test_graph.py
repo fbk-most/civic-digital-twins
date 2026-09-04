@@ -8,7 +8,7 @@ from collections.abc import Iterable
 
 import pytest
 
-from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
@@ -599,40 +599,6 @@ def test_function_creation():
     assert n5.kwargs["d"] is n4
 
 
-def test_timeseries_constant_creation():
-    """Test creation of timeseries_constant nodes."""
-    node = graph.timeseries_constant([1.0, 2.0, 3.0], name="ts")
-    assert node.name == "ts"
-    assert isinstance(node.values, Iterable)
-    assert list(node.values) == [1.0, 2.0, 3.0]
-
-
-def test_timeseries_placeholder_creation():
-    """Test creation of timeseries_placeholder nodes."""
-    node = graph.timeseries_placeholder("ts_ph")
-    assert node.name == "ts_ph"
-
-
-def test_timeseries_constant_repr():
-    """Test the __repr__ of timeseries_constant."""
-    node = graph.timeseries_constant([10.0, 20.0], name="cap")
-    assert str(node) == f"n{node.id} = graph.timeseries_constant(values=[10.0, 20.0], name='cap')"
-
-
-def test_timeseries_placeholder_repr():
-    """Test the __repr__ of timeseries_placeholder."""
-    node = graph.timeseries_placeholder("ts_ph")
-    assert str(node) == f"n{node.id} = graph.timeseries_placeholder(name='ts_ph')"
-
-
-def test_timeseries_constant_identity():
-    """Test identity semantics of timeseries_constant nodes."""
-    n1 = graph.timeseries_constant([1.0, 2.0])
-    n2 = graph.timeseries_constant([1.0, 2.0])
-    assert n1 is not n2
-    assert hash(n1) != hash(n2)
-
-
 # ---------------------------------------------------------------------------
 # Generic array_constant / array_placeholder nodes
 # ---------------------------------------------------------------------------
@@ -667,24 +633,6 @@ def test_array_placeholder_no_axes():
     """array_placeholder with no declared axes has empty output_axes."""
     node = graph.array_placeholder("scalar_ph")
     assert node.output_axes == ()
-
-
-def test_timeseries_nodes_are_array_node_subclasses():
-    """timeseries_constant/placeholder specialize array_constant/placeholder."""
-    tc = graph.timeseries_constant([1.0, 2.0, 3.0])
-    tp = graph.timeseries_placeholder("ts")
-    assert isinstance(tc, graph.array_constant)
-    assert isinstance(tp, graph.array_placeholder)
-
-
-def test_timeseries_output_axes_unchanged():
-    """timeseries_constant/placeholder still report exactly (TIME_AXIS,)."""
-    from civic_digital_twins.dt_model.axes import TIME_AXIS
-
-    tc = graph.timeseries_constant([1.0, 2.0, 3.0])
-    tp = graph.timeseries_placeholder("ts")
-    assert tc.output_axes == (TIME_AXIS,)
-    assert tp.output_axes == (TIME_AXIS,)
 
 
 def test_negate_creation():
@@ -930,7 +878,7 @@ def test_axis_eq_returns_not_implemented_for_non_axis():
 def test_where_output_axes_propagates_time_axis():
     """where.output_axes returns the union of condition, then, and otherwise axes."""
     time_axis = Axis("time", DOMAIN)
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     cond = graph.greater(ts, graph.constant(0.0))
     default = graph.constant(0.0)
     w = graph.where(cond, ts, default)
@@ -955,7 +903,7 @@ class _SignedFunctor:
 
 def test_function_call_without_functor_falls_back_to_conservative_union():
     """With no functor, output_axes stays the conservative union of the input axes."""
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     fc = graph.function_call("reduce", ts)
     assert fc.output_axes == ts.output_axes
     assert fc.has_declared_output_axes is False
@@ -963,7 +911,7 @@ def test_function_call_without_functor_falls_back_to_conservative_union():
 
 def test_function_call_functor_output_axes_replaces_the_union():
     """A functor declaring output_axes makes the inference exact instead of conservative."""
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     fc = graph.function_call("reduce", ts, functor=_SignedFunctor(output_axes=()))
     assert fc.output_axes == ()
     assert fc.has_declared_output_axes is True
@@ -972,7 +920,7 @@ def test_function_call_functor_output_axes_replaces_the_union():
 def test_function_call_functor_input_axes_verified_at_build_time():
     """A declared input_axes that contradicts the actual arguments raises at graph-build time."""
     time_axis = Axis("time", DOMAIN)
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     # The functor claims a scalar input, but ts carries the time axis.
     with pytest.raises(ValueError, match="input_axes"):
         graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((),)))
@@ -983,7 +931,7 @@ def test_function_call_functor_input_axes_verified_at_build_time():
 def test_function_call_functor_input_axes_covers_keyword_arguments():
     """input_axes entries line up with positional arguments first, then keyword ones."""
     time_axis = Axis("time", DOMAIN)
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     scalar = graph.constant(1.0)
     functor = _SignedFunctor(input_axes=((time_axis,), ()))
     graph.function_call("blend", ts, weight=scalar, functor=functor)
@@ -993,6 +941,6 @@ def test_function_call_functor_input_axes_covers_keyword_arguments():
 
 def test_function_call_functor_input_axes_arity_mismatch_raises():
     """A declared input_axes with the wrong number of entries raises ValueError."""
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     with pytest.raises(ValueError, match="input_axes"):
         graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((), ())))

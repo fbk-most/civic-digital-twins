@@ -376,35 +376,45 @@ These three nodes are used by the model layer to implement runtime `ModelVariant
 [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection) for the model-layer
 perspective.
 
-### Timeseries Nodes
+### Domain-Carrying Nodes
 
 In addition to scalar `constant` and `placeholder`, `graph.py` provides
-two nodes for representing time-indexed data:
+two nodes for representing array data shaped by one or more DOMAIN axes
+(time, a spatial grid, or any combination):
 
-- **`graph.timeseries_constant(values, name="")`** — stores a fixed 1-D
-  array of values (one per time step).  At evaluation time the executor
-  converts it to a `np.ndarray` of the corresponding shape.
+- **`graph.array_constant(values, axes, name="")`** — stores a fixed array
+  of values, one dimension per axis in `axes`.  At evaluation time the
+  executor converts it to a `np.ndarray` of the corresponding shape.
 
-- **`graph.timeseries_placeholder(name)`** — a placeholder whose value
-  is a 1-D array supplied at evaluation time (e.g. a measured time-series).
+- **`graph.array_placeholder(name, axes)`** — a placeholder whose value is
+  an array of the declared shape, supplied at evaluation time (e.g. a
+  measured time-series).
+
+A timeseries is simply the common case of `axes=(TIME_AXIS,)`. Earlier
+versions of this module had dedicated `timeseries_constant`/
+`timeseries_placeholder` node types; once `array_constant`/`array_placeholder`
+gained generic `axes=` support, those became redundant and were removed —
+shape, including a timeseries' shape, lives entirely in `axes` rather than in
+the node type.
 
 Example:
 
 ```python
 import numpy as np
 from civic_digital_twins.dt_model.engine.frontend import graph
+from civic_digital_twins.dt_model.axes import TIME_AXIS
 
 # A fixed time series (e.g. 24 hourly demand values)
-demand = graph.timeseries_constant(np.arange(24, dtype=float), "demand")
+demand = graph.array_constant(np.arange(24, dtype=float), axes=(TIME_AXIS,), name="demand")
 
 # A placeholder for an externally supplied time series
-traffic = graph.timeseries_placeholder("traffic")
+traffic = graph.array_placeholder("traffic", axes=(TIME_AXIS,))
 
-# Formulas can combine timeseries nodes with scalar nodes
+# Formulas can combine domain-carrying nodes with scalar nodes
 scaled = demand * graph.constant(0.5)
 ```
 
-The executor evaluates timeseries nodes in the same way as scalar nodes;
+The executor evaluates domain-carrying nodes in the same way as scalar nodes;
 the difference is purely in the shape of the resulting `np.ndarray`.
 
 ### Axis Management

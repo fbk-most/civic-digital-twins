@@ -16,17 +16,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ...axes import TIME_AXIS, domain_axis_position
+from ...axes import domain_axis_position
 from ..frontend import graph
-
-DEFAULT_DOMAIN_AXES: tuple[graph.Axis, ...] = (TIME_AXIS,)
-"""DOMAIN axes assumed when a caller does not supply the evaluation's own.
-
-Time-only models are the overwhelmingly common case and were the *only* case
-before multi-domain support, so defaulting here keeps every existing caller —
-and the ``repr`` round-trips that :mod:`.executor` prints under ``TRACE`` —
-behaving exactly as they did.
-"""
 
 
 class UnsupportedNodeArguments(Exception):
@@ -42,9 +33,9 @@ class _InternalTestingNode(graph.Node):
 
 
 _operation_names: dict[type[graph.Node], str] = {
-    # timeseries
-    graph.timeseries_constant: "asarray",
-    graph.timeseries_placeholder: "asarray",
+    # domain-carrying arrays
+    graph.array_constant: "asarray",
+    graph.array_placeholder: "asarray",
     # placeholder
     graph.placeholder: "asarray",
     # constant
@@ -120,12 +111,12 @@ def graph_node_to_ast_stmt(
     node: graph.Node,
     value: np.ndarray | None = None,
     *,
-    domain_axes: Sequence[graph.Axis] = DEFAULT_DOMAIN_AXES,
+    domain_axes: Sequence[graph.Axis] = (),
 ) -> ast.stmt:
     """Transform a graph.Node to a Python AST assignment statement.
 
     The value is only required for placeholder nodes (``graph.placeholder``
-    and ``graph.timeseries_placeholder``), whose value is known ahead of
+    and ``graph.array_placeholder``), whose value is known ahead of
     evaluation and is not embedded in the graph.  We verify this invariant
     at runtime.
 
@@ -172,9 +163,9 @@ def _graph_function_to_ast_expr(node: graph.function_call) -> ast.expr:
 def _simple_graph_node_to_ast_expr(
     node: graph.Node,
     value: np.ndarray | None = None,
-    domain_axes: Sequence[graph.Axis] = DEFAULT_DOMAIN_AXES,
+    domain_axes: Sequence[graph.Axis] = (),
 ) -> ast.expr:
-    _placeholders = (graph.placeholder, graph.timeseries_placeholder)
+    _placeholders = (graph.placeholder, graph.array_placeholder)
 
     # 0. ensure value is only given for placeholder nodes
     assert (isinstance(node, _placeholders) and value is not None) or value is None
@@ -190,7 +181,7 @@ def _simple_graph_node_to_ast_expr(
     kwargs: list[ast.keyword] = []
 
     # 3. evaluate timeseries constants (values embedded in the node)
-    if isinstance(node, graph.timeseries_constant):
+    if isinstance(node, graph.array_constant):
         posargs.append(_np_ndarray_to_ast_expr(np.asarray(node.values).tolist()))
 
     # 4. evaluate placeholder nodes (value provided externally)
@@ -266,7 +257,7 @@ def graph_node_to_numpy_code(
     node: graph.Node,
     value: np.ndarray | None = None,
     *,
-    domain_axes: Sequence[graph.Axis] = DEFAULT_DOMAIN_AXES,
+    domain_axes: Sequence[graph.Axis] = (),
 ) -> str:
     """Transform a node to NumPy source code.
 

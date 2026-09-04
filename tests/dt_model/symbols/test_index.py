@@ -21,11 +21,12 @@ from civic_digital_twins.dt_model.model.index import CategoricalIndex, Condition
 
 
 def test_timeseries_index_construction():
-    """Test basic construction of a TimeseriesIndex — node is timeseries_placeholder."""
+    """Test basic construction of a TimeseriesIndex — node is an array_placeholder over axes=(TIME_AXIS,)."""
     values = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("cap", values)
     assert idx.name == "cap"
-    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert isinstance(idx.node, graph.array_placeholder)
+    assert idx.node.output_axes == (TIME_AXIS,)
     default = idx.concrete_default
     assert isinstance(default, np.ndarray)
     assert np.array_equal(default, values)
@@ -75,7 +76,8 @@ def test_timeseries_index_in_arithmetic():
 def test_timeseries_index_no_values():
     """Test construction of a TimeseriesIndex with no values (placeholder mode)."""
     idx = TimeseriesIndex("inflow")
-    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert isinstance(idx.node, graph.array_placeholder)
+    assert idx.node.output_axes == (TIME_AXIS,)
     assert idx.is_abstract
 
 
@@ -178,21 +180,23 @@ def test_const_index_scalar_creates_constant():
     assert idx.concrete_default == 8.0
 
 
-def test_timeseries_index_array_creates_timeseries_placeholder():
-    """TimeseriesIndex(arr) creates a timeseries_placeholder node."""
+def test_timeseries_index_array_creates_array_placeholder():
+    """TimeseriesIndex(arr) creates an array_placeholder node over axes=(TIME_AXIS,)."""
     arr = np.array([1.0, 2.0, 3.0])
     idx = TimeseriesIndex("ts", arr)
-    assert isinstance(idx.node, graph.timeseries_placeholder)
+    assert isinstance(idx.node, graph.array_placeholder)
+    assert idx.node.output_axes == (TIME_AXIS,)
     default = idx.concrete_default
     assert isinstance(default, np.ndarray)
     assert np.array_equal(default, arr)
 
 
-def test_const_timeseries_index_creates_timeseries_constant():
-    """ConstTimeseriesIndex always creates a timeseries_constant node."""
+def test_const_timeseries_index_creates_array_constant():
+    """ConstTimeseriesIndex always creates an array_constant node over axes=(TIME_AXIS,)."""
     arr = np.array([1.0, 2.0, 3.0])
     idx = ConstTimeseriesIndex("ts", arr)
-    assert isinstance(idx.node, graph.timeseries_constant)
+    assert isinstance(idx.node, graph.array_constant)
+    assert idx.node.output_axes == (TIME_AXIS,)
 
 
 # ---------------------------------------------------------------------------
@@ -234,10 +238,10 @@ def test_timeseries_index_repr_unchanged():
     assert str(ConstTimeseriesIndex("demand", np.array([10.0, 20.0]))) == "const_timeseries_idx([10.0, 20.0])"
 
 
-def test_const_timeseries_index_node_still_timeseries_constant_exact_type():
+def test_const_timeseries_index_node_exact_type_is_array_constant():
     """ConstTimeseriesIndex.node's exact type is unchanged (executor dispatch relies on this)."""
     idx = ConstTimeseriesIndex("demand", np.array([1.0, 2.0, 3.0]))
-    assert type(idx.node) is graph.timeseries_constant
+    assert type(idx.node) is graph.array_constant
 
 
 # ---------------------------------------------------------------------------
@@ -509,12 +513,17 @@ def test_reduction_requires_explicit_axis_when_multiple_domain_axes():
     assert node.axis == y
 
 
-def test_reduction_zero_domain_axes_falls_back_to_time():
-    """A scalar/untyped index keeps the legacy time-axis default (reduce last dimension)."""
+def test_reduction_without_a_domain_axis_requires_an_explicit_axis():
+    """A scalar index has no dimension to reduce, so no default can be inferred.
+
+    It used to fall back to the time axis, reproducing a "reduce the last
+    dimension" convention from when every array was a timeseries.  The executor
+    now reduces the dimension an axis *names*, so that fallback would ask it to
+    reduce a time axis the evaluation need not carry.
+    """
     idx = Index("scalar", 5.0)
-    node = idx.sum()
-    assert isinstance(node, graph.project_using_sum)
-    assert node.axis == TIME_AXIS
+    with pytest.raises(ValueError, match="carries no DOMAIN axis"):
+        idx.sum()
 
 
 # ---------------------------------------------------------------------------
@@ -807,14 +816,15 @@ def test_const_index_str():
 
 
 def test_const_timeseries_index_construction():
-    """ConstTimeseriesIndex holds a concrete array backed by timeseries_constant."""
+    """ConstTimeseriesIndex holds a concrete array backed by an array_constant."""
     arr = np.array([1.0, 2.0, 3.0])
     ts = ConstTimeseriesIndex("demand", arr)
     assert ts.name == "demand"
     default = ts.concrete_default
     assert isinstance(default, np.ndarray)
     assert np.array_equal(default, arr)
-    assert isinstance(ts.node, graph.timeseries_constant)
+    assert isinstance(ts.node, graph.array_constant)
+    assert ts.node.output_axes == (TIME_AXIS,)
 
 
 def test_const_timeseries_index_is_both_const_index_and_timeseries_index():
@@ -836,7 +846,7 @@ def test_const_timeseries_index_is_both_const_index_and_timeseries_index():
 def test_const_timeseries_index_mro_resolves_construction_to_const_index():
     """The ConstIndex base wins for construction, so the node is baked, not a placeholder."""
     ts = ConstTimeseriesIndex("demand", np.array([1.0, 2.0]))
-    assert type(ts.node) is graph.timeseries_constant
+    assert type(ts.node) is graph.array_constant
     assert ts.is_abstract is False
     assert ConstTimeseriesIndex.__mro__.index(ConstIndex) < ConstTimeseriesIndex.__mro__.index(TimeseriesIndex)
 
@@ -845,7 +855,7 @@ def test_const_timeseries_index_evaluates_correctly():
     """ConstTimeseriesIndex node evaluates to its stored array."""
     arr = np.array([10.0, 20.0, 30.0])
     ts = ConstTimeseriesIndex("demand", arr)
-    state = executor.State({})
+    state = executor.State({}, domain_axes=(TIME_AXIS,))
     executor.evaluate_nodes(state, *linearize.forest(ts.node))
     assert np.array_equal(state.values[ts.node], arr)
 

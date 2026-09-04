@@ -289,12 +289,15 @@ class GenericIndex(ABC):
 
         * exactly one DOMAIN axis → that axis (a timeseries index has exactly
           one, time, so its reductions keep defaulting to time as before);
-        * more than one DOMAIN axis → no unambiguous default, so an explicit
-          ``axis=`` is required and a ``ValueError`` is raised;
-        * no DOMAIN axis → fall back to the time axis, preserving the legacy
-          "reduce the last dimension" convention for untyped/scalar indexes.
-          Tightening this to also require an explicit axis is deferred to the
-          label-driven executor step, where the choice actually bites.
+        * any other number → there is no unambiguous default, so an explicit
+          ``axis=`` is required and a ``ValueError`` is raised.
+
+        An index carrying *no* DOMAIN axis is included in that second case:
+        there is no dimension to reduce, so nothing can be inferred. It used to
+        fall back to the time axis, reproducing a "reduce the last dimension"
+        convention from when every array was a timeseries. The executor now
+        resolves a reduction to the position its axis *names*, so that fallback
+        would ask it to reduce a time axis the evaluation does not carry.
         """
         if axis is not None:
             return axis
@@ -302,7 +305,11 @@ class GenericIndex(ABC):
         if len(domain_axes) == 1:
             return domain_axes[0]
         if not domain_axes:
-            return TIME_AXIS
+            raise ValueError(
+                f"{type(self).__name__} reduction needs an explicit axis=: this index carries no "
+                f"DOMAIN axis, so there is no dimension to reduce over. Declare the index's shape "
+                f"with axes=, or pass the axis to reduce explicitly."
+            )
         raise ValueError(
             f"{type(self).__name__} reduction needs an explicit axis=: this index carries "
             f"{len(domain_axes)} DOMAIN axes {[ax.name for ax in domain_axes]}, "
@@ -541,9 +548,8 @@ class Index(GenericIndex):
     def _make_placeholder_node(name: str, axes: tuple[Axis, ...]) -> graph.Node:
         """Build the placeholder node for the concrete/bare-placeholder modes.
 
-        Overridden by :class:`TimeseriesIndex` to construct a
-        ``graph.timeseries_placeholder`` instead of a generic
-        ``graph.array_placeholder``, so its node type is unchanged.
+        Subclasses fixing a named shape (:class:`TimeseriesIndex`) simply pass
+        their *axes*; the node type is the same generic one either way.
         """
         return graph.array_placeholder(name, axes)
 
@@ -644,9 +650,8 @@ class ConstIndex(Index):
     def _make_constant_node(value: np.ndarray, axes: tuple[Axis, ...], name: str) -> graph.Node:
         """Build the constant node for the domain-carrying mode.
 
-        Overridden by :class:`ConstTimeseriesIndex` to construct a
-        ``graph.timeseries_constant`` instead of a generic
-        ``graph.array_constant``, so its node type is unchanged.
+        Subclasses fixing a named shape (:class:`ConstTimeseriesIndex`) simply
+        pass their *axes*; the node type is the same generic one either way.
         """
         return graph.array_constant(value, axes, name)
 
@@ -668,11 +673,12 @@ class TimeseriesIndex(Index):
     Three modes mirror :class:`Index`:
 
     * **Fixed array** — ``TimeseriesIndex(name, np.array([...]))``
-      Node is a ``timeseries_placeholder``; the array is the default,
-      injected by :class:`~simulation.scenario.Scenario` at evaluation time.
+      Node is an ``array_placeholder`` over ``axes=(TIME_AXIS,)``; the array
+      is the default, injected by :class:`~simulation.scenario.Scenario` at
+      evaluation time.
     * **Placeholder** — ``TimeseriesIndex(name)``
-      Node is a ``timeseries_placeholder``; value must be supplied via
-      Scenario or ``parameters=`` before evaluation.
+      Node is an ``array_placeholder`` over ``axes=(TIME_AXIS,)``; value must
+      be supplied via Scenario or ``parameters=`` before evaluation.
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
       Node is the formula node directly; value is computed by the engine.
     """
@@ -684,11 +690,6 @@ class TimeseriesIndex(Index):
     ) -> None:
         super().__init__(name, value, axes=(TIME_AXIS,))
 
-    @staticmethod
-    def _make_placeholder_node(name: str, axes: tuple[Axis, ...]) -> graph.Node:
-        """Build the placeholder node as a ``timeseries_placeholder`` (time-axis parity)."""
-        return graph.timeseries_placeholder(name)
-
     def __repr__(self) -> str:
         """Return a string representation of the timeseries index."""
         if self._value is None:
@@ -699,7 +700,7 @@ class TimeseriesIndex(Index):
 
 
 class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
-    """ConstIndex baked into the graph as a ``timeseries_constant``.
+    """ConstIndex baked into the graph as an ``array_constant`` over ``axes=(TIME_AXIS,)``.
 
     Specialization of :class:`ConstIndex` fixing ``axes=(TIME_AXIS,)``.
     Immutable after construction; the node is permanently fixed.
@@ -719,7 +720,8 @@ class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
         Human-readable name for this index.
     value:
         Fixed array of time-step values.  Stored via :func:`numpy.asarray`
-        and used to create a ``timeseries_constant`` graph node.
+        and used to create an ``array_constant`` graph node over
+        ``axes=(TIME_AXIS,)``.
 
     Examples
     --------
@@ -731,11 +733,6 @@ class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
 
     def __init__(self, name: str, value: np.ndarray) -> None:
         super().__init__(name, value, axes=(TIME_AXIS,))
-
-    @staticmethod
-    def _make_constant_node(value: np.ndarray, axes: tuple[Axis, ...], name: str) -> graph.Node:
-        """Build the constant node as a ``timeseries_constant`` (time-axis parity)."""
-        return graph.timeseries_constant(value, name)
 
     def __repr__(self) -> str:
         """Return a string representation of the constant timeseries index."""

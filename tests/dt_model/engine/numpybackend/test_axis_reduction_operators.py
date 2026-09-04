@@ -111,7 +111,7 @@ class TestAxisOperatorExecution:
         else:
             x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
 
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = numpy_func(x_val, axis=-1, keepdims=True)
@@ -129,7 +129,7 @@ class TestAxisOperatorExecution:
             result = QUANTILE_OPERATOR(x, axis=TIME_AXIS, q=q)
             plan = linearize.forest(result)
 
-            state = executor.State({x: x_val})
+            state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
             executor.evaluate_nodes(state, *plan)
 
             expected = np.quantile(x_val, q, axis=-1, keepdims=True)
@@ -151,7 +151,7 @@ class TestAxisOperatorKeepdims:
         if name in ("any", "all"):
             x_val = np.array([[True, False, True], [False, True, False]])
 
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         assert state.values[result].shape == (2, 1)
@@ -163,7 +163,7 @@ class TestAxisOperatorKeepdims:
         plan = linearize.forest(result)
 
         x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         assert state.values[result].shape == (2, 1)
@@ -184,7 +184,7 @@ class TestAxisOperatorEdgeCases:
         if name in ("any", "all"):
             x_val = np.array([[True]])
 
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         assert state.values[result].shape == (1, 1)
@@ -196,7 +196,7 @@ class TestAxisOperatorEdgeCases:
         plan = linearize.forest(result)
 
         x_val = np.array([[-1.0, -5.0, -3.0], [-2.0, -4.0, -6.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.min(x_val, axis=-1, keepdims=True)
@@ -209,7 +209,7 @@ class TestAxisOperatorEdgeCases:
         plan = linearize.forest(result)
 
         x_val = np.array([[1.0, 2.0, 0.0], [3.0, 0.0, 4.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.prod(x_val, axis=-1, keepdims=True)
@@ -222,7 +222,7 @@ class TestAxisOperatorEdgeCases:
         plan = linearize.forest(result)
 
         x_val = np.array([[5.0, 5.0, 5.0], [5.0, 5.0, 5.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.std(x_val, axis=-1, keepdims=True)
@@ -236,7 +236,7 @@ class TestAxisOperatorEdgeCases:
         plan = linearize.forest(result)
 
         x_val = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.count_nonzero(x_val, axis=-1, keepdims=True)
@@ -251,7 +251,7 @@ class TestAxisOperatorEdgeCases:
         # q=0.0 should give minimum
         result_min = QUANTILE_OPERATOR(x, axis=TIME_AXIS, q=0.0)
         plan_min = linearize.forest(result_min)
-        state_min = executor.State({x: x_val})
+        state_min = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state_min, *plan_min)
         expected_min = np.quantile(x_val, 0.0, axis=-1, keepdims=True)
         assert np.allclose(state_min.values[result_min], expected_min)
@@ -259,7 +259,7 @@ class TestAxisOperatorEdgeCases:
         # q=1.0 should give maximum
         result_max = QUANTILE_OPERATOR(x, axis=TIME_AXIS, q=1.0)
         plan_max = linearize.forest(result_max)
-        state_max = executor.State({x: x_val})
+        state_max = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state_max, *plan_max)
         expected_max = np.quantile(x_val, 1.0, axis=-1, keepdims=True)
         assert np.allclose(state_max.values[result_max], expected_max)
@@ -280,7 +280,7 @@ class TestAxisOperatorComposition:
         plan = linearize.forest(mean_result)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.mean(np.sum(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
@@ -294,7 +294,7 @@ class TestAxisOperatorComposition:
         plan = linearize.forest(std_result)
 
         x_val = np.array([[1.0, 2.0], [3.0, 4.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.std(np.prod(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
@@ -308,7 +308,7 @@ class TestAxisOperatorComposition:
         plan = linearize.forest(quantile_result)
 
         x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.quantile(np.mean(x_val, axis=-1, keepdims=True), 0.5, axis=-1, keepdims=True)
@@ -322,7 +322,7 @@ class TestAxisOperatorComposition:
         plan = linearize.forest(any_result)
 
         x_val = np.array([[True, True, False], [True, True, True]])
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.any(np.all(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
@@ -339,7 +339,7 @@ class TestAxisOperatorBroadcasting:
         plan = linearize.forest(result)
 
         x_val = np.array([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])  # (2, 2, 2)
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.sum(x_val, axis=-1, keepdims=True)
@@ -353,7 +353,7 @@ class TestAxisOperatorBroadcasting:
         plan = linearize.forest(result)
 
         x_val = np.array([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])  # (2, 2, 2)
-        state = executor.State({x: x_val})
+        state = executor.State({x: x_val}, domain_axes=(TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.mean(x_val, axis=-1, keepdims=True)

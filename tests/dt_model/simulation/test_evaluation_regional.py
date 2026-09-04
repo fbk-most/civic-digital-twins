@@ -563,7 +563,7 @@ def test_regional_timeseries_branch_scatter_normalise():
 def _make_const_ts_selector_mv(keys: list[str]) -> "ModelVariant":
     """Build a ModelVariant whose selector is a ConstTimeseriesIndex holding *keys*.
 
-    ConstTimeseriesIndex creates a timeseries_constant node — no Scenario needed.
+    ConstTimeseriesIndex creates an array_constant node over axes=(TIME_AXIS,) — no Scenario needed.
     With an ensemble (n_full=1) the selector broadcasts to shape (S, len(keys)).
     Branch keys are "bike" / "train".
     """
@@ -667,7 +667,7 @@ def test_regional_leading_mask_singleton_timeseries_selector_with_ensemble():
     ens = DistributionEnsemble(scenario, size=10)
     plan = ev.build_plan(strategy="regional")
     result = ev.execute_plan(plan, ens)
-    # Verify both outputs are present. extra_ts=1 (selector is timeseries_constant)
+    # Verify both outputs are present. extra_ts=1 (selector is a time-axis array_constant)
     # adds a trailing (1,) to nodes without DOMAIN axes, so shape is (S, 1).
     assert result[mv.outputs.throughput].shape == (10, 1)
     assert result[mv.outputs.emissions].shape == (10, 1)

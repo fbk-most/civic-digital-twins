@@ -50,14 +50,14 @@ class TestSelectorMask:
 
     def test_trailing_singleton_squeezed(self):
         """A trailing singleton (timeseries) dim on the selector is dropped."""
-        node = graph.timeseries_constant([1.0])
+        node = graph.array_constant([1.0], axes=(TIME_AXIS,))
         sel = np.full((2, 3, 1), "a", dtype=object)
         mask = LEAD.selector_mask(node, sel, "a")
         assert mask.shape == (2, 3) and mask.all()
 
     def test_trailing_wide_rejected(self):
         """A selector varying along a DOMAIN axis is unsupported."""
-        node = graph.timeseries_constant([1.0, 2.0])
+        node = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,))
         sel = np.full((2, 3, 2), "a", dtype=object)
         with pytest.raises(NotImplementedError, match="non-singleton DOMAIN"):
             LEAD.selector_mask(node, sel, "a")
@@ -83,7 +83,7 @@ class TestGather:
 
     def test_gather_aligns_domain_only_value(self):
         """A raw (T,) timeseries value is recognised via output_axes and aligned."""
-        node = graph.timeseries_constant([1.0, 2.0, 3.0])
+        node = graph.array_constant([1.0, 2.0, 3.0], axes=(TIME_AXIS,))
         out = LEAD.gather(node, np.array([1.0, 2.0, 3.0]), np.array([0, 5]))
         assert out.shape == (2, 3)
         np.testing.assert_array_equal(out[1], [1.0, 2.0, 3.0])
@@ -133,7 +133,7 @@ class TestScatter:
 
     def test_scatter_broadcasts_domain_only_value(self):
         """A (T,) value from a DOMAIN node is repeated per coordinate."""
-        node = graph.timeseries_constant([1.0, 2.0, 3.0])
+        node = graph.array_constant([1.0, 2.0, 3.0], axes=(TIME_AXIS,))
         out = LEAD_TS.scatter(node, np.array([1.0, 2.0, 3.0]), np.array([0, 5]))
         assert out.shape == (2, 3, 3)
         np.testing.assert_array_equal(out.reshape(-1, 3)[5], [1.0, 2.0, 3.0])

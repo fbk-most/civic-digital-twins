@@ -693,7 +693,7 @@ class Evaluation:
         # We check only abstract indexes (value=None or Distribution-backed) — NOT
         # concrete-value placeholder nodes that may be "orphan" (not in model.indexes).
         # Concrete-value orphan placeholders are handled via graph.placeholder.default_value
-        # or graph.timeseries_placeholder.default_values auto-populated at creation time.
+        # or graph.array_placeholder default values auto-populated at creation time.
         abstract_nodes = {idx.node for idx in self._scenario.abstract_indexes()}
         covered = set(scenario_subs.keys()) | set(c_subs.keys())
         uncovered_abstract = abstract_nodes - covered

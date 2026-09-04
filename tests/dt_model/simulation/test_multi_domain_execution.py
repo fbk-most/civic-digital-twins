@@ -311,3 +311,29 @@ def test_injected_lower_rank_value_aligns_to_its_own_axis():
     m = MixedModel(inputs=MixedModel.Inputs(field=field, wx=wx))
     result = _evaluate(m)
     assert np.array_equal(result[m.outputs.out], [[10.0, 10.0, 10.0], [20.0, 20.0, 20.0]])
+
+
+def test_dropped_domain_carrying_index_is_reported_at_construction():
+    """An unsurfaced domain-carrying placeholder is caught like any other dropped index.
+
+    The guard matched only scalar and timeseries placeholders, so a index over a
+    non-time axis slipped through and failed much later, as an opaque missing-value
+    error during evaluation.
+    """
+
+    @define("DroppedDomain")
+    class DroppedModel(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inputs):
+            hidden = Index("hidden", axes=(X,))  # never surfaced via Inputs/Outputs/Expose
+            return DroppedModel.Outputs(out=Index("out", hidden * 2.0))
+
+    with pytest.raises(ValueError, match="not declared|not de"):
+        DroppedModel(inputs=DroppedModel.Inputs())

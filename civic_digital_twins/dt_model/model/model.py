@@ -659,8 +659,8 @@ class Model:
             if caller_frame is not None:
                 _check_inputs_contract(caller_frame, concrete_cls, self.inputs)
 
-            # Dropped-index check: any graph.placeholder or
-            # graph.timeseries_placeholder node that is reachable from the
+            # Dropped-index check: any graph.placeholder or domain-carrying
+            # graph.array_placeholder node that is reachable from the
             # model's internally-built formula nodes but not itself covered
             # by a declared index will never receive a value at evaluation time.
             # This catches both sub-model concrete indexes and inline
@@ -672,7 +672,7 @@ class Model:
             _input_formula_nodes: tuple[graph.Node, ...] = tuple(
                 idx.node
                 for idx in self.inputs
-                if not isinstance(idx.node, (graph.placeholder, graph.timeseries_placeholder))
+                if not isinstance(idx.node, (graph.placeholder, graph.array_placeholder))
             )
             _orphaned = _find_orphaned_placeholder_nodes(self.indexes, _input_formula_nodes)
             if _orphaned:
@@ -818,9 +818,8 @@ def _iter_node_deps(node: graph.Node) -> list[graph.Node]:
     """Return direct graph dependencies of *node* for backward traversal.
 
     This function is exhaustive over all non-leaf node types.  Leaf nodes
-    (``constant``, ``placeholder``, ``timeseries_constant``,
-    ``timeseries_placeholder``) have no dependencies and fall through to the
-    ``return []`` at the end.
+    (``constant``, ``placeholder``, ``array_constant``, ``array_placeholder``)
+    have no dependencies and fall through to the ``return []`` at the end.
 
     **Maintenance note**: every new non-leaf ``graph.Node`` subclass must be
     handled here; omitting one will silently stop BFS traversal at that node,
@@ -856,7 +855,7 @@ def _iter_node_deps(node: graph.Node) -> list[graph.Node]:
         return [node.node]
     if isinstance(node, graph.function_call):
         return list(node.args) + list(node.kwargs.values())
-    # Leaf nodes: constant, placeholder, timeseries_constant, timeseries_placeholder.
+    # Leaf nodes: constant, placeholder, array_constant, array_placeholder.
     return []
 
 
@@ -891,7 +890,7 @@ def _find_orphaned_placeholder_nodes(
     Traverses the computation graph **backward** from the model's internally-
     built formula nodes (outputs and expose) using :func:`_iter_node_deps`.
     Any :class:`~engine.frontend.graph.placeholder` or
-    :class:`~engine.frontend.graph.timeseries_placeholder` node that is
+    :class:`~engine.frontend.graph.array_placeholder` node that is
     reachable but whose identity is *not* among ``{idx.node for idx in indexes}``
     is returned as **orphaned**.
 
@@ -940,7 +939,7 @@ def _find_orphaned_placeholder_nodes(
     internal_formula_starts: list[graph.Node] = [
         node
         for node in covered_nodes
-        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder)) and id(node) not in input_formula_ids
+        if not isinstance(node, (graph.placeholder, graph.array_placeholder)) and id(node) not in input_formula_ids
     ]
     visited_ids: set[int] = set()
     to_visit: list[graph.Node] = list(internal_formula_starts)
@@ -953,7 +952,7 @@ def _find_orphaned_placeholder_nodes(
         for dep in _iter_node_deps(node):
             if id(dep) in visited_ids or id(dep) in covered_ids or id(dep) in input_formula_ids:
                 continue  # already handled or belongs to another model
-            if isinstance(dep, (graph.placeholder, graph.timeseries_placeholder)):
+            if isinstance(dep, (graph.placeholder, graph.array_placeholder)):
                 # placeholder nodes with a default_value are self-contained:
                 # the executor falls back to that value when the node is absent
                 # from state.values, so they are not orphaned.
