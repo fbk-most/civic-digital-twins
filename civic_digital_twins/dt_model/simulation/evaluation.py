@@ -175,6 +175,26 @@ class EvaluationResult:
         arr = self._contract_ensemble(index)
         return self._layout.drop_stray_domain(arr, index.output_axes)
 
+    def layout_of(self, index: GenericIndex) -> AxisLayout:
+        """Return the :class:`~simulation.axis_layout.AxisLayout` of :meth:`expected_value`'s array.
+
+        Mirrors :attr:`layout`, which describes the *raw* ``result[index]``
+        array — but ``expected_value`` returns a differently-shaped array
+        (ENSEMBLE axes contracted away, DOMAIN axes *index* does not carry
+        dropped as stray), so it needs its own layout: PARAMETER axes
+        unchanged, no ENSEMBLE axes, and only the DOMAIN axes present in
+        *index*'s :attr:`~model.index.GenericIndex.output_axes`.
+
+        With several DOMAIN axes in play, position alone no longer tells you
+        which dimension is which; this is how a caller finds out.
+        """
+        entries = tuple(
+            (ax, size)
+            for ax, size in self._layout.entries
+            if ax.role == PARAMETER or (ax.role == DOMAIN and ax in index.output_axes)
+        )
+        return AxisLayout(entries)
+
 
 class Evaluation:
     """Bridge between a :class:`~simulation.scenario.Scenario` and the engine.

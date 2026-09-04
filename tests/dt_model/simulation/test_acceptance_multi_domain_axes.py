@@ -8,14 +8,19 @@ Covers:
 - Time-only parity: existing time-only models are unaffected.
 - 2-D spatial + time end-to-end: a (TIME, X, Y) model can be authored and
   evaluated, including reduction over spatial axes.
+- Self-describing results: a caller can map axis name to position for
+  every returned array, raw and ensemble-marginalized alike.
 """
 
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
+from scipy import stats
 
 from civic_digital_twins.dt_model import (
     ConstIndex,
+    DistributionEnsemble,
+    DistributionIndex,
     Evaluation,
     Index,
     Model,
@@ -107,9 +112,10 @@ def test_time_only_model_unaffected_by_multi_domain_support():
     result = _evaluate(m)
 
     # sum(axis=TIME_AXIS) keeps the reduced axis at size 1 (broadcast
-    # convention), and result.layout reflects every domain-carrying node in
-    # the plan (including the un-reduced input), not just this output — so
-    # only the value is asserted here.
+    # convention) rather than removing it from output_axes, so the
+    # marginalized layout for "total" is still empty: no DOMAIN axis
+    # survives in its output_axes for layout_of to keep.
+    assert result.layout_of(m.outputs.total).entries == ()
     assert np.isclose(float(result[m.outputs.total].ravel()[0]), 10.0)
 
 
@@ -187,3 +193,53 @@ def test_lower_rank_operand_broadcasts_against_full_spacetime_block():
 
     expected = np.ones((2, 3, 4)) * np.array([10.0, 20.0, 30.0]).reshape(1, 3, 1)
     np.testing.assert_array_equal(result[m.outputs.weighted], expected)
+
+
+# ---------------------------------------------------------------------------
+# Self-describing results
+# ---------------------------------------------------------------------------
+
+
+def test_layout_of_matches_the_marginalized_array_two_outputs_carry_different_axes():
+    """result.layout_of(idx) names every dimension of expected_value(idx), per output.
+
+    One model, one ENSEMBLE axis, two outputs that carry different DOMAIN
+    axes: "field" keeps (time, x, y), "col_mean" drops y. result.layout (the
+    *raw*, pre-marginalization layout) is the same object for both — it
+    cannot tell them apart. result.layout_of(idx) can: it always drops the
+    ENSEMBLE axis (contracted by expected_value) and keeps only the DOMAIN
+    axes the given index actually carries.
+    """
+
+    @define("Marginalized")
+    class MarginalizedModel(Model):
+        @inputs
+        class Inputs:
+            noise: Index
+
+        @outputs
+        class Outputs:
+            field: Index
+            col_mean: Index
+
+        def compute(self, inputs):
+            data = np.arange(24.0).reshape(2, 3, 4)  # (time=2, x=3, y=4)
+            temperature = ConstIndex("temperature", data, axes=(TIME_AXIS, X, Y))
+            field = Index("field", temperature * inputs.noise)
+            col_mean = Index("col_mean", field.mean(axis=Y))
+            return MarginalizedModel.Outputs(field=field, col_mean=col_mean)
+
+    # scale=0.0: a deterministic "ensemble" isolates the axis-bookkeeping
+    # behaviour under test from sampling noise.
+    noise = DistributionIndex("noise", stats.norm, {"loc": 1.0, "scale": 0.0})
+    m = MarginalizedModel(inputs=MarginalizedModel.Inputs(noise=noise))
+    scenario = Scenario(m)
+    ensemble = DistributionEnsemble(scenario, size=5, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ensemble)
+
+    assert result.layout_of(m.outputs.field).entries == ((TIME_AXIS, 2), (X, 3), (Y, 4))
+    assert result.layout_of(m.outputs.col_mean).entries == ((TIME_AXIS, 2), (X, 3))
+
+    # The per-output layout always matches the array expected_value actually returns.
+    assert result.layout_of(m.outputs.field).full_shape == result.expected_value(m.outputs.field).shape
+    assert result.layout_of(m.outputs.col_mean).full_shape == result.expected_value(m.outputs.col_mean).shape

@@ -79,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over-estimate.  Broadcasting a scalar, or combining operands that already
   share the result's axes, does not trigger it.  Declaring `axes=` states the
   intent and silences the warning; so does filtering the category.
+- `EvaluationResult.layout_of(index)` — the `AxisLayout` of the array
+  `expected_value(index)` returns, mirroring `result.layout` (which describes
+  the *raw*, pre-marginalization array).  With several DOMAIN axes, position
+  alone no longer identifies a dimension after ENSEMBLE contraction and
+  stray-DOMAIN dropping — different outputs of the same model can carry
+  different DOMAIN axes and therefore end up with different marginalized
+  shapes — so this is how a caller finds out which axis is which.
 
 ### Changed
 
