@@ -726,7 +726,7 @@ class Evaluation:
         n_total = leading_layout.n_leading + n_domain
         region_ops = RegionArrayOps(leading_layout, domain_axes=domain_axes)
 
-        # Coverage validation (D_valid): every abstract index must have a value source.
+        # Coverage validation: every abstract index must have a value source.
         # We check only abstract indexes (value=None or Distribution-backed) — NOT
         # concrete-value placeholder nodes that may be "orphan" (not in model.indexes).
         # Concrete-value orphan placeholders are handled via graph.placeholder.default_value

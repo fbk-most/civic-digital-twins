@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for Step 1 of scenario-runner-protocol.md.
+"""Tests for the scenario-runner protocol.
 
 Covers:
 - ``EvaluationConfig`` dataclass
@@ -8,7 +8,7 @@ Covers:
 - ``ModelOutput`` ABC: ``is_resumable`` flag mechanics and round-trip via a
   concrete stub subclass
 - ``ModelRunHandle``: ``get()``, ``poll()``, ``cancel()``
-- ``AsyncEvaluationHandle.future`` property (precondition for Step 1)
+- ``AsyncEvaluationHandle.future`` property
 """
 
 from __future__ import annotations
@@ -413,12 +413,12 @@ class TestModelRunHandle:
 
 
 # ---------------------------------------------------------------------------
-# AsyncEvaluationHandle.future property (Step 1 precondition)
+# AsyncEvaluationHandle.future property
 # ---------------------------------------------------------------------------
 
 
 class TestAsyncEvaluationHandleFutureProperty:
-    """Verify the public ``future`` property added as a Step 1 precondition."""
+    """Verify the public ``future`` property."""
 
     def test_future_property_returns_future(self) -> None:
         """AsyncEvaluationHandle.future returns a concurrent.futures.Future."""
@@ -444,12 +444,12 @@ class TestAsyncEvaluationHandleFutureProperty:
 
 
 # ---------------------------------------------------------------------------
-# Scenario.overrides property (Step 2 precondition)
+# Scenario.overrides property
 # ---------------------------------------------------------------------------
 
 
 class TestScenarioOverrides:
-    """Verify the public overrides property added as a Step 2 precondition."""
+    """Verify the public overrides property."""
 
     def test_overrides_empty_for_base_scenario(self) -> None:
         """Overrides is empty when no overrides were given."""

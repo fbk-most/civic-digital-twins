@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for AsyncEvaluationHandle and submit_evaluate() — Step 4 of engine-control.md."""
+"""Tests for AsyncEvaluationHandle and submit_evaluate()."""
 
 import concurrent.futures
 import time
