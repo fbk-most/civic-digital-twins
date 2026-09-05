@@ -243,3 +243,33 @@ def test_layout_of_matches_the_marginalized_array_two_outputs_carry_different_ax
     # The per-output layout always matches the array expected_value actually returns.
     assert result.layout_of(m.outputs.field).full_shape == result.expected_value(m.outputs.field).shape
     assert result.layout_of(m.outputs.col_mean).full_shape == result.expected_value(m.outputs.col_mean).shape
+
+
+def test_labeled_pairs_expected_value_with_its_layout_for_name_based_selection():
+    """result.labeled(idx) gives a LabeledArray usable without knowing dimension positions."""
+
+    @define("Labeled")
+    class LabeledModel(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            field: Index
+
+        def compute(self, inputs):
+            data = np.arange(6.0).reshape(2, 3)  # (x=2, y=3)
+            return LabeledModel.Outputs(field=ConstIndex("field", data, axes=(X, Y)))
+
+    m = LabeledModel(inputs=LabeledModel.Inputs())
+    result = _evaluate(m)
+
+    labeled = result.labeled(m.outputs.field)
+    assert labeled.dims == ("x", "y")
+    np.testing.assert_array_equal(labeled.values, result.expected_value(m.outputs.field))
+
+    # Select by axis name, not by remembering which position "x" landed in.
+    row = labeled.sel(x=1)
+    assert row.dims == ("y",)
+    np.testing.assert_array_equal(row.values, np.arange(6.0).reshape(2, 3)[1, :])

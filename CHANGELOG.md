@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stray-DOMAIN dropping — different outputs of the same model can carry
   different DOMAIN axes and therefore end up with different marginalized
   shapes — so this is how a caller finds out which axis is which.
+- `LabeledArray` and `EvaluationResult.labeled(index)` — an optional,
+  additive self-describing wrapper pairing `expected_value(index)` with
+  `layout_of(index)`: `.dims` (axis names, in order), `.sel(name=...)`
+  (integer or slice selection by axis name instead of position), and
+  `.to_xarray()` for interop with the xarray ecosystem.  `result[index]` and
+  `expected_value(index)` are unaffected and keep returning plain
+  `np.ndarray`.  `xarray` is not a dependency of this library — `.to_xarray()`
+  imports it lazily and raises `ImportError` if it is not installed.
 
 ### Changed
 

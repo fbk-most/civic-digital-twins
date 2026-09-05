@@ -15,6 +15,7 @@ from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .axis_layout import AxisLayout
 from .ensemble import AxisEnsemble
+from .labeled_array import LabeledArray
 from .plan import EvaluationPlan, Region, RegionGuard
 from .region_execution import RegionArrayOps
 from .scenario import Scenario
@@ -194,6 +195,16 @@ class EvaluationResult:
             if ax.role == PARAMETER or (ax.role == DOMAIN and ax in index.output_axes)
         )
         return AxisLayout(entries)
+
+    def labeled(self, index: GenericIndex) -> LabeledArray:
+        """Return :meth:`expected_value` for *index* paired with :meth:`layout_of`.
+
+        Optional convenience for name-based access (``.dims``, ``.sel(...)``)
+        and interop with a labeled-array ecosystem (``.to_xarray()``).  Purely
+        additive: :meth:`expected_value` and ``result[index]`` keep returning
+        plain ``np.ndarray``, unaffected by this method's existence.
+        """
+        return LabeledArray(self.expected_value(index), self.layout_of(index))
 
 
 class Evaluation:
