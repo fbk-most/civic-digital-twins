@@ -94,6 +94,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `expected_value(index)` are unaffected and keep returning plain
   `np.ndarray`.  `xarray` is not a dependency of this library — `.to_xarray()`
   imports it lazily and raises `ImportError` if it is not installed.
+- **`FIXED_AXES`** — a `ClassVar[tuple[Axis, ...]]` convention for `Index`/
+  `ConstIndex` subclasses that fix a shape (`TimeseriesIndex` is the first,
+  refactored, instance: `FIXED_AXES = (TIME_AXIS,)`).  An `Inputs`/
+  `Outputs`/`Expose` field annotated with such a class (or a `list[...]`/
+  `dict[str, ...]` of one) is now verified at construction time: the actual
+  value's `output_axes` must match `FIXED_AXES`, raising `ValueError`
+  otherwise.  A plain `Index`/`ConstIndex`/`GenericIndex` annotation stays
+  unchecked, exactly as before.  The check is structural, never `isinstance`
+  — a value built by an unrelated class satisfies the annotation as long as
+  its `output_axes` matches, which is what lets independently-authored
+  components interoperate around the same shape without sharing a class
+  hierarchy for it.  Since every existing `TimeseriesIndex`/
+  `ConstTimeseriesIndex` instance already carries `(TIME_AXIS,)` by
+  construction, this can only newly reject a value that was already a latent
+  contract violation invisible to anything but Pyright.
 
 ### Changed
 

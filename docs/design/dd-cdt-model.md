@@ -245,6 +245,61 @@ flow = TimeseriesIndex("flow", np.array([10.0, 20.0, 30.0]))
 demand_ts = TimeseriesIndex("demand_ts")
 ```
 
+### Defining your own named shape
+
+`TimeseriesIndex` is not special-cased by the engine or the model layer — it
+is the first instance of a general, user-extensible pattern for giving a
+recurring shape a name. Fixing `axes=` via a class-level `FIXED_AXES`
+constant, rather than repeating the tuple at every call site, buys two
+things: less boilerplate, and (see below) a runtime-checked `Inputs`/
+`Outputs`/`Expose` field annotation.
+
+```python
+from typing import ClassVar
+
+from civic_digital_twins.dt_model import ConstIndex, Index
+from civic_digital_twins.dt_model.axes import Axis, DomainAxis, SpaceType
+
+x = DomainAxis("x", type=SpaceType(spacing=1.0))
+y = DomainAxis("y", type=SpaceType(spacing=1.0))
+
+class GridIndex(Index):
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (x, y)
+
+    def __init__(self, name, value=None):
+        super().__init__(name, value, axes=self.FIXED_AXES)
+
+# A Const variant follows ConstTimeseriesIndex's own pattern: multiple
+# inheritance, ConstIndex first so it wins construction, GridIndex second
+# purely as a shape declaration.
+class ConstGridIndex(ConstIndex, GridIndex):
+    def __init__(self, name, value):
+        super().__init__(name, value, axes=self.FIXED_AXES)
+```
+
+**Contract-boundary verification.** An `Inputs`/`Outputs`/`Expose` field
+annotated with a class carrying `FIXED_AXES` — `GridIndex` above,
+`TimeseriesIndex`, or `list[...]`/`dict[str, ...]` of either — has the
+*actual* value's `output_axes` checked against it at construction time,
+raising `ValueError` on a mismatch. A plain `Index`/`ConstIndex`/
+`GenericIndex` annotation (no `FIXED_AXES`) is unchecked, exactly as before
+this existed.
+
+The check is **structural, never nominal**: it compares axis sets, and never
+asks `isinstance`. A value built by an unrelated class — even one sharing no
+inheritance with `GridIndex` at all — satisfies a `field: GridIndex`
+annotation as long as its `output_axes` matches `GridIndex.FIXED_AXES`. This
+is deliberate: it is what lets independently-authored components interoperate
+around the same shape without agreeing on a common class hierarchy for it,
+the same way a plain `Axis("x", DOMAIN)` has always compared equal to a
+`DomainAxis("x", type=SpaceType(...))` sharing its name.
+
+**Extension point, not yet implemented**: a shape used in exactly one model
+does not necessarily deserve its own named class. An `Annotated[Index,
+Axes(...)]`-style inline declaration — verified the same structural way,
+without minting a type — is a natural addition if that need materializes; it
+has not been built because no concrete case has needed it yet.
+
 ## Model
 
 [`model/model.py`](../../civic_digital_twins/dt_model/model/model.py)

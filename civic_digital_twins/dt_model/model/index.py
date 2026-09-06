@@ -10,7 +10,7 @@ be a constant, a distribution, or a symbolic expression.
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
 
@@ -77,20 +77,27 @@ def _surprising_axes_reason(node: graph.Node) -> str | None:
     return None
 
 
-def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], inferred: tuple[Axis, ...]) -> None:
-    """Raise ``ValueError`` unless *declared* and *inferred* hold the same axes.
+def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[Axis, ...]) -> None:
+    """Raise ``ValueError`` unless *declared* and *actual* hold the same axes.
 
-    Compared as **sets**: the order of a formula's inferred ``output_axes`` is
-    an artifact of how ``union_axes`` walked the operands (``a * b`` and
+    Compared as **sets**: for a formula, the order of inferred ``output_axes``
+    is an artifact of how ``union_axes`` walked the operands (``a * b`` and
     ``b * a`` order the same result differently), so it carries no meaning to
     assert against. Contrast the injected-value modes, where *axes* is zipped
     positionally against the array's shape and order is load-bearing.
+
+    Shared by two call sites: :class:`Index`'s own construction-time check
+    (a formula's declared ``axes=`` against its graph-inferred
+    ``output_axes``), and ``model.contracts``' contract-boundary check (a
+    field's ``FIXED_AXES`` against the actual value's ``output_axes``).
+    Structural both times: it never asks what type produced *actual*, only
+    what axes it carries.
     """
-    if set(declared) != set(inferred):
+    if set(declared) != set(actual):
         raise ValueError(
-            f"{owner}: declared axes {declared!r} do not match the formula's inferred "
-            f"output_axes {inferred!r} (compared as sets, order is not significant). "
-            f"Declaring axes verifies the formula, it cannot relabel it — fix whichever "
+            f"{owner}: declared axes {declared!r} do not match the actual "
+            f"output_axes {actual!r} (compared as sets, order is not significant). "
+            f"Declaring axes verifies the shape, it cannot relabel it — fix whichever "
             f"of the two is wrong."
         )
 
@@ -667,8 +674,9 @@ class TimeseriesIndex(Index):
 
     Specialization of :class:`Index` fixing ``axes=(TIME_AXIS,)``: a thin
     backward-compatible convenience over the generic domain-carrying index,
-    not a new concept, and the model for any future named-shape convenience.
-    Immutable after construction.
+    not a new concept, and the model for any named-shape convenience — see
+    :attr:`FIXED_AXES` for how to define your own.  Immutable after
+    construction.
 
     Three modes mirror :class:`Index`:
 
@@ -683,12 +691,26 @@ class TimeseriesIndex(Index):
       Node is the formula node directly; value is computed by the engine.
     """
 
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (TIME_AXIS,)
+    """The axes this class fixes.
+
+    Read by ``model.contracts``: an ``Inputs``/``Outputs``/``Expose`` field
+    annotated with a class carrying ``FIXED_AXES`` is verified at
+    construction time against the actual value's
+    :attr:`~GenericIndex.output_axes` — structurally, by comparing axis sets,
+    never by ``isinstance``.  This is the general recipe for a named shape:
+    subclass :class:`Index`, set ``FIXED_AXES``, and pass it to ``axes=`` in
+    your own ``__init__`` (mirror :class:`ConstIndex` too, via multiple
+    inheritance, for a constant-valued variant — see
+    :class:`ConstTimeseriesIndex`).
+    """
+
     def __init__(
         self,
         name: str,
         value: np.ndarray | graph.Node | None = None,
     ) -> None:
-        super().__init__(name, value, axes=(TIME_AXIS,))
+        super().__init__(name, value, axes=self.FIXED_AXES)
 
     def __repr__(self) -> str:
         """Return a string representation of the timeseries index."""
@@ -702,8 +724,10 @@ class TimeseriesIndex(Index):
 class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
     """ConstIndex baked into the graph as an ``array_constant`` over ``axes=(TIME_AXIS,)``.
 
-    Specialization of :class:`ConstIndex` fixing ``axes=(TIME_AXIS,)``.
-    Immutable after construction; the node is permanently fixed.
+    Specialization of :class:`ConstIndex` fixing ``axes=(TIME_AXIS,)`` (via
+    the :attr:`~TimeseriesIndex.FIXED_AXES` inherited from
+    :class:`TimeseriesIndex`).  Immutable after construction; the node is
+    permanently fixed.
 
     It is *also* a :class:`TimeseriesIndex`, deliberately: that is the type
     that means "time-shaped, whatever the value source", and it is what model
@@ -732,7 +756,7 @@ class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
     """
 
     def __init__(self, name: str, value: np.ndarray) -> None:
-        super().__init__(name, value, axes=(TIME_AXIS,))
+        super().__init__(name, value, axes=self.FIXED_AXES)
 
     def __repr__(self) -> str:
         """Return a string representation of the constant timeseries index."""
