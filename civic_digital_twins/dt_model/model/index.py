@@ -850,7 +850,7 @@ class TimeseriesIndex(Index):
     def __init__(
         self,
         name: str,
-        value: "np.ndarray | graph.Node | GenericIndex | None" = None,
+        value: "np.ndarray | graph.Node | TimeseriesIndex | None" = None,
     ) -> None:
         super().__init__(name, value, axes=self.FIXED_AXES)
 
