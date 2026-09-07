@@ -387,6 +387,71 @@ git commit -m "chore: start v<next-version> development"
 git push origin dev
 ```
 
+### Hotfix and backport releases
+
+Two situations don't fit the normal `dev → main` flow above:
+
+- **Hotfix** — a bug needs fixing in the version `main` currently sits at,
+  while `dev` has independently moved on to unfinished next-version work
+  that isn't ready to ship. Branch directly off `main`'s current tip.
+- **Backport** — a bug needs fixing in an *older*, already-superseded
+  release line (`main` has moved past it by one or more versions). Branch
+  off the old release tag instead.
+
+Both use a dedicated `hotfix/vX.Y.Z` or `backport/vX.Y.Z` branch as a
+short-lived staging branch: individual pieces of work are PR'd and merged
+into it (never committed to directly), then it is either merged onward
+(hotfix) or tagged and released directly (backport).
+
+#### Hotfix procedure
+
+1. `git checkout -b hotfix/v<version> origin/main`, push it:
+   `git push -u origin hotfix/v<version>`.
+2. For each piece of work (bug fixes, release prep), branch off
+   `hotfix/v<version>`, PR into it, merge. `CI (release)` runs
+   automatically on these PRs (see below).
+3. Once `hotfix/v<version>` contains everything for the release, open a PR
+   from it into `main` — this is the actual release PR (version bump,
+   changelog, etc. is typically already in place from step 2) and triggers
+   `CI (release)` normally, exactly like a `dev → main` PR.
+4. Tag and publish from `main`'s new tip, exactly as in Step 3 above.
+5. Forward-port the same fix into `dev` as its own small PR, so the next
+   regular release doesn't reintroduce it. Don't touch `dev`'s in-progress
+   work otherwise.
+
+#### Backport procedure
+
+1. `git checkout -b backport/v<version> v<old-version>`, push it.
+2. For each piece of work, branch off `backport/v<version>`, PR into it,
+   merge — same as the hotfix flow.
+3. Tag and publish **directly from `backport/v<version>`'s tip**. This
+   branch never merges into `main` or `dev` — their code has diverged too
+   far for that to be meaningful. On the Releases page, review the draft
+   and explicitly set **"Set as the latest release"** to **No** before
+   publishing, so the repository's "latest" designation stays on the
+   current release.
+4. Separately, port the same fix forward into whichever line is actually
+   current (typically as a hotfix per above, or folded into normal `dev`
+   work).
+
+#### CI on maintenance branches
+
+`CI (release)` (`.github/workflows/ci-release.yml`) triggers on
+`push`/`pull_request` against `main`, `hotfix/**`, and `backport/**`, plus
+`workflow_dispatch` for manual runs. A brand-new `hotfix/*`/`backport/*`
+branch created straight from a historical tag may carry an older snapshot
+of the CI workflow that lacks this pattern — add it (and a
+`workflow_dispatch: {}` fallback) as part of setting up the branch.
+
+The pattern trigger only fires once a branch's *own* committed copy of the
+workflow already includes it, so the very first PR into a brand-new branch
+(before that trigger exists there) won't auto-fire. Verify it manually
+instead, dispatching against the PR's source branch directly (this works
+even if the target branch doesn't have the trigger yet):
+```bash
+gh workflow run <workflow-file> --ref <branch-name>
+```
+
 ### One-time setup
 
 > **PyPI Trusted Publisher:** must be configured before the first release.

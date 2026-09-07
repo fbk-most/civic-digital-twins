@@ -569,6 +569,67 @@ def test_user_defined_function():
         executor.evaluate_nodes(state2, *linearize.forest(g))
 
 
+def test_user_defined_function_rejects_graph_node_result():
+    """A function returning a graph.Node must raise instead of silently going symbolic.
+
+    Regression test for https://github.com/fbk-most/civic-digital-twins/issues/222:
+    a closure that accidentally captures Index/GenericIndex objects instead of
+    plain floats causes arithmetic inside the user function to build graph nodes
+    (via GenericIndex/Node dunder methods) rather than computing a value. Without
+    this check, the resulting Node is silently stored as the node's "value" and
+    every downstream numpy op keeps building graph instead of raising.
+    """
+    from civic_digital_twins.dt_model.model.index import Index
+
+    # Mistake: list_w should be plain floats (e.g. [0.5, 0.5]), not Index objects.
+    zone_props = [Index("w0", 0.5), Index("w1", 0.5)]
+
+    def ts_w_sum_list(*args, list_w):
+        return sum(w * a for w, a in zip(list_w, args))
+
+    functor = executor.NumpyBackend.adapt(
+        lambda *args: ts_w_sum_list(*args, list_w=zone_props)  # type: ignore[arg-type]
+    )
+
+    x0 = graph.placeholder("x0")
+    x1 = graph.placeholder("x1")
+    call = graph.function_call("f", x0, x1)
+
+    state = executor.State(
+        values={x0: np.asarray(10.0), x1: np.asarray(20.0)},
+        functions={"f": functor},
+    )
+    with pytest.raises(executor.InvalidFunctionResult):
+        executor.evaluate_nodes(state, *linearize.forest(call))
+
+
+def test_user_defined_function_rejects_non_numeric_result():
+    """A function returning a non-numeric value (e.g. a list) must raise."""
+    a = graph.placeholder("a")
+    call = graph.function_call("f", a)
+    functor = executor.NumpyBackend.adapt(lambda a: [a, a])  # type: ignore[arg-type]  # not numeric
+
+    state = executor.State(values={a: np.asarray(1.0)}, functions={"f": functor})
+    with pytest.raises(executor.InvalidFunctionResult):
+        executor.evaluate_nodes(state, *linearize.forest(call))
+
+
+def test_user_defined_function_accepts_numpy_scalar_result():
+    """A function returning a bare numpy scalar (not np.ndarray) must still work.
+
+    np.sum() without keepdims returns np.float64, which is not an np.ndarray
+    instance; the InvalidFunctionResult check must not reject this common,
+    legitimate case.
+    """
+    a = graph.placeholder("a")
+    call = graph.function_call("f", a)
+    functor = executor.NumpyBackend.adapt(lambda a: np.sum(a))
+
+    state = executor.State(values={a: np.asarray([1.0, 2.0, 3.0])}, functions={"f": functor})
+    executor.evaluate_nodes(state, *linearize.forest(call))
+    assert state.get_node_value(call) == np.asarray(6.0)
+
+
 def test_state_set_node_value():
     """Ensure we can mutate the state and set node values."""
     state = executor.State(values={})

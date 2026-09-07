@@ -826,6 +826,11 @@ class TimeseriesIndex(Index):
       be supplied via Scenario or ``parameters=`` before evaluation.
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
       Node is the formula node directly; value is computed by the engine.
+      Another :class:`TimeseriesIndex` is also accepted here and coerced to
+      its underlying ``.node`` (reusing the formula). A sibling type
+      carrying a different shape — :class:`Index` — is deliberately *not*
+      accepted; mixing shapes this way is almost always a mistake, not a
+      formula reuse.
     """
 
     FIXED_AXES: ClassVar[tuple[Axis, ...]] = (TIME_AXIS,)
@@ -845,7 +850,7 @@ class TimeseriesIndex(Index):
     def __init__(
         self,
         name: str,
-        value: np.ndarray | graph.Node | None = None,
+        value: "np.ndarray | graph.Node | GenericIndex | None" = None,
     ) -> None:
         super().__init__(name, value, axes=self.FIXED_AXES)
 
