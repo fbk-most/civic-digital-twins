@@ -142,16 +142,15 @@ class TestDomainTypeLattice:
         """SetType is a parameterless marker."""
         assert repr(SetType()) == "SetType()"
 
-    def test_sequence_type_defaults(self):
-        """SequenceType defaults to non-periodic."""
-        assert SequenceType().periodic is False
-        assert SequenceType(periodic=True).periodic is True
+    def test_sequence_type_is_a_marker(self):
+        """SequenceType carries no fields: shift vs. roll is always an explicit call-site choice."""
+        assert repr(SequenceType()) == "SequenceType()"
 
     def test_time_type_is_a_sequence_type(self):
         """TimeType extends SequenceType (lattice: SequenceType subset of TimeType)."""
-        t = TimeType(periodic=True)
+        t = TimeType()
         assert isinstance(t, SequenceType)
-        assert t.periodic is True
+        assert repr(t) == "TimeType()"
 
     def test_space_type_is_a_sequence_type(self):
         """SpaceType extends SequenceType and carries a metric + boundary."""

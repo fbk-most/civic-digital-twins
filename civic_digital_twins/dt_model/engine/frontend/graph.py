@@ -107,19 +107,24 @@ type checker will produce type errors for mismatched operations.
 If at least a node is untyped, then operations are always
 possible without getting static type errors.
 
-For example:
+`T` names a *quantity kind* — what the node's values mean (a vehicle
+count, a currency amount, a probability) — not its array shape. A
+node's axes (time, space, ensemble, ...) are tracked separately, at
+runtime, by the axis-labeling machinery; two nodes can share a `T`
+while carrying different axes, or carry the same axes while
+representing unrelated quantities. For example:
 
-    class TimeDimension:
-        '''Represents the time dimension.'''
+    class VehicleCount:
+        '''Represents a count of vehicles.'''
 
-    class EnsembleDimension:
-        '''Represents the ensemble dimension.'''
+    class Currency:
+        '''Represents a monetary amount.'''
 
-    a = graph.constant[TimeDimension](14)
-    b = graph.constant[EnsembleDimension](117)
+    a = graph.constant[VehicleCount](14)
+    b = graph.constant[Currency](117)
     c = a + b  # This line produces a static type error due to incompatible types
 
-    d = graph.constant[TimeDimension](14)
+    d = graph.constant[VehicleCount](14)
     e = graph.constant(117)
     f = d + e  # No static type error: untyped nodes default to Unknown
 
@@ -1224,6 +1229,167 @@ class project_using_quantile[T](ProjectionOp[T]):
         return (
             f"n{self.id} = graph.project_using_quantile("
             f"node=n{self.node.id}, q={self.q}, axis={self.axis!r}, name='{self.name}')"
+        )
+
+
+class AxisOp[T](Node[T]):
+    """Base class for shape-preserving per-axis operations (shift, roll, cumulative, ...).
+
+    Unlike :class:`ProjectionOp`, the named axis is *not* removed from
+    ``output_axes`` — these operations rearrange or accumulate values along
+    an axis without reducing it away.
+
+    Args:
+        node: Input tensor.
+        axis: The semantic :class:`~civic_digital_twins.dt_model.axes.Axis`
+            along which to operate (e.g. ``Axis("time", DOMAIN)``).
+        name: Optional node name for debugging.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, name: str = "") -> None:
+        super().__init__(name)
+        self.node = node
+        self.axis = axis
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Propagate the operand's axes unchanged."""
+        return self.node.output_axes
+
+
+class shift[T](AxisOp[T]):
+    """Shifts tensor elements along a domain axis, filling exposed positions.
+
+    Positive *periods* shifts values towards higher indices (each value
+    moves *forward*); negative *periods* shifts towards lower indices.
+    Positions exposed at the boundary are set to *fill_value* — this is the
+    fill (non-circular) counterpart to :class:`roll`.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to shift.
+        periods: Number of positions to shift by (may be negative).
+        fill_value: Value used for positions exposed at the boundary.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, periods: int = 1, fill_value: float = 0.0, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.periods = periods
+        self.fill_value = fill_value
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.shift(node=n{self.node.id}, axis={self.axis!r}, "
+            f"periods={self.periods}, fill_value={self.fill_value!r}, name='{self.name}')"
+        )
+
+
+class roll[T](AxisOp[T]):
+    """Circularly shifts tensor elements along a domain axis.
+
+    Values shifted past the boundary wrap around to the other end — this is
+    the circular counterpart to :class:`shift`. For example, this is the
+    convention used by a periodic recurrence such as a circular
+    ``np.roll``-based solver.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to roll.
+        periods: Number of positions to roll by (may be negative).
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, periods: int = 1, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.periods = periods
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.roll(node=n{self.node.id}, axis={self.axis!r}, "
+            f"periods={self.periods}, name='{self.name}')"
+        )
+
+
+class cumulative[T](AxisOp[T]):
+    """Computes the cumulative (running) sum of tensor elements along a domain axis.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to accumulate.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.cumulative(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
+
+
+class gradient[T](AxisOp[T]):
+    """Computes the first partial derivative along a domain axis (central differences).
+
+    *spacing* is a plain value carried on the node; this class never
+    inspects the axis's own metadata (e.g. a ``SpaceType``) to derive it.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to differentiate.
+        spacing: Grid spacing between samples along *axis*.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, spacing: float = 1.0, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.spacing = spacing
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.gradient(node=n{self.node.id}, axis={self.axis!r}, "
+            f"spacing={self.spacing!r}, name='{self.name}')"
+        )
+
+
+class laplacian[T](Node[T]):
+    """Computes the sum of second partial derivatives over one or more domain axes.
+
+    Unlike :class:`AxisOp`, this operates over *several* named axes at once
+    (the isotropic Laplacian a diffusion operator needs), so it does not
+    subclass it — but like ``AxisOp`` it is shape-preserving: no axis is
+    removed from ``output_axes``. *spacings* and *boundaries* are plain
+    values carried on the node, positionally matched to *axes*; this class
+    never inspects the axes' own metadata to derive them.
+
+    Args:
+        node: Input tensor.
+        axes: Semantic axes to sum the second derivative over.
+        spacings: Grid spacing for each axis in *axes*, same length and order.
+        boundaries: Boundary-condition policy for each axis in *axes*, same
+            length and order.
+    """
+
+    def __init__(
+        self,
+        node: Node[T],
+        axes: tuple[Axis, ...],
+        spacings: tuple[float, ...],
+        boundaries: tuple[str, ...],
+        name: str = "",
+    ) -> None:
+        super().__init__(name)
+        self.node = node
+        self.axes = axes
+        self.spacings = spacings
+        self.boundaries = boundaries
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Propagate the operand's axes unchanged."""
+        return self.node.output_axes
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.laplacian(node=n{self.node.id}, axes={self.axes!r}, "
+            f"spacings={self.spacings!r}, boundaries={self.boundaries!r}, name='{self.name}')"
         )
 
 

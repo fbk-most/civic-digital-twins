@@ -202,6 +202,40 @@ def test_axes_operations():
     assert find_node_idx(plan, reduced) < find_node_idx(plan, result)
 
 
+def test_axis_op_operations():
+    """Test linearization with shape-preserving axis operations (shift/roll/cumulative)."""
+    x = graph.placeholder("x")
+    time_axis = Axis("time", DOMAIN)
+
+    ts = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,))
+    shifted = graph.shift(ts, time_axis, periods=1)
+    result = graph.add(x, shifted)
+
+    plan = linearize.forest(result)
+
+    # Check node ordering: ts before shifted, shifted before result
+    assert find_node_idx(plan, ts) < find_node_idx(plan, shifted)
+    assert find_node_idx(plan, x) < find_node_idx(plan, result)
+    assert find_node_idx(plan, shifted) < find_node_idx(plan, result)
+
+
+def test_laplacian_operations():
+    """Test linearization with a multi-axis laplacian node."""
+    x = graph.placeholder("x")
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+
+    field = graph.array_constant([[1.0, 2.0], [3.0, 4.0]], axes=(x_axis, y_axis))
+    lap = graph.laplacian(field, (x_axis, y_axis), (1.0, 1.0), ("reflect", "reflect"))
+    result = graph.add(x, lap)
+
+    plan = linearize.forest(result)
+
+    assert find_node_idx(plan, field) < find_node_idx(plan, lap)
+    assert find_node_idx(plan, x) < find_node_idx(plan, result)
+    assert find_node_idx(plan, lap) < find_node_idx(plan, result)
+
+
 def test_multiple_independent_graphs():
     """Test linearization of multiple independent computation graphs."""
     a = graph.placeholder("a")

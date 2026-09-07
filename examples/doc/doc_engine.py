@@ -14,12 +14,8 @@ from civic_digital_twins.dt_model.engine.numpybackend import executor
 # ---------------------------------------------------------------------------
 
 
-class TimeDimension:
-    """Represents nodes in the time dimension."""
-
-
-class EnsembleDimension:
-    """Represents nodes in the ensemble dimension."""
+class VehicleCount:
+    """Represents a count of vehicles."""
 
 
 class Apple:
@@ -32,8 +28,8 @@ class Orange:
 
 def _demo_end_to_end() -> None:
     """dd-cdt-engine.md — End-to-End Example (block 00)."""
-    a = graph.placeholder[TimeDimension]("a")
-    b = graph.placeholder[TimeDimension]("b")
+    a = graph.placeholder[VehicleCount]("a")
+    b = graph.placeholder[VehicleCount]("b")
     k0 = graph.constant(3, name="k0")
     c = a + b * k0
     c1 = graph.function_call("reduce", c)

@@ -109,9 +109,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ConstTimeseriesIndex` instance already carries `(TIME_AXIS,)` by
   construction, this can only newly reject a value that was already a latent
   contract violation invisible to anything but Pyright.
+- **Domain-typed operator vocabulary.** `GenericIndex` gains `shift`,
+  `roll`, `diff`, and `cumulative` (gated by `SequenceType`, the type any
+  untyped DOMAIN axis behaves as) and `gradient`/`laplacian` (gated by
+  `SpaceType`, checked via `isinstance(axis.type, SpaceType)`, since axis
+  capability is a genuine type lattice). `shift`/`roll` are two explicit
+  methods reading no axis metadata — matching xarray's own `shift` (fill, a
+  plain `fill_value`) vs. `roll` (circular) split. `diff` composes as
+  `self - self.shift(...)`, so it needs no new graph node. `gradient`
+  (`np.gradient`, central differences) and `laplacian` (a padded
+  finite-difference stencil honoring each axis's `SpaceType.boundary`,
+  summed isotropically over one or more axes) read their axis's
+  `spacing`/`boundary` once at graph-construction time and bake
+  the resolved values onto the new `graph.shift`/`graph.roll`/
+  `graph.cumulative`/`graph.gradient`/`graph.laplacian` nodes — axis `type`
+  is not reliably available at evaluation time, since `DomainAxis` equality
+  and hashing deliberately exclude it. `numpy_ast`'s debug codegen renders
+  `roll`/`cumulative`/`gradient` as direct `np.*` calls and `shift`/
+  `laplacian` (which have no single-call NumPy equivalent) as calls to a
+  small local helper, mirroring how it already renders user-defined
+  functions as bare-name calls.
 
 ### Changed
 
+- `Node[T]`'s documentation (`dd-cdt-engine.md`, `graph.py`'s module
+  docstring, `doc_engine.py`) no longer frames `T` around array dimensions
+  (`TimeDimension`/`EnsembleDimension`) — that reads as a second, competing
+  shape-typing mechanism now that axes carry shape. `T` names a *quantity
+  kind* (a vehicle count, a currency amount); a node's axes are unrelated
+  and tracked separately, at runtime, by the axis-labeling machinery.
 - **Removed `graph.timeseries_constant` and `graph.timeseries_placeholder`.**
   They were reduced to thin factory functions building an `array_constant` /
   `array_placeholder` with `axes=(TIME_AXIS,)`, and are now gone entirely:

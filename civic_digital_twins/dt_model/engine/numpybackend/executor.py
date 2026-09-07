@@ -28,7 +28,7 @@ import numpy as np
 from ...axes import DOMAIN, Axis, domain_axis_position
 from .. import compileflags
 from ..frontend import graph
-from . import numpy_ast
+from . import kernels, numpy_ast
 
 # Type aliases for operation function signatures
 type _BinaryOpFunc = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -723,6 +723,52 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
         raise UnsupportedOperation(f"executor: unsupported projection operation: {type(node)}")
 
 
+def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate an AxisOp node, operating along the node's named axis.
+
+    Resolves the axis to a numpy dimension exactly as :func:`_eval_projection_op`
+    does, but the operation is shape-preserving rather than reducing.
+    """
+    node = cast(graph.AxisOp, node)
+    try:
+        position = domain_axis_position(state.domain_axes, node.axis)
+    except ValueError:
+        raise UnsupportedOperation(
+            f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
+            f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
+        ) from None
+    operand = state.get_node_value(node.node)
+    if isinstance(node, graph.shift):
+        return kernels.shift(operand, node.periods, axis=position, fill_value=node.fill_value)
+    if isinstance(node, graph.roll):
+        return np.roll(operand, node.periods, axis=position)
+    if isinstance(node, graph.cumulative):
+        return np.cumsum(operand, axis=position)
+    if isinstance(node, graph.gradient):
+        return np.gradient(operand, node.spacing, axis=position)
+    raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
+
+
+def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a laplacian node, summing second derivatives along the node's named axes.
+
+    Each axis is resolved to a numpy dimension exactly as :func:`_eval_projection_op`
+    does; the operation is shape-preserving, like :func:`_eval_axis_op`.
+    """
+    node = cast(graph.laplacian, node)
+    positions: list[int] = []
+    for axis in node.axes:
+        try:
+            positions.append(domain_axis_position(state.domain_axes, axis))
+        except ValueError:
+            raise UnsupportedOperation(
+                f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
+                f"{[ax.name for ax in state.domain_axes]}; got {axis!r}"
+            ) from None
+    operand = state.get_node_value(node.node)
+    return kernels.laplacian(operand, tuple(positions), node.spacings, node.boundaries)
+
+
 def _eval_function(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.function_call, node)
     args: list[np.ndarray] = []
@@ -763,6 +809,8 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.MultiClauseOp, _eval_multi_clause_where_op),
     (graph.variant_selector, _eval_variant_selector_noop),
     (graph.ProjectionOp, _eval_projection_op),
+    (graph.AxisOp, _eval_axis_op),
+    (graph.laplacian, _eval_laplacian),
     (graph.function_call, _eval_function),
 )
 

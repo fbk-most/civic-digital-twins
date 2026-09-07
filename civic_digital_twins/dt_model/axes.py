@@ -132,13 +132,14 @@ class DomainType(Protocol):
     Reductions and element-wise operations are universal for any domain
     axis. Higher-level operations are gated by the concrete type, forming a
     lattice: ``SetType`` (reductions + selection only) is extended by
-    ``SequenceType`` (adds shift/lag/cumulative/diff for ordered 1-D
-    domains), which is in turn extended by ``TimeType`` (+ calendar /
-    periodicity) and ``SpaceType`` (+ a metric for gradient/laplacian).
+    ``SequenceType`` (adds ``shift``/``roll``/``diff``/``cumulative`` for
+    ordered 1-D domains, gated by ``isinstance(axis.type, SequenceType)``),
+    which is in turn extended by ``TimeType`` (calendar semantics — mostly
+    deferred, currently a plain marker) and ``SpaceType`` (+ a metric and
+    boundary condition, gating ``gradient``/``laplacian``).
 
-    This is a metadata-only protocol in this step: the gated operator
-    vocabulary itself is introduced in a later step. An untyped
-    (``type=None``) :class:`DomainAxis` behaves as :class:`SequenceType`.
+    An untyped (``type=None``) :class:`DomainAxis` behaves as
+    :class:`SequenceType`.
     """
 
 
@@ -153,37 +154,30 @@ class SetType:
 
 
 class SequenceType:
-    """Ordered, 1-D domain: adds shift/lag/cumulative/diff.
+    """Ordered, 1-D domain: gates ``shift``/``roll``/``diff``/``cumulative``.
 
-    Parameters
-    ----------
-    periodic:
-        Whether the sequence wraps around (circular shift/roll) rather
-        than being fill-padded at the boundary.
-    """
-
-    __slots__ = ("periodic",)
-
-    def __init__(self, periodic: bool = False) -> None:
-        self.periodic = periodic
-
-    def __repr__(self) -> str:
-        """Return a round-trippable string representation."""
-        return f"SequenceType(periodic={self.periodic!r})"
-
-
-class TimeType(SequenceType):
-    """:class:`SequenceType` specialized for calendar / periodic time.
-
-    ``periodic=True`` is the circular-shift convention used by recurrences
-    such as a periodic ``np.roll``-based solver.
+    A plain marker, carrying no fields.
     """
 
     __slots__ = ()
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
-        return f"TimeType(periodic={self.periodic!r})"
+        return "SequenceType()"
+
+
+class TimeType(SequenceType):
+    """:class:`SequenceType` specialized for calendar time.
+
+    Currently a plain marker, like :class:`SequenceType`: no calendar-specific
+    metadata (e.g. a sampling interval) is represented yet.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return "TimeType()"
 
 
 class SpaceType(SequenceType):
@@ -208,7 +202,6 @@ class SpaceType(SequenceType):
         spacing: float = 1.0,
         boundary: Literal["reflect", "constant", "wrap", "nearest"] = "reflect",
     ) -> None:
-        super().__init__(periodic=False)
         self.spacing = spacing
         self.boundary = boundary
 

@@ -186,6 +186,24 @@ def test_projection_ops() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Axis ops (shape-preserving)
+# ---------------------------------------------------------------------------
+
+
+def test_axis_ops() -> None:
+    """Round-trip test for all AxisOp subclasses."""
+    a = graph.constant(7, name="a")
+    ax = Axis("time", DOMAIN)
+    space_ax = Axis("x", DOMAIN)
+    deps = _ctx(a)
+    _assert_roundtrip(graph.shift(a, ax, periods=2, fill_value=1.5), deps)
+    _assert_roundtrip(graph.roll(a, ax, periods=2), deps)
+    _assert_roundtrip(graph.cumulative(a, ax), deps)
+    _assert_roundtrip(graph.gradient(a, space_ax, spacing=0.5), deps)
+    _assert_roundtrip(graph.laplacian(a, (space_ax,), (0.5,), ("reflect",)), deps)
+
+
+# ---------------------------------------------------------------------------
 # function_call
 # ---------------------------------------------------------------------------
 
@@ -251,6 +269,11 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.project_using_all,
         graph.project_using_count_nonzero,
         graph.project_using_quantile,
+        graph.shift,
+        graph.roll,
+        graph.cumulative,
+        graph.gradient,
+        graph.laplacian,
         graph.function_call,
     }
 )

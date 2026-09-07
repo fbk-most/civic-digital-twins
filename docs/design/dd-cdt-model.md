@@ -93,11 +93,27 @@ GenericIndex  (ABC)
   comparison operators on a `GenericIndex` delegate here, returning a
   new `graph.Node`.
 - **Axis reduction methods** — convenience wrappers for axis reduction operators:
-  `.sum(axis=-1)`, `.mean(axis=-1)`, `.min(axis=-1)`, `.max(axis=-1)`,
-  `.std(axis=-1)`, `.var(axis=-1)`, `.median(axis=-1)`, `.prod(axis=-1)`,
-  `.any(axis=-1)`, `.all(axis=-1)`, `.count_nonzero(axis=-1)`,
-  and `.quantile(q, axis=-1)`. These delegate to the corresponding
-  `graph.project_using_*` operators.
+  `.sum(axis=...)`, `.mean(axis=...)`, `.min(axis=...)`, `.max(axis=...)`,
+  `.std(axis=...)`, `.var(axis=...)`, `.median(axis=...)`, `.prod(axis=...)`,
+  `.any(axis=...)`, `.all(axis=...)`, `.count_nonzero(axis=...)`,
+  and `.quantile(q, axis=...)`. These delegate to the corresponding
+  `graph.project_using_*` operators. `axis` defaults to the index's unique
+  DOMAIN axis; an index carrying several requires it explicitly.
+- **Domain-typed per-axis operators**, gated by the axis's `DomainType`
+  (§ [TimeseriesIndex](#timeseriesindex) below covers `TIME_AXIS`'s
+  `TimeType`; see `axes.py` for the full lattice):
+  - Any `SequenceType`-or-untyped DOMAIN axis (i.e. any axis, since untyped
+    behaves as `SequenceType`) supports `.shift(periods=1, *, axis=..., fill_value=0.0)`
+    (fill-padded), `.roll(periods=1, *, axis=...)` (circular — two distinct
+    methods reading no axis metadata, matching xarray's own `shift`/`roll`
+    split), `.diff(periods=1, *, axis=..., fill_value=0.0)`
+    (`self - self.shift(...)`), and `.cumulative(*, axis=...)` (running sum).
+  - A `SpaceType` DOMAIN axis additionally supports `.gradient(*, axis=...)`
+    (first derivative, central differences, reading the axis's `spacing`)
+    and `.laplacian(*, axes=...)` (sum of second derivatives over one or
+    more `SpaceType` axes — the isotropic operator a diffusion process
+    needs — reading each axis's `spacing` and `boundary`). Calling either on
+    a non-`SpaceType` axis raises `ValueError`.
 - **Identity-based `__hash__`** — because `__eq__` is overridden to
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as

@@ -479,6 +479,29 @@ def test_axis_operations():
         executor.evaluate_nodes(unsupported_state, *unsupported_plan)
 
 
+def test_axis_op_unsupported_operation():
+    """Test error handling for an unsupported AxisOp subclass.
+
+    shift/roll/cumulative are comprehensively tested in
+    tests/dt_model/engine/numpybackend/test_axis_shape_preserving_operators.py
+    """
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    x = graph.placeholder("x")
+    x_val = np.array([1.0, 2.0, 3.0])
+    time_axis = Axis("time", DOMAIN)
+
+    class UnsupportedAxisOp(graph.AxisOp):
+        pass
+
+    unsupported_node = UnsupportedAxisOp(x, axis=time_axis)
+    unsupported_plan = linearize.forest(unsupported_node)
+    unsupported_state = executor.State({x: x_val}, domain_axes=(time_axis,))
+
+    with pytest.raises(executor.UnsupportedOperation, match="unsupported axis operation"):
+        executor.evaluate_nodes(unsupported_state, *unsupported_plan)
+
+
 def test_state_post_init_tracing(capsys):
     """Test that State.__post_init__ traces initial values when NODE_FLAG_TRACE is set."""
     # Create nodes

@@ -14,7 +14,7 @@ from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
 
-from ..axes import DOMAIN, TIME_AXIS, Axis, filter_by_role
+from ..axes import DOMAIN, TIME_AXIS, Axis, SpaceType, filter_by_role
 from ..engine.frontend import graph
 
 
@@ -113,6 +113,24 @@ def _warn_if_axes_surprising(owner: str, node: graph.Node) -> None:
             AxesInferenceWarning,
             stacklevel=3,
         )
+
+
+def _require_space_type(axis: Axis) -> SpaceType:
+    """Return *axis*'s :class:`~..axes.SpaceType`, or raise if it does not carry one.
+
+    Gates ``gradient``/``laplacian`` to axes that actually carry the metric
+    (``spacing``) and boundary policy those operators need. ``isinstance``
+    against the ``SetType``/``SequenceType``/``SpaceType`` lattice is the
+    right check here: an axis's *capability* (what operator vocabulary it
+    unlocks) is exactly what that lattice models.
+    """
+    axis_type = getattr(axis, "type", None)
+    if not isinstance(axis_type, SpaceType):
+        raise ValueError(
+            f"gradient/laplacian require a SpaceType axis; {axis!r} does not carry one. "
+            f"Construct it as DomainAxis(name, type=SpaceType(spacing=...))."
+        )
+    return axis_type
 
 
 @runtime_checkable
@@ -286,25 +304,30 @@ class GenericIndex(ABC):
         return self.node >= self._node_of(other)
 
     # ------------------------------------------------------------------
-    # Reduction operators
+    # Reduction and per-axis operators
     # ------------------------------------------------------------------
 
-    def _resolve_reduction_axis(self, axis: Axis | None) -> Axis:
-        """Resolve the axis to reduce, defaulting to the index's unique DOMAIN axis.
+    def _resolve_domain_axis(self, axis: Axis | None) -> Axis:
+        """Resolve the axis an operation applies to, defaulting to the index's unique DOMAIN axis.
+
+        Shared by every axis-taking operator on this class — reductions
+        (``sum``, ``mean``, ...) and per-axis operators (``shift``, ``roll``,
+        ``diff``, ``cumulative``) alike.
 
         When *axis* is given it is used verbatim. When it is ``None``:
 
         * exactly one DOMAIN axis → that axis (a timeseries index has exactly
-          one, time, so its reductions keep defaulting to time as before);
+          one, time, so operations keep defaulting to time as before);
         * any other number → there is no unambiguous default, so an explicit
           ``axis=`` is required and a ``ValueError`` is raised.
 
         An index carrying *no* DOMAIN axis is included in that second case:
-        there is no dimension to reduce, so nothing can be inferred. It used to
-        fall back to the time axis, reproducing a "reduce the last dimension"
-        convention from when every array was a timeseries. The executor now
-        resolves a reduction to the position its axis *names*, so that fallback
-        would ask it to reduce a time axis the evaluation does not carry.
+        there is no dimension to operate over, so nothing can be inferred. It
+        used to fall back to the time axis, reproducing a "use the last
+        dimension" convention from when every array was a timeseries. The
+        executor now resolves an axis to the position its name identifies, so
+        that fallback would ask it to operate on a time axis the evaluation
+        does not carry.
         """
         if axis is not None:
             return axis
@@ -313,14 +336,14 @@ class GenericIndex(ABC):
             return domain_axes[0]
         if not domain_axes:
             raise ValueError(
-                f"{type(self).__name__} reduction needs an explicit axis=: this index carries no "
-                f"DOMAIN axis, so there is no dimension to reduce over. Declare the index's shape "
-                f"with axes=, or pass the axis to reduce explicitly."
+                f"{type(self).__name__} needs an explicit axis=: this index carries no "
+                f"DOMAIN axis, so there is no dimension to operate over. Declare the index's shape "
+                f"with axes=, or pass the axis explicitly."
             )
         raise ValueError(
-            f"{type(self).__name__} reduction needs an explicit axis=: this index carries "
+            f"{type(self).__name__} needs an explicit axis=: this index carries "
             f"{len(domain_axes)} DOMAIN axes {[ax.name for ax in domain_axes]}, "
-            f"so there is no unique default axis to reduce over."
+            f"so there is no unique default axis to operate over."
         )
 
     def sum(self, axis: Axis | None = None) -> graph.Node:
@@ -336,7 +359,7 @@ class GenericIndex(ABC):
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
-        return graph.project_using_sum(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_sum(self.node, self._resolve_domain_axis(axis))
 
     def mean(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
@@ -345,7 +368,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_mean(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_mean(self.node, self._resolve_domain_axis(axis))
 
     def min(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the minimum of this index over the given axis.
@@ -354,7 +377,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_min(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_min(self.node, self._resolve_domain_axis(axis))
 
     def max(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the maximum of this index over the given axis.
@@ -363,7 +386,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_max(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_max(self.node, self._resolve_domain_axis(axis))
 
     def std(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the standard deviation of this index over the given axis.
@@ -372,7 +395,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_std(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_std(self.node, self._resolve_domain_axis(axis))
 
     def var(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the variance of this index over the given axis.
@@ -381,7 +404,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_var(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_var(self.node, self._resolve_domain_axis(axis))
 
     def median(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the median of this index over the given axis.
@@ -390,7 +413,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_median(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_median(self.node, self._resolve_domain_axis(axis))
 
     def prod(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the product of this index over the given axis.
@@ -399,7 +422,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_prod(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_prod(self.node, self._resolve_domain_axis(axis))
 
     def any(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if any elements of this index are True over the given axis.
@@ -408,7 +431,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_any(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_any(self.node, self._resolve_domain_axis(axis))
 
     def all(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if all elements of this index are True over the given axis.
@@ -417,7 +440,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_all(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_all(self.node, self._resolve_domain_axis(axis))
 
     def count_nonzero(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that counts non-zero elements of this index over the given axis.
@@ -426,7 +449,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_count_nonzero(self.node, self._resolve_reduction_axis(axis))
+        return graph.project_using_count_nonzero(self.node, self._resolve_domain_axis(axis))
 
     def quantile(self, q: float, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the quantile of this index over the given axis.
@@ -438,7 +461,121 @@ class GenericIndex(ABC):
                 to the index's sole DOMAIN axis (time, for a timeseries
                 index); required when the index carries several.
         """
-        return graph.project_using_quantile(self.node, self._resolve_reduction_axis(axis), q)
+        return graph.project_using_quantile(self.node, self._resolve_domain_axis(axis), q)
+
+    def shift(self, periods: int = 1, *, axis: Axis | None = None, fill_value: float = 0.0) -> graph.Node:
+        """Return a graph node shifting this index along the given axis, filling exposed positions.
+
+        Positive *periods* moves values towards higher indices; negative
+        moves towards lower indices. Positions exposed at the boundary are
+        set to *fill_value*. This is the fill (non-circular) counterpart to
+        :meth:`roll` — mirroring pandas' and xarray's ``shift``, which never
+        wraps; use :meth:`roll` explicitly for circular behavior.
+
+        Args:
+            periods: Number of positions to shift by (may be negative).
+            axis: Semantic axis along which to shift. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+            fill_value: Value used for positions exposed at the boundary.
+        """
+        return graph.shift(self.node, self._resolve_domain_axis(axis), periods, fill_value)
+
+    def roll(self, periods: int = 1, *, axis: Axis | None = None) -> graph.Node:
+        """Return a graph node circularly shifting this index along the given axis.
+
+        Values shifted past the boundary wrap around to the other end. This
+        is the circular counterpart to :meth:`shift` — e.g. the convention
+        used by a periodic recurrence such as a circular ``np.roll``-based
+        solver.
+
+        Args:
+            periods: Number of positions to roll by (may be negative).
+            axis: Semantic axis along which to roll. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+        """
+        return graph.roll(self.node, self._resolve_domain_axis(axis), periods)
+
+    def diff(self, periods: int = 1, *, axis: Axis | None = None, fill_value: float = 0.0) -> graph.Node:
+        """Return a graph node computing the difference between this index and its shifted self.
+
+        Equivalent to ``self - self.shift(periods, axis=axis, fill_value=fill_value)``
+        (pandas' and xarray's ``diff``), so the position exposed by the shift
+        carries ``value - fill_value`` rather than an undefined result.
+
+        Args:
+            periods: Number of positions to look back (may be negative).
+            axis: Semantic axis along which to difference. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+            fill_value: Value assumed for positions before the axis start
+                (or after its end, for negative *periods*).
+        """
+        resolved = self._resolve_domain_axis(axis)
+        return graph.subtract(self.node, graph.shift(self.node, resolved, periods, fill_value))
+
+    def cumulative(self, *, axis: Axis | None = None) -> graph.Node:
+        """Return a graph node computing the cumulative (running) sum of this index along the given axis.
+
+        Args:
+            axis: Semantic axis along which to accumulate. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+        """
+        return graph.cumulative(self.node, self._resolve_domain_axis(axis))
+
+    def gradient(self, *, axis: Axis | None = None) -> graph.Node:
+        """Return a graph node computing the first partial derivative of this index along the given axis.
+
+        The axis must carry :class:`~..axes.SpaceType` metadata (spacing) —
+        see :class:`~..axes.DomainAxis`. Computed via central differences,
+        one-sided at the array boundary (no boundary condition is applied:
+        unlike :meth:`laplacian`, a first derivative needs no value outside
+        the array to evaluate at the edge).
+
+        Args:
+            axis: Semantic ``SpaceType`` axis along which to differentiate.
+                Defaults to the index's sole DOMAIN axis; required when the
+                index carries several.
+        """
+        resolved = self._resolve_domain_axis(axis)
+        space_type = _require_space_type(resolved)
+        return graph.gradient(self.node, resolved, space_type.spacing)
+
+    def laplacian(self, *, axes: tuple[Axis, ...] | None = None) -> graph.Node:
+        """Return a graph node computing the Laplacian (sum of second partial derivatives) of this index.
+
+        Each axis must carry :class:`~..axes.SpaceType` metadata (spacing and
+        boundary condition) — see :class:`~..axes.DomainAxis`. This is the
+        isotropic operator a diffusion process needs: for a 2-D grid it is
+        ``d2/dx2 + d2/dy2``.
+
+        Args:
+            axes: Semantic ``SpaceType`` axes to sum the second derivative
+                over. Defaults to every ``SpaceType`` DOMAIN axis this index
+                carries; raises if there are none and *axes* is not given.
+        """
+        resolved_axes = axes if axes is not None else self._resolve_space_axes()
+        space_types = [_require_space_type(ax) for ax in resolved_axes]
+        spacings = tuple(st.spacing for st in space_types)
+        boundaries = tuple(st.boundary for st in space_types)
+        return graph.laplacian(self.node, resolved_axes, spacings, boundaries)
+
+    def _resolve_space_axes(self) -> tuple[Axis, ...]:
+        """Return every ``SpaceType`` DOMAIN axis this index carries, for :meth:`laplacian`'s default.
+
+        Raises ``ValueError`` if there is none — mirroring
+        :meth:`_resolve_domain_axis`'s "no unambiguous default" behavior.
+        """
+        domain_axes = filter_by_role(self.node.output_axes, DOMAIN)
+        space_axes = tuple(ax for ax in domain_axes if isinstance(getattr(ax, "type", None), SpaceType))
+        if not space_axes:
+            raise ValueError(
+                f"{type(self).__name__}.laplacian needs an explicit axes=: this index carries no "
+                f"SpaceType DOMAIN axis to default to."
+            )
+        return space_axes
 
 
 class Index(GenericIndex):

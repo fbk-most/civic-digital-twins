@@ -80,18 +80,15 @@ from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
-# Define types
-class TimeDimension:
-    """Represents nodes in the time dimension."""
-
-
-class EnsembleDimension:
-    """Represents nodes in the ensemble dimension."""
+# Define a quantity kind, so a type checker rejects accidentally
+# mixing this node's values with an unrelated quantity
+class VehicleCount:
+    """Represents a count of vehicles."""
 
 
 # Define a type-aware DAG
-a = graph.placeholder[TimeDimension]("a")
-b = graph.placeholder[TimeDimension]("b")
+a = graph.placeholder[VehicleCount]("a")
+b = graph.placeholder[VehicleCount]("b")
 k0 = graph.constant(3, name="k0")
 c = a + b * k0
 c1 = graph.function_call("reduce", c)
@@ -265,14 +262,16 @@ d = c * b + scale
 ```
 
 In practice, assigning distinct types to distinct nodes is
-beneficial to avoid programming mistakes, especially with
-shapes. For example, a real model could have the ensemble
-dimension with shape `(1,)` and the time dimension with
-shape `(255,)`. To perform computations in the time-ensemble
-dimension, one needs to expand vectors into the `(255,1)`
-space. By using types correctly, we avoid mixing dimensions
-and reduce the risk of combining nodes with incorrect
-shapes by mistake.
+beneficial to avoid programming mistakes, especially when a
+model mixes several *kinds* of quantity — population counts,
+currency, probabilities, temperatures. `T` names the quantity
+a node represents, so a static type checker flags an accidental
+`vehicle_count + euros`. It says nothing about array shape: a
+node's actual axes (time, space, ensemble, ...) are tracked
+separately, at runtime, by the axis-labeling machinery described
+in [`dd-cdt-model.md`](dd-cdt-model.md) — two nodes can share a
+`T` while carrying entirely different axes, or carry the same
+axes while representing unrelated quantities.
 
 Regarding how `graph.py` could be implemented, a very simplified
 implementation looks like this:
