@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Multi-domain axes (work in progress)**
+**Multi-domain axes**
 
 - `DomainAxis` — an `Axis` carrying a static domain `type` from the new
   `DomainType` lattice (`SetType` ⊂ `SequenceType` ⊂ `TimeType`/`SpaceType`).
