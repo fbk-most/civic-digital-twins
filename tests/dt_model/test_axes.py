@@ -171,6 +171,10 @@ class TestDomainTypeLattice:
         m = MeshType(adjacency=adj)
         assert m.adjacency is adj
 
+    def test_mesh_type_repr(self):
+        """MeshType's repr shows the adjacency payload, like the other DomainType classes."""
+        assert repr(MeshType(adjacency="adj")) == "MeshType(adjacency='adj')"
+
 
 class TestTopLevelExports:
     """Axis vocabulary re-exported by the top-level package."""

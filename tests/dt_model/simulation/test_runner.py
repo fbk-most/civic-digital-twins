@@ -38,11 +38,12 @@ from civic_digital_twins.dt_model import (
     inputs,
     outputs,
 )
+from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value
+from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value, _own_index_value
 
 # ---------------------------------------------------------------------------
 # Minimal model fixture (reused from other simulation tests)
@@ -707,6 +708,31 @@ class TestGetModelValues:
         values = evaluator.get_model_values(Scenario(model))
         expected_names = {idx.name for idx in model.indexes}
         assert set(values.keys()) == expected_names
+
+
+# ---------------------------------------------------------------------------
+# _own_index_value() — GenericIndex extension point
+# ---------------------------------------------------------------------------
+
+
+def test_own_index_value_falls_back_to_none_for_a_bare_generic_index() -> None:
+    """A GenericIndex that is neither a DistributionIndex nor an Index yields None.
+
+    Every concrete index shipped by this library (Index, DistributionIndex,
+    and their specializations) derives from Index, so this is the fallback
+    for a third-party GenericIndex extension that does not.
+    """
+
+    class _BareGenericIndex(GenericIndex):
+        @property
+        def node(self) -> graph.Node:
+            return graph.constant(1.0)
+
+        @property
+        def name(self) -> str:
+            return "bare"
+
+    assert _own_index_value(_BareGenericIndex()) is None
 
 
 # ---------------------------------------------------------------------------
