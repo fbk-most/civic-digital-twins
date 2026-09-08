@@ -929,3 +929,89 @@ def test_conditional_categorical_sample_for_no_rng():
     np.random.seed(0)
     samples = idx.sample_for(size=100, season="summer")
     assert "hot" in samples
+
+
+# ===========================================================================
+# CategoricalIndex — weight-free (support-only) construction
+# ===========================================================================
+
+
+def test_categorical_index_weight_free_construction_from_list():
+    """A bare list[str] constructs a weight-free CategoricalIndex with the given support."""
+    idx = CategoricalIndex("mode_param", ["bike", "train"])
+    assert idx.support == ["bike", "train"]
+    assert idx.is_abstract
+    assert isinstance(idx.node, graph.placeholder)
+
+
+def test_categorical_index_weight_free_construction_from_generic_iterable():
+    """Any Iterable[str] (not just list) is accepted for the support-only form."""
+    idx = CategoricalIndex("mode_param", (m for m in ("bike", "train", "bus")))
+    assert idx.support == ["bike", "train", "bus"]
+
+
+def test_categorical_index_weight_free_empty_raises():
+    """An empty support-only iterable raises ValueError, same as an empty dict."""
+    with pytest.raises(ValueError, match="must not be empty"):
+        CategoricalIndex("mode_param", [])
+
+
+def test_categorical_index_weight_free_duplicate_keys_raise():
+    """Duplicate outcome keys in the support-only form raise ValueError."""
+    with pytest.raises(ValueError, match="unique"):
+        CategoricalIndex("mode_param", ["bike", "train", "bike"])
+
+
+def test_categorical_index_weight_free_outcomes_raises():
+    """Accessing .outcomes on a weight-free CategoricalIndex raises a clear ValueError."""
+    idx = CategoricalIndex("mode_param", ["bike", "train"])
+    with pytest.raises(ValueError, match="support-only"):
+        _ = idx.outcomes
+
+
+def test_categorical_index_weight_free_sample_raises():
+    """Calling .sample() on a weight-free CategoricalIndex raises a clear ValueError."""
+    idx = CategoricalIndex("mode_param", ["bike", "train"])
+    with pytest.raises(ValueError, match="support-only"):
+        idx.sample(size=1)
+
+
+def test_categorical_index_weight_free_equality_creates_graph_node():
+    """A weight-free CategoricalIndex still works as a guard: __eq__ returns a graph Node."""
+    idx = CategoricalIndex("mode_param", ["bike", "train"])
+    result = idx == "bike"
+    assert isinstance(result, graph.Node)
+
+
+def test_categorical_index_weight_free_used_as_piecewise_guard():
+    """A weight-free CategoricalIndex drives a graph.piecewise guard, like the weighted form.
+
+    Mirrors the deterministic ``parameters=`` sweep pattern: the index's own
+    placeholder node is fed concrete values directly (bypassing .outcomes
+    entirely), and the guard comparison selects the matching branch.
+    """
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+    factor = Index(
+        "factor",
+        graph.piecewise(
+            (0.0, mode_param == "bike"),
+            (1.0, True),
+        ),
+    )
+    plan = linearize.forest(factor.node)
+
+    state_bike = executor.State({mode_param.node: np.asarray("bike", dtype=object)})
+    executor.evaluate_nodes(state_bike, *plan)
+    assert state_bike.get_node_value(factor.node) == 0.0
+
+    state_train = executor.State({mode_param.node: np.asarray("train", dtype=object)})
+    executor.evaluate_nodes(state_train, *plan)
+    assert state_train.get_node_value(factor.node) == 1.0
+
+
+def test_categorical_index_weight_free_repr_shows_support():
+    """Repr of a weight-free CategoricalIndex shows the support list, not outcomes."""
+    idx = CategoricalIndex("mode_param", ["bike", "train"])
+    r = repr(idx)
+    assert "CategoricalIndex" in r
+    assert "bike" in r and "train" in r

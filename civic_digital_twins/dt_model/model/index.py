@@ -9,7 +9,7 @@ be a constant, a distribution, or a symbolic expression.
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
@@ -1117,46 +1117,83 @@ class CategoricalIndex(Index):
             (1.2,   True),
         ))
 
+    *outcomes* may also be a bare support set — a ``list[str]`` or other
+    ``Iterable[str]`` with no weights — for indexes that are only ever used
+    where weights don't matter: guard conditions (``idx == "value"``) and
+    deterministic ``parameters=`` grid sweeps::
+
+        mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+
+    Such a *weight-free* index has a ``.support`` but no ``.outcomes``:
+    accessing :attr:`outcomes` or calling :meth:`sample` raises
+    ``ValueError`` rather than silently assuming uniform weights.
+
     Parameters
     ----------
     name:
         Human-readable name.
     outcomes:
-        Maps each outcome key to its probability.  All values must be
-        strictly positive and sum to 1.0 (validated within a small
-        tolerance at construction time).
+        Either a ``dict[str, float]`` mapping each outcome key to its
+        probability (all values strictly positive, summing to 1.0 within a
+        small tolerance), or a non-empty ``Iterable[str]`` of outcome keys
+        with no weights (weight-free / support-only).
 
     Raises
     ------
     ValueError
-        If *outcomes* is empty, any probability is non-positive, or the
-        probabilities do not sum to 1.0.
+        If *outcomes* is empty, contains duplicate keys (support-only form),
+        any probability is non-positive (weighted form), or the
+        probabilities do not sum to 1.0 (weighted form).
     """
 
-    def __init__(self, name: str, outcomes: dict[str, float]) -> None:
-        if not outcomes:
-            raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
-        non_positive = [k for k, p in outcomes.items() if p <= 0]
-        if non_positive:
-            raise ValueError(
-                f"CategoricalIndex {name!r}: all probabilities must be strictly positive; "
-                f"non-positive keys: {non_positive}."
-            )
-        total = sum(outcomes.values())
-        if not np.isclose(total, 1.0):
-            raise ValueError(f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}.")
-        self._outcomes = dict(outcomes)
+    def __init__(self, name: str, outcomes: dict[str, float] | Iterable[str]) -> None:
+        if isinstance(outcomes, dict):
+            if not outcomes:
+                raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
+            non_positive = [k for k, p in outcomes.items() if p <= 0]
+            if non_positive:
+                raise ValueError(
+                    f"CategoricalIndex {name!r}: all probabilities must be strictly positive; "
+                    f"non-positive keys: {non_positive}."
+                )
+            total = sum(outcomes.values())
+            if not np.isclose(total, 1.0):
+                raise ValueError(f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}.")
+            self._outcomes: dict[str, float] | None = dict(outcomes)
+            self._support: list[str] = list(outcomes)
+        else:
+            support = list(outcomes)
+            if not support:
+                raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
+            duplicates = [k for k in dict.fromkeys(support) if support.count(k) > 1]
+            if duplicates:
+                raise ValueError(f"CategoricalIndex {name!r}: outcome keys must be unique; duplicates: {duplicates}.")
+            self._outcomes = None
+            self._support = support
         super().__init__(name, None)  # placeholder mode
 
     @property
     def outcomes(self) -> dict[str, float]:
-        """Outcome probabilities, in declaration order."""
+        """Outcome probabilities, in declaration order.
+
+        Raises
+        ------
+        ValueError
+            If this index was constructed weight-free (support-only) — there
+            are no probabilities to return.
+        """
+        if self._outcomes is None:
+            raise ValueError(
+                f"CategoricalIndex {self.name!r} was constructed without weights (support-only); "
+                "'.outcomes' is unavailable. Pass a dict[str, float] at construction, or a "
+                "scenario override, to give it weights before using it probabilistically."
+            )
         return dict(self._outcomes)
 
     @property
     def support(self) -> list[str]:
         """Ordered list of outcome keys."""
-        return list(self._outcomes)
+        return list(self._support)
 
     def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
         """Draw ``size`` keys proportionally to outcome probabilities.
@@ -1173,7 +1210,19 @@ class CategoricalIndex(Index):
         -------
         np.ndarray
             Object-dtype array of shape ``(size,)`` containing the sampled keys.
+
+        Raises
+        ------
+        ValueError
+            If this index was constructed weight-free (support-only) — there
+            are no weights to sample from.
         """
+        if self._outcomes is None:
+            raise ValueError(
+                f"CategoricalIndex {self.name!r} was constructed without weights (support-only); "
+                "cannot sample it. Pass a dict[str, float] at construction, or a scenario "
+                "override, to give it weights before sampling."
+            )
         keys = self.support
         probs = [self._outcomes[k] for k in keys]
         if rng is not None:
@@ -1182,7 +1231,8 @@ class CategoricalIndex(Index):
 
     def __repr__(self) -> str:
         """Return a string representation of the categorical index."""
-        return f"CategoricalIndex({self.name!r}, {self._outcomes!r})"
+        payload = self._outcomes if self._outcomes is not None else self._support
+        return f"CategoricalIndex({self.name!r}, {payload!r})"
 
 
 class ConditionalCategoricalIndex(Index):

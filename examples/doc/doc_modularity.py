@@ -547,7 +547,7 @@ class TrainModelPres(Model):
 
 def _demo_catidx_param_axis_1d() -> None:
     """1-D deterministic sweep: mode ∈ {bike, train}, constant capacity variants."""
-    mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])  # support-only, no weights
     mv_param = ModelVariant(
         "TransportParam",
         variants={
@@ -576,7 +576,7 @@ def _demo_catidx_param_axis_1d() -> None:
 
 def _demo_catidx_param_axis_2d() -> None:
     """2-D deterministic grid: mode × presence, presence-aware variants."""
-    mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])
     presence = Index("presence", None)  # abstract — swept by the grid
     mv_grid = ModelVariant(
         "TransportGrid",
