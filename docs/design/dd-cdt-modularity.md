@@ -710,7 +710,7 @@ side-by-side, without any probabilistic ensemble.  Pass it directly to `paramete
 array of outcome strings, and wrap the model in `Scenario` before `Evaluation`:
 
 ```python
-mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+mode_param = CategoricalIndex("mode_param", ["bike", "train"])  # support-only, no weights
 mv_param = ModelVariant(
     "TransportParam",
     variants={
@@ -734,10 +734,11 @@ can be combined with numeric PARAMETER axes for a 2-D grid.  Variant sub-models 
 accept the numeric index as an abstract input:
 
 ```python
-# CategoricalIndex is always abstract (a placeholder node, see dd-cdt-model.md);
-# the outcome weights are required at construction but go unused on this fully
-# deterministic path — parameters= supplies the swept values directly.
-mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+# CategoricalIndex is always abstract (a placeholder node, see dd-cdt-model.md).
+# The support-only form carries no weights — fine here since parameters=
+# supplies the swept values directly and this fully deterministic path never
+# samples mode_param (sampling a weight-free CategoricalIndex raises ValueError).
+mode_param = CategoricalIndex("mode_param", ["bike", "train"])
 presence = Index("presence", None)  # abstract — swept by the grid
 mv_grid = ModelVariant(
     "TransportGrid",
