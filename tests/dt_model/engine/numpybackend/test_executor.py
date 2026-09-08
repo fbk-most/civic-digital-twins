@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.axes import PARAMETER, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, PARAMETER, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -473,9 +473,32 @@ def test_axis_operations():
 
     unsupported_node = UnsupportedProjectionOp(x, axis=time_axis)
     unsupported_plan = linearize.forest(unsupported_node)
-    unsupported_state = executor.State({x: x_val})
+    unsupported_state = executor.State({x: x_val}, domain_axes=(time_axis,))
 
     with pytest.raises(executor.UnsupportedOperation):
+        executor.evaluate_nodes(unsupported_state, *unsupported_plan)
+
+
+def test_axis_op_unsupported_operation():
+    """Test error handling for an unsupported AxisOp subclass.
+
+    shift/roll/cumulative are comprehensively tested in
+    tests/dt_model/engine/numpybackend/test_axis_shape_preserving_operators.py
+    """
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    x = graph.placeholder("x")
+    x_val = np.array([1.0, 2.0, 3.0])
+    time_axis = Axis("time", DOMAIN)
+
+    class UnsupportedAxisOp(graph.AxisOp):
+        pass
+
+    unsupported_node = UnsupportedAxisOp(x, axis=time_axis)
+    unsupported_plan = linearize.forest(unsupported_node)
+    unsupported_state = executor.State({x: x_val}, domain_axes=(time_axis,))
+
+    with pytest.raises(executor.UnsupportedOperation, match="unsupported axis operation"):
         executor.evaluate_nodes(unsupported_state, *unsupported_plan)
 
 
@@ -617,18 +640,18 @@ def test_state_set_node_value():
 
 
 def test_timeseries_constant_evaluation():
-    """Test evaluation of timeseries_constant nodes."""
+    """Test evaluation of a time-axis array_constant node."""
     values = np.array([1.0, 2.0, 3.0])
-    node = graph.timeseries_constant(values)
+    node = graph.array_constant(values, axes=(TIME_AXIS,))
     plan = linearize.forest(node)
-    state = executor.State({})
+    state = executor.State({}, domain_axes=(TIME_AXIS,))
     executor.evaluate_nodes(state, *plan)
     assert np.array_equal(state.values[node], values)
 
 
 def test_timeseries_placeholder_evaluation():
-    """Test evaluation of timeseries_placeholder nodes with a provided value."""
-    node = graph.timeseries_placeholder("ts")
+    """Test evaluation of a time-axis array_placeholder node with a provided value."""
+    node = graph.array_placeholder("ts", axes=(TIME_AXIS,))
     plan = linearize.forest(node)
     values = np.array([4.0, 5.0, 6.0])
     state = executor.State({node: values})
@@ -637,8 +660,8 @@ def test_timeseries_placeholder_evaluation():
 
 
 def test_timeseries_placeholder_missing():
-    """Test that evaluating a timeseries_placeholder without a value raises an error."""
-    node = graph.timeseries_placeholder("ts")
+    """Test that evaluating a time-axis array_placeholder without a value raises an error."""
+    node = graph.array_placeholder("ts", axes=(TIME_AXIS,))
     plan = linearize.forest(node)
     state = executor.State({})
     with pytest.raises(executor.PlaceholderValueNotProvided):
@@ -646,11 +669,11 @@ def test_timeseries_placeholder_missing():
 
 
 def test_timeseries_in_arithmetic():
-    """Test that timeseries_constant participates correctly in arithmetic operations."""
-    ts = graph.timeseries_constant([2.0, 4.0, 6.0])
+    """Test that a time-axis array_constant participates correctly in arithmetic operations."""
+    ts = graph.array_constant([2.0, 4.0, 6.0], axes=(TIME_AXIS,))
     result = ts * graph.constant(0.5)
     plan = linearize.forest(result)
-    state = executor.State({})
+    state = executor.State({}, domain_axes=(TIME_AXIS,))
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[result], [1.0, 2.0, 3.0])
 
@@ -676,7 +699,7 @@ def test_neg_operator_evaluation():
 
 
 def test_projection_op_unsupported_axis_raises():
-    """Executor raises UnsupportedOperation when a ProjectionOp uses a non-time axis."""
+    """Executor raises UnsupportedOperation projecting an axis the evaluation does not carry."""
     node = graph.constant(1.0)
     bad_axis = Axis("space", PARAMETER)
     proj = graph.project_using_sum(node, axis=bad_axis)
@@ -685,3 +708,38 @@ def test_projection_op_unsupported_axis_raises():
     executor.evaluate_nodes(state, *plan[:-1])  # evaluate prerequisites
     with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
         executor.evaluate_nodes(state, proj)
+
+
+def test_projection_resolves_each_declared_domain_axis_to_its_position():
+    """With several DOMAIN axes, each projection reduces the dimension its axis names."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    # Layout (x, y): x is the second-to-last numpy dim, y the last.
+    values = np.arange(6.0).reshape(2, 3)
+    p = graph.placeholder("field")
+
+    for axis, expected in ((x, values.sum(axis=-2, keepdims=True)), (y, values.sum(axis=-1, keepdims=True))):
+        proj = graph.project_using_sum(p, axis=axis)
+        state = executor.State({p: values}, domain_axes=(x, y))
+        executor.evaluate_nodes(state, *linearize.forest(proj))
+        assert np.array_equal(state.values[proj], expected)
+
+
+def test_projection_along_a_non_time_domain_axis():
+    """A model with no time axis at all can still reduce along its own DOMAIN axis."""
+    space = Axis("space", DOMAIN)
+    p = graph.placeholder("field")
+    proj = graph.project_using_sum(p, axis=space)
+    state = executor.State({p: np.array([1.0, 2.0, 3.0])}, domain_axes=(space,))
+    executor.evaluate_nodes(state, *linearize.forest(proj))
+    assert np.array_equal(state.values[proj], np.array([6.0]))
+
+
+def test_projection_rejects_an_axis_outside_the_declared_domain_axes():
+    """Declaring domain_axes narrows what is projectable: time is not implicitly available."""
+    space = Axis("space", DOMAIN)
+    p = graph.placeholder("field")
+    proj = graph.project_using_sum(p, axis=TIME_AXIS)
+    state = executor.State({p: np.array([1.0, 2.0])}, domain_axes=(space,))
+    with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
+        executor.evaluate_nodes(state, *linearize.forest(proj))

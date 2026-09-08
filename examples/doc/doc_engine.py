@@ -4,6 +4,7 @@
 
 import numpy as np
 
+from civic_digital_twins.dt_model.axes import TIME_AXIS
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -13,12 +14,8 @@ from civic_digital_twins.dt_model.engine.numpybackend import executor
 # ---------------------------------------------------------------------------
 
 
-class TimeDimension:
-    """Represents nodes in the time dimension."""
-
-
-class EnsembleDimension:
-    """Represents nodes in the ensemble dimension."""
+class VehicleCount:
+    """Represents a count of vehicles."""
 
 
 class Apple:
@@ -31,8 +28,8 @@ class Orange:
 
 def _demo_end_to_end() -> None:
     """dd-cdt-engine.md — End-to-End Example (block 00)."""
-    a = graph.placeholder[TimeDimension]("a")
-    b = graph.placeholder[TimeDimension]("b")
+    a = graph.placeholder[VehicleCount]("a")
+    b = graph.placeholder[VehicleCount]("b")
     k0 = graph.constant(3, name="k0")
     c = a + b * k0
     c1 = graph.function_call("reduce", c)
@@ -117,19 +114,19 @@ def _demo_typed_nodes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Block 07 — Timeseries Nodes
+# Block 07 — Domain-Carrying Nodes
 # ---------------------------------------------------------------------------
 
 
 def _demo_timeseries() -> None:
-    """dd-cdt-engine.md — Timeseries Nodes (block 07)."""
-    demand = graph.timeseries_constant(np.arange(24, dtype=float), "demand")
-    traffic = graph.timeseries_placeholder("traffic")
+    """dd-cdt-engine.md — Domain-Carrying Nodes (block 07)."""
+    demand = graph.array_constant(np.arange(24, dtype=float), axes=(TIME_AXIS,), name="demand")
+    traffic = graph.array_placeholder("traffic", axes=(TIME_AXIS,))
     scaled = demand * graph.constant(0.5)
 
     assert traffic is not None
 
-    ts_state = executor.State(values={})
+    ts_state = executor.State(values={}, domain_axes=(TIME_AXIS,))
     executor.evaluate_nodes(ts_state, *linearize.forest(scaled))
     np.testing.assert_allclose(
         ts_state.get_node_value(scaled),

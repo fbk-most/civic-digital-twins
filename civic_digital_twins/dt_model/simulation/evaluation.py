@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import numpy as np
 
-from ..axes import PARAMETER, TIME_AXIS, Axis
+from ..axes import DOMAIN, PARAMETER, Axis
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..model.index import GenericIndex
@@ -15,11 +15,29 @@ from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .axis_layout import AxisLayout
 from .ensemble import AxisEnsemble
+from .labeled_array import LabeledArray
 from .plan import EvaluationPlan, Region, RegionGuard
 from .region_execution import RegionArrayOps
 from .scenario import Scenario
 
 __all__ = ["EvaluationResult", "Evaluation"]
+
+
+def _canonical_domain_order(axes: set[Axis] | frozenset[Axis]) -> tuple[Axis, ...]:
+    """Order DOMAIN axes canonically for the evaluation layout: by axis name.
+
+    The order has to come from somewhere stable, because callers read result
+    dimensions through this layout.  Deriving it from graph traversal would tie
+    it to the order operands happen to appear in a formula, so commuting a
+    multiplication would silently reshuffle a result's dimensions.  Axis names
+    are stable identifiers the model author chose, so they order the layout.
+    """
+    return tuple(sorted(axes, key=lambda ax: ax.name))
+
+
+def _domain_axes_of(nodes: Iterable[graph.Node]) -> tuple[Axis, ...]:
+    """Return the canonical DOMAIN axes carried by any of *nodes*."""
+    return _canonical_domain_order({ax for n in nodes for ax in n.output_axes if ax.role == DOMAIN})
 
 
 class EvaluationResult:
@@ -158,6 +176,36 @@ class EvaluationResult:
         arr = self._contract_ensemble(index)
         return self._layout.drop_stray_domain(arr, index.output_axes)
 
+    def layout_of(self, index: GenericIndex) -> AxisLayout:
+        """Return the :class:`~simulation.axis_layout.AxisLayout` of :meth:`expected_value`'s array.
+
+        Mirrors :attr:`layout`, which describes the *raw* ``result[index]``
+        array — but ``expected_value`` returns a differently-shaped array
+        (ENSEMBLE axes contracted away, DOMAIN axes *index* does not carry
+        dropped as stray), so it needs its own layout: PARAMETER axes
+        unchanged, no ENSEMBLE axes, and only the DOMAIN axes present in
+        *index*'s :attr:`~model.index.GenericIndex.output_axes`.
+
+        With several DOMAIN axes in play, position alone no longer tells you
+        which dimension is which; this is how a caller finds out.
+        """
+        entries = tuple(
+            (ax, size)
+            for ax, size in self._layout.entries
+            if ax.role == PARAMETER or (ax.role == DOMAIN and ax in index.output_axes)
+        )
+        return AxisLayout(entries)
+
+    def labeled(self, index: GenericIndex) -> LabeledArray:
+        """Return :meth:`expected_value` for *index* paired with :meth:`layout_of`.
+
+        Optional convenience for name-based access (``.dims``, ``.sel(...)``)
+        and interop with a labeled-array ecosystem (``.to_xarray()``).  Purely
+        additive: :meth:`expected_value` and ``result[index]`` keep returning
+        plain ``np.ndarray``, unaffected by this method's existence.
+        """
+        return LabeledArray(self.expected_value(index), self.layout_of(index))
+
 
 class Evaluation:
     """Bridge between a :class:`~simulation.scenario.Scenario` and the engine.
@@ -245,15 +293,13 @@ class Evaluation:
         # entry per distinct node.
         actual_nodes = list(dict.fromkeys(idx.node for idx in nodes_of_interest))
         linearized_nodes = linearize.forest(*actual_nodes)
-        has_timeseries = any(
-            isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)) for node in linearized_nodes
-        )
+        region_domain_axes = _domain_axes_of(linearized_nodes)
 
         if strategy == "monolithic":
             return EvaluationPlan(
                 model=self.model,
                 nodes_of_interest=tuple(nodes_of_interest),
-                regions=(Region(nodes=tuple(linearized_nodes), has_timeseries=has_timeseries),),
+                regions=(Region(nodes=tuple(linearized_nodes), domain_axes=region_domain_axes),),
                 dependencies=(frozenset(),),
             )
         if strategy == "regional":
@@ -289,9 +335,6 @@ class Evaluation:
                     "build_plan(strategy='regional') requires a ModelVariant with a "
                     "runtime selector. No variant_selector found — use strategy='monolithic'."
                 )
-
-            def _is_ts(nodes: tuple[graph.Node, ...]) -> bool:
-                return any(isinstance(n, (graph.timeseries_constant, graph.timeseries_placeholder)) for n in nodes)
 
             collected_regions: list[Region] = []
             collected_deps: list[frozenset[int]] = []
@@ -332,7 +375,9 @@ class Evaluation:
                     if not topo:
                         return scope_entry  # pragma: no cover
                     idx = len(collected_regions)
-                    collected_regions.append(Region(nodes=topo, has_timeseries=_is_ts(topo), guards=inherited_guards))
+                    collected_regions.append(
+                        Region(nodes=topo, domain_axes=_domain_axes_of(topo), guards=inherited_guards)
+                    )
                     collected_deps.append(scope_entry)
                     return frozenset({idx})
 
@@ -353,7 +398,7 @@ class Evaluation:
 
                 shared_idx = len(collected_regions)
                 collected_regions.append(
-                    Region(nodes=shared_topo, has_timeseries=_is_ts(shared_topo), guards=inherited_guards)
+                    Region(nodes=shared_topo, domain_axes=_domain_axes_of(shared_topo), guards=inherited_guards)
                 )
                 collected_deps.append(scope_entry)
 
@@ -387,7 +432,7 @@ class Evaluation:
 
                 merge_idx = len(collected_regions)
                 collected_regions.append(
-                    Region(nodes=merge_topo, has_timeseries=_is_ts(merge_topo), guards=inherited_guards)
+                    Region(nodes=merge_topo, domain_axes=_domain_axes_of(merge_topo), guards=inherited_guards)
                 )
                 collected_deps.append(frozenset(scope_indices))
                 return frozenset({merge_idx})
@@ -501,7 +546,20 @@ class Evaluation:
             for node, val in _raw_scenario_subs.items()
             if not (isinstance(val, np.ndarray) and val.ndim == 0 and val.dtype.kind == "O")
         }
-        _has_timeseries = any(r.has_timeseries for r in plan.regions)
+        domain_axes = _canonical_domain_order({ax for r in plan.regions for ax in r.domain_axes})
+        n_domain = len(domain_axes)
+
+        # Injected values arrive shaped by the index's *declared* axis order, which
+        # need not be the canonical layout order and omits axes the index does not
+        # carry.  Align them here rather than in Scenario: only the evaluation knows
+        # which axes are in play and in what order.  Leaves must be aligned before
+        # execution because numpy right-aligns operands, so an (x,)-shaped value
+        # would otherwise broadcast onto the last domain axis instead of x.
+        if n_domain:
+            scenario_subs = {
+                node: executor.align_to_domain_block(val, node.output_axes, domain_axes)
+                for node, val in scenario_subs.items()
+            }
 
         # Separate callable entries (correlated axes) from plain array entries.
         parameter_axes = parameter_axes or {}
@@ -520,14 +578,15 @@ class Evaluation:
             )
 
         # Validate that parameters= does not contain constant-node indexes.
-        # ConstIndex and ConstTimeseriesIndex bake their value into a graph.constant
-        # node; the executor evaluates constant nodes directly and never consults
-        # state.values, so substituting them has no effect.  Placeholder-backed
-        # indexes (Index, DistributionIndex, TimeseriesIndex — with or without a
-        # default value) are fine because the executor does read their state entry.
-        from ..model.index import ConstIndex, ConstTimeseriesIndex
+        # ConstIndex (including its ConstTimeseriesIndex specialization) bakes its
+        # value into a constant node; the executor evaluates constant nodes directly
+        # and never consults state.values, so substituting them has no effect.
+        # Placeholder-backed indexes (Index, DistributionIndex, TimeseriesIndex —
+        # with or without a default value) are fine because the executor does read
+        # their state entry.
+        from ..model.index import ConstIndex
 
-        const_params = [idx for idx in parameters if isinstance(idx, (ConstIndex, ConstTimeseriesIndex))]
+        const_params = [idx for idx in parameters if isinstance(idx, ConstIndex)]
         if const_params:
             names = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in const_params)
             raise ValueError(
@@ -631,19 +690,18 @@ class Evaluation:
                 # broadcast with timeseries (T,) nodes: (S, 1) × (T,) → (S, T).
                 param_singletons = (1,) * n_params
                 target = param_singletons + batched.shape
-                if _has_timeseries and batched.ndim == n_ensemble:
-                    target = target + (1,)
+                if n_domain and batched.ndim == n_ensemble:
+                    target = target + (1,) * n_domain
                 ens_subs[idx.node] = np.reshape(batched, target)
 
         # Extend substitutions with trailing singleton dims for broadcasting:
         # - anonymous param nodes: shape (*P,) needs n_ensemble + extra_ts singletons.
         # - callable-backed nodes: shape (*named_P,) needs m + n_ensemble + extra_ts singletons.
-        extra_ts = 1 if _has_timeseries else 0
-        anon_trailing = (1,) * (n_ensemble + extra_ts)
+        anon_trailing = (1,) * (n_ensemble + n_domain)
         if anon_trailing:
             for node in param_nodes:
                 c_subs[node] = c_subs[node].reshape(c_subs[node].shape + anon_trailing)
-        callable_trailing = (1,) * (m + n_ensemble + extra_ts)
+        callable_trailing = (1,) * (m + n_ensemble + n_domain)
         if callable_trailing:
             for node in callable_nodes:
                 c_subs[node] = c_subs[node].reshape(c_subs[node].shape + callable_trailing)
@@ -665,14 +723,14 @@ class Evaluation:
         # RegionArrayOps, so selectors may vary along PARAMETER axes and
         # ensembles may span multiple ENSEMBLE axes.
         leading_layout = AxisLayout.build(parameters=param_axis_entries, ensemble=ens_axis_entries)
-        n_total = leading_layout.n_leading + extra_ts
-        region_ops = RegionArrayOps(leading_layout, has_timeseries=_has_timeseries)
+        n_total = leading_layout.n_leading + n_domain
+        region_ops = RegionArrayOps(leading_layout, domain_axes=domain_axes)
 
         # Coverage validation (D_valid): every abstract index must have a value source.
         # We check only abstract indexes (value=None or Distribution-backed) — NOT
         # concrete-value placeholder nodes that may be "orphan" (not in model.indexes).
         # Concrete-value orphan placeholders are handled via graph.placeholder.default_value
-        # or graph.timeseries_placeholder.default_values auto-populated at creation time.
+        # or graph.array_placeholder default values auto-populated at creation time.
         abstract_nodes = {idx.node for idx in self._scenario.abstract_indexes()}
         covered = set(scenario_subs.keys()) | set(c_subs.keys())
         uncovered_abstract = abstract_nodes - covered
@@ -697,6 +755,7 @@ class Evaluation:
             {**scenario_subs, **c_subs},
             functions=functions or {},
             node_functions=getattr(plan.model, "_node_functions", {}),
+            domain_axes=domain_axes,
         )
 
         # Execute regions in topological order.
@@ -738,6 +797,7 @@ class Evaluation:
                     branch_values,
                     functions=functions or {},
                     node_functions=getattr(plan.model, "_node_functions", {}),
+                    domain_axes=domain_axes,
                 )
                 executor.evaluate_nodes(branch_state, *region.nodes)
 
@@ -782,37 +842,43 @@ class Evaluation:
                 if node in all_touched or node not in state.values:
                     continue
                 arr = np.asarray(state.values[node])
-                assert arr.ndim in ({0, 1} if _has_timeseries else {0}), (
+                assert arr.ndim <= n_domain, (
                     f"Untouched node {getattr(node, 'name', repr(node))!r}: "
-                    f"unexpected ndim={arr.ndim} (has_timeseries={_has_timeseries})"
+                    f"unexpected ndim={arr.ndim} (domain axes: {[ax.name for ax in domain_axes]})"
                 )
                 n_inject = n_total - arr.ndim
                 state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
 
-        # DOMAIN axis tracking: append TIME_AXIS to the layout so that every
-        # result dimension is named.  T is read post-execution because
-        # abstract TimeseriesIndex nodes are filled at evaluate time.
-        # Assumption: T is uniform across all PARAMETER configurations (T is a
-        # structural property of the model, not a function of parameter values).
+        # DOMAIN axis tracking: append each DOMAIN axis to the layout so that
+        # every result dimension is named.  Sizes are read post-execution
+        # because abstract domain-carrying nodes are filled at evaluate time.
+        # Assumption (unchanged, now per axis): a domain axis has one size
+        # across all PARAMETER configurations — it is a structural property of
+        # the model, not a function of parameter values.
         result_layout = leading_layout
-        if _has_timeseries:
-            ts_nodes = [
+        if n_domain:
+            domain_nodes = [
                 n
                 for r in plan.regions
                 for n in r.nodes
-                if isinstance(n, (graph.timeseries_constant, graph.timeseries_placeholder))
+                if isinstance(n, (graph.array_constant, graph.array_placeholder)) and n in state.values
             ]
-            T = int(np.asarray(state.values[ts_nodes[0]]).shape[-1])
-            if __debug__:
-                for ts_n in ts_nodes:
-                    T_n = int(np.asarray(state.values[ts_n]).shape[-1])
-                    assert T_n == T, (
-                        f"Non-uniform timeseries length: node "
-                        f"{getattr(ts_n, 'name', repr(ts_n))!r} has T={T_n}, "
-                        f"expected T={T}. T must be constant across all PARAMETER "
-                        f"configurations (it is a structural model property)."
+            axis_sizes: dict[Axis, int] = {}
+            for dom_node in domain_nodes:
+                arr = np.asarray(state.values[dom_node])
+                block = arr.shape[arr.ndim - n_domain :]
+                for ax, size in zip(domain_axes, block, strict=True):
+                    if size == 1:
+                        continue  # a broadcast placeholder dimension carries no size
+                    previous = axis_sizes.setdefault(ax, size)
+                    assert previous == size, (
+                        f"Non-uniform size for DOMAIN axis {ax.name!r}: node "
+                        f"{getattr(dom_node, 'name', repr(dom_node))!r} has {size}, "
+                        f"expected {previous}. A domain axis must have one size across "
+                        f"all PARAMETER configurations (it is a structural model property)."
                     )
-            result_layout = leading_layout.with_axis_appended(TIME_AXIS, T)
+            for ax in domain_axes:
+                result_layout = result_layout.with_axis_appended(ax, axis_sizes.get(ax, 1))
         if __debug__:
             for node in actual_nodes:
                 assert node in state.values, (

@@ -16,7 +16,7 @@ where ``body(r)`` strips the leading ``nX = `` assignment.
 
 from typing import Any
 
-from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis, DomainAxis, TimeType
 from civic_digital_twins.dt_model.engine.frontend import graph
 
 
@@ -36,7 +36,7 @@ def _assert_roundtrip(node: graph.Node, extra_ctx: dict[str, Any] | None = None)
     Exec's ``repr(node)`` in a context that contains ``graph``, ``Axis``,
     and all provided dependency nodes, then checks body equality.
     """
-    ctx: dict[str, Any] = {"graph": graph, "Axis": Axis}
+    ctx: dict[str, Any] = {"graph": graph, "Axis": Axis, "DomainAxis": DomainAxis, "TimeType": TimeType}
     if extra_ctx:
         ctx.update(extra_ctx)
     exec(repr(node), ctx)  # noqa: S102
@@ -55,8 +55,16 @@ def test_leaf_nodes() -> None:
     _assert_roundtrip(graph.constant(3.14))
     _assert_roundtrip(graph.placeholder("p", default_value=11))
     _assert_roundtrip(graph.placeholder("q"))
-    _assert_roundtrip(graph.timeseries_constant([1.0, 2.0, 3.0], name="ts"))
-    _assert_roundtrip(graph.timeseries_placeholder("tp"))
+
+
+def test_array_nodes() -> None:
+    """Round-trip test for the generic array_constant / array_placeholder nodes."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    _assert_roundtrip(graph.array_constant([[1.0, 2.0], [3.0, 4.0]], axes=(x_axis, y_axis), name="grid"))
+    _assert_roundtrip(graph.array_placeholder("field", axes=(x_axis, y_axis)))
+    _assert_roundtrip(graph.array_constant(1.0))
+    _assert_roundtrip(graph.array_placeholder("noaxes"))
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +186,24 @@ def test_projection_ops() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Axis ops (shape-preserving)
+# ---------------------------------------------------------------------------
+
+
+def test_axis_ops() -> None:
+    """Round-trip test for all AxisOp subclasses."""
+    a = graph.constant(7, name="a")
+    ax = Axis("time", DOMAIN)
+    space_ax = Axis("x", DOMAIN)
+    deps = _ctx(a)
+    _assert_roundtrip(graph.shift(a, ax, periods=2, fill_value=1.5), deps)
+    _assert_roundtrip(graph.roll(a, ax, periods=2), deps)
+    _assert_roundtrip(graph.cumulative(a, ax), deps)
+    _assert_roundtrip(graph.gradient(a, space_ax, spacing=0.5), deps)
+    _assert_roundtrip(graph.laplacian(a, (space_ax,), (0.5,), ("reflect",)), deps)
+
+
+# ---------------------------------------------------------------------------
 # function_call
 # ---------------------------------------------------------------------------
 
@@ -206,8 +232,8 @@ _TESTED_TYPES: frozenset[type] = frozenset(
     {
         graph.constant,
         graph.placeholder,
-        graph.timeseries_constant,
-        graph.timeseries_placeholder,
+        graph.array_constant,
+        graph.array_placeholder,
         graph.negate,
         graph.logical_not,
         graph.exp,
@@ -243,6 +269,11 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.project_using_all,
         graph.project_using_count_nonzero,
         graph.project_using_quantile,
+        graph.shift,
+        graph.roll,
+        graph.cumulative,
+        graph.gradient,
+        graph.laplacian,
         graph.function_call,
     }
 )

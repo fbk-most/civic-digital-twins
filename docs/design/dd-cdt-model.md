@@ -93,11 +93,27 @@ GenericIndex  (ABC)
   comparison operators on a `GenericIndex` delegate here, returning a
   new `graph.Node`.
 - **Axis reduction methods** — convenience wrappers for axis reduction operators:
-  `.sum(axis=-1)`, `.mean(axis=-1)`, `.min(axis=-1)`, `.max(axis=-1)`,
-  `.std(axis=-1)`, `.var(axis=-1)`, `.median(axis=-1)`, `.prod(axis=-1)`,
-  `.any(axis=-1)`, `.all(axis=-1)`, `.count_nonzero(axis=-1)`,
-  and `.quantile(q, axis=-1)`. These delegate to the corresponding
-  `graph.project_using_*` operators.
+  `.sum(axis=...)`, `.mean(axis=...)`, `.min(axis=...)`, `.max(axis=...)`,
+  `.std(axis=...)`, `.var(axis=...)`, `.median(axis=...)`, `.prod(axis=...)`,
+  `.any(axis=...)`, `.all(axis=...)`, `.count_nonzero(axis=...)`,
+  and `.quantile(q, axis=...)`. These delegate to the corresponding
+  `graph.project_using_*` operators. `axis` defaults to the index's unique
+  DOMAIN axis; an index carrying several requires it explicitly.
+- **Domain-typed per-axis operators**, gated by the axis's `DomainType`
+  (§ [TimeseriesIndex](#timeseriesindex) below covers `TIME_AXIS`'s
+  `TimeType`; see `axes.py` for the full lattice):
+  - Any `SequenceType`-or-untyped DOMAIN axis (i.e. any axis, since untyped
+    behaves as `SequenceType`) supports `.shift(periods=1, *, axis=..., fill_value=0.0)`
+    (fill-padded), `.roll(periods=1, *, axis=...)` (circular — two distinct
+    methods reading no axis metadata, matching xarray's own `shift`/`roll`
+    split), `.diff(periods=1, *, axis=..., fill_value=0.0)`
+    (`self - self.shift(...)`), and `.cumulative(*, axis=...)` (running sum).
+  - A `SpaceType` DOMAIN axis additionally supports `.gradient(*, axis=...)`
+    (first derivative, central differences, reading the axis's `spacing`)
+    and `.laplacian(*, axes=...)` (sum of second derivatives over one or
+    more `SpaceType` axes — the isotropic operator a diffusion process
+    needs — reading each axis's `spacing` and `boundary`). Calling either on
+    a non-`SpaceType` axis raises `ValueError`.
 - **Identity-based `__hash__`** — because `__eq__` is overridden to
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as
@@ -229,9 +245,9 @@ in `graph.piecewise` guards.
 
 | `values` type | Mode | graph node created |
 | ------------- | ---- | ------------------ |
-| `np.ndarray` | fixed array | `graph.timeseries_constant` |
+| `np.ndarray` | fixed array | `graph.array_placeholder` over `axes=(TIME_AXIS,)`; the array is the default, seeded via `Index.concrete_default` and overridable by Scenario |
 | `graph.Node` | formula | the node itself |
-| `None` (default) | placeholder | `graph.timeseries_placeholder` |
+| `None` (default) | placeholder | `graph.array_placeholder` over `axes=(TIME_AXIS,)` |
 
 ```python
 import numpy as np
@@ -244,6 +260,61 @@ flow = TimeseriesIndex("flow", np.array([10.0, 20.0, 30.0]))
 # Placeholder (externally supplied)
 demand_ts = TimeseriesIndex("demand_ts")
 ```
+
+### Defining your own named shape
+
+`TimeseriesIndex` is not special-cased by the engine or the model layer — it
+is the first instance of a general, user-extensible pattern for giving a
+recurring shape a name. Fixing `axes=` via a class-level `FIXED_AXES`
+constant, rather than repeating the tuple at every call site, buys two
+things: less boilerplate, and (see below) a runtime-checked `Inputs`/
+`Outputs`/`Expose` field annotation.
+
+```python
+from typing import ClassVar
+
+from civic_digital_twins.dt_model import ConstIndex, Index
+from civic_digital_twins.dt_model.axes import Axis, DomainAxis, SpaceType
+
+x = DomainAxis("x", type=SpaceType(spacing=1.0))
+y = DomainAxis("y", type=SpaceType(spacing=1.0))
+
+class GridIndex(Index):
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (x, y)
+
+    def __init__(self, name, value=None):
+        super().__init__(name, value, axes=self.FIXED_AXES)
+
+# A Const variant follows ConstTimeseriesIndex's own pattern: multiple
+# inheritance, ConstIndex first so it wins construction, GridIndex second
+# purely as a shape declaration.
+class ConstGridIndex(ConstIndex, GridIndex):
+    def __init__(self, name, value):
+        super().__init__(name, value, axes=self.FIXED_AXES)
+```
+
+**Contract-boundary verification.** An `Inputs`/`Outputs`/`Expose` field
+annotated with a class carrying `FIXED_AXES` — `GridIndex` above,
+`TimeseriesIndex`, or `list[...]`/`dict[str, ...]` of either — has the
+*actual* value's `output_axes` checked against it at construction time,
+raising `ValueError` on a mismatch. A plain `Index`/`ConstIndex`/
+`GenericIndex` annotation (no `FIXED_AXES`) is unchecked, exactly as before
+this existed.
+
+The check is **structural, never nominal**: it compares axis sets, and never
+asks `isinstance`. A value built by an unrelated class — even one sharing no
+inheritance with `GridIndex` at all — satisfies a `field: GridIndex`
+annotation as long as its `output_axes` matches `GridIndex.FIXED_AXES`. This
+is deliberate: it is what lets independently-authored components interoperate
+around the same shape without agreeing on a common class hierarchy for it,
+the same way a plain `Axis("x", DOMAIN)` has always compared equal to a
+`DomainAxis("x", type=SpaceType(...))` sharing its name.
+
+**Extension point, not yet implemented**: a shape used in exactly one model
+does not necessarily deserve its own named class. An `Annotated[Index,
+Axes(...)]`-style inline declaration — verified the same structural way,
+without minting a type — is a natural addition if that need materializes; it
+has not been built because no concrete case has needed it yet.
 
 ## Model
 

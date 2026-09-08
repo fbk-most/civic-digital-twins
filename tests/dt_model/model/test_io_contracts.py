@@ -5,9 +5,11 @@
 import dataclasses
 import warnings
 
+import numpy as np
 import pytest
 
 from civic_digital_twins.dt_model import define, expose, inputs, outputs
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import Model
 
@@ -616,3 +618,120 @@ def test_raw_outputs_dataclass_indexes_reachable():
 
     m = M()
     assert any(idx is a for idx in m.indexes)
+
+
+# ---------------------------------------------------------------------------
+# FIXED_AXES shape verification at the contract boundary
+# ---------------------------------------------------------------------------
+
+
+def test_field_with_matching_shape_is_accepted():
+    """A TimeseriesIndex value satisfies a field annotated TimeseriesIndex."""
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    inst = Inputs(field=ts)
+    assert inst.field is ts
+
+
+def test_field_with_mismatched_shape_is_rejected():
+    """A value whose output_axes disagrees with the field's FIXED_AXES raises.
+
+    Previously silent (pyright-only): field: TimeseriesIndex historically
+    carried no runtime check at all, only isinstance(val, GenericIndex).
+    """
+    x = Axis("x", DOMAIN)
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    mismatched = Index("field", np.array([1.0, 2.0]), axes=(x,))
+    with pytest.raises(ValueError, match=r"declared axes .* do not match the actual output_axes"):
+        Inputs(field=mismatched)  # type: ignore[arg-type]
+
+
+def test_structurally_equivalent_but_unrelated_class_is_accepted():
+    """A value from a *different* class satisfies the field, if its axes match.
+
+    The check is purely structural (output_axes), never isinstance: a
+    hand-rolled index type sharing no inheritance with TimeseriesIndex still
+    satisfies a field: TimeseriesIndex slot as long as FIXED_AXES agree.
+    This is what lets independently-authored components interoperate
+    without agreeing on a common class hierarchy for the same shape.
+    """
+
+    class TimeIndex(Index):
+        FIXED_AXES = (TIME_AXIS,)
+
+        def __init__(self, name: str, value=None) -> None:
+            super().__init__(name, value, axes=self.FIXED_AXES)
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    ti = TimeIndex("ti", np.array([1.0, 2.0]))
+    inst = Inputs(field=ti)  # type: ignore[arg-type]  # pyright can't see the structural match; that's the point
+    assert inst.field is ti
+
+
+def test_field_without_fixed_axes_is_unchecked():
+    """A plain Index field (no FIXED_AXES) accepts any shape, same as before this feature."""
+
+    @inputs
+    class Inputs:
+        field: Index
+
+    x = Axis("x", DOMAIN)
+    val = Index("field", np.array([1.0, 2.0]), axes=(x,))
+    inst = Inputs(field=val)  # must not raise
+    assert inst.field is val
+
+
+def test_list_field_checks_each_element():
+    """list[TimeseriesIndex] verifies every element's shape independently."""
+
+    @inputs
+    class Inputs:
+        fields: list[TimeseriesIndex]
+
+    good = TimeseriesIndex("good", np.array([1.0, 2.0]))
+    bad = Index("bad", np.array([1.0, 2.0]), axes=(Axis("x", DOMAIN),))
+    Inputs(fields=[good])  # must not raise
+    with pytest.raises(ValueError, match=r"fields\[0\]: declared axes"):
+        Inputs(fields=[bad])  # type: ignore[arg-type]
+
+
+def test_dict_field_checks_each_value():
+    """dict[str, TimeseriesIndex] verifies every value's shape independently."""
+
+    @inputs
+    class Inputs:
+        fields: dict[str, TimeseriesIndex]
+
+    good = TimeseriesIndex("good", np.array([1.0, 2.0]))
+    bad = Index("bad", np.array([1.0, 2.0]), axes=(Axis("x", DOMAIN),))
+    Inputs(fields={"a": good})  # must not raise
+    with pytest.raises(ValueError, match=r"fields\['b'\]: declared axes"):
+        Inputs(fields={"b": bad})  # type: ignore[arg-type]
+
+
+def test_unresolvable_annotation_falls_back_to_no_check():
+    """An annotation typing.get_type_hints cannot resolve is treated as having no declared shape.
+
+    Not a special case in the implementation: any GenericIndex is still
+    accepted regardless, exactly as for a plain Index field.
+    """
+
+    @inputs
+    class Inputs:
+        field: "NameNotDefinedAnywhere"  # type: ignore[name-defined]  # noqa: F821
+
+    x = Axis("x", DOMAIN)
+    val = Index("field", np.array([1.0, 2.0]), axes=(x,))
+    inst = Inputs(field=val)  # must not raise despite the unresolvable annotation
+    assert inst.field is val

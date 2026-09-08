@@ -13,13 +13,11 @@ from ..model.index import (
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
     ConstIndex,
-    ConstTimeseriesIndex,
     Distribution,
     DistributionIndex,
     DomainValue,
     GenericIndex,
     Index,
-    TimeseriesIndex,
 )
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
@@ -65,16 +63,18 @@ class Scenario:
 
     .. code-block:: text
 
-        Index type                   │ float  str  ndarray  Distribution  dict[str,float]  list[str]
-        ─────────────────────────────┼──────────────────────────────────────────────────────────────
-        Index                        │  ✓     ✗      ✗         ✗              ✗               ✗
-        TimeseriesIndex              │  ✗     ✗      ✓(1-D)    ✗              ✗               ✗
-        ConstIndex / ConstTimeseries │  ✗     ✗      ✗         ✗              ✗               ✗
-        DistributionIndex            │  ✗     ✗      ✗         ✓              ✗               ✗
-        ConditionalDistributionIndex │  ✗     ✗      ✗         ✗              ✗               ✗
-        CategoricalIndex             │  ✗     ✓*     ✗         ✗              ✓**             ✓***
-        ConditionalCategoricalIndex  │  ✗     ✓*     ✗         ✗              ✗               ✗
+        Index type                    │ float  str  ndarray  Distribution  dict[str,float]  list[str]
+        ────────────────────────────-─┼──────────────────────────────────────────────────────────────
+        Index (no axes=)              │  ✓     ✗      ✗         ✗              ✗               ✗
+        Index(axes=(...)) / Timeseries│  ✗     ✗      ✓(n-D)†   ✗              ✗               ✗
+        ConstIndex / ConstTimeseries  │  ✗     ✗      ✗         ✗              ✗               ✗
+        DistributionIndex             │  ✗     ✗      ✗         ✓              ✗               ✗
+        ConditionalDistributionIndex  │  ✗     ✗      ✗         ✗              ✗               ✗
+        CategoricalIndex              │  ✗     ✓*     ✗         ✗              ✓**             ✓***
+        ConditionalCategoricalIndex   │  ✗     ✓*     ✗         ✗              ✗               ✗
 
+        † an ndarray whose rank equals len(idx.axes), one dimension per declared
+          axis in declaration order (so 1-D for a TimeseriesIndex)
         * str must be in idx.support
         ** dict keys must be a non-empty subset of idx.support, positive probs summing to 1.0
         *** list must be a non-empty subset of idx.support; original model probabilities are
@@ -88,10 +88,10 @@ class Scenario:
         Index(scalar), float override   │ absent            override float —                       —
         Index(None), no override        │ present           —              —                       —
         Index(None), float override     │ absent            override float —                       —
-        TimeseriesIndex(arr), no ovr    │ absent            own array      —                       —
-        TimeseriesIndex(arr), ndarray   │ absent            override array —                       —
-        TimeseriesIndex(None), no ovr   │ present           —              —                       —
-        TimeseriesIndex(None), ndarray  │ absent            override array —                       —
+        Index(axes=)(arr), no ovr       │ absent            own array      —                       —
+        Index(axes=)(arr), ndarray      │ absent            override array —                       —
+        Index(axes=)(None), no ovr      │ present           —              —                       —
+        Index(axes=)(None), ndarray     │ absent            override array —                       —
         DistributionIndex, no override  │ present           —              _frozen                 —
         DistributionIndex, Distribution │ present           —              override dist           —
         CondDistribution, no override   │ present           —              —                       —
@@ -166,18 +166,25 @@ class Scenario:
 
         for idx, val in self._overrides.items():
             # Structural constants cannot be overridden.
-            if isinstance(idx, (ConstIndex, ConstTimeseriesIndex)):
+            if isinstance(idx, ConstIndex):
                 raise TypeError(
                     f"Index {idx.name!r} is a structural constant and cannot be overridden in a Scenario. "
                     f"Use Index / TimeseriesIndex for values that vary between scenarios."
                 )
 
-            # TimeseriesIndex: only 1-D ndarray override allowed.
-            if isinstance(idx, TimeseriesIndex):
-                if not isinstance(val, np.ndarray) or val.ndim != 1:
+            # Domain-carrying Index (including TimeseriesIndex, whose declared
+            # axes are (time,)): the override must be an ndarray whose rank
+            # matches the declared axes, since each dimension is zipped against
+            # one axis.  Distribution/categorical indexes declare no axes and
+            # fall through to their own checks below.
+            if isinstance(idx, Index) and idx.axes:
+                expected = len(idx.axes)
+                if not isinstance(val, np.ndarray) or val.ndim != expected:
                     shape_info = f" with shape {val.shape}" if isinstance(val, np.ndarray) else ""
+                    axis_names = ", ".join(ax.name for ax in idx.axes)
                     raise TypeError(
-                        f"Override for TimeseriesIndex {idx.name!r} must be a 1-D ndarray; "
+                        f"Override for {type(idx).__name__} {idx.name!r} must be a "
+                        f"{expected}-D ndarray over axes ({axis_names}); "
                         f"got {type(val).__name__!r}{shape_info}."
                     )
                 continue
@@ -438,12 +445,12 @@ class Scenario:
         """
         subs: dict[graph.Node, np.ndarray] = {}
         for idx in self._model.indexes:
-            if isinstance(idx, (ConstIndex, ConstTimeseriesIndex)):
+            if isinstance(idx, ConstIndex):
                 continue  # value already baked into the graph as a constant node
 
             # Determine the effective value: override takes precedence.
             val: DomainValue | graph.Node | None = self._overrides.get(idx)
-            if val is None and isinstance(idx, (Index, TimeseriesIndex)):
+            if val is None and isinstance(idx, Index):
                 val = idx.concrete_default  # type: ignore[assignment]  # Scalar ⊄ DomainValue
 
             if val is None or isinstance(val, (Distribution, dict, graph.Node)):

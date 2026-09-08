@@ -9,6 +9,214 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**Multi-domain axes**
+
+- `DomainAxis` — an `Axis` carrying a static domain `type` from the new
+  `DomainType` lattice (`SetType` ⊂ `SequenceType` ⊂ `TimeType`/`SpaceType`).
+  `type` is metadata only: axis identity stays `(name, role)`, so a typed axis
+  still compares and hashes equal to a plain `Axis` with the same name and
+  role (serialization round-trips unaffected).  `TIME_AXIS` is now
+  `DomainAxis("time", type=TimeType())`.
+- `graph.array_placeholder` / `graph.array_constant` — generic
+  domain-carrying graph nodes that mint their declared `output_axes`.  Until
+  now only `timeseries_placeholder`/`timeseries_constant` minted an axis, and
+  always `TIME_AXIS`; a non-time DOMAIN axis was not constructible.
+- `Index` and `ConstIndex` accept an optional `axes=` tuple of DOMAIN axes,
+  making them domain-carrying:
+  `Index("field", arr, axes=(x, y))`, `ConstIndex("field", arr, axes=(x, y))`.
+  Per-axis sizes are deduced by zipping `axes` against the array's shape, so
+  the array's rank must match the number of axes.  `Index.axes`,
+  `Index.sizes`, and `ConstIndex.sizes` are new read-only accessors.
+  `Index` is now documented as *any* index, scalar or domain-carrying — its
+  shape is **declared** via `axes=` when the value is injected (concrete or
+  placeholder) and **derived** from the graph when the value is a formula.
+- `NumpyBackend.adapt(fn, output_axes=..., input_axes=...)` — an optional
+  declared axis signature for a user-defined function, surfaced as the new
+  `Functor.output_axes`/`Functor.input_axes` attributes.  Pass the bound
+  functor to `graph.function_call(..., functor=...)` to use it: `output_axes`
+  replaces that node's conservative axis-union inference (which over-estimates
+  whenever the function reduces an axis), and `input_axes` is verified against
+  the actual arguments, so a shape mismatch raises `ValueError` at graph-build
+  time instead of surfacing at evaluation.  `graph.function_call` also gains
+  `has_declared_output_axes`, and `graph.HasAxisSignature` is the structural
+  protocol the `functor=` argument accepts.
+- `axes.domain_axis_position(domain_axes, axis)` — maps a named DOMAIN axis to
+  its numpy dimension.  CDT lays arrays out as `(*PARAMETER, *ENSEMBLE,
+  *DOMAIN)`, so DOMAIN axes are trailing and the index is returned as a
+  *negative* offset, which stays valid whatever leading dimensions an array
+  carries mid-evaluation (arrays are right-aligned by broadcasting and are not
+  padded to a uniform rank until after execution).
+- `executor.State.domain_axes` — the DOMAIN axes an evaluation carries, in
+  canonical layout order; defaults to `()`.  Projections now resolve their
+  *named* axis against it instead of hard-coding numpy axis `-1`, so a model
+  can reduce along a non-time DOMAIN axis, and one carrying several reduces
+  the dimension its axis actually names.  Reducing an axis the evaluation does
+  not carry raises `UnsupportedOperation` rather than silently reducing the
+  wrong dimension.  `numpy_ast.graph_node_to_ast_stmt` and
+  `graph_node_to_numpy_code` take a matching `domain_axes=` keyword, so the
+  generated debug source agrees with what the executor does.
+- **Models can now carry several DOMAIN axes end to end.** A model built from
+  `Index`/`ConstIndex` with `axes=(x, y)` evaluates, reduces, and reports a
+  result layout naming every dimension — previously such a model could be
+  constructed but not evaluated (a non-time array node had no executor
+  evaluator, and the pipeline reserved at most one trailing DOMAIN dimension).
+  Reductions target the axis they *name* rather than the last dimension, and
+  `Scenario` accepts an override for a domain-carrying index as an ndarray
+  whose rank matches its declared axes.
+- `executor.align_to_domain_block(arr, node_axes, domain_axes)` — pads a value
+  to the evaluation's full DOMAIN block (size 1 for axes it does not carry) and
+  permutes the axes it does carry into canonical order.  Needed because numpy
+  right-aligns operands: without it an `(x,)`-shaped value in an `(x, y)` model
+  would broadcast onto `y`.  Only leaves need aligning; broadcasting then
+  preserves positions for every computed node.
+- `AxesInferenceWarning` (a `UserWarning`) — raised when an undeclared
+  formula-backed index has inferred axes that are unlikely to be intended:
+  an outer product emerging from operands with *disjoint* axes
+  (`a:(time,) * b:(space,)` → `(time, space)`, over `BinaryOp`, `where`, and
+  multi-clause nodes), or an unsigned `function_call` whose union may
+  over-estimate.  Broadcasting a scalar, or combining operands that already
+  share the result's axes, does not trigger it.  Declaring `axes=` states the
+  intent and silences the warning; so does filtering the category.
+- `EvaluationResult.layout_of(index)` — the `AxisLayout` of the array
+  `expected_value(index)` returns, mirroring `result.layout` (which describes
+  the *raw*, pre-marginalization array).  With several DOMAIN axes, position
+  alone no longer identifies a dimension after ENSEMBLE contraction and
+  stray-DOMAIN dropping — different outputs of the same model can carry
+  different DOMAIN axes and therefore end up with different marginalized
+  shapes — so this is how a caller finds out which axis is which.
+- `LabeledArray` and `EvaluationResult.labeled(index)` — an optional,
+  additive self-describing wrapper pairing `expected_value(index)` with
+  `layout_of(index)`: `.dims` (axis names, in order), `.sel(name=...)`
+  (integer or slice selection by axis name instead of position), and
+  `.to_xarray()` for interop with the xarray ecosystem.  `result[index]` and
+  `expected_value(index)` are unaffected and keep returning plain
+  `np.ndarray`.  `xarray` is not a dependency of this library — `.to_xarray()`
+  imports it lazily and raises `ImportError` if it is not installed.
+- **`FIXED_AXES`** — a `ClassVar[tuple[Axis, ...]]` convention for `Index`/
+  `ConstIndex` subclasses that fix a shape (`TimeseriesIndex` is the first,
+  refactored, instance: `FIXED_AXES = (TIME_AXIS,)`).  An `Inputs`/
+  `Outputs`/`Expose` field annotated with such a class (or a `list[...]`/
+  `dict[str, ...]` of one) is now verified at construction time: the actual
+  value's `output_axes` must match `FIXED_AXES`, raising `ValueError`
+  otherwise.  A plain `Index`/`ConstIndex`/`GenericIndex` annotation stays
+  unchecked, exactly as before.  The check is structural, never `isinstance`
+  — a value built by an unrelated class satisfies the annotation as long as
+  its `output_axes` matches, which is what lets independently-authored
+  components interoperate around the same shape without sharing a class
+  hierarchy for it.  Since every existing `TimeseriesIndex`/
+  `ConstTimeseriesIndex` instance already carries `(TIME_AXIS,)` by
+  construction, this can only newly reject a value that was already a latent
+  contract violation invisible to anything but Pyright.
+- **Domain-typed operator vocabulary.** `GenericIndex` gains `shift`,
+  `roll`, `diff`, and `cumulative` (gated by `SequenceType`, the type any
+  untyped DOMAIN axis behaves as) and `gradient`/`laplacian` (gated by
+  `SpaceType`, checked via `isinstance(axis.type, SpaceType)`, since axis
+  capability is a genuine type lattice). `shift`/`roll` are two explicit
+  methods reading no axis metadata — matching xarray's own `shift` (fill, a
+  plain `fill_value`) vs. `roll` (circular) split. `diff` composes as
+  `self - self.shift(...)`, so it needs no new graph node. `gradient`
+  (`np.gradient`, central differences) and `laplacian` (a padded
+  finite-difference stencil honoring each axis's `SpaceType.boundary`,
+  summed isotropically over one or more axes) read their axis's
+  `spacing`/`boundary` once at graph-construction time and bake
+  the resolved values onto the new `graph.shift`/`graph.roll`/
+  `graph.cumulative`/`graph.gradient`/`graph.laplacian` nodes — axis `type`
+  is not reliably available at evaluation time, since `DomainAxis` equality
+  and hashing deliberately exclude it. `numpy_ast`'s debug codegen renders
+  `roll`/`cumulative`/`gradient` as direct `np.*` calls and `shift`/
+  `laplacian` (which have no single-call NumPy equivalent) as calls to a
+  small local helper, mirroring how it already renders user-defined
+  functions as bare-name calls.
+
+### Changed
+
+- `Node[T]`'s documentation (`dd-cdt-engine.md`, `graph.py`'s module
+  docstring, `doc_engine.py`) no longer frames `T` around array dimensions
+  (`TimeDimension`/`EnsembleDimension`) — that reads as a second, competing
+  shape-typing mechanism now that axes carry shape. `T` names a *quantity
+  kind* (a vehicle count, a currency amount); a node's axes are unrelated
+  and tracked separately, at runtime, by the axis-labeling machinery.
+- **Removed `graph.timeseries_constant` and `graph.timeseries_placeholder`.**
+  They were reduced to thin factory functions building an `array_constant` /
+  `array_placeholder` with `axes=(TIME_AXIS,)`, and are now gone entirely:
+  construct the generic node with `axes=(TIME_AXIS,)` directly. `graph.py`
+  itself no longer imports `TIME_AXIS` — the engine frontend carries no
+  axis-specific knowledge. Time is one domain axis among several, so shape
+  belongs in `axes` rather than in a factory (or class) per shape.
+- **Removed `numpy_ast.DEFAULT_DOMAIN_AXES`.** `graph_node_to_ast_stmt` and
+  `graph_node_to_numpy_code`'s `domain_axes=` keyword now defaults to `()`
+  instead of `(TIME_AXIS,)`; callers tracing a time-only graph must pass
+  `domain_axes=(TIME_AXIS,)` explicitly.
+- `executor.State.domain_axes` now defaults to `()` instead of `(TIME_AXIS,)`.
+  Constructing a `State` directly to evaluate a time-carrying node (a
+  reduction, or an `array_constant`/`array_placeholder` leaf) now requires
+  passing `domain_axes=(TIME_AXIS,)` explicitly; values already present in
+  `State.values` are unaffected, since they never go through domain-axis
+  alignment. This also fixed a latent bug in `handle.py`'s ensemble/parameter
+  merge paths, which built a fresh `State` without propagating the source
+  result's `domain_axes` — silently correct only because every merge so far
+  happened to be time-only.
+- `GenericIndex` reductions on an index carrying **no** DOMAIN axis now raise
+  `ValueError` instead of silently defaulting to the time axis.  That fallback
+  reproduced a "reduce the last dimension" convention from when every array was
+  a timeseries; the executor now reduces the dimension an axis *names*, so it
+  would have asked for a time axis the evaluation need not carry.  Declare the
+  index's shape with `axes=`, or pass `axis=` explicitly.
+- The model contract's dropped-index check now also covers domain-carrying
+  placeholders.  An `Index(axes=(x,))` created inside `compute()` but never
+  surfaced via `Inputs`/`Outputs`/`Expose` was previously not reported, and
+  surfaced much later as an opaque missing-value error during evaluation.
+- Multi-domain graphs can be traced: `numpy_ast` had no entry for the generic
+  array nodes, so `DTMODEL_ENGINE_FLAGS=trace` raised `UnsupportedNodeType` on
+  any model carrying a non-time DOMAIN axis.
+- `Region.has_timeseries: bool` is now `Region.domain_axes: tuple[Axis, ...]`,
+  and `RegionArrayOps(..., has_timeseries=)` is now `domain_axes=`.  A boolean
+  could only express "zero or one trailing DOMAIN dimension"; the layout needs
+  to know *which* axes, in what order.  DOMAIN axes are ordered canonically by
+  axis name — deriving the order from graph traversal would make a result's
+  dimension order depend on how a formula happened to be written, so commuting
+  a multiplication would reshuffle it.
+- The `Scenario` override check for a domain-carrying index reports the
+  declared rank and axis names (`must be a 2-D ndarray over axes (x, y)`)
+  instead of the `TimeseriesIndex`-specific "must be a 1-D ndarray".
+- Formula-mode `axes=` on `Index` (and therefore the `axes=(TIME_AXIS,)` that
+  `TimeseriesIndex` fixes) is **verified** against the formula's inferred
+  `output_axes`; a mismatch raises `ValueError`.  It is a verification, not an
+  override: there is no mechanism to relabel a formula's axes.  The comparison
+  is by **set** — a formula's axis order is an artifact of how the inference
+  walked the operands (`a * b` and `b * a` order the same result differently),
+  so it carries no intent to assert against.  Injected values are unaffected:
+  there `axes=` stays ordered, since it is zipped against the array's shape.
+  A `TimeseriesIndex` wrapping a formula that does not carry the time axis now
+  raises where it was previously silently accepted.
+- The `Functor` protocol gained the `output_axes`/`input_axes` attributes, so a
+  *hand-rolled* functor (one not produced by `NumpyBackend.adapt`) must now
+  declare them — set both to `None` to keep the previous behaviour.  Runtime is
+  unaffected; nothing checks the protocol at runtime.
+- `GenericIndex` reductions (`.sum()`, `.mean()`, …) default to the index's
+  **unique** DOMAIN axis rather than always the time axis.  An index carrying
+  several DOMAIN axes must now pass `axis=` explicitly (`ValueError`
+  otherwise).  Time-only models are unaffected, and an index carrying no
+  DOMAIN axis keeps the legacy time-axis default for now.
+- `TimeseriesIndex` is now a specialization of `Index` fixing
+  `axes=(TIME_AXIS,)` (previously a sibling class).  `isinstance(ts, Index)`
+  is therefore `True` where it used to be `False`.  Its constructor, node
+  types, `repr`, and behaviour are unchanged.
+- `Index(name, other_index)` now unwraps **any** `GenericIndex` to its
+  underlying `.node`, reusing the formula.  Previously passing a
+  `TimeseriesIndex` raised `TypeError`.  The old guard inspected the wrapper
+  class rather than the value's shape, so it rejected the explicit case while
+  admitting the equivalent implicit one (`Index("y", ts_a / ts_b)`).
+- `ConstTimeseriesIndex` now derives from `ConstIndex` as well as
+  `TimeseriesIndex` — it is `ConstIndex(axes=(TIME_AXIS,))`, so the const and
+  non-const hierarchies are parallel.  `isinstance(cts, ConstIndex)` and
+  `isinstance(cts, Index)` are now `True`; `isinstance(cts, TimeseriesIndex)`
+  remains `True`, keeping `TimeseriesIndex` usable as the "time-shaped,
+  whatever the value source" annotation in model `Inputs`/`Outputs`
+  contracts.  Its constructor, node type, and `repr` are unchanged.
+
 ## [0.11.1] - 2026-08-20
 
 ### Fixed

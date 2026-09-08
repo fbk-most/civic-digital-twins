@@ -80,18 +80,15 @@ from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
-# Define types
-class TimeDimension:
-    """Represents nodes in the time dimension."""
-
-
-class EnsembleDimension:
-    """Represents nodes in the ensemble dimension."""
+# Define a quantity kind, so a type checker rejects accidentally
+# mixing this node's values with an unrelated quantity
+class VehicleCount:
+    """Represents a count of vehicles."""
 
 
 # Define a type-aware DAG
-a = graph.placeholder[TimeDimension]("a")
-b = graph.placeholder[TimeDimension]("b")
+a = graph.placeholder[VehicleCount]("a")
+b = graph.placeholder[VehicleCount]("b")
 k0 = graph.constant(3, name="k0")
 c = a + b * k0
 c1 = graph.function_call("reduce", c)
@@ -265,14 +262,16 @@ d = c * b + scale
 ```
 
 In practice, assigning distinct types to distinct nodes is
-beneficial to avoid programming mistakes, especially with
-shapes. For example, a real model could have the ensemble
-dimension with shape `(1,)` and the time dimension with
-shape `(255,)`. To perform computations in the time-ensemble
-dimension, one needs to expand vectors into the `(255,1)`
-space. By using types correctly, we avoid mixing dimensions
-and reduce the risk of combining nodes with incorrect
-shapes by mistake.
+beneficial to avoid programming mistakes, especially when a
+model mixes several *kinds* of quantity — population counts,
+currency, probabilities, temperatures. `T` names the quantity
+a node represents, so a static type checker flags an accidental
+`vehicle_count + euros`. It says nothing about array shape: a
+node's actual axes (time, space, ensemble, ...) are tracked
+separately, at runtime, by the axis-labeling machinery described
+in [`dd-cdt-model.md`](dd-cdt-model.md) — two nodes can share a
+`T` while carrying entirely different axes, or carry the same
+axes while representing unrelated quantities.
 
 Regarding how `graph.py` could be implemented, a very simplified
 implementation looks like this:
@@ -376,35 +375,45 @@ These three nodes are used by the model layer to implement runtime `ModelVariant
 [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection) for the model-layer
 perspective.
 
-### Timeseries Nodes
+### Domain-Carrying Nodes
 
 In addition to scalar `constant` and `placeholder`, `graph.py` provides
-two nodes for representing time-indexed data:
+two nodes for representing array data shaped by one or more DOMAIN axes
+(time, a spatial grid, or any combination):
 
-- **`graph.timeseries_constant(values, name="")`** — stores a fixed 1-D
-  array of values (one per time step).  At evaluation time the executor
-  converts it to a `np.ndarray` of the corresponding shape.
+- **`graph.array_constant(values, axes, name="")`** — stores a fixed array
+  of values, one dimension per axis in `axes`.  At evaluation time the
+  executor converts it to a `np.ndarray` of the corresponding shape.
 
-- **`graph.timeseries_placeholder(name)`** — a placeholder whose value
-  is a 1-D array supplied at evaluation time (e.g. a measured time-series).
+- **`graph.array_placeholder(name, axes)`** — a placeholder whose value is
+  an array of the declared shape, supplied at evaluation time (e.g. a
+  measured time-series).
+
+A timeseries is simply the common case of `axes=(TIME_AXIS,)`. Earlier
+versions of this module had dedicated `timeseries_constant`/
+`timeseries_placeholder` node types; once `array_constant`/`array_placeholder`
+gained generic `axes=` support, those became redundant and were removed —
+shape, including a timeseries' shape, lives entirely in `axes` rather than in
+the node type.
 
 Example:
 
 ```python
 import numpy as np
 from civic_digital_twins.dt_model.engine.frontend import graph
+from civic_digital_twins.dt_model.axes import TIME_AXIS
 
 # A fixed time series (e.g. 24 hourly demand values)
-demand = graph.timeseries_constant(np.arange(24, dtype=float), "demand")
+demand = graph.array_constant(np.arange(24, dtype=float), axes=(TIME_AXIS,), name="demand")
 
 # A placeholder for an externally supplied time series
-traffic = graph.timeseries_placeholder("traffic")
+traffic = graph.array_placeholder("traffic", axes=(TIME_AXIS,))
 
-# Formulas can combine timeseries nodes with scalar nodes
+# Formulas can combine domain-carrying nodes with scalar nodes
 scaled = demand * graph.constant(0.5)
 ```
 
-The executor evaluates timeseries nodes in the same way as scalar nodes;
+The executor evaluates domain-carrying nodes in the same way as scalar nodes;
 the difference is purely in the shape of the resulting `np.ndarray`.
 
 ### Axis Management

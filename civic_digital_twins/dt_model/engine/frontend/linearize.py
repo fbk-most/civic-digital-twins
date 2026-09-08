@@ -177,13 +177,13 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
             deps.extend(branch_nodes)
         return deps
 
-    if isinstance(node, graph.ProjectionOp):
+    if isinstance(node, (graph.ProjectionOp, graph.AxisOp, graph.laplacian)):
         return [node.node]
 
     if isinstance(node, (graph.constant, graph.placeholder)):
         return []
 
-    if isinstance(node, (graph.timeseries_constant, graph.timeseries_placeholder)):
+    if isinstance(node, (graph.array_constant, graph.array_placeholder)):
         return []
 
     if isinstance(node, graph.function_call):

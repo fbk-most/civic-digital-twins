@@ -44,7 +44,7 @@ import numpy as np
 
 from ..axes import Axis
 from ..engine.numpybackend.executor import Functor, NumpyBackend, State
-from ..model.index import DistributionIndex, GenericIndex, Index, TimeseriesIndex
+from ..model.index import DistributionIndex, GenericIndex, Index
 from ..model.model import Model
 from ..model.model_variant import ModelVariant
 from .axis_layout import AxisLayout
@@ -838,7 +838,7 @@ def _own_index_value(idx: GenericIndex) -> Any:
     """
     if isinstance(idx, DistributionIndex):
         return idx.frozen_distribution
-    if isinstance(idx, (Index, TimeseriesIndex)):
+    if isinstance(idx, Index):
         return idx.concrete_default
     return None
 

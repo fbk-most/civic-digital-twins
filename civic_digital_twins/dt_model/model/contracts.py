@@ -16,7 +16,8 @@ import typing
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, TypeVar, dataclass_transform, overload
 
-from .index import GenericIndex
+from ..axes import Axis
+from .index import GenericIndex, _verify_declared_axes
 
 __all__ = ["define", "expose", "functions", "inputs", "outputs"]
 
@@ -181,6 +182,46 @@ def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
     raise TypeError(f"{cls_name}.{field_name}: expected GenericIndex (or list/dict thereof), got {type(val).__name__}")
 
 
+def _declared_axes(annotation: Any) -> tuple[Axis, ...] | None:
+    """Return the ``FIXED_AXES`` a field's resolved annotation declares, or ``None``.
+
+    Recognizes a bare class carrying ``FIXED_AXES`` (e.g. ``TimeseriesIndex``,
+    or any user-defined shape following the same pattern), or a
+    ``list[...]``/``dict[str, ...]`` whose element type does. Returns
+    ``None`` for anything else — a plain ``Index``/``ConstIndex``/
+    ``GenericIndex`` annotation, or an annotation that :func:`typing.get_type_hints`
+    could not resolve (left as a string) — so no shape check runs there,
+    same as today.
+    """
+    origin = typing.get_origin(annotation)
+    if origin in (list, dict):
+        args = typing.get_args(annotation)
+        return _declared_axes(args[-1]) if args else None
+    return getattr(annotation, "FIXED_AXES", None)
+
+
+def _verify_index_field_shape(cls_name: str, field_name: str, declared: tuple[Axis, ...], val: Any) -> None:
+    """Verify *val* (or each of its elements) carries exactly *declared* axes.
+
+    Structural, never nominal (see :func:`~.index._verify_declared_axes`):
+    compares ``output_axes`` as a set, regardless of which ``Index``
+    subclass produced the value. Only applies where *val* is (or contains) a
+    :class:`~.index.GenericIndex` — nested ``@expose``/``@outputs``
+    dataclasses and ``IOProxy`` fields carry no ``output_axes`` and are left
+    to :func:`_validate_index_field`'s own checks.
+    """
+    if isinstance(val, GenericIndex):
+        _verify_declared_axes(f"{cls_name}.{field_name}", declared, val.output_axes)
+    elif isinstance(val, list):
+        for i, item in enumerate(val):
+            if isinstance(item, GenericIndex):
+                _verify_declared_axes(f"{cls_name}.{field_name}[{i}]", declared, item.output_axes)
+    elif isinstance(val, dict):
+        for k, item in val.items():
+            if isinstance(item, GenericIndex):
+                _verify_declared_axes(f"{cls_name}.{field_name}[{k!r}]", declared, item.output_axes)
+
+
 def _make_io_decorator(marker: str):
     """Return a decorator that wraps ``@dataclass`` and validates ``GenericIndex`` fields.
 
@@ -193,12 +234,28 @@ def _make_io_decorator(marker: str):
         cls = dataclasses.dataclass(cls)
         original_init = cls.__init__
 
+        # Resolve field annotations once, at decoration time, rather than on
+        # every instantiation.  typing.get_type_hints() (rather than
+        # dataclasses.fields()[i].type, a string under `from __future__ import
+        # annotations`) is what lets us actually look at the annotated class
+        # and check it for FIXED_AXES; on failure (an annotation that cannot
+        # be resolved), fields default to no declared shape, same as today.
+        try:
+            hints = typing.get_type_hints(cls, globalns=vars(sys.modules[cls.__module__]), localns=vars(cls))
+        except Exception:
+            hints = {}
+        field_axes = {name: _declared_axes(hint) for name, hint in hints.items()}
+
         @functools.wraps(original_init)
         def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
             original_init(self, *args, **kwargs)
             cls_name = type(self).__name__
             for f in dataclasses.fields(self):  # type: ignore[arg-type]
-                _validate_index_field(cls_name, f.name, getattr(self, f.name))
+                val = getattr(self, f.name)
+                _validate_index_field(cls_name, f.name, val)
+                declared = field_axes.get(f.name)
+                if declared is not None:
+                    _verify_index_field_shape(cls_name, f.name, declared, val)
 
         cls.__init__ = __init__  # type: ignore[assignment]
         setattr(cls, marker, True)

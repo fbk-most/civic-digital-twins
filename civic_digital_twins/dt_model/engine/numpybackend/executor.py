@@ -25,10 +25,10 @@ from typing import (
 
 import numpy as np
 
-from ...axes import TIME_AXIS
+from ...axes import DOMAIN, Axis, domain_axis_position
 from .. import compileflags
 from ..frontend import graph
-from . import numpy_ast
+from . import kernels, numpy_ast
 
 # Type aliases for operation function signatures
 type _BinaryOpFunc = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -260,13 +260,14 @@ _projection_operations: dict[type[graph.Node], _ProjectionOpFunc] = {
 }
 """Maps a projection op in the graph domain to the corresponding numpy operation.
 
-All projection operations reduce along numpy axis ``-1`` (CDT convention:
-the DOMAIN axis always occupies the last numpy dimension).
+Each operation takes the operand and the numpy dimension to reduce.  That
+dimension is resolved per node from the op's *named* axis (see
+:func:`_eval_projection_op`), not hard-coded.
 
 Add entries to this table to support more projection operations."""
 
 
-def _print_graph_node(node: graph.Node) -> None:
+def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = ()) -> None:
     """Print a node before evaluation."""
     # 1. print the original DAG node as a comment so we can always
     # understand what is the specific node leading to this.
@@ -274,10 +275,8 @@ def _print_graph_node(node: graph.Node) -> None:
 
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
-    if not isinstance(
-        node, (graph.constant, graph.placeholder, graph.timeseries_constant, graph.timeseries_placeholder)
-    ):
-        print(numpy_ast.graph_node_to_numpy_code(node))
+    if not isinstance(node, (graph.constant, graph.placeholder, graph.array_constant, graph.array_placeholder)):
+        print(numpy_ast.graph_node_to_numpy_code(node, domain_axes=domain_axes))
 
 
 def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
@@ -335,7 +334,19 @@ class InvalidFunctionResult(Exception):
 
 @runtime_checkable
 class Functor(Protocol):
-    """A user-defined callable integrated into the DAG."""
+    """A user-defined callable integrated into the DAG.
+
+    ``output_axes``/``input_axes`` are an optional declared axis signature,
+    set via :meth:`NumpyBackend.adapt`. Passing the functor to
+    :class:`~..frontend.graph.function_call` as ``functor=`` makes
+    ``output_axes`` replace that node's conservative axis-union inference, and
+    verifies ``input_axes`` against the actual call arguments at graph-build
+    time. Both are ``None`` for an unsigned functor — the common case, which
+    keeps the conservative-union behaviour.
+    """
+
+    output_axes: tuple[Axis, ...] | None
+    input_axes: tuple[tuple[Axis, ...], ...] | None
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         """Execute the user defined function."""
@@ -345,8 +356,16 @@ class Functor(Protocol):
 class _NumpyFunctor:
     """A callable bound to the numpy array convention (internal implementation)."""
 
-    def __init__(self, fn: Callable[..., np.ndarray]) -> None:
+    def __init__(
+        self,
+        fn: Callable[..., np.ndarray],
+        *,
+        output_axes: tuple[Axis, ...] | None = None,
+        input_axes: tuple[tuple[Axis, ...], ...] | None = None,
+    ) -> None:
         self._fn = fn
+        self.output_axes = output_axes
+        self.input_axes = input_axes
 
     def __call__(self, *args: np.ndarray, **kwargs: np.ndarray) -> np.ndarray:
         return self._fn(*args, **kwargs)
@@ -370,13 +389,22 @@ class NumpyBackend:
     """
 
     @staticmethod
-    def adapt(fn: Callable[..., np.ndarray]) -> Functor:
+    def adapt(
+        fn: Callable[..., np.ndarray],
+        *,
+        output_axes: tuple[Axis, ...] | None = None,
+        input_axes: tuple[tuple[Axis, ...], ...] | None = None,
+    ) -> Functor:
         """Bind *fn* to the numpy array convention.
 
         The callable must accept and return :class:`numpy.ndarray` values.
         Returns a :class:`Functor` wrapping *fn*.
+
+        *output_axes*/*input_axes* declare an optional axis signature (see
+        :class:`Functor`); pass the returned functor to
+        ``graph.function_call(..., functor=...)`` to make use of it.
         """
-        return _NumpyFunctor(fn)
+        return _NumpyFunctor(fn, output_axes=output_axes, input_axes=input_axes)
 
 
 # Belt-and-suspenders: assert at import time that _NumpyFunctor satisfies Functor.
@@ -409,6 +437,10 @@ class State:
             construction-time binding via ``@functions`` contract).  Checked
             before ``functions`` so that two sub-models sharing the same
             function name each receive their own functor.
+        domain_axes: the DOMAIN axes this evaluation carries, in canonical
+            (layout) order.  They occupy the trailing numpy dimensions, and
+            projections resolve their named axis against this tuple.  Defaults
+            to empty (no DOMAIN axes); a time-only model passes ``(TIME_AXIS,)``.
 
     Notes
     -----
@@ -426,13 +458,14 @@ class State:
     flags: int = compileflags.defaults
     functions: dict[str, Functor] = field(default_factory=dict)
     node_functions: dict[graph.Node, Functor] = field(default_factory=dict)
+    domain_axes: tuple[Axis, ...] = ()
 
     def __post_init__(self):
         """Print the placeholder values provided to the constructor."""
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                _print_graph_node(node)
+                _print_graph_node(node, self.domain_axes)
                 _print_evaluated_node(node, self.values[node])
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
@@ -513,7 +546,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     flags = node.flags | state.flags
     tracing = flags & compileflags.TRACE
     if tracing:
-        _print_graph_node(node)
+        _print_graph_node(node, state.domain_axes)
 
     # 3. evaluate the node
     result = _evaluate(state, node)
@@ -538,14 +571,79 @@ evaluate = evaluate_single_node
 """Backward-compatible name for evaluate_node."""
 
 
-def _eval_timeseries_constant(_: State, node: graph.Node) -> np.ndarray:
-    node = cast(graph.timeseries_constant, node)
-    return np.asarray(node.values)
+def align_to_domain_block(
+    arr: np.ndarray,
+    node_axes: tuple[Axis, ...],
+    domain_axes: tuple[Axis, ...],
+) -> np.ndarray:
+    """Reshape *arr* so its DOMAIN axes sit at their canonical trailing positions.
+
+    Mid-evaluation, arrays have heterogeneous ranks and numpy aligns them from
+    the right.  With a single DOMAIN axis that is harmless — everything that
+    carries it has it last.  With several, an array carrying only the *first*
+    domain axis would right-align onto the *last* one and silently compute
+    nonsense.  So each value is padded to the full domain block, size 1 for the
+    axes it does not carry, and permuted into canonical order for those it does.
+
+    Only leaves need this: once every leaf is aligned, broadcasting preserves
+    dimension positions, so every computed node is canonically ordered too.
+    That is why ``output_axes`` on a computed node is read as a *set* — the
+    layout, not the traversal, decides positions.
+
+    Parameters
+    ----------
+    arr:
+        Value whose trailing dimensions are its own DOMAIN axes, in
+        *node_axes* order.  Leading dimensions are preserved untouched.
+    node_axes:
+        The node's own axes; non-DOMAIN entries are ignored.
+    domain_axes:
+        The evaluation's DOMAIN axes in canonical order.
+
+    Returns
+    -------
+    *arr* reshaped so its trailing ``len(domain_axes)`` dimensions correspond
+    to *domain_axes* positionally.
+    """
+    own = [ax for ax in node_axes if ax.role == DOMAIN]
+    unknown = [ax for ax in own if ax not in domain_axes]
+    if unknown:
+        raise UnsupportedOperation(
+            f"executor: node carries DOMAIN axes {[ax.name for ax in unknown]} that are not among "
+            f"this evaluation's axes {[ax.name for ax in domain_axes]} — the layout cannot place them"
+        )
+    if not domain_axes:
+        return arr
+    n = len(own)
+    leading = arr.shape[: arr.ndim - n]
+    ordered = [ax for ax in domain_axes if ax in own]
+    if ordered != own:
+        base = arr.ndim - n
+        arr = np.moveaxis(arr, [base + own.index(ax) for ax in ordered], [base + i for i in range(n)])
+    present = arr.shape[arr.ndim - n :] if n else ()
+    target: list[int] = []
+    consumed = 0
+    for ax in domain_axes:
+        if consumed < n and ordered[consumed] == ax:
+            target.append(present[consumed])
+            consumed += 1
+        else:
+            target.append(1)
+    return arr.reshape(leading + tuple(target))
 
 
-def _eval_timeseries_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
-    node = cast(graph.timeseries_placeholder, node)
-    raise PlaceholderValueNotProvided(f"executor: no value provided for timeseries placeholder '{node.name}'")
+def _eval_array_constant(state: State, node: graph.Node) -> np.ndarray:
+    node = cast(graph.array_constant, node)
+    return align_to_domain_block(np.asarray(node.values), node.output_axes, state.domain_axes)
+
+
+def _eval_array_placeholder_default(_: State, node: graph.Node) -> np.ndarray:
+    # Reached only when the state carries no value for this placeholder.
+    node = cast(graph.array_placeholder, node)
+    raise PlaceholderValueNotProvided(
+        f"executor: no value provided for array placeholder '{node.name}' "
+        f"over axes {[ax.name for ax in node.output_axes]}"
+    )
 
 
 def _eval_constant_op(_: State, node: graph.Node) -> np.ndarray:
@@ -604,25 +702,75 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
 
 
 def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
-    """Evaluate a ProjectionOp node.
+    """Evaluate a ProjectionOp node, reducing along the node's named axis.
 
-    The numpybackend maps ``Axis("time", DOMAIN)`` to numpy axis ``-1``
-    (CDT convention: the time axis always occupies the last numpy dimension).
-    Projecting along any other axis is not supported and raises immediately,
-    so that a future second DOMAIN axis cannot silently produce wrong results.
+    The axis is resolved to a numpy dimension through
+    :func:`~...axes.domain_axis_position`, against the DOMAIN axes this
+    evaluation declares (:attr:`State.domain_axes`).  Reducing an axis the
+    evaluation does not carry raises rather than silently reducing the wrong
+    dimension.
     """
     node = cast(graph.ProjectionOp, node)
-    if node.axis != TIME_AXIS:
+    try:
+        position = domain_axis_position(state.domain_axes, node.axis)
+    except ValueError:
         raise UnsupportedOperation(
-            f"executor: numpybackend only supports projection along {TIME_AXIS!r}; got {node.axis!r}"
-        )
+            f"executor: numpybackend only supports projection along this evaluation's DOMAIN axes "
+            f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
+        ) from None
     operand = state.get_node_value(node.node)
     if isinstance(node, graph.project_using_quantile):
-        return _reduce_quantile(operand, -1, node.q)
+        return _reduce_quantile(operand, position, node.q)
     try:
-        return _projection_operations[type(node)](operand, -1)
+        return _projection_operations[type(node)](operand, position)
     except KeyError:
         raise UnsupportedOperation(f"executor: unsupported projection operation: {type(node)}")
+
+
+def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate an AxisOp node, operating along the node's named axis.
+
+    Resolves the axis to a numpy dimension exactly as :func:`_eval_projection_op`
+    does, but the operation is shape-preserving rather than reducing.
+    """
+    node = cast(graph.AxisOp, node)
+    try:
+        position = domain_axis_position(state.domain_axes, node.axis)
+    except ValueError:
+        raise UnsupportedOperation(
+            f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
+            f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
+        ) from None
+    operand = state.get_node_value(node.node)
+    if isinstance(node, graph.shift):
+        return kernels.shift(operand, node.periods, axis=position, fill_value=node.fill_value)
+    if isinstance(node, graph.roll):
+        return np.roll(operand, node.periods, axis=position)
+    if isinstance(node, graph.cumulative):
+        return np.cumsum(operand, axis=position)
+    if isinstance(node, graph.gradient):
+        return np.gradient(operand, node.spacing, axis=position)
+    raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
+
+
+def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a laplacian node, summing second derivatives along the node's named axes.
+
+    Each axis is resolved to a numpy dimension exactly as :func:`_eval_projection_op`
+    does; the operation is shape-preserving, like :func:`_eval_axis_op`.
+    """
+    node = cast(graph.laplacian, node)
+    positions: list[int] = []
+    for axis in node.axes:
+        try:
+            positions.append(domain_axis_position(state.domain_axes, axis))
+        except ValueError:
+            raise UnsupportedOperation(
+                f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
+                f"{[ax.name for ax in state.domain_axes]}; got {axis!r}"
+            ) from None
+    operand = state.get_node_value(node.node)
+    return kernels.laplacian(operand, tuple(positions), node.spacings, node.boundaries)
 
 
 def _eval_function(state: State, node: graph.Node) -> np.ndarray:
@@ -668,8 +816,8 @@ def _eval_variant_selector_noop(_state: State, _node: graph.Node) -> np.ndarray:
 _EvaluatorFunc = Callable[[State, graph.Node], np.ndarray]
 
 _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
-    (graph.timeseries_constant, _eval_timeseries_constant),
-    (graph.timeseries_placeholder, _eval_timeseries_placeholder_default),
+    (graph.array_constant, _eval_array_constant),
+    (graph.array_placeholder, _eval_array_placeholder_default),
     (graph.constant, _eval_constant_op),
     (graph.placeholder, _eval_placeholder_default),
     (graph.BinaryOp, _eval_binary_op),
@@ -678,6 +826,8 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.MultiClauseOp, _eval_multi_clause_where_op),
     (graph.variant_selector, _eval_variant_selector_noop),
     (graph.ProjectionOp, _eval_projection_op),
+    (graph.AxisOp, _eval_axis_op),
+    (graph.laplacian, _eval_laplacian),
     (graph.function_call, _eval_function),
 )
 

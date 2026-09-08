@@ -7,7 +7,8 @@ to NumPy primitives, albeit with minor naming differences.
 This module provides:
 
 1. Basic node types for constants and placeholders
-2. Timeseries node types (timeseries_constant, timeseries_placeholder)
+2. Domain-carrying node types (array_constant, array_placeholder), shaped by
+   an ``axes=`` tuple — for instance, a timeseries is ``axes=(TIME_AXIS,)``
 3. Arithmetic operations (add, subtract, multiply, divide, power, negate)
 4. Comparison operations (equal, not_equal, less, less_equal, greater, greater_equal)
 5. Logical operations (and, or, xor, not)
@@ -54,7 +55,7 @@ Here's an example of what you can do with this module:
     >>>
     >>> # Project to a lower-dimensional space by summing over the time axis
     >>> time_axis = Axis("time", DOMAIN)
-    >>> ts = graph.timeseries_constant([1.0, 2.0, 3.0])
+    >>> ts = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,))
     >>> f = graph.project_using_sum(ts, axis=time_axis)
 
 Like TensorFlow, we support placeholders. That is, variables with a given
@@ -106,19 +107,24 @@ type checker will produce type errors for mismatched operations.
 If at least a node is untyped, then operations are always
 possible without getting static type errors.
 
-For example:
+`T` names a *quantity kind* — what the node's values mean (a vehicle
+count, a currency amount, a probability) — not its array shape. A
+node's axes (time, space, ensemble, ...) are tracked separately, at
+runtime, by the axis-labeling machinery; two nodes can share a `T`
+while carrying different axes, or carry the same axes while
+representing unrelated quantities. For example:
 
-    class TimeDimension:
-        '''Represents the time dimension.'''
+    class VehicleCount:
+        '''Represents a count of vehicles.'''
 
-    class EnsembleDimension:
-        '''Represents the ensemble dimension.'''
+    class Currency:
+        '''Represents a monetary amount.'''
 
-    a = graph.constant[TimeDimension](14)
-    b = graph.constant[EnsembleDimension](117)
+    a = graph.constant[VehicleCount](14)
+    b = graph.constant[Currency](117)
     c = a + b  # This line produces a static type error due to incompatible types
 
-    d = graph.constant[TimeDimension](14)
+    d = graph.constant[VehicleCount](14)
     e = graph.constant(117)
     f = d + e  # No static type error: untyped nodes default to Unknown
 
@@ -180,7 +186,7 @@ from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
-from ...axes import TIME_AXIS, Axis, union_axes
+from ...axes import Axis, union_axes
 from .. import atomic, compileflags
 
 Scalar = bool | float | int | str
@@ -490,50 +496,58 @@ class placeholder[T](Node[T]):
         return f"n{self.id} = graph.placeholder(name='{self.name}', default_value={self.default_value})"
 
 
-class timeseries_constant[T](Node[T]):
-    """A node holding a fixed sequence of values indexed by time.
+class array_constant[T](Node[T]):
+    """A node holding a fixed array of values carrying declared domain axes.
 
-    ``values`` is stored as-is.  The executor is responsible for converting
-    it to a concrete array when the node is evaluated — consistent with how
+    A timeseries is a common case (``axes=(TIME_AXIS,)``), but time is one
+    domain axis among several — a grid or space-time node is no less
+    fundamental — so shape lives in ``axes`` rather than in the node type.
+    ``values`` is stored as-is.  The executor is responsible for converting it
+    to a concrete array when the node is evaluated — consistent with how
     ``constant`` stores its scalar value without conversion.
 
     Args:
-        values: Array-like of shape (T,) containing the timeseries values.
+        values: Array-like data carrying the declared *axes*, in order.
+        axes: The domain axes carried by ``values``, in declaration order.
         name: Optional name for the node.
     """
 
-    def __init__(self, values: ArrayLike, name: str = "") -> None:
+    def __init__(self, values: ArrayLike, axes: tuple[Axis, ...] = (), name: str = "") -> None:
         super().__init__(name)
         self.values: ArrayLike = values
+        self._axes = axes
 
     @property
     def output_axes(self) -> tuple[Axis, ...]:
-        """Return ``(Axis("time", DOMAIN),)`` — this node carries a time axis."""
-        return (TIME_AXIS,)
+        """Return the declared domain axes for this node."""
+        return self._axes
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_constant(values={self.values!r}, name={self.name!r})"
+        return f"n{self.id} = graph.array_constant(values={self.values!r}, axes={self._axes!r}, name={self.name!r})"
 
 
-class timeseries_placeholder[T](Node[T]):
-    """Named placeholder for a timeseries value to be provided during evaluation.
+class array_placeholder[T](Node[T]):
+    """Named placeholder for an array value carrying declared domain axes.
 
     Args:
         name: The name of the placeholder.
+        axes: The domain axes carried by the value provided at evaluation
+            time, in declaration order.
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, axes: tuple[Axis, ...] = ()) -> None:
         super().__init__(name)
+        self._axes = axes
 
     @property
     def output_axes(self) -> tuple[Axis, ...]:
-        """Return ``(Axis("time", DOMAIN),)`` — this node carries a time axis."""
-        return (TIME_AXIS,)
+        """Return the declared domain axes for this node."""
+        return self._axes
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.timeseries_placeholder(name={self.name!r})"
+        return f"n{self.id} = graph.array_placeholder(name={self.name!r}, axes={self._axes!r})"
 
 
 class BinaryOp[T](Node[T]):
@@ -1218,7 +1232,183 @@ class project_using_quantile[T](ProjectionOp[T]):
         )
 
 
+class AxisOp[T](Node[T]):
+    """Base class for shape-preserving per-axis operations (shift, roll, cumulative, ...).
+
+    Unlike :class:`ProjectionOp`, the named axis is *not* removed from
+    ``output_axes`` — these operations rearrange or accumulate values along
+    an axis without reducing it away.
+
+    Args:
+        node: Input tensor.
+        axis: The semantic :class:`~civic_digital_twins.dt_model.axes.Axis`
+            along which to operate (e.g. ``Axis("time", DOMAIN)``).
+        name: Optional node name for debugging.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, name: str = "") -> None:
+        super().__init__(name)
+        self.node = node
+        self.axis = axis
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Propagate the operand's axes unchanged."""
+        return self.node.output_axes
+
+
+class shift[T](AxisOp[T]):
+    """Shifts tensor elements along a domain axis, filling exposed positions.
+
+    Positive *periods* shifts values towards higher indices (each value
+    moves *forward*); negative *periods* shifts towards lower indices.
+    Positions exposed at the boundary are set to *fill_value* — this is the
+    fill (non-circular) counterpart to :class:`roll`.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to shift.
+        periods: Number of positions to shift by (may be negative).
+        fill_value: Value used for positions exposed at the boundary.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, periods: int = 1, fill_value: float = 0.0, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.periods = periods
+        self.fill_value = fill_value
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.shift(node=n{self.node.id}, axis={self.axis!r}, "
+            f"periods={self.periods}, fill_value={self.fill_value!r}, name='{self.name}')"
+        )
+
+
+class roll[T](AxisOp[T]):
+    """Circularly shifts tensor elements along a domain axis.
+
+    Values shifted past the boundary wrap around to the other end — this is
+    the circular counterpart to :class:`shift`. For example, this is the
+    convention used by a periodic recurrence such as a circular
+    ``np.roll``-based solver.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to roll.
+        periods: Number of positions to roll by (may be negative).
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, periods: int = 1, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.periods = periods
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.roll(node=n{self.node.id}, axis={self.axis!r}, "
+            f"periods={self.periods}, name='{self.name}')"
+        )
+
+
+class cumulative[T](AxisOp[T]):
+    """Computes the cumulative (running) sum of tensor elements along a domain axis.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to accumulate.
+    """
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.cumulative(node=n{self.node.id}, axis={self.axis!r}, name='{self.name}')"
+
+
+class gradient[T](AxisOp[T]):
+    """Computes the first partial derivative along a domain axis (central differences).
+
+    *spacing* is a plain value carried on the node; this class never
+    inspects the axis's own metadata (e.g. a ``SpaceType``) to derive it.
+
+    Args:
+        node: Input tensor.
+        axis: Semantic axis along which to differentiate.
+        spacing: Grid spacing between samples along *axis*.
+    """
+
+    def __init__(self, node: Node[T], axis: Axis, spacing: float = 1.0, name: str = "") -> None:
+        super().__init__(node, axis, name)
+        self.spacing = spacing
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.gradient(node=n{self.node.id}, axis={self.axis!r}, "
+            f"spacing={self.spacing!r}, name='{self.name}')"
+        )
+
+
+class laplacian[T](Node[T]):
+    """Computes the sum of second partial derivatives over one or more domain axes.
+
+    Unlike :class:`AxisOp`, this operates over *several* named axes at once
+    (the isotropic Laplacian a diffusion operator needs), so it does not
+    subclass it — but like ``AxisOp`` it is shape-preserving: no axis is
+    removed from ``output_axes``. *spacings* and *boundaries* are plain
+    values carried on the node, positionally matched to *axes*; this class
+    never inspects the axes' own metadata to derive them.
+
+    Args:
+        node: Input tensor.
+        axes: Semantic axes to sum the second derivative over.
+        spacings: Grid spacing for each axis in *axes*, same length and order.
+        boundaries: Boundary-condition policy for each axis in *axes*, same
+            length and order.
+    """
+
+    def __init__(
+        self,
+        node: Node[T],
+        axes: tuple[Axis, ...],
+        spacings: tuple[float, ...],
+        boundaries: tuple[str, ...],
+        name: str = "",
+    ) -> None:
+        super().__init__(name)
+        self.node = node
+        self.axes = axes
+        self.spacings = spacings
+        self.boundaries = boundaries
+
+    @property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Propagate the operand's axes unchanged."""
+        return self.node.output_axes
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return (
+            f"n{self.id} = graph.laplacian(node=n{self.node.id}, axes={self.axes!r}, "
+            f"spacings={self.spacings!r}, boundaries={self.boundaries!r}, name='{self.name}')"
+        )
+
+
 # User-defined functions
+
+
+@runtime_checkable
+class HasAxisSignature(Protocol):
+    """Protocol for objects declaring an axis signature for a user-defined function.
+
+    Matches :class:`~..numpybackend.executor.Functor` structurally, without
+    importing it — the frontend must not depend on a specific backend. Any
+    object exposing these two attributes (e.g. one returned by
+    ``NumpyBackend.adapt(fn, output_axes=..., input_axes=...)``) can be passed
+    as ``functor=`` to :class:`function_call`.
+    """
+
+    output_axes: tuple[Axis, ...] | None
+    input_axes: tuple[tuple[Axis, ...], ...] | None
 
 
 class function_call[T](Node[T]):
@@ -1229,17 +1419,57 @@ class function_call[T](Node[T]):
 
     When evaluating the DAG, the programmer is responsible for
     providing the corresponding function binding.
+
+    By default ``output_axes`` is the conservative union of all input axes,
+    which can over-estimate — a function that reduces its input still reports
+    the reduced axis. Passing the bound ``functor=`` (the same object later
+    supplied at evaluation time) makes the inference exact: a declared
+    ``output_axes`` replaces the union, and a declared ``input_axes`` is
+    checked against the actual arguments right here, so a shape mismatch is a
+    graph-build error rather than a latent bug surfacing at evaluation.
     """
 
-    def __init__(self, name: str, *args: Node[T] | HasNode[T], **kwargs: Node[T] | HasNode[T]) -> None:
+    def __init__(
+        self,
+        name: str,
+        *args: Node[T] | HasNode[T],
+        functor: HasAxisSignature | None = None,
+        **kwargs: Node[T] | HasNode[T],
+    ) -> None:
         super().__init__(name)
         self.args = tuple(ensure_node(a) for a in args)
         self.kwargs = {k: ensure_node(v) for k, v in kwargs.items()}
+        self._declared_output_axes = functor.output_axes if functor is not None else None
+        declared_input_axes = functor.input_axes if functor is not None else None
+        if declared_input_axes is not None:
+            self._check_input_axes(name, declared_input_axes)
+
+    def _check_input_axes(self, name: str, declared: tuple[tuple[Axis, ...], ...]) -> None:
+        """Verify each argument's axes against the functor's declared ``input_axes``."""
+        actual = (*self.args, *self.kwargs.values())
+        if len(declared) != len(actual):
+            raise ValueError(
+                f"function_call {name!r}: the functor declares input_axes for "
+                f"{len(declared)} argument(s) but {len(actual)} were provided"
+            )
+        for position, (arg, expected) in enumerate(zip(actual, declared, strict=True)):
+            if arg.output_axes != expected:
+                raise ValueError(
+                    f"function_call {name!r}: argument {position} carries output_axes="
+                    f"{arg.output_axes!r}, but the functor declares input_axes[{position}]={expected!r}"
+                )
 
     @property
     def output_axes(self) -> tuple[Axis, ...]:
-        """Return the union of all input axes (conservative)."""
+        """Return the functor's declared output axes, else the conservative union of input axes."""
+        if self._declared_output_axes is not None:
+            return self._declared_output_axes
         return union_axes(*(a.output_axes for a in self.args), *(v.output_axes for v in self.kwargs.values()))
+
+    @property
+    def has_declared_output_axes(self) -> bool:
+        """Whether a functor declaring explicit ``output_axes`` was supplied at construction."""
+        return self._declared_output_axes is not None
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""

@@ -16,6 +16,7 @@ from .ensemble import (
 )
 from .evaluation import Evaluation, EvaluationResult
 from .handle import AsyncEvaluationHandle, EvaluationHandle
+from .labeled_array import LabeledArray
 from .plan import EvaluationPlan, Region, RegionGuard
 from .runner import (
     EvaluationConfig,
@@ -45,6 +46,7 @@ __all__ = [
     "FrozenEnsemble",
     "IncompatibleResultError",
     "IncrementalRun",
+    "LabeledArray",
     "ModelEvaluator",
     "ModelOutput",
     "ModelRunHandle",

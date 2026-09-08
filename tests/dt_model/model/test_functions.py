@@ -592,6 +592,34 @@ def test_iter_node_deps_projection_op():
     assert fc in m._node_functions
 
 
+def test_iter_node_deps_axis_op():
+    """function_call reachable through an AxisOp (shift) is claimed."""
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    axis = Axis("time", DOMAIN)
+    shifted = graph.shift(fc, axis)
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = _simple_model_with_output(shifted, inp_idx, functor)
+    assert fc in m._node_functions
+
+
+def test_iter_node_deps_laplacian():
+    """function_call reachable through a laplacian node is claimed."""
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    p = graph.placeholder("inp", default_value=1.0)
+    fc = graph.function_call("solve", p)
+    axis = Axis("x", DOMAIN)
+    lap = graph.laplacian(fc, (axis,), (1.0,), ("reflect",))
+    inp_idx = Index("inp", p)
+    functor = NumpyBackend.adapt(lambda x: x)
+    m = _simple_model_with_output(lap, inp_idx, functor)
+    assert fc in m._node_functions
+
+
 # ---------------------------------------------------------------------------
 # _build_node_functions_map: early return and diamond traversal
 # ---------------------------------------------------------------------------
