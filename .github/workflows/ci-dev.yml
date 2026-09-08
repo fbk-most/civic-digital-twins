@@ -66,3 +66,6 @@ jobs:
 
       - name: Run tests
         run: uv run --python 3.12 pytest
+
+      - name: Run xarray-dependent tests with xarray present
+        run: uv run --with xarray --python 3.12 pytest tests/dt_model/simulation/test_labeled_array.py -k xarray
