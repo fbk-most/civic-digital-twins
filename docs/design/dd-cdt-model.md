@@ -401,6 +401,51 @@ covered here — `@expose`, `@functions`, `default_inputs()`, and composite
 ("root") models that wire several sub-models together — see the full
 `@define`/`compute()` guide in [dd-cdt-modularity.md](dd-cdt-modularity.md).
 
+**`@config`** carries construction-time, non-`Index` data — policy strings,
+small lookup dicts, selector values — that `compute()` needs to pick a
+formula branch or parametrize a nested `ModelVariant`, but that has no
+business being wrapped as an `Index`:
+
+```python
+@define("Routing")
+class RoutingModel(Model):
+
+    @inputs
+    class Inputs:
+        demand: Index
+
+    @config
+    class Config:
+        policy: str = "shortest_path"
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+        factor = 2.0 if config.policy == "shortest_path" else 1.0
+        return RoutingModel.Outputs(cost=Index("cost", inputs.demand * factor))
+
+m = RoutingModel(inputs=RoutingModel.Inputs(demand=demand), config=RoutingModel.Config(policy="shortest_path"))
+```
+
+Three boundaries keep `@config` from becoming a second, ad hoc channel next to
+`Inputs`/`Outputs`/`Expose`:
+
+* **`Config` never enters the graph.** A `Config` field is baked in once at
+  construction — never `Scenario`-overridable, never swept per ensemble
+  member, never added to `self.indexes`. `@config` rejects any field holding
+  a `GenericIndex` (the opposite validation direction from `@inputs`, which
+  requires one) — values that need to be inspectable, swept, or overridden
+  belong in `Inputs`, not `Config`.
+* **I/O still doesn't belong in `compute()`.** `@config` could technically
+  carry a file path or external ID to parametrize a lookup, but disk reads
+  and external computation pipelines stay out of `compute()` regardless —
+  this is contract-level guidance, not something `@config` changes.
+* **`Outputs`/`Expose` remain the only output surface.** `@config` is
+  input-side only; there is no symmetric "raw output" escape hatch (no ad
+  hoc `self.foo = bar` during `compute()`).
+
 ### Direct subclassing with `legacy=True`
 
 For composite models that wire sub-models together, or any model that cannot be expressed

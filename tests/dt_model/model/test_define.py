@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from civic_digital_twins.dt_model import NumpyBackend, define, expose, functions, inputs, outputs
+from civic_digital_twins.dt_model import NumpyBackend, config, define, expose, functions, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -170,6 +170,127 @@ def test_define_empty_inputs_no_functions():
 
     m = M()  # no inputs argument — Inputs() is auto-constructed
     assert m.outputs.y is not None
+
+
+def test_define_with_config_only():
+    """Generated _init_with_config threads config into compute() and never into super()."""
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @config
+        class Config:
+            multiplier: float = 1.0
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            """Scale x by config.multiplier."""
+            return M.Outputs(y=Index("y", inputs.x * config.multiplier))
+
+    x = Index("x", 2.0)
+    m = M(inputs=M.Inputs(x=x), config=M.Config(multiplier=3.0))
+
+    result = Evaluation(Scenario(m)).evaluate(backend=NumpyBackend)
+    assert float(result[m.outputs.y]) == pytest.approx(6.0)
+
+
+def test_define_with_functions_and_config():
+    """Generated _init_with_fns_config threads both fns and config into compute()."""
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @functions
+        class Functions:
+            f: Any
+
+        @config
+        class Config:
+            multiplier: float = 1.0
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, fns: Functions, config: Config) -> Outputs:
+            """Apply the function then scale by config.multiplier."""
+            return M.Outputs(y=Index("y", inputs.x * config.multiplier))
+
+    x = Index("x", 2.0)
+    m = M(
+        inputs=M.Inputs(x=x),
+        fns=M.Functions(f=NumpyBackend.adapt(lambda v: v)),
+        config=M.Config(multiplier=5.0),
+    )
+
+    result = Evaluation(Scenario(m)).evaluate(backend=NumpyBackend)
+    assert float(result[m.outputs.y]) == pytest.approx(10.0)
+
+
+def test_define_config_never_reaches_super_init():
+    """Config is graph-inert: @define's generated __init__ never forwards it to super().
+
+    This exercises the real ``@define``-generated ``_run_compute`` wiring (not
+    a hand-written ``legacy=True`` init that could pass or drop config by
+    construction): ``Model.__init__`` has no real ``config=`` parameter, so if
+    the generated ``__init__`` ever leaked ``config`` into
+    ``super().__init__()``, this call would raise ``TypeError: unexpected
+    keyword argument 'config'`` before reaching the assertions below.
+    """
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @config
+        class Config:
+            policy: str = "default"
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            """Return y regardless of config; config only picks a branch."""
+            return M.Outputs(y=Index("y", inputs.x))
+
+    x = Index("x", 1.0)
+    m = M(inputs=M.Inputs(x=x), config=M.Config(policy="peak"))
+    assert len(m.indexes) == 2  # just x and y — no trace of Config
+    assert m.abstract_indexes() == []
+
+
+def test_define_no_config_declared_is_unchanged():
+    """Without a @config Config inner class, passing config= raises TypeError (regression guard)."""
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            """Return a dummy output."""
+            return M.Outputs(y=Index("y", inputs.x))
+
+    x = Index("x", 1.0)
+    with pytest.raises(TypeError, match="unexpected keyword argument 'config'"):
+        M(inputs=M.Inputs(x=x), config="not declared")  # type: ignore[call-arg]
 
 
 def test_define_empty_inputs_with_functions():

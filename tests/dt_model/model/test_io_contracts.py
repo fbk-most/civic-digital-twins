@@ -1,4 +1,4 @@
-"""Tests for the @inputs, @outputs, and @expose contract decorators."""
+"""Tests for the @inputs, @outputs, @expose, and @config contract decorators."""
 
 # SPDX-License-Identifier: Apache-2.0
 
@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model import define, expose, inputs, outputs
+from civic_digital_twins.dt_model import config, define, expose, inputs, outputs
 from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import Model
@@ -205,6 +205,117 @@ def test_expose_validates_fields():
 
     with pytest.raises(TypeError, match="expected GenericIndex"):
         Expose(z="bad")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# @config
+# ---------------------------------------------------------------------------
+
+
+def test_config_decorator_applies_dataclass():
+    """@config applies @dataclass so the class becomes a dataclass."""
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    assert dataclasses.is_dataclass(Config)
+
+
+def test_config_decorator_stamps_marker():
+    """@config sets _is_config = True on the decorated class."""
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    assert getattr(Config, "_is_config", False) is True
+
+
+def test_config_accepts_plain_values():
+    """Plain, non-Index values (str, dict, list) are accepted without error."""
+
+    @config
+    class Config:
+        policy: str
+        lookup: dict
+        selectors: list
+
+    c = Config(policy="peak", lookup={"a": 1}, selectors=["x", "y"])
+    assert c.policy == "peak"
+    assert c.lookup == {"a": 1}
+    assert c.selectors == ["x", "y"]
+
+
+def test_config_supports_default_values():
+    """A Config field with a default value can be omitted at construction time.
+
+    @config wraps @dataclass, so ordinary dataclass default-value semantics
+    apply: declaring `policy: str = "default"` makes `policy` optional.
+    """
+
+    @config
+    class Config:
+        policy: str = "default"
+        retries: int = 3
+
+    assert Config().policy == "default"
+    assert Config().retries == 3
+    assert Config(policy="peak").policy == "peak"
+    assert Config(policy="peak").retries == 3  # untouched fields keep their default
+
+
+def test_config_rejects_generic_index_field():
+    """A Config field holding a GenericIndex raises TypeError.
+
+    This is the opposite validation direction from @inputs/@outputs/@expose,
+    which require a GenericIndex: @config fields are graph-inert and must
+    never become a side channel into the graph.
+    """
+
+    @config
+    class Config:
+        x: Index
+
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(x=Index("x", 1.0))  # type: ignore[arg-type]
+
+
+def test_config_rejects_generic_index_in_list_field():
+    """A Config list field containing a GenericIndex raises TypeError with field[i] context."""
+
+    @config
+    class Config:
+        xs: list
+
+    with pytest.raises(TypeError, match=r"xs\[0\].*must not hold a GenericIndex"):
+        Config(xs=[Index("x", 1.0)])  # type: ignore[arg-type]
+
+
+def test_config_rejects_generic_index_in_dict_field():
+    """A Config dict field containing a GenericIndex raises TypeError with field['key'] context."""
+
+    @config
+    class Config:
+        xs: dict
+
+    with pytest.raises(TypeError, match=r"xs\['k'\].*must not hold a GenericIndex"):
+        Config(xs={"k": Index("x", 1.0)})  # type: ignore[arg-type]
+
+
+def test_config_supports_both_call_forms():
+    """@config and @config() both work."""
+
+    @config
+    class A:
+        policy: str
+
+    @config()
+    class B:
+        policy: str
+
+    assert A(policy="a").policy == "a"
+    assert B(policy="b").policy == "b"
 
 
 # ---------------------------------------------------------------------------
