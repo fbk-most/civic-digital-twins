@@ -773,6 +773,14 @@ class Model:
             # follow-up, together with ``legacy=True`` removal itself.
             functions: Any = ...,
             fns: Any = ...,
+            # ``config``: @define's synthesized __init__ takes this keyword when
+            # a ``@config`` inner class is declared (see contracts.config). There
+            # is no base-class counterpart to satisfy here — unlike functions/fns,
+            # `Model.__init__` above has no real `config=` parameter, since
+            # @config fields are graph-inert and are consumed entirely inside the
+            # generated __init__ before it calls super().__init__(). Only one
+            # name is needed for that reason.
+            config: Any = ...,
         ) -> None: ...
 
     def abstract_indexes(self) -> list[GenericIndex]:

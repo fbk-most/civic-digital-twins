@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from ..axes import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
-from .contracts import define, expose, functions, inputs, outputs
+from .contracts import config, define, expose, functions, inputs, outputs
 from .index import (
     AxesInferenceWarning,
     CategoricalIndex,
@@ -33,6 +33,7 @@ __all__ = [
     "AbstractIndexNotInInputsError",
     "AxesInferenceWarning",
     "Axis",
+    "config",
     "define",
     "expose",
     "functions",

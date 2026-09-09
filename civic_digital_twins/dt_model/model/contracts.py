@@ -1,8 +1,9 @@
 """Contract decorators for :class:`~.model.Model` subclasses.
 
-``@define``, ``@functions``, ``@inputs``, ``@outputs``, and ``@expose`` replace
-the bare ``@dataclass`` convention with purpose-specific decorators that make
-intent explicit and validate field types at construction time.
+``@define``, ``@functions``, ``@config``, ``@inputs``, ``@outputs``, and
+``@expose`` extend the bare ``@dataclass`` convention with purpose-specific
+decorators that make intent explicit and validate field types at
+construction time.
 """
 
 # SPDX-License-Identifier: Apache-2.0
@@ -19,7 +20,7 @@ from typing import Any, Literal, TypeVar, dataclass_transform, overload
 from ..axes import Axis
 from .index import GenericIndex, _verify_declared_axes
 
-__all__ = ["define", "expose", "functions", "inputs", "outputs"]
+__all__ = ["config", "define", "expose", "functions", "inputs", "outputs"]
 
 _T = TypeVar("_T")
 
@@ -138,6 +139,112 @@ def functions(
         cls._extra_mode = extra_mode
         cls._is_functions = True
 
+        return cls
+
+    if _cls is not None:
+        return decorator(_cls)
+    return decorator
+
+
+# ---------------------------------------------------------------------------
+# @config
+# ---------------------------------------------------------------------------
+
+
+def _validate_config_field(cls_name: str, field_name: str, val: Any) -> None:
+    """Raise :class:`TypeError` if *val* holds a :class:`~.index.GenericIndex`.
+
+    ``@config`` fields are plain, graph-inert, construction-time-only data —
+    the opposite direction from :func:`_validate_index_field`, which
+    *requires* a ``GenericIndex``. A ``GenericIndex`` value belongs in
+    ``Inputs`` instead, where it can be part of the graph, swept per ensemble
+    member, and overridden via ``Scenario``.
+    """
+    if isinstance(val, GenericIndex):
+        raise TypeError(f"{cls_name}.{field_name}: Config fields must not hold a GenericIndex; use Inputs instead.")
+    if isinstance(val, list):
+        for i, item in enumerate(val):
+            if isinstance(item, GenericIndex):
+                raise TypeError(
+                    f"{cls_name}.{field_name}[{i}]: Config fields must not hold a GenericIndex; use Inputs instead."
+                )
+    if isinstance(val, dict):
+        for k, item in val.items():
+            if isinstance(item, GenericIndex):
+                raise TypeError(
+                    f"{cls_name}.{field_name}[{k!r}]: Config fields must not hold a GenericIndex; use Inputs instead."
+                )
+
+
+@overload
+def config(_cls: type[_T]) -> type[_T]: ...
+@overload
+def config(_cls: None = ...) -> Callable[[type[_T]], type[_T]]: ...
+@dataclass_transform(field_specifiers=(dataclasses.field, dataclasses.Field))
+def config(_cls: Any = None) -> Any:
+    """Declare the ``Config`` contract for construction-time, non-``Index`` data.
+
+    ``@config`` fields are plain, graph-inert data — policy strings, small
+    lookup dicts, selector values — consumed once at construction time by
+    :meth:`compute` to pick a formula branch or parametrize a nested
+    :class:`~.model_variant.ModelVariant`. Unlike ``@functions``, there is no
+    declared/``_extra`` split and no promotion logic: ``@config`` wraps
+    ``@dataclass`` directly, exactly like ``@inputs``/``@outputs``/``@expose``.
+
+    Unlike those decorators, a ``Config`` field must **not** hold a
+    :class:`~.index.GenericIndex` (scalar, list, or dict thereof) — the
+    opposite validation direction, enforcing that ``@config`` never becomes a
+    side channel into the graph. Values that should be inspectable, ensemble-
+    swept, or ``Scenario``-overridable belong in ``Inputs``, not ``Config``.
+
+    ``Config`` is consumed entirely inside the ``__init__`` that ``@define``
+    generates and passed to ``compute(inputs, config=...)``; it is never
+    forwarded to :class:`~.model.Model.__init__`, never enters
+    ``self.indexes``, and never participates in node-function promotion.
+
+    Examples
+    --------
+    ::
+
+        from civic_digital_twins.dt_model import Model, config, define, inputs, outputs
+
+        @define("Traffic")
+        class TrafficModel(Model):
+
+            @inputs
+            class Inputs:
+                ts_inflow: TimeseriesIndex
+
+            @config
+            class Config:
+                policy: str = "default"
+
+            @outputs
+            class Outputs:
+                ts_traffic: TimeseriesIndex
+
+            def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+                ...  # branch on config.policy
+
+        model = TrafficModel(
+            inputs=TrafficModel.Inputs(ts_inflow=ts_inflow),
+            config=TrafficModel.Config(policy="peak"),
+        )
+    """
+
+    def decorator(cls: type) -> type:
+        cls = dataclasses.dataclass(cls)
+        original_init = cls.__init__
+
+        @functools.wraps(original_init)
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+            original_init(self, *args, **kwargs)
+            cls_name = type(self).__name__
+            for f in dataclasses.fields(self):  # type: ignore[arg-type]
+                _validate_config_field(cls_name, f.name, getattr(self, f.name))
+
+        cls.__init__ = __init__  # type: ignore[assignment]
+        cls._is_config = True
         return cls
 
     if _cls is not None:
@@ -351,8 +458,11 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
     """Declare a leaf :class:`~.model.Model` subclass via a ``compute()`` method.
 
     Generates a typed ``__init__(self, inputs: Inputs)`` (plus ``fns: Functions``
-    when a ``@functions`` inner class is declared) and wires the result of
-    :meth:`compute` into ``super().__init__()`` automatically.
+    when a ``@functions`` inner class is declared, and/or ``config: Config`` when
+    a ``@config`` inner class is declared) and wires the result of :meth:`compute`
+    into ``super().__init__()`` automatically. ``config`` is passed to
+    :meth:`compute` only — it is never forwarded to ``super().__init__()``, since
+    ``@config`` fields are graph-inert (see :func:`config`).
 
     Parameters
     ----------
@@ -408,6 +518,28 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
                     TrafficModel.Expose(ts_raw=ts_raw),
                 )
 
+    With ``@config`` (construction-time, non-``Index`` data, e.g. a policy
+    selector for a nested :class:`~.model_variant.ModelVariant`)::
+
+        @define("Routing")
+        class RoutingModel(Model):
+
+            @inputs
+            class Inputs:
+                demand: Index
+
+            @config
+            class Config:
+                policy: str = "shortest_path"
+
+            @outputs
+            class Outputs:
+                cost: Index
+
+            def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+                cost = Index("cost", inputs.demand * (2.0 if config.policy == "shortest_path" else 1.0))
+                return RoutingModel.Outputs(cost=cost)
+
     Composite / root models that assign sub-model attributes before calling
     ``super().__init__()`` can remain on the direct-``__init__`` path by
     declaring ``legacy=True``::
@@ -436,6 +568,9 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
 
         # Detect @functions inner class via its role marker.
         has_functions = "Functions" in cls.__dict__ and getattr(cls.__dict__["Functions"], "_is_functions", False)
+
+        # Detect @config Config inner class via its role marker, the same way.
+        has_config = "Config" in cls.__dict__ and getattr(cls.__dict__["Config"], "_is_config", False)
 
         # Detect @expose Expose inner class declared directly on this class.
         has_expose_cls = "Expose" in cls.__dict__ and getattr(cls.__dict__["Expose"], "_is_expose", False)
@@ -478,31 +613,58 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
             and len(dataclasses.fields(_inputs_cls)) == 0  # type: ignore[arg-type]
         )
 
-        # Use distinct names to avoid Pyright reportRedeclaration in the if/else.
-        if has_functions:
+        # Shared body for every generated __init__ variant below. `fns`/`config`
+        # use the module-level `_MISSING` sentinel (rather than `None`, a valid
+        # user value) to distinguish "not declared for this class" from "declared
+        # and passed". `config` is threaded into `compute()` only — never into
+        # `super().__init__()` — because Config fields are graph-inert and must
+        # never reach `_build_node_functions_map` or `self.indexes` (see @config).
+        def _run_compute(self: Any, inputs: Any, fns: Any = _MISSING, config: Any = _MISSING) -> None:
+            if _inputs_is_empty and inputs is None and _inputs_cls is not None:
+                inputs = _inputs_cls()  # type: ignore[operator]
 
-            def _init_with_fns(self: Any, inputs: Any = None, *, fns: Any) -> None:  # type: ignore[misc]
-                if _inputs_is_empty and inputs is None and _inputs_cls is not None:
-                    inputs = _inputs_cls()  # type: ignore[operator]
-                if _returns_expose:
-                    out, exp = self.compute(inputs, fns=fns)
-                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp, functions=fns)  # type: ignore[misc]
-                else:
-                    out = self.compute(inputs, fns=fns)
-                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, functions=fns)  # type: ignore[misc]
+            compute_kwargs: dict[str, Any] = {}
+            if fns is not _MISSING:
+                compute_kwargs["fns"] = fns
+            if config is not _MISSING:
+                compute_kwargs["config"] = config
+
+            if _returns_expose:
+                out, exp = self.compute(inputs, **compute_kwargs)
+            else:
+                out = self.compute(inputs, **compute_kwargs)
+                exp = _MISSING
+
+            super_kwargs: dict[str, Any] = {"inputs": inputs, "outputs": out}
+            if exp is not _MISSING:
+                super_kwargs["expose"] = exp
+            if fns is not _MISSING:
+                super_kwargs["functions"] = fns
+            super(_cls, self).__init__(_name, **super_kwargs)  # type: ignore[misc]
+
+        # Use distinct names per branch to avoid Pyright reportRedeclaration.
+        if has_functions and has_config:
+
+            def _init_with_fns_config(self: Any, inputs: Any = None, *, fns: Any, config: Any) -> None:
+                _run_compute(self, inputs, fns=fns, config=config)
+
+            cls.__init__ = _init_with_fns_config  # type: ignore[assignment]
+        elif has_functions:
+
+            def _init_with_fns(self: Any, inputs: Any = None, *, fns: Any) -> None:
+                _run_compute(self, inputs, fns=fns)
 
             cls.__init__ = _init_with_fns  # type: ignore[assignment]
+        elif has_config:
+
+            def _init_with_config(self: Any, inputs: Any = None, *, config: Any) -> None:
+                _run_compute(self, inputs, config=config)
+
+            cls.__init__ = _init_with_config  # type: ignore[assignment]
         else:
 
             def _init_no_fns(self: Any, inputs: Any = None) -> None:
-                if _inputs_is_empty and inputs is None and _inputs_cls is not None:
-                    inputs = _inputs_cls()  # type: ignore[operator]
-                if _returns_expose:
-                    out, exp = self.compute(inputs)
-                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out, expose=exp)  # type: ignore[misc]
-                else:
-                    out = self.compute(inputs)
-                    super(_cls, self).__init__(_name, inputs=inputs, outputs=out)  # type: ignore[misc]
+                _run_compute(self, inputs)
 
             cls.__init__ = _init_no_fns  # type: ignore[assignment]
 
