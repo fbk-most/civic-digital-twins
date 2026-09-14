@@ -19,6 +19,7 @@ from .index import (
 )
 from .model import (
     AbstractIndexNotInInputsError,
+    ConfigTypeMismatchError,
     FunctionsTypeMismatchError,
     InputsContractError,
     InputsTypeMismatchError,
@@ -34,6 +35,7 @@ __all__ = [
     "AxesInferenceWarning",
     "Axis",
     "config",
+    "ConfigTypeMismatchError",
     "define",
     "expose",
     "functions",

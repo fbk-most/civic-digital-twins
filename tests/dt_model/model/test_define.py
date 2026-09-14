@@ -6,7 +6,16 @@ from typing import Any
 
 import pytest
 
-from civic_digital_twins.dt_model import NumpyBackend, config, define, expose, functions, inputs, outputs
+from civic_digital_twins.dt_model import (
+    ConfigTypeMismatchError,
+    NumpyBackend,
+    config,
+    define,
+    expose,
+    functions,
+    inputs,
+    outputs,
+)
 from civic_digital_twins.dt_model.model.index import Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
@@ -316,3 +325,107 @@ def test_define_empty_inputs_with_functions():
 
     m = M(fns=M.Functions(f=NumpyBackend.adapt(lambda x: x)))
     assert m.outputs.y is not None
+
+
+def test_define_config_type_mismatch_raises_for_wrong_model_config():
+    """Passing another model's Config instance raises ConfigTypeMismatchError before compute() runs."""
+
+    @define("ModelA")
+    class ModelA(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @config
+        class Config:
+            multiplier: float = 1.0
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            return ModelA.Outputs(y=Index("y", inputs.x * config.multiplier))
+
+    @define("ModelB")
+    class ModelB(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @config
+        class Config:
+            multiplier: float = 2.0
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            return ModelB.Outputs(y=Index("y", inputs.x * config.multiplier))
+
+    x = Index("x", 2.0)
+    wrong_config = ModelB.Config(multiplier=2.0)
+
+    with pytest.raises(ConfigTypeMismatchError, match="ModelA"):
+        ModelA(inputs=ModelA.Inputs(x=x), config=wrong_config)  # type: ignore[arg-type]
+
+
+def test_define_config_type_mismatch_raises_for_unrelated_value():
+    """Passing an unrelated object or wrong type raises ConfigTypeMismatchError."""
+
+    @define("ModelA")
+    class ModelA(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @config
+        class Config:
+            rate: float = 0.5
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            return ModelA.Outputs(y=Index("y", inputs.x * config.rate))
+
+    x = Index("x", 2.0)
+    with pytest.raises(ConfigTypeMismatchError, match="ModelA"):
+        ModelA(inputs=ModelA.Inputs(x=x), config={"rate": 0.5})  # type: ignore[arg-type]
+
+    with pytest.raises(ConfigTypeMismatchError, match="ModelA"):
+        ModelA(inputs=ModelA.Inputs(x=x), config=None)  # type: ignore[arg-type]
+
+
+def test_define_config_type_mismatch_with_functions_and_config():
+    """When both Functions and Config are declared, wrong config raises ConfigTypeMismatchError."""
+
+    @define("ModelWithBoth")
+    class ModelWithBoth(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @functions
+        class Functions:
+            f: Any
+
+        @config
+        class Config:
+            rate: float = 0.5
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, fns: Functions, config: Config) -> Outputs:
+            return ModelWithBoth.Outputs(y=Index("y", inputs.x))
+
+    x = Index("x", 2.0)
+    fns = ModelWithBoth.Functions(f=NumpyBackend.adapt(lambda v: v))
+
+    with pytest.raises(ConfigTypeMismatchError, match="ModelWithBoth"):
+        ModelWithBoth(inputs=ModelWithBoth.Inputs(x=x), fns=fns, config="wrong")  # type: ignore[arg-type]
+

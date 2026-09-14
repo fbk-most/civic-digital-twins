@@ -19,6 +19,7 @@ from typing import Any, Literal, TypeVar, dataclass_transform, overload
 
 from ..axes import Axis
 from .index import GenericIndex, _verify_declared_axes
+from .model import ConfigTypeMismatchError
 
 __all__ = ["config", "define", "expose", "functions", "inputs", "outputs"]
 
@@ -612,6 +613,7 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
             and dataclasses.is_dataclass(_inputs_cls)
             and len(dataclasses.fields(_inputs_cls)) == 0  # type: ignore[arg-type]
         )
+        _config_cls = cls.__dict__.get("Config")
 
         # Shared body for every generated __init__ variant below. `fns`/`config`
         # use the module-level `_MISSING` sentinel (rather than `None`, a valid
@@ -622,6 +624,14 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
         def _run_compute(self: Any, inputs: Any, fns: Any = _MISSING, config: Any = _MISSING) -> None:
             if _inputs_is_empty and inputs is None and _inputs_cls is not None:
                 inputs = _inputs_cls()  # type: ignore[operator]
+
+            if has_config and config is not _MISSING:
+                if _config_cls is not None and not isinstance(config, _config_cls):
+                    raise ConfigTypeMismatchError(
+                        f"{_cls.__name__} expected config of type "
+                        f"{_config_cls.__qualname__}, got "
+                        f"{type(config).__qualname__} instead."
+                    )
 
             compute_kwargs: dict[str, Any] = {}
             if fns is not _MISSING:
