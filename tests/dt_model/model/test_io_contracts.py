@@ -4,6 +4,7 @@
 
 import dataclasses
 import warnings
+from typing import Any
 
 import numpy as np
 import pytest
@@ -301,6 +302,65 @@ def test_config_rejects_generic_index_in_dict_field():
 
     with pytest.raises(TypeError, match=r"xs\['k'\].*must not hold a GenericIndex"):
         Config(xs={"k": Index("x", 1.0)})  # type: ignore[arg-type]
+
+
+def test_config_rejects_nested_dataclass_with_generic_index():
+    """A Config field holding a nested @outputs/@expose (or dataclass) with a GenericIndex raises TypeError."""
+
+    @outputs
+    class SubOutputs:
+        y: Index
+
+    @config
+    class Config:
+        sub: SubOutputs
+
+    sub_out = SubOutputs(y=Index("y", 1.0))
+    with pytest.raises(TypeError, match=r"sub\.y.*must not hold a GenericIndex"):
+        Config(sub=sub_out)  # type: ignore[arg-type]
+
+
+def test_config_rejects_ioproxy_with_generic_index():
+    """A Config field holding an IOProxy wrapping an @outputs/@expose dataclass raises TypeError."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=Index("x", 1.0)))
+
+    @config
+    class Config:
+        leaked: Any
+
+    with pytest.raises(TypeError, match=r"leaked\.y.*must not hold a GenericIndex"):
+        Config(leaked=leaf.outputs)
+
+
+def test_config_accepts_nested_dataclass_without_generic_index():
+    """A Config field holding a nested dataclass containing only plain values is accepted."""
+
+    @dataclasses.dataclass
+    class SubConfig:
+        threshold: float
+        tag: str
+
+    @config
+    class Config:
+        sub: SubConfig
+
+    c = Config(sub=SubConfig(threshold=0.5, tag="test"))
+    assert c.sub.threshold == 0.5
+    assert c.sub.tag == "test"
 
 
 def test_config_supports_both_call_forms():

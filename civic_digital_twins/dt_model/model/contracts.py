@@ -162,18 +162,23 @@ def _validate_config_field(cls_name: str, field_name: str, val: Any) -> None:
     """
     if isinstance(val, GenericIndex):
         raise TypeError(f"{cls_name}.{field_name}: Config fields must not hold a GenericIndex; use Inputs instead.")
+
+    # Unwrap IOProxy if present, or inspect raw dataclass instance
+    _dc = getattr(val, "_dc", val)
+    if dataclasses.is_dataclass(_dc) and not isinstance(_dc, type):
+        for f in dataclasses.fields(_dc):
+            _validate_config_field(cls_name, f"{field_name}.{f.name}", getattr(_dc, f.name))
+        return
+
     if isinstance(val, list):
         for i, item in enumerate(val):
-            if isinstance(item, GenericIndex):
-                raise TypeError(
-                    f"{cls_name}.{field_name}[{i}]: Config fields must not hold a GenericIndex; use Inputs instead."
-                )
+            _validate_config_field(cls_name, f"{field_name}[{i}]", item)
+        return
+
     if isinstance(val, dict):
         for k, item in val.items():
-            if isinstance(item, GenericIndex):
-                raise TypeError(
-                    f"{cls_name}.{field_name}[{k!r}]: Config fields must not hold a GenericIndex; use Inputs instead."
-                )
+            _validate_config_field(cls_name, f"{field_name}[{k!r}]", item)
+        return
 
 
 @overload
