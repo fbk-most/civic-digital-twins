@@ -181,6 +181,7 @@ This behavior impacts code that needs to find nodes in collections like lists:
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
@@ -316,7 +317,7 @@ class Node[T]:
         self.flags = 0
         self.id = _id_generator.add(1)
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Semantic domain axes carried by this node's output.
 
@@ -517,7 +518,7 @@ class array_constant[T](Node[T]):
         self.values: ArrayLike = values
         self._axes = axes
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the declared domain axes for this node."""
         return self._axes
@@ -540,7 +541,7 @@ class array_placeholder[T](Node[T]):
         super().__init__(name)
         self._axes = axes
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the declared domain axes for this node."""
         return self._axes
@@ -563,7 +564,7 @@ class BinaryOp[T](Node[T]):
         self.left = left
         self.right = right
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of the left and right operand axes."""
         return union_axes(self.left.output_axes, self.right.output_axes)
@@ -580,7 +581,7 @@ class UnaryOp[T](Node[T]):
         super().__init__(name)
         self.node = node
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Propagate the operand's axes unchanged."""
         return self.node.output_axes
@@ -774,7 +775,7 @@ class where[C, T](Node[T]):
         self.then = ensure_node(then)
         self.otherwise = ensure_node(otherwise)
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of condition, then, and otherwise axes."""
         return union_axes(self.condition.output_axes, self.then.output_axes, self.otherwise.output_axes)
@@ -802,7 +803,7 @@ class MultiClauseOp[C, T](Node[T]):
         self.clauses = clauses
         self.default_value = default_value
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the union of all clause condition, clause value, and default axes."""
         clause_seqs = [ax for cond, val in self.clauses for ax in (cond.output_axes, val.output_axes)]
@@ -1019,7 +1020,7 @@ class ProjectionOp[T](Node[T]):
         self.node = node
         self.axis = axis
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return input axes minus the axis being reduced."""
         return tuple(ax for ax in self.node.output_axes if ax != self.axis)
@@ -1251,7 +1252,7 @@ class AxisOp[T](Node[T]):
         self.node = node
         self.axis = axis
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Propagate the operand's axes unchanged."""
         return self.node.output_axes
@@ -1380,7 +1381,7 @@ class laplacian[T](Node[T]):
         self.spacings = spacings
         self.boundaries = boundaries
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Propagate the operand's axes unchanged."""
         return self.node.output_axes
@@ -1459,7 +1460,7 @@ class function_call[T](Node[T]):
                     f"{arg.output_axes!r}, but the functor declares input_axes[{position}]={expected!r}"
                 )
 
-    @property
+    @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
         """Return the functor's declared output axes, else the conservative union of input axes."""
         if self._declared_output_axes is not None:

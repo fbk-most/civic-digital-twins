@@ -885,6 +885,39 @@ def test_where_output_axes_propagates_time_axis():
     assert time_axis in w.output_axes
 
 
+def test_output_axes_is_memoized_on_reconvergent_dag(monkeypatch):
+    """output_axes is cached per node, so a DAG with heavy reconvergence costs linear (not exponential) work.
+
+    Each node in this chain takes the previous *two* nodes as its operands
+    (Fibonacci-style sharing), so a node N layers deep is reachable from the
+    root via exponentially many paths. A naive, uncached ``output_axes``
+    would re-walk the whole shared ancestry on every access — the same
+    blowup as naive recursive Fibonacci — costing O(fib(depth)) calls to
+    ``union_axes``. With memoization each node's ``output_axes`` is computed
+    exactly once, so the call count scales linearly with depth instead.
+    """
+    calls = 0
+    original_union_axes = graph.union_axes
+
+    def counting_union_axes(*args):
+        nonlocal calls
+        calls += 1
+        return original_union_axes(*args)
+
+    monkeypatch.setattr(graph, "union_axes", counting_union_axes)
+
+    depth = 30
+    leaf = graph.array_constant([1.0], axes=(TIME_AXIS,), name="leaf")
+    prev2, prev1 = leaf, leaf
+    for _ in range(depth):
+        prev2, prev1 = prev1, graph.add(prev1, prev2)
+
+    assert prev1.output_axes == (TIME_AXIS,)
+    # Without memoization this would be on the order of fib(depth) (~1.3M for
+    # depth=30); with memoization it is bounded by the number of nodes built.
+    assert calls <= depth * 2
+
+
 # ---------------------------------------------------------------------------
 # function_call functor axis signature
 # ---------------------------------------------------------------------------
