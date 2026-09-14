@@ -257,7 +257,7 @@ def config(_cls: Any = None) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
+def _validate_index_field(cls_name: str, field_name: str, val: Any, *, marker: str | None = None) -> None:
     """Raise :class:`TypeError` if *val* is not a valid IO contract field value.
 
     Valid shapes: a single :class:`~.index.GenericIndex`, a ``list`` of them,
@@ -267,6 +267,12 @@ def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
     """
     if isinstance(val, GenericIndex):
         return
+    _dc = getattr(val, "_dc", val)
+    if marker == "_is_outputs" and getattr(type(_dc), "_is_expose", False):
+        raise TypeError(
+            f"{cls_name}.{field_name}: @outputs field cannot accept an @expose value "
+            f"({type(_dc).__name__} is unstable diagnostics, not a stable output)"
+        )
     if getattr(type(val), "_is_expose", False) or getattr(type(val), "_is_outputs", False):
         return
     # IOProxy wrapping an @expose or @outputs dataclass (model.expose / model.outputs
@@ -359,7 +365,7 @@ def _make_io_decorator(marker: str):
             cls_name = type(self).__name__
             for f in dataclasses.fields(self):  # type: ignore[arg-type]
                 val = getattr(self, f.name)
-                _validate_index_field(cls_name, f.name, val)
+                _validate_index_field(cls_name, f.name, val, marker=marker)
                 declared = field_axes.get(f.name)
                 if declared is not None:
                     _verify_index_field_shape(cls_name, f.name, declared, val)

@@ -11,7 +11,7 @@ import pytest
 from civic_digital_twins.dt_model import config, define, expose, inputs, outputs
 from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
-from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model.model.model import Model, _proxy_from_dataclass
 
 # ---------------------------------------------------------------------------
 # @inputs
@@ -181,6 +181,58 @@ def test_outputs_validates_fields():
         Outputs(y=99)  # type: ignore[arg-type]
 
 
+def test_outputs_rejects_raw_expose_dataclass():
+    """An @outputs field assigned a raw @expose dataclass raises TypeError."""
+
+    @expose
+    class SubExpose:
+        diag: Index
+
+    @outputs
+    class Outputs:
+        leaked: SubExpose
+
+    exp = SubExpose(diag=Index("diag", 1.0))
+    with pytest.raises(TypeError, match=r"Outputs\.leaked.*@outputs.*cannot accept.*@expose"):
+        Outputs(leaked=exp)  # type: ignore[arg-type]
+
+
+def test_outputs_rejects_ioproxy_wrapping_expose():
+    """An @outputs field assigned an IOProxy wrapping an @expose dataclass raises TypeError."""
+
+    @expose
+    class SubExpose:
+        diag: Index
+
+    @outputs
+    class Outputs:
+        leaked: object
+
+    proxy = _proxy_from_dataclass(SubExpose(diag=Index("diag", 1.0)))
+    with pytest.raises(TypeError, match=r"Outputs\.leaked.*@outputs.*cannot accept.*@expose"):
+        Outputs(leaked=proxy)
+
+
+def test_outputs_accepts_nested_outputs():
+    """An @outputs field assigned an @outputs dataclass or proxy is accepted."""
+
+    @outputs
+    class SubOutputs:
+        out: Index
+
+    @outputs
+    class RootOutputs:
+        nested: SubOutputs
+
+    sub_out = SubOutputs(out=Index("out", 1.0))
+    root = RootOutputs(nested=sub_out)
+    assert root.nested is sub_out
+
+    proxy = _proxy_from_dataclass(sub_out)
+    root_proxy = RootOutputs(nested=proxy)
+    assert root_proxy.nested is proxy
+
+
 # ---------------------------------------------------------------------------
 # @expose
 # ---------------------------------------------------------------------------
@@ -205,6 +257,22 @@ def test_expose_validates_fields():
 
     with pytest.raises(TypeError, match="expected GenericIndex"):
         Expose(z="bad")  # type: ignore[arg-type]
+
+
+def test_expose_accepts_ioproxy_wrapping_outputs():
+    """An @expose field assigned an IOProxy wrapping an @outputs dataclass is accepted."""
+
+    @outputs
+    class SubOutputs:
+        out: Index
+
+    @expose
+    class Expose:
+        surfaced: object
+
+    proxy = _proxy_from_dataclass(SubOutputs(out=Index("out", 1.0)))
+    exp = Expose(surfaced=proxy)
+    assert exp.surfaced is proxy
 
 
 # ---------------------------------------------------------------------------
