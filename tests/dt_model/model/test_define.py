@@ -8,7 +8,7 @@ import pytest
 
 from civic_digital_twins.dt_model import NumpyBackend, config, define, expose, functions, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index
-from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model.model.model import ConfigTypeMismatchError, Model
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
@@ -234,6 +234,44 @@ def test_define_with_functions_and_config():
 
     result = Evaluation(Scenario(m)).evaluate(backend=NumpyBackend)
     assert float(result[m.outputs.y]) == pytest.approx(10.0)
+
+
+def test_define_config_type_mismatch_raises():
+    """Passing an unrelated @config class's instance as config= raises ConfigTypeMismatchError.
+
+    Two unrelated Config dataclasses can coincidentally share field names, in
+    which case the mistake would otherwise go undetected — the wrong
+    policy/config data silently wired in, only surfacing later as confusing
+    behavior deep inside compute(). Checking the type at construction turns
+    that into an immediate, located error (the Config analogue of
+    InputsTypeMismatchError/FunctionsTypeMismatchError).
+    """
+
+    @define("M")
+    class M(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @config
+        class Config:
+            multiplier: float = 1.0
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            """Scale x by config.multiplier."""
+            return M.Outputs(y=Index("y", inputs.x * config.multiplier))
+
+    @config
+    class OtherConfig:
+        multiplier: float = 1.0
+
+    x = Index("x", 2.0)
+    with pytest.raises(ConfigTypeMismatchError, match="expected config of type"):
+        M(inputs=M.Inputs(x=x), config=OtherConfig(multiplier=3.0))  # type: ignore[arg-type]
 
 
 def test_define_config_never_reaches_super_init():
