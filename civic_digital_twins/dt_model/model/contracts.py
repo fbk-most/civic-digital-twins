@@ -152,62 +152,38 @@ def functions(
 # ---------------------------------------------------------------------------
 
 
-def _config_value_holds_generic_index(val: Any) -> bool:
-    """Return ``True`` if *val* is, wraps, or nests a :class:`~.index.GenericIndex`.
-
-    Mirrors the recursion ``model.py``'s ``_iter_scalars`` performs for a
-    different purpose (collecting indexes): unwraps an ``IOProxy`` via
-    ``_dc``, and recurses into a raw ``@outputs``/``@expose``-decorated
-    dataclass instance's own fields (arbitrarily deep), plus plain ``list``/
-    ``dict`` containers. This lets :func:`_validate_config_field` catch a
-    ``GenericIndex`` hidden several layers down inside a ``Config`` field,
-    not just one held directly.
-    """
-    if isinstance(val, GenericIndex):
-        return True
-    _dc = getattr(val, "_dc", None)
-    if _dc is not None and (getattr(type(_dc), "_is_expose", False) or getattr(type(_dc), "_is_outputs", False)):
-        val = _dc  # unwrap IOProxy, then recurse into the wrapped dataclass's fields below
-    if getattr(type(val), "_is_expose", False) or getattr(type(val), "_is_outputs", False):
-        return any(
-            _config_value_holds_generic_index(getattr(val, f.name))
-            for f in dataclasses.fields(val)  # type: ignore[arg-type]
-        )
-    if isinstance(val, list):
-        return any(_config_value_holds_generic_index(item) for item in val)
-    if isinstance(val, dict):
-        return any(_config_value_holds_generic_index(item) for item in val.values())
-    return False
-
-
 def _validate_config_field(cls_name: str, field_name: str, val: Any) -> None:
-    """Raise :class:`TypeError` if *val* holds a :class:`~.index.GenericIndex`.
+    """Raise :class:`TypeError` if *val* holds, wraps, or nests a :class:`~.index.GenericIndex`.
 
     ``@config`` fields are plain, graph-inert, construction-time-only data —
     the opposite direction from :func:`_validate_index_field`, which
     *requires* a ``GenericIndex``. A ``GenericIndex`` value belongs in
     ``Inputs`` instead, where it can be part of the graph, swept per ensemble
-    member, and overridden via ``Scenario``. This check also catches a
-    ``GenericIndex`` nested inside an ``IOProxy`` or a raw ``@outputs``/
-    ``@expose`` dataclass value, at any depth (see
-    :func:`_config_value_holds_generic_index`), not just one held directly.
+    member, and overridden via ``Scenario``.
+
+    Recurses into an ``IOProxy`` (unwrapped via ``_dc``), any nested
+    dataclass instance's own fields, and plain ``list``/``dict`` containers —
+    not just a ``GenericIndex`` held directly — so a value smuggled several
+    layers down (e.g. a sub-model's ``.outputs``/``.expose`` proxy) is still
+    caught, and can't quietly become invisible to ``Scenario``/inspection.
+    *field_name* grows a dotted/indexed path as recursion descends, so the
+    raised error points at the exact nested location, not just the outer field.
     """
+    if isinstance(val, GenericIndex):
+        raise TypeError(f"{cls_name}.{field_name}: Config fields must not hold a GenericIndex; use Inputs instead.")
+    _dc = getattr(val, "_dc", val)
+    if dataclasses.is_dataclass(_dc) and not isinstance(_dc, type):
+        for f in dataclasses.fields(_dc):  # type: ignore[arg-type]
+            _validate_config_field(cls_name, f"{field_name}.{f.name}", getattr(_dc, f.name))
+        return
     if isinstance(val, list):
         for i, item in enumerate(val):
-            if _config_value_holds_generic_index(item):
-                raise TypeError(
-                    f"{cls_name}.{field_name}[{i}]: Config fields must not hold a GenericIndex; use Inputs instead."
-                )
+            _validate_config_field(cls_name, f"{field_name}[{i}]", item)
         return
     if isinstance(val, dict):
         for k, item in val.items():
-            if _config_value_holds_generic_index(item):
-                raise TypeError(
-                    f"{cls_name}.{field_name}[{k!r}]: Config fields must not hold a GenericIndex; use Inputs instead."
-                )
+            _validate_config_field(cls_name, f"{field_name}[{k!r}]", item)
         return
-    if _config_value_holds_generic_index(val):
-        raise TypeError(f"{cls_name}.{field_name}: Config fields must not hold a GenericIndex; use Inputs instead.")
 
 
 @overload

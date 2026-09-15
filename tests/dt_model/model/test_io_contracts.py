@@ -393,6 +393,58 @@ def test_config_rejects_generic_index_in_dict_nested_inside_outputs_dataclass():
         Config(inner=Inner(items={"k": a}))
 
 
+def test_config_rejects_generic_index_nested_in_plain_dataclass():
+    """A Config field holding a plain (undecorated) nested dataclass with a GenericIndex raises TypeError.
+
+    The recursion isn't limited to @outputs/@expose-marked dataclasses —
+    any nested dataclass instance is walked, since a GenericIndex smuggled
+    inside one would be just as invisible to Scenario/inspection.
+    """
+
+    @dataclasses.dataclass
+    class PlainInner:
+        a: Index
+
+    @config
+    class Config:
+        inner: PlainInner  # type: ignore[arg-type]  # deliberately wrong: nests a GenericIndex
+
+    with pytest.raises(TypeError, match=r"inner\.a.*must not hold a GenericIndex"):
+        Config(inner=PlainInner(a=Index("a", 1.0)))
+
+
+def test_config_accepts_plain_dataclass_without_generic_index():
+    """A Config field holding a plain nested dataclass with no GenericIndex is accepted."""
+
+    @dataclasses.dataclass
+    class PlainInner:
+        threshold: float
+        tag: str
+
+    @config
+    class Config:
+        inner: PlainInner
+
+    c = Config(inner=PlainInner(threshold=0.5, tag="x"))
+    assert c.inner.threshold == 0.5
+    assert c.inner.tag == "x"
+
+
+def test_config_rejects_generic_index_error_names_the_nested_path():
+    """The raised error identifies the exact nested field, not just the outer Config field."""
+
+    @outputs
+    class Inner:
+        a: Index
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match=r"Config\.inner\.a: Config fields must not hold a GenericIndex"):
+        Config(inner=Inner(a=Index("a", 1.0)))
+
+
 def test_config_supports_both_call_forms():
     """@config and @config() both work."""
 
