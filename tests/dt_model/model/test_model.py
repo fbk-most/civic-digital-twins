@@ -12,6 +12,7 @@ from civic_digital_twins.dt_model import expose, functions, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Distribution, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import (
     AbstractIndexNotInInputsError,
+    ConfigTypeMismatchError,
     FunctionsTypeMismatchError,
     InputsContractError,
     InputsTypeMismatchError,
@@ -499,6 +500,13 @@ def test_functions_type_mismatch_error_shares_violation_base():
     assert issubclass(FunctionsTypeMismatchError, ModelContractError)
     assert issubclass(FunctionsTypeMismatchError, ModelContractViolation)
     assert not issubclass(FunctionsTypeMismatchError, ModelContractWarning)
+
+
+def test_config_type_mismatch_error_shares_violation_base():
+    """ConfigTypeMismatchError is a ModelContractError/Violation, not a warning."""
+    assert issubclass(ConfigTypeMismatchError, ModelContractError)
+    assert issubclass(ConfigTypeMismatchError, ModelContractViolation)
+    assert not issubclass(ConfigTypeMismatchError, ModelContractWarning)
 
 
 def test_inputs_contract_error_is_subclass_of_model_contract_error_not_warning():
