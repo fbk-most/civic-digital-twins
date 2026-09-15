@@ -19,6 +19,7 @@ from .index import (
 )
 from .model import (
     AbstractIndexNotInInputsError,
+    ConfigTypeMismatchError,
     FunctionsTypeMismatchError,
     InputsContractError,
     InputsTypeMismatchError,
@@ -43,6 +44,7 @@ __all__ = [
     "CategoricalIndex",
     "ConditionalCategoricalIndex",
     "ConditionalDistributionIndex",
+    "ConfigTypeMismatchError",
     "ConstIndex",
     "ConstTimeseriesIndex",
     "Distribution",

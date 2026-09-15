@@ -303,6 +303,96 @@ def test_config_rejects_generic_index_in_dict_field():
         Config(xs={"k": Index("x", 1.0)})  # type: ignore[arg-type]
 
 
+def test_config_rejects_generic_index_nested_in_raw_outputs_dataclass():
+    """A Config field holding a raw @outputs dataclass with a GenericIndex field raises TypeError.
+
+    @config's own GenericIndex check must recurse into nested @outputs/@expose
+    dataclass values, not just check the field's own direct value — mirroring
+    the recursion @inputs/@outputs/@expose already perform in the opposite
+    direction (accepting, rather than rejecting, a GenericIndex).
+    """
+
+    @outputs
+    class Inner:
+        a: Index
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]  # deliberately wrong: nests a GenericIndex
+
+    a = Index("a", 1.0)
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(inner=Inner(a=a))
+
+
+def test_config_rejects_generic_index_nested_in_outputs_proxy():
+    """A Config field holding an IOProxy wrapping @outputs with a GenericIndex raises TypeError."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @config
+    class Config:
+        leaf_out: LeafModel.Outputs  # type: ignore[arg-type]  # IOProxy wrapping @outputs
+
+    x = Index("x", 1.0)
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=x))
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(leaf_out=leaf.outputs)
+
+
+def test_config_rejects_generic_index_in_list_nested_inside_outputs_dataclass():
+    """A GenericIndex hidden in a list field of a nested @outputs dataclass is still caught.
+
+    Exercises the recursive helper's own list-handling branch (reached only
+    when recursing into a nested dataclass's field, as opposed to the
+    top-level list check @config already performed directly).
+    """
+
+    @outputs
+    class Inner:
+        items: list
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]  # nested @outputs dataclass with a list field
+
+    a = Index("a", 1.0)
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(inner=Inner(items=[a]))
+
+
+def test_config_rejects_generic_index_in_dict_nested_inside_outputs_dataclass():
+    """A GenericIndex hidden in a dict field of a nested @outputs dataclass is still caught.
+
+    Exercises the recursive helper's own dict-handling branch (reached only
+    when recursing into a nested dataclass's field, as opposed to the
+    top-level dict check @config already performed directly).
+    """
+
+    @outputs
+    class Inner:
+        items: dict
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]  # nested @outputs dataclass with a dict field
+
+    a = Index("a", 1.0)
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(inner=Inner(items={"k": a}))
+
+
 def test_config_supports_both_call_forms():
     """@config and @config() both work."""
 
@@ -729,6 +819,93 @@ def test_raw_outputs_dataclass_indexes_reachable():
 
     m = M()
     assert any(idx is a for idx in m.indexes)
+
+
+# ---------------------------------------------------------------------------
+# @outputs must not accept @expose values (the reverse direction is fine)
+# ---------------------------------------------------------------------------
+
+
+def test_outputs_rejects_raw_expose_dataclass():
+    """An @outputs field must not hold a raw @expose dataclass instance.
+
+    @outputs is the model's public contract; @expose is for non-contractual,
+    internal diagnostics only. Accepting an @expose value here would let
+    diagnostic-only data silently leak into the contractual outputs surface.
+    """
+
+    @expose
+    class Inner:
+        a: Index
+
+    @outputs
+    class Outer:
+        inner: Inner  # type: ignore[arg-type]  # deliberately wrong marker
+
+    a = Index("a", 7.0)
+    with pytest.raises(TypeError, match="must not hold an @expose value"):
+        Outer(inner=Inner(a=a))
+
+
+def test_outputs_rejects_nested_expose_proxy():
+    """An @outputs field must not hold an IOProxy wrapping an @expose dataclass."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            mid: Index
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            mid = Index("mid", inp.x)
+            return LeafModel.Outputs(y=mid), LeafModel.Expose(mid=mid)
+
+    @outputs
+    class BadOuter:
+        leaf: LeafModel.Expose  # type: ignore[arg-type]  # IOProxy wrapping @expose, disallowed here
+
+    x = Index("x", 1.0)
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=x))
+    with pytest.raises(TypeError, match="must not hold an IOProxy wrapping an @expose value"):
+        BadOuter(leaf=leaf.expose)
+
+
+def test_expose_still_accepts_nested_outputs_proxy_after_marker_check():
+    """The reverse direction — @expose holding an IOProxy wrapping @outputs — remains allowed.
+
+    Regression guard for the #236 fix: adding the @outputs->@expose rejection
+    must not affect this pre-existing, still-valid direction.
+    """
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @expose
+    class Outer:
+        leaf_out: LeafModel.Outputs  # IOProxy wrapping @outputs — still fine
+
+    x = Index("x", 1.0)
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=x))
+    outer = Outer(leaf_out=leaf.outputs)  # must not raise
+    assert outer.leaf_out is not None
 
 
 # ---------------------------------------------------------------------------

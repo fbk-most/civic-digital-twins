@@ -19,6 +19,7 @@ from typing import Any, Literal, TypeVar, dataclass_transform, overload
 
 from ..axes import Axis
 from .index import GenericIndex, _verify_declared_axes
+from .model import ConfigTypeMismatchError
 
 __all__ = ["config", "define", "expose", "functions", "inputs", "outputs"]
 
@@ -151,6 +152,34 @@ def functions(
 # ---------------------------------------------------------------------------
 
 
+def _config_value_holds_generic_index(val: Any) -> bool:
+    """Return ``True`` if *val* is, wraps, or nests a :class:`~.index.GenericIndex`.
+
+    Mirrors the recursion ``model.py``'s ``_iter_scalars`` performs for a
+    different purpose (collecting indexes): unwraps an ``IOProxy`` via
+    ``_dc``, and recurses into a raw ``@outputs``/``@expose``-decorated
+    dataclass instance's own fields (arbitrarily deep), plus plain ``list``/
+    ``dict`` containers. This lets :func:`_validate_config_field` catch a
+    ``GenericIndex`` hidden several layers down inside a ``Config`` field,
+    not just one held directly.
+    """
+    if isinstance(val, GenericIndex):
+        return True
+    _dc = getattr(val, "_dc", None)
+    if _dc is not None and (getattr(type(_dc), "_is_expose", False) or getattr(type(_dc), "_is_outputs", False)):
+        val = _dc  # unwrap IOProxy, then recurse into the wrapped dataclass's fields below
+    if getattr(type(val), "_is_expose", False) or getattr(type(val), "_is_outputs", False):
+        return any(
+            _config_value_holds_generic_index(getattr(val, f.name))
+            for f in dataclasses.fields(val)  # type: ignore[arg-type]
+        )
+    if isinstance(val, list):
+        return any(_config_value_holds_generic_index(item) for item in val)
+    if isinstance(val, dict):
+        return any(_config_value_holds_generic_index(item) for item in val.values())
+    return False
+
+
 def _validate_config_field(cls_name: str, field_name: str, val: Any) -> None:
     """Raise :class:`TypeError` if *val* holds a :class:`~.index.GenericIndex`.
 
@@ -158,22 +187,27 @@ def _validate_config_field(cls_name: str, field_name: str, val: Any) -> None:
     the opposite direction from :func:`_validate_index_field`, which
     *requires* a ``GenericIndex``. A ``GenericIndex`` value belongs in
     ``Inputs`` instead, where it can be part of the graph, swept per ensemble
-    member, and overridden via ``Scenario``.
+    member, and overridden via ``Scenario``. This check also catches a
+    ``GenericIndex`` nested inside an ``IOProxy`` or a raw ``@outputs``/
+    ``@expose`` dataclass value, at any depth (see
+    :func:`_config_value_holds_generic_index`), not just one held directly.
     """
-    if isinstance(val, GenericIndex):
-        raise TypeError(f"{cls_name}.{field_name}: Config fields must not hold a GenericIndex; use Inputs instead.")
     if isinstance(val, list):
         for i, item in enumerate(val):
-            if isinstance(item, GenericIndex):
+            if _config_value_holds_generic_index(item):
                 raise TypeError(
                     f"{cls_name}.{field_name}[{i}]: Config fields must not hold a GenericIndex; use Inputs instead."
                 )
+        return
     if isinstance(val, dict):
         for k, item in val.items():
-            if isinstance(item, GenericIndex):
+            if _config_value_holds_generic_index(item):
                 raise TypeError(
                     f"{cls_name}.{field_name}[{k!r}]: Config fields must not hold a GenericIndex; use Inputs instead."
                 )
+        return
+    if _config_value_holds_generic_index(val):
+        raise TypeError(f"{cls_name}.{field_name}: Config fields must not hold a GenericIndex; use Inputs instead.")
 
 
 @overload
@@ -257,22 +291,43 @@ def config(_cls: Any = None) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _validate_index_field(cls_name: str, field_name: str, val: Any) -> None:
+def _validate_index_field(cls_name: str, field_name: str, val: Any, container_marker: str) -> None:
     """Raise :class:`TypeError` if *val* is not a valid IO contract field value.
 
     Valid shapes: a single :class:`~.index.GenericIndex`, a ``list`` of them,
     a ``dict`` mapping strings to them, a nested ``@expose``-decorated dataclass
     instance, or an ``IOProxy`` wrapping an ``@expose`` or ``@outputs`` dataclass
     (for surfacing sub-model diagnostics and outputs for inspection).
+
+    *container_marker* identifies which decorator (``"_is_inputs"``,
+    ``"_is_outputs"``, or ``"_is_expose"``) declared the field being
+    validated. It is used to reject an ``@expose``-marked value (raw or
+    ``IOProxy``-wrapped) inside an ``@outputs`` field: ``Outputs`` is the
+    model's public output contract and must not silently absorb a value
+    meant only for non-contractual, internal diagnostics. The reverse
+    (an ``@outputs``-marked value nested inside ``@expose``) remains
+    allowed — surfacing a sub-model's outputs for inspection is exactly
+    what ``@expose`` is for.
     """
     if isinstance(val, GenericIndex):
         return
-    if getattr(type(val), "_is_expose", False) or getattr(type(val), "_is_outputs", False):
+    val_is_expose = getattr(type(val), "_is_expose", False)
+    val_is_outputs = getattr(type(val), "_is_outputs", False)
+    if val_is_expose and container_marker == "_is_outputs":
+        raise TypeError(
+            f"{cls_name}.{field_name}: an @outputs field must not hold an @expose value; got {type(val).__name__}."
+        )
+    if val_is_expose or val_is_outputs:
         return
     # IOProxy wrapping an @expose or @outputs dataclass (model.expose / model.outputs
     # both return IOProxy, not the raw dataclass)
     _dc = getattr(val, "_dc", None)
     if _dc is not None and getattr(type(_dc), "_is_expose", False):
+        if container_marker == "_is_outputs":
+            raise TypeError(
+                f"{cls_name}.{field_name}: an @outputs field must not hold an IOProxy wrapping "
+                f"an @expose value; got {type(_dc).__name__}."
+            )
         return
     if _dc is not None and getattr(type(_dc), "_is_outputs", False):
         return
@@ -359,7 +414,7 @@ def _make_io_decorator(marker: str):
             cls_name = type(self).__name__
             for f in dataclasses.fields(self):  # type: ignore[arg-type]
                 val = getattr(self, f.name)
-                _validate_index_field(cls_name, f.name, val)
+                _validate_index_field(cls_name, f.name, val, marker)
                 declared = field_axes.get(f.name)
                 if declared is not None:
                     _verify_index_field_shape(cls_name, f.name, declared, val)
@@ -613,6 +668,10 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
             and len(dataclasses.fields(_inputs_cls)) == 0  # type: ignore[arg-type]
         )
 
+        # Config inner class declared directly on this class, if any — used to
+        # validate the `config` argument's type below (see has_config).
+        _config_cls = cls.__dict__.get("Config")
+
         # Shared body for every generated __init__ variant below. `fns`/`config`
         # use the module-level `_MISSING` sentinel (rather than `None`, a valid
         # user value) to distinguish "not declared for this class" from "declared
@@ -622,6 +681,12 @@ def define(name: str) -> Callable[[type[_T]], type[_T]]:
         def _run_compute(self: Any, inputs: Any, fns: Any = _MISSING, config: Any = _MISSING) -> None:
             if _inputs_is_empty and inputs is None and _inputs_cls is not None:
                 inputs = _inputs_cls()  # type: ignore[operator]
+
+            if config is not _MISSING and _config_cls is not None and not isinstance(config, _config_cls):
+                raise ConfigTypeMismatchError(
+                    f"{type(self).__name__} expected config of type "
+                    f"{_config_cls.__qualname__}, got {type(config).__qualname__} instead."
+                )
 
             compute_kwargs: dict[str, Any] = {}
             if fns is not _MISSING:

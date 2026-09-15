@@ -134,6 +134,27 @@ class FunctionsTypeMismatchError(ModelContractError):
     """
 
 
+class ConfigTypeMismatchError(ModelContractError):
+    """Raised when the ``config`` argument is not an instance of the subclass's own ``Config``.
+
+    The :class:`Config` analogue of :class:`InputsTypeMismatchError` and
+    :class:`FunctionsTypeMismatchError`: raised when a model that declares a
+    ``@config`` inner class is constructed with a ``config`` value that is
+    not an instance of that declared ``Config`` class — most commonly
+    another model's ``Config`` by mistake, or an unrelated object.
+
+    ``Config`` is graph-inert and never forwarded to :class:`Model.__init__`
+    (see :func:`~.contracts.config`), so this check is performed by the
+    ``__init__`` that ``@define`` generates, before ``compute()`` is called.
+    Without it, two unrelated ``Config`` dataclasses that coincidentally
+    share field names would be silently accepted and mapped by name — the
+    wrong policy/config data would be wired in and only surface later as
+    confusing behavior deep inside ``compute()``, far from its cause.
+    Checking the type at construction turns that into an immediate, located
+    error.
+    """
+
+
 # ---------------------------------------------------------------------------
 # IOProxy value types
 # ---------------------------------------------------------------------------
