@@ -163,9 +163,15 @@ class TestEvaluationConfig:
         assert dataclasses.is_dataclass(EvaluationConfig)
 
     def test_field_names(self) -> None:
-        """EvaluationConfig has exactly one field: ensemble_size."""
+        """EvaluationConfig has ensemble_size, ensemble_seed, and n_samples_per_combo."""
         fields = {f.name for f in dataclasses.fields(EvaluationConfig)}
-        assert fields == {"ensemble_size"}
+        assert fields == {"ensemble_size", "ensemble_seed", "n_samples_per_combo"}
+
+    def test_ensemble_seed_and_n_samples_per_combo_defaults(self) -> None:
+        """ensemble_seed defaults to None and n_samples_per_combo defaults to 1."""
+        cfg = EvaluationConfig(ensemble_size=100)
+        assert cfg.ensemble_seed is None
+        assert cfg.n_samples_per_combo == 1
 
     def test_equality(self) -> None:
         """Two configs with equal ensemble_size compare equal."""
@@ -965,6 +971,34 @@ class TestModelEvaluatorDefaultTemplate:
         state = evaluator.extract_resume_state(output)
         assert isinstance(state, ResumeState)
         assert isinstance(state.result, EvaluationResult)
+
+    def test_make_ensemble_same_seed_yields_same_samples(self) -> None:
+        """make_ensemble with equal ensemble_seed produces identical draws."""
+        x, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        scenario = Scenario(model)
+        config = EvaluationConfig(ensemble_size=5, ensemble_seed=42)
+        samples_a = evaluator.make_ensemble(scenario, config).assignments()[x]
+        samples_b = evaluator.make_ensemble(scenario, config).assignments()[x]
+        np.testing.assert_array_equal(samples_a, samples_b)
+
+    def test_make_ensemble_different_seed_yields_different_samples(self) -> None:
+        """make_ensemble with different ensemble_seed values produces different draws."""
+        x, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        scenario = Scenario(model)
+        config_a = EvaluationConfig(ensemble_size=5, ensemble_seed=42)
+        config_b = EvaluationConfig(ensemble_size=5, ensemble_seed=43)
+        samples_a = evaluator.make_ensemble(scenario, config_a).assignments()[x]
+        samples_b = evaluator.make_ensemble(scenario, config_b).assignments()[x]
+        assert not np.array_equal(samples_a, samples_b)
+
+    def test_make_ensemble_no_seed_uses_no_rng(self) -> None:
+        """make_ensemble without ensemble_seed still returns a usable ensemble."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        ensemble = evaluator.make_ensemble(Scenario(model), EvaluationConfig(ensemble_size=5))
+        assert isinstance(ensemble, DistributionEnsemble)
 
 
 # ---------------------------------------------------------------------------

@@ -113,9 +113,20 @@ class EvaluationConfig:
         ``initial_ensemble_size`` in :meth:`ModelEvaluator.evaluate` and
         :meth:`ModelEvaluator.start`, and as the default increment when
         :meth:`IncrementalRun.extend` is called without an explicit *n*.
+    ensemble_seed : int | None
+        Seed for the ensemble's random number generator, converted into a
+        :class:`numpy.random.Generator` by :meth:`ModelEvaluator.make_ensemble`.
+        ``None`` (default) uses non-deterministic seeding.
+    n_samples_per_combo : int
+        Number of samples drawn per parameter combination, for evaluators
+        that build their own :class:`~dt_model.simulation.ensemble.CrossProductEnsemble`
+        instead of relying on :meth:`ModelEvaluator.make_ensemble`'s default.
+        Not consumed by the base template.
     """
 
     ensemble_size: int
+    ensemble_seed: int | None = None
+    n_samples_per_combo: int = 1
 
 
 @dataclasses.dataclass
@@ -976,9 +987,10 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
 
         Default implementation returns a
         :class:`~dt_model.simulation.ensemble.DistributionEnsemble` of size
-        ``config.ensemble_size``.  Override for models that use a different
-        ensemble type (e.g. :class:`~dt_model.simulation.ensemble.CrossProductEnsemble`
-        with a parameter grid — in that case override :meth:`evaluate` as a whole).
+        ``config.ensemble_size``, seeded from ``config.ensemble_seed`` when set.
+        Override for models that use a different ensemble type (e.g.
+        :class:`~dt_model.simulation.ensemble.CrossProductEnsemble` with a
+        parameter grid — in that case override :meth:`evaluate` as a whole).
 
         Parameters
         ----------
@@ -992,7 +1004,8 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
         Any
             An ensemble compatible with :meth:`~simulation.evaluation.Evaluation.evaluate`.
         """
-        return DistributionEnsemble(scenario, config.ensemble_size)
+        rng = np.random.default_rng(config.ensemble_seed) if config.ensemble_seed is not None else None
+        return DistributionEnsemble(scenario, config.ensemble_size, rng=rng)
 
     def attach_resume(self, output: ModelOutput, result: EvaluationResult) -> None:
         """Encode *result* and store it as the resume payload on *output*.
