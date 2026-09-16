@@ -7,7 +7,7 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model import define, inputs, outputs
-from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, ENSEMBLE, Axis
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.simulation.ensemble import EnsembleAxisSpec, PartitionedEnsemble
@@ -283,6 +283,31 @@ def test_marginalize_order_independence():
     m_fwd = float(Evaluation(scenario).evaluate(ensemble=ens_fwd).expected_value(i_result))
     m_rev = float(Evaluation(scenario).evaluate(ensemble=ens_rev).expected_value(i_result))
     assert m_fwd == pytest.approx(m_rev, rel=0.05)
+
+
+def test_shaped_distribution_index_end_to_end():
+    """A shaped DistributionIndex flows through PartitionedEnsemble → Evaluation → expected_value.
+
+    Regression coverage for issue #247: both PartitionedEnsemble.assignments()
+    (flat sampling) and the reshape step must account for idx.shape, so the
+    per-axis ENSEMBLE dimension and the index's own declared shape both
+    survive into the result.
+    """
+    row_axis = Axis("row", DOMAIN)
+    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0}, axes=(row_axis,), shape=(3,))
+    i_result = Index("result", cap.node * 1.0)
+    model = _make_model(cap, i_result)
+    scenario = Scenario(model)
+
+    ens = PartitionedEnsemble(
+        scenario,
+        axes=[EnsembleAxisSpec("unc", indexes=[cap], size=50)],
+        rng=np.random.default_rng(0),
+    )
+    result = Evaluation(scenario).evaluate(ensemble=ens)
+    marginalised = result.expected_value(i_result)
+    assert marginalised.shape == (3,)
+    assert np.all((marginalised >= 0.0) & (marginalised <= 1.0))
 
 
 def test_axis_repr():

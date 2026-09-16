@@ -117,6 +117,8 @@ class AxisEnsemble(Protocol):
 
     - scalar values: ``domain_shape(idx) == ()``
     - timeseries values: ``domain_shape(idx) == (T,)``  (time is last)
+    - shaped :class:`~model.index.DistributionIndex` values:
+      ``domain_shape(idx) == idx.shape``  (declared axes last, in declared order)
 
     The ENSEMBLE dims ``(d0..d(M-1))`` are **mandatory** and must be present
     in-order for every assigned index (size 1 where not applicable).  No axis
@@ -444,7 +446,9 @@ class PartitionedEnsemble:
         """Return batched samples for every abstract index.
 
         Each value has shape ``(1, …, Sj, …, 1)`` — size ``Sj`` only at the
-        dimension corresponding to the index's own axis, 1 everywhere else.
+        dimension corresponding to the index's own axis, 1 everywhere else
+        (plus trailing ``*idx.shape`` dims for a shaped
+        :class:`~model.index.DistributionIndex`).
         """
         M = len(self._specs)
         result: dict[GenericIndex, np.ndarray] = {}
@@ -453,6 +457,7 @@ class PartitionedEnsemble:
             Sj = spec.size
             for idx in spec.indexes:
                 # Sample Sj values for this index.
+                idx_shape = idx.shape if isinstance(idx, DistributionIndex) else ()
                 if isinstance(idx, CategoricalIndex):
                     samples = idx.sample(self._rng, size=Sj)  # shape (Sj,)
                 else:
@@ -462,13 +467,14 @@ class PartitionedEnsemble:
                             f"Index {getattr(idx, 'name', repr(idx))!r} is not Distribution-backed "
                             f"or CategoricalIndex in this scenario; cannot sample."
                         )
+                    full_size = (Sj, *idx_shape) if idx_shape else Sj
                     if self._rng is not None:
-                        samples = np.asarray(dist.rvs(size=Sj, random_state=self._rng))
+                        samples = np.asarray(dist.rvs(size=full_size, random_state=self._rng))
                     else:
-                        samples = np.asarray(dist.rvs(size=Sj))
+                        samples = np.asarray(dist.rvs(size=full_size))
 
-                # Reshape to (1, …, Sj, …, 1): size Sj at position j, 1 elsewhere.
-                shape = [1] * M
+                # Reshape to (1, …, Sj, …, 1, *idx_shape): size Sj at position j, 1 elsewhere.
+                shape = [1] * M + list(idx_shape)
                 shape[j] = Sj
                 result[idx] = samples.reshape(shape)
 
@@ -521,8 +527,10 @@ class PartitionedEnsemble:
                 dist = self._scenario.effective_distribution(idx)
                 if dist is None:  # pragma: no cover — guarded by __init__ validation
                     raise ValueError(f"Index {getattr(idx, 'name', repr(idx))!r} is not samplable.")
-                raw = dist.rvs(size=size, random_state=rng) if rng is not None else dist.rvs(size=size)
-                new_assignments[idx] = np.asarray(raw)  # shape (size,)
+                assert isinstance(idx, DistributionIndex)
+                full_size = (size, *idx.shape) if idx.shape else size
+                raw = dist.rvs(size=full_size, random_state=rng) if rng is not None else dist.rvs(size=full_size)
+                new_assignments[idx] = np.asarray(raw)  # shape (size,) or (size, *idx.shape)
         return FrozenEnsemble(
             (Axis(axis, ENSEMBLE),),
             (np.full(size, 1.0 / size),),
@@ -548,9 +556,10 @@ class DistributionEnsemble:
     :class:`~model.index.CategoricalIndex`.
 
     Implements the :class:`AxisEnsemble` protocol: :meth:`assignments` returns
-    batched arrays of shape ``(size,)`` for each abstract index (no scenario
-    enumeration).  The legacy :meth:`__iter__` interface is preserved for
-    backward compatibility.
+    batched arrays of shape ``(size,)`` for each abstract index (``(size,
+    *idx.shape)`` for a shaped :class:`~model.index.DistributionIndex`; no
+    scenario enumeration).  The legacy :meth:`__iter__` interface is preserved
+    for backward compatibility.
 
     Parameters
     ----------
@@ -657,7 +666,8 @@ class DistributionEnsemble:
     def assignments(self) -> Mapping[GenericIndex, np.ndarray]:
         """Return batched samples for every abstract index.
 
-        Each value has shape ``(size,)`` — the single ENSEMBLE axis dimension.
+        Each value has shape ``(size,)`` — the single ENSEMBLE axis dimension
+        (``(size, *idx.shape)`` for a shaped :class:`~model.index.DistributionIndex`).
         Scalar-valued :class:`~model.index.Distribution`-backed indexes yield
         float arrays; :class:`~model.index.CategoricalIndex` indexes yield
         object arrays of string keys.
@@ -691,11 +701,13 @@ class DistributionEnsemble:
             else:
                 dist = self._scenario.effective_distribution(idx)
                 assert dist is not None
+                assert isinstance(idx, DistributionIndex)
+                full_size = (self._size, *idx.shape) if idx.shape else self._size
                 if self._rng is not None:
-                    raw = dist.rvs(size=self._size, random_state=self._rng)
+                    raw = dist.rvs(size=full_size, random_state=self._rng)
                 else:
-                    raw = dist.rvs(size=self._size)
-                result[idx] = np.asarray(raw)  # shape (S,)
+                    raw = dist.rvs(size=full_size)
+                result[idx] = np.asarray(raw)  # shape (S,) or (S, *idx.shape)
         return result
 
     def _scoped_assignments(self) -> dict[GenericIndex, np.ndarray]:
@@ -767,8 +779,10 @@ class DistributionEnsemble:
         n_branch = int(len(positions))
         placeholder = self._placeholder_value(idx)
         is_categorical = isinstance(idx, CategoricalIndex)
+        idx_shape = idx.shape if isinstance(idx, DistributionIndex) else ()
+        out_shape = (self._size, *idx_shape) if idx_shape else self._size
         out = np.full(
-            self._size,
+            out_shape,
             placeholder,
             dtype=object if is_categorical else None,
         )
@@ -779,10 +793,11 @@ class DistributionEnsemble:
         else:
             dist = self._scenario.effective_distribution(idx)
             assert dist is not None
+            full_n_branch = (n_branch, *idx_shape) if idx_shape else n_branch
             if self._rng is not None:
-                raw = dist.rvs(size=n_branch, random_state=self._rng)
+                raw = dist.rvs(size=full_n_branch, random_state=self._rng)
             else:
-                raw = dist.rvs(size=n_branch)
+                raw = dist.rvs(size=full_n_branch)
             out[positions] = np.asarray(raw)
         return out
 
@@ -1200,10 +1215,12 @@ class CrossProductEnsemble:
             else:
                 dist = scenario.effective_distribution(idx)
                 assert dist is not None
+                assert isinstance(idx, DistributionIndex)
+                full_size = (S_total, *idx.shape) if idx.shape else S_total
                 if rng is not None:
-                    result_assignments[idx] = np.asarray(dist.rvs(size=S_total, random_state=rng))
+                    result_assignments[idx] = np.asarray(dist.rvs(size=full_size, random_state=rng))
                 else:
-                    result_assignments[idx] = np.asarray(dist.rvs(size=S_total))
+                    result_assignments[idx] = np.asarray(dist.rvs(size=full_size))
 
         return result_assignments, weights, S_total, combo_cats, combo_weights
 
@@ -1269,7 +1286,9 @@ class CrossProductEnsemble:
             else:
                 dist = self._scenario.effective_distribution(idx)
                 assert dist is not None
-                result_assignments[idx] = np.asarray(dist.rvs(size=S_total, random_state=rng))
+                assert isinstance(idx, DistributionIndex)
+                full_size = (S_total, *idx.shape) if idx.shape else S_total
+                result_assignments[idx] = np.asarray(dist.rvs(size=full_size, random_state=rng))
 
         return result_assignments, weights
 
