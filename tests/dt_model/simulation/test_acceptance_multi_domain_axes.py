@@ -30,7 +30,8 @@ from civic_digital_twins.dt_model import (
     inputs,
     outputs,
 )
-from civic_digital_twins.dt_model.axes import TIME_AXIS, DomainAxis, SpaceType
+from civic_digital_twins.dt_model.axes import ENSEMBLE, TIME_AXIS, Axis, DomainAxis, SpaceType
+from civic_digital_twins.dt_model.simulation.ensemble import FrozenEnsemble
 
 X = DomainAxis("x", type=SpaceType(spacing=1.0))
 Y = DomainAxis("y", type=SpaceType(spacing=1.0))
@@ -84,6 +85,66 @@ def test_axis_order_independence_across_three_domain_axes():
     assert r2.layout.entries == ((TIME_AXIS, 2), (X, 3), (Y, 4))
     np.testing.assert_array_equal(r1[m1.outputs.field], data_txy)
     np.testing.assert_array_equal(r2[m2.outputs.field], data_txy)
+
+
+def test_shaped_distribution_index_axis_order_independence_in_addition():
+    """Adding two shaped DistributionIndex declared with swapped axes= order aligns by name.
+
+    "a" declares axes=(X, Y), shape=(3, 2); "b" declares axes=(Y, X), shape=(2, 3)
+    — same logical (x, y) grid as "a", but stored transposed. X and Y have
+    different sizes on purpose (like the axis-order test above), so a
+    position/name mixup would show up as a shape mismatch, not a coincidental
+    match. The engine must align each operand's own declared axes by name
+    before adding — via the same executor.align_to_domain_block leaves
+    already get.
+
+    Which physical position ends up holding "x" versus "y" in the result is
+    an implementation convention (currently alphabetical — see the private
+    _canonical_domain_order in evaluation.py), not a documented contract, so
+    this test does not assume it: it accepts the result in either canonical
+    order, (x, y) or (y, x), as long as the values themselves are correctly
+    aligned by axis name rather than by position.
+
+    Uses a FrozenEnsemble with hand-picked, all-distinct per-cell values
+    (rather than DistributionEnsemble sampling) so a transposition bug would
+    show up as a value mismatch instead of coincidentally matching.
+    """
+
+    @define("Sum")
+    class SumModel(Model):
+        @inputs
+        class Inputs:
+            a: Index
+            b: Index
+
+        @outputs
+        class Outputs:
+            total: Index
+
+        def compute(self, inputs):
+            return SumModel.Outputs(total=Index("total", inputs.a + inputs.b))
+
+    a = DistributionIndex("a", stats.uniform, {"loc": 0.0, "scale": 1.0}, axes=(X, Y), shape=(3, 2))
+    b = DistributionIndex("b", stats.uniform, {"loc": 0.0, "scale": 1.0}, axes=(Y, X), shape=(2, 3))
+    m = SumModel(inputs=SumModel.Inputs(a=a, b=b))
+    scenario = Scenario(m)
+
+    a_vals = np.arange(6.0).reshape(1, 3, 2)  # (ensemble=1, x=3, y=2) — a's own declared order
+    b_vals = np.arange(100.0, 106.0).reshape(1, 2, 3)  # (ensemble=1, y=2, x=3) — b's own declared order
+
+    ens_axis = Axis("_ensemble", ENSEMBLE)
+    ensemble = FrozenEnsemble((ens_axis,), (np.array([1.0]),), {a: a_vals, b: b_vals})
+    result = Evaluation(scenario).evaluate(ensemble=ensemble)
+
+    marginalised = result.expected_value(m.outputs.total)
+    # b's own array is (y, x)-ordered; transpose it to (x, y) before adding,
+    # to compute the expected value the way a correctly-aligned engine would
+    # under an (x, y) canonical order.  expected_yx is the same computation
+    # under a (y, x) canonical order instead — the two are transposes of each
+    # other, since (A + B).T == A.T + B.T.
+    expected_xy = a_vals[0] + b_vals[0].T
+    expected_yx = expected_xy.T
+    assert np.array_equal(marginalised, expected_xy) or np.array_equal(marginalised, expected_yx)
 
 
 # ---------------------------------------------------------------------------

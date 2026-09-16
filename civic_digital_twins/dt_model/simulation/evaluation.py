@@ -683,16 +683,24 @@ class Evaluation:
                 ens_axis_entries.append((ax, w.size))
                 factorized_weights[ax] = w
             for idx, batched in ens_assignments.items():
+                # Trailing dimensions carrying idx's own declared DOMAIN axes
+                # (a shaped DistributionIndex) arrive in *declared* axis
+                # order, which need not be canonical.  Align them here — same
+                # reasoning as the scenario_subs alignment above: numpy
+                # right-aligns operands, so a value carrying its axes out of
+                # canonical order (or omitting some) would otherwise
+                # broadcast onto the wrong axis instead of failing loudly or
+                # computing nonsense.  For a domain-less index (scalar
+                # DistributionIndex, CategoricalIndex) this also appends the
+                # trailing size-1 domain dims a plain reshape used to add by
+                # hand, so it broadcasts with timeseries (T,) nodes:
+                # (S, 1) × (T,) → (S, T).
+                if n_domain:
+                    batched = executor.align_to_domain_block(batched, idx.output_axes, domain_axes)
                 # Prepend n_params PARAMETER singletons so ENSEMBLE arrays
                 # broadcast correctly against the (*PARAMETER, *ENSEMBLE) layout.
-                # When the model contains timeseries nodes, also append a
-                # trailing 1 for scalar (non-timeseries) assignments so they
-                # broadcast with timeseries (T,) nodes: (S, 1) × (T,) → (S, T).
                 param_singletons = (1,) * n_params
-                target = param_singletons + batched.shape
-                if n_domain and batched.ndim == n_ensemble:
-                    target = target + (1,) * n_domain
-                ens_subs[idx.node] = np.reshape(batched, target)
+                ens_subs[idx.node] = np.reshape(batched, param_singletons + batched.shape)
 
         # Extend substitutions with trailing singleton dims for broadcasting:
         # - anonymous param nodes: shape (*P,) needs n_ensemble + extra_ts singletons.
