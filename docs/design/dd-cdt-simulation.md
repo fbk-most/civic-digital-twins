@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-07-24                                     |
+| Last-Updated | 2026-09-16                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -330,17 +330,62 @@ class ConcentrationEvaluator(ModelEvaluator[ConcentrationModel, ConcentrationOut
             mean_conc=result.expected_value(self._model.outputs.concentration),
         )
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         return {
-            "base_level":   {"type": "scalar", "default": 15.0, "unit": "µg/m³"},
-            "traffic_load": {"type": "scalar", "default": 100.0, "unit": "veh/h"},
+            "base_level": ParameterMeta(name="base_level", kind="scalar", default=15.0),
+            "traffic_load": ParameterMeta(name="traffic_load", kind="scalar", default=100.0),
         }
 ```
 
 Override `evaluate()` when the model requires a parameter grid or a non-default ensemble type.
 Override `make_ensemble()` for a different ensemble type without changing the rest of the template.
 
+### ParameterMeta and build_scenario
+
+`input_schema()` returns a `dict[str, ParameterMeta]` — structural metadata for each tunable
+index: `kind` (`"scalar"`, `"categorical"`, or `"distribution"`), and, depending on `kind`,
+`support`, `default`/`default_category`, or `distribution_family`/`distribution_fixed_params`.
+`ParameterMeta` is deliberately minimal — everything needed to validate or reconstruct a
+submitted override, nothing that only affects how a widget renders it.  Presentation-only fields
+(label, description, unit, UI ranges, …) belong on a subclass built via plain dataclass
+inheritance, not on the base class.
+
+`build_scenario()` is the other side of that round trip: given the `index_map`/`spec_map`
+derived from `input_schema()` and a string-keyed `param_overrides` mapping submitted by a client
+(a scenario-creation UI, an API request body, …), it resolves each override into the value shape
+`Scenario` expects:
+
+```python
+scenario = build_scenario(
+    model,
+    param_overrides={"base_level": 20.0, "traffic_load": 150.0},
+    index_map={idx.name: idx for idx in model.indexes},
+    spec_map=evaluator.input_schema(),
+)
+```
+
+Dispatch is on `spec_map[name].kind`:
+
+* `"scalar"` — the value is coerced to `float` and used directly.
+* `"categorical"` — the value is coerced to `str` and used directly; `Scenario` validates it
+  against the index's `support`.
+* `"distribution"` — the value is a `(lo, hi)` pair rather than a `Distribution` object.
+  `build_scenario` reconstructs a frozen `scipy.stats` distribution from it via
+  `ParameterMeta.distribution_family`/`.distribution_fixed_params`, using the convention
+  `loc=lo, scale=hi-lo`.  That `(lo, hi)` → `loc`/`scale` convention belongs to the caller
+  producing endpoint pairs (e.g. a range-slider UI), not to `DistributionIndex` itself —
+  `distribution_fixed_params` carries any other shape parameters the family needs (e.g.
+  `truncnorm`'s `a`/`b` truncation bounds, expressed *before* the `loc`/`scale` shift).
+
+Keys absent from `param_overrides`, or present but missing from `index_map`/`spec_map`, are left
+unoverridden — model defaults apply.
+
 ### Evaluation lifecycle
+
+`EvaluationConfig` also accepts an optional `ensemble_seed` — converted into a
+`np.random.Generator` by the default `make_ensemble()` for reproducible sampling — and
+`n_samples_per_combo`, read by evaluators that build their own `CrossProductEnsemble` instead
+of relying on the default template; neither is consumed by `make_ensemble()` itself.
 
 **One-shot evaluation** (no resume payload):
 
@@ -528,7 +573,7 @@ class IncrementalRun(Generic[OutputT]):
 ```python
 class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
     @abstractmethod
-    def input_schema(self) -> dict[str, dict[str, Any]]: ...
+    def input_schema(self) -> dict[str, ParameterMeta]: ...
 
     def post_process(self, scenario: Scenario, result: EvaluationResult) -> OutputT: ...
     def make_ensemble(self, scenario: Scenario, config: EvaluationConfig) -> Any: ...
@@ -549,11 +594,41 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
     def attach_resume(self, output: ModelOutput, result: EvaluationResult) -> None: ...
 ```
 
+### `ParameterMeta`
+
+```python
+# === dataclass — structural metadata for one model parameter ===
+@dataclasses.dataclass
+class ParameterMeta:
+    name: str
+    kind: str  # "scalar" | "categorical" | "distribution"
+    distribution_family: str | None = None
+    distribution_fixed_params: dict[str, Any] | None = None
+    support: list[str] = dataclasses.field(default_factory=list)
+    default: float | None = None
+    default_category: str | None = None
+```
+
+### `build_scenario`
+
+```python
+# === function — resolves string-keyed overrides into a Scenario ===
+def build_scenario(
+    model: Model | ModelVariant,
+    param_overrides: Mapping[str, Any],
+    index_map: Mapping[str, GenericIndex],
+    spec_map: Mapping[str, ParameterMeta],
+    parameter_axes: list[GenericIndex] | None = None,
+) -> Scenario: ...
+```
+
 ### `EvaluationConfig`
 
 ```python
-# === dataclass — controls Monte Carlo budget for ModelEvaluator ===
+# === dataclass — controls Monte Carlo budget and RNG seeding for ModelEvaluator ===
 @dataclasses.dataclass
 class EvaluationConfig:
     ensemble_size: int
+    ensemble_seed: int | None = None
+    n_samples_per_combo: int = 1
 ```

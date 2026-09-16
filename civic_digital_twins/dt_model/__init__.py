@@ -69,12 +69,14 @@ from .simulation import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
+    ParameterMeta,
     PartitionedEnsemble,
     Region,
     RegionGuard,
     ResumeState,
     Scenario,
     WeightedScenario,
+    build_scenario,
     sample_across,
 )
 
@@ -141,6 +143,7 @@ __all__ = [
     "ModelVariant",
     "NumpyBackend",
     "PARAMETER",
+    "ParameterMeta",
     "PartitionedEnsemble",
     "Region",
     "RegionGuard",
@@ -149,5 +152,6 @@ __all__ = [
     "TIME_AXIS",
     "TimeseriesIndex",
     "WeightedScenario",
+    "build_scenario",
     "sample_across",
 ]
