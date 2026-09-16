@@ -36,11 +36,12 @@ import base64
 import dataclasses
 import importlib.metadata
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future
 from typing import Any, Generic, Self, TypeVar
 
 import numpy as np
+from scipy import stats as scipy_stats
 
 from ..axes import Axis
 from ..engine.numpybackend.executor import Functor, NumpyBackend, State
@@ -62,6 +63,7 @@ __all__ = [
     "ModelRunHandle",
     "ParameterMeta",
     "ResumeState",
+    "build_scenario",
 ]
 
 
@@ -1346,3 +1348,80 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
             backend=state.backend,
         )
         return IncrementalRun(handle, self, scenario, config)
+
+
+# ---------------------------------------------------------------------------
+# Scenario builder
+# ---------------------------------------------------------------------------
+
+
+def build_scenario(
+    model: Model | ModelVariant,
+    param_overrides: Mapping[str, Any],
+    index_map: Mapping[str, GenericIndex],
+    spec_map: Mapping[str, ParameterMeta],
+    parameter_axes: list[GenericIndex] | None = None,
+) -> Scenario:
+    """Resolve string-keyed ``param_overrides`` into a :class:`Scenario`.
+
+    Handles three value types transparently, dispatching on
+    ``spec_map[name].kind``:
+
+    - **Scalar** (``float``): passed directly as the index override.
+    - **Distribution** (``(float, float)`` tuple): reconstructed as a frozen
+      ``scipy.stats`` distribution via ``ParameterMeta.distribution_family``
+      and ``.distribution_fixed_params``, using the convention ``loc = lo``,
+      ``scale = hi - lo``. This convention belongs to the caller that
+      produces ``(lo, hi)`` endpoint pairs (e.g. a range-slider UI), not to
+      :class:`~model.index.DistributionIndex` itself.
+    - **Categorical** (``str``): passed directly as the index override.
+
+    Keys absent from ``param_overrides``, or present but missing from
+    ``index_map``/``spec_map``, are left unoverridden — model defaults apply.
+
+    Parameters
+    ----------
+    model : Model | ModelVariant
+        The model the resulting :class:`Scenario` wraps.
+    param_overrides : Mapping[str, Any]
+        Partial ``{index_name: value}`` mapping, typically from a
+        scenario-creation UI or API request.
+    index_map : Mapping[str, GenericIndex]
+        ``index.name -> GenericIndex`` lookup, usually built from
+        ``model.indexes`` or the keys of a :meth:`ModelEvaluator.input_schema`
+        call.
+    spec_map : Mapping[str, ParameterMeta]
+        ``index.name -> ParameterMeta`` lookup, used to dispatch on ``kind``
+        and to reconstruct distribution overrides. Declared as ``Mapping``
+        rather than ``dict`` so a richer ``ParameterMeta`` subclass's schema
+        (e.g. one adding presentation-only fields) is still accepted —
+        ``dict``'s invariant value type would reject it.
+    parameter_axes : list[GenericIndex] or None, optional
+        Indexes to declare as PARAMETER axes on the returned
+        :class:`Scenario` (see :class:`Scenario`). ``None`` for models with
+        no parameter grid to sweep.
+
+    Returns
+    -------
+    Scenario
+        A scenario wrapping ``model`` with the resolved overrides and
+        ``parameter_axes`` applied.
+    """
+    overrides: dict[GenericIndex, Any] = {}
+    for name, value in param_overrides.items():
+        idx = index_map.get(name)
+        spec = spec_map.get(name)
+        if idx is None or spec is None:
+            continue
+        if spec.kind == "distribution":
+            lo, hi = value
+            lo, hi = float(lo), float(hi)
+            family = spec.distribution_family or "uniform"
+            fixed = dict(spec.distribution_fixed_params or {})
+            dist_cls = getattr(scipy_stats, family)
+            overrides[idx] = dist_cls(**{**fixed, "loc": lo, "scale": hi - lo})
+        elif spec.kind == "categorical":
+            overrides[idx] = str(value)
+        else:
+            overrides[idx] = float(value)
+    return Scenario(model, overrides=overrides, parameter_axes=parameter_axes)

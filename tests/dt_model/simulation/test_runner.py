@@ -23,6 +23,7 @@ from scipy import stats
 
 from civic_digital_twins.dt_model import (
     AsyncEvaluationHandle,
+    CategoricalIndex,
     DistributionEnsemble,
     Evaluation,
     EvaluationConfig,
@@ -35,13 +36,14 @@ from civic_digital_twins.dt_model import (
     ParameterMeta,
     ResumeState,
     Scenario,
+    build_scenario,
     define,
     inputs,
     outputs,
 )
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
-from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
+from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value, _own_index_value
@@ -108,6 +110,41 @@ def _make_scalar_model() -> tuple[Index, _ScalarModel]:
     """Return (cost_index, model) where cost is a plain scalar Index."""
     cost = Index("cost", 8.0)
     return cost, _ScalarModel(inputs=_ScalarModel.Inputs(cost=cost))
+
+
+# A third model exercising all three build_scenario() dispatch kinds at once:
+# a scalar Index, a CategoricalIndex, and a DistributionIndex.
+
+
+@define("BuildScenarioModel")
+class _BuildScenarioModel(Model):
+    """Model with one scalar, one categorical, and one distribution input."""
+
+    @inputs
+    class Inputs:
+        scalar_param: Index
+        cat_param: CategoricalIndex
+        dist_param: DistributionIndex
+
+    @outputs
+    class Outputs:
+        out: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Pass the scalar input through unchanged."""
+        out = Index("out", inputs.scalar_param.node)
+        return _BuildScenarioModel.Outputs(out=out)
+
+
+def _make_build_scenario_model() -> tuple[Index, CategoricalIndex, DistributionIndex, _BuildScenarioModel]:
+    """Return (scalar_param, cat_param, dist_param, model) ready for build_scenario()."""
+    scalar_param = Index("scalar_param", 1.0)
+    cat_param = CategoricalIndex("cat_param", ["a", "b"])
+    dist_param = DistributionIndex("dist_param", stats.norm, {"loc": 0.0, "scale": 1.0})
+    model = _BuildScenarioModel(
+        inputs=_BuildScenarioModel.Inputs(scalar_param=scalar_param, cat_param=cat_param, dist_param=dist_param)
+    )
+    return scalar_param, cat_param, dist_param, model
 
 
 # ---------------------------------------------------------------------------
@@ -1076,3 +1113,88 @@ class TestIncrementalRun:
         run2 = evaluator.resume(scenario, output2, config)
         assert isinstance(run2, IncrementalRun)
         assert isinstance(run2.result, EvaluationResult)
+
+
+# ---------------------------------------------------------------------------
+# build_scenario()
+# ---------------------------------------------------------------------------
+
+
+class TestBuildScenario:
+    """Unit tests for build_scenario()."""
+
+    def test_scalar_override(self) -> None:
+        """A non-distribution, non-categorical kind resolves to a float override."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"scalar_param": ParameterMeta(name="scalar_param", kind="scalar")}
+        scenario = build_scenario(model, {"scalar_param": 5}, index_map, spec_map)
+        assert scenario.overrides == {scalar_param: 5.0}
+
+    def test_categorical_override(self) -> None:
+        """A "categorical" kind passes the value through as a string."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"cat_param": ParameterMeta(name="cat_param", kind="categorical", support=["a", "b"])}
+        scenario = build_scenario(model, {"cat_param": "b"}, index_map, spec_map)
+        assert scenario.overrides == {cat_param: "b"}
+
+    def test_distribution_override(self) -> None:
+        """A "distribution" kind reconstructs a frozen distribution from a (lo, hi) tuple."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"dist_param": ParameterMeta(name="dist_param", kind="distribution", distribution_family="uniform")}
+        scenario = build_scenario(model, {"dist_param": (1.0, 3.0)}, index_map, spec_map)
+        dist = scenario.overrides[dist_param]
+        assert isinstance(dist, Distribution)
+        assert dist.mean() == pytest.approx(2.0)
+        assert dist.support() == (1.0, 3.0)  # type: ignore[attr-defined]
+
+    def test_distribution_override_with_fixed_params(self) -> None:
+        """distribution_fixed_params are passed through to the reconstructed distribution."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {
+            "dist_param": ParameterMeta(
+                name="dist_param",
+                kind="distribution",
+                distribution_family="truncnorm",
+                distribution_fixed_params={"a": -2.0, "b": 2.0},
+            )
+        }
+        scenario = build_scenario(model, {"dist_param": (0.0, 1.0)}, index_map, spec_map)
+        dist = scenario.overrides[dist_param]
+        assert isinstance(dist, Distribution)
+        assert dist.kwds == {"a": -2.0, "b": 2.0, "loc": 0.0, "scale": 1.0}  # type: ignore[attr-defined]
+
+    def test_absent_key_left_unoverridden(self) -> None:
+        """Keys absent from param_overrides are not present in the resulting overrides."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"scalar_param": ParameterMeta(name="scalar_param", kind="scalar")}
+        scenario = build_scenario(model, {}, index_map, spec_map)
+        assert scenario.overrides == {}
+
+    def test_key_missing_from_index_map_is_skipped(self) -> None:
+        """A param_overrides key absent from index_map is silently skipped."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param}
+        spec_map = {"scalar_param": ParameterMeta(name="scalar_param", kind="scalar")}
+        scenario = build_scenario(model, {"unknown_param": 1.0, "scalar_param": 5}, index_map, spec_map)
+        assert scenario.overrides == {scalar_param: 5.0}
+
+    def test_key_missing_from_spec_map_is_skipped(self) -> None:
+        """A param_overrides key absent from spec_map is silently skipped."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map: dict[str, ParameterMeta] = {}
+        scenario = build_scenario(model, {"scalar_param": 5}, index_map, spec_map)
+        assert scenario.overrides == {}
+
+    def test_parameter_axes_forwarded(self) -> None:
+        """parameter_axes is forwarded unchanged to the constructed Scenario."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map: dict[str, ParameterMeta] = {}
+        scenario = build_scenario(model, {}, index_map, spec_map, parameter_axes=[dist_param])
+        assert scenario.parameter_axes == [dist_param]

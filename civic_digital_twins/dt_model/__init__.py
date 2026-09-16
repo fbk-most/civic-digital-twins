@@ -76,6 +76,7 @@ from .simulation import (
     ResumeState,
     Scenario,
     WeightedScenario,
+    build_scenario,
     sample_across,
 )
 
@@ -151,5 +152,6 @@ __all__ = [
     "TIME_AXIS",
     "TimeseriesIndex",
     "WeightedScenario",
+    "build_scenario",
     "sample_across",
 ]

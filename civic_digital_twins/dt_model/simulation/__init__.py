@@ -27,6 +27,7 @@ from .runner import (
     ModelRunHandle,
     ParameterMeta,
     ResumeState,
+    build_scenario,
 )
 from .scenario import Scenario
 
@@ -58,5 +59,6 @@ __all__ = [
     "ResumeState",
     "Scenario",
     "WeightedScenario",
+    "build_scenario",
     "sample_across",
 ]
