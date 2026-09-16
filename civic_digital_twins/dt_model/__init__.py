@@ -46,6 +46,7 @@ from .model import (
     expose,
     functions,
     inputs,
+    named_shape,
     outputs,
 )
 from .simulation import (
@@ -141,6 +142,7 @@ __all__ = [
     "ModelOutput",
     "ModelRunHandle",
     "ModelVariant",
+    "named_shape",
     "NumpyBackend",
     "PARAMETER",
     "ParameterMeta",

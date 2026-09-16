@@ -906,6 +906,39 @@ class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
         return f"const_timeseries_idx({self._value.tolist()!r})"
 
 
+def named_shape(prefix: str, axes: tuple[Axis, ...]) -> tuple[type, type, type]:
+    """Build the (Index, ConstIndex, DistributionIndex) trio for a named domain shape.
+
+    Generalizes the hand-written ``TimeseriesIndex``/``ConstTimeseriesIndex``
+    recipe (subclass, set ``FIXED_AXES``, thread ``axes=`` through
+    ``__init__``) documented on :attr:`TimeseriesIndex.FIXED_AXES`. Returns
+    ``({prefix}Index, Const{prefix}Index, Distribution{prefix}Index)``.
+
+    The ``Distribution{prefix}Index`` member forwards ``axes=`` via the same
+    recipe, but ``shape=`` is not supplied by the factory — there is nothing
+    to default it to, since it is genuinely per-instance (the same way
+    :class:`TimeseriesIndex` does not fix its array length). Callers of a
+    generated ``Distribution{prefix}Index`` must still pass ``shape=``
+    explicitly::
+
+        RowIndex, ConstRowIndex, DistributionRowIndex = named_shape("Row", (row_axis,))
+        m = DistributionRowIndex("m", stats.randint, {"low": 1, "high": 4}, shape=(3,))
+    """
+
+    def make(cls_name: str, *bases: type) -> type:
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+            kwargs.setdefault("axes", type(self).FIXED_AXES)
+            super(new_cls, self).__init__(*args, **kwargs)
+
+        new_cls = type(cls_name, bases, {"FIXED_AXES": axes, "__init__": __init__})
+        return new_cls
+
+    plain = make(f"{prefix}Index", Index)
+    const = make(f"Const{prefix}Index", ConstIndex, plain)
+    dist = make(f"Distribution{prefix}Index", DistributionIndex)
+    return plain, const, dist
+
+
 class DistributionIndex(Index):
     """Index backed by any scipy-compatible distribution.
 
