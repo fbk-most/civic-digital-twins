@@ -24,6 +24,7 @@ from civic_digital_twins.dt_model import (
     ModelRunHandle,
     ParameterMeta,
     Scenario,
+    build_scenario,
     define,
     inputs,
     outputs,
@@ -288,6 +289,19 @@ def _demo_model_evaluator() -> None:
     assert not output.is_resumable
 
 
+def _demo_build_scenario() -> None:
+    """build_scenario(): resolve string-keyed overrides into a Scenario."""
+    evaluator = ConcentrationEvaluator(model)
+    scenario = build_scenario(
+        model,
+        param_overrides={"base_level": 20.0, "traffic_load": 150.0},
+        index_map={idx.name: idx for idx in model.indexes},
+        spec_map=evaluator.input_schema(),
+    )
+    assert scenario.overrides[model.inputs.base_level] == 20.0
+    assert scenario.overrides[model.inputs.traffic_load] == 150.0
+
+
 def _demo_incremental() -> None:
     """ModelEvaluator incremental lifecycle: start → extend → snapshot → resume."""
     evaluator = ConcentrationEvaluator(model)
@@ -374,6 +388,7 @@ _demo_async_handle()
 _demo_plan()
 _demo_frozen_ensemble()
 _demo_model_evaluator()
+_demo_build_scenario()
 _demo_incremental()
 _demo_run_async()
 _demo_incompatible()
