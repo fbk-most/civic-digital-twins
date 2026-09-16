@@ -917,6 +917,76 @@ def test_distribution_index_sample():
     assert samples.shape == (10,)
 
 
+# ---------------------------------------------------------------------------
+# DistributionIndex — shaped (axes=/shape=)
+# ---------------------------------------------------------------------------
+
+
+def test_distribution_index_axes_without_shape_raises():
+    """axes= without shape= raises ValueError."""
+    row_axis = Axis("row", DOMAIN)
+    with pytest.raises(ValueError, match="axes and shape must be given together"):
+        DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis,))
+
+
+def test_distribution_index_shape_without_axes_raises():
+    """shape= without axes= raises ValueError."""
+    with pytest.raises(ValueError, match="axes and shape must be given together"):
+        DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0}, shape=(3,))
+
+
+def test_distribution_index_output_axes_reports_declared_axes():
+    """A shaped DistributionIndex's output_axes matches the declared axes."""
+    row_axis = Axis("row", DOMAIN)
+    col_axis = Axis("col", DOMAIN)
+    idx = DistributionIndex(
+        "m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3)
+    )
+    assert idx.output_axes == (row_axis, col_axis)
+
+
+def test_distribution_index_shape_property():
+    """DistributionIndex.shape returns the declared per-axis sizes, () for scalar."""
+    row_axis = Axis("row", DOMAIN)
+    col_axis = Axis("col", DOMAIN)
+    shaped = DistributionIndex(
+        "m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3)
+    )
+    assert shaped.shape == (2, 3)
+
+    scalar = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    assert scalar.shape == ()
+
+
+def test_distribution_index_sample_shaped():
+    """A shaped DistributionIndex.sample() returns shape (size, *shape)."""
+    row_axis = Axis("row", DOMAIN)
+    col_axis = Axis("col", DOMAIN)
+    idx = DistributionIndex(
+        "m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3)
+    )
+    rng = np.random.default_rng(0)
+    samples = idx.sample(rng=rng, size=10)
+    assert samples.shape == (10, 2, 3)
+
+
+def test_distribution_index_sample_scalar_unaffected():
+    """A scalar DistributionIndex.sample() still returns shape (size,) — regression."""
+    idx = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
+    rng = np.random.default_rng(0)
+    samples = idx.sample(rng=rng, size=5)
+    assert samples.shape == (5,)
+
+
+def test_distribution_index_scalar_construction_unaffected():
+    """A scalar DistributionIndex built without axes=/shape= behaves exactly as before."""
+    idx = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0})
+    assert idx.axes is None
+    assert idx.shape == ()
+    assert idx.is_abstract is True
+    assert isinstance(idx.node, graph.placeholder)
+
+
 def test_conditional_categorical_sample_for_no_rng():
     """ConditionalCategoricalIndex.sample_for without rng uses global numpy random state."""
     parent = CategoricalIndex("season", {"summer": 0.5, "winter": 0.5})
