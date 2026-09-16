@@ -330,10 +330,10 @@ class ConcentrationEvaluator(ModelEvaluator[ConcentrationModel, ConcentrationOut
             mean_conc=result.expected_value(self._model.outputs.concentration),
         )
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         return {
-            "base_level":   {"type": "scalar", "default": 15.0, "unit": "µg/m³"},
-            "traffic_load": {"type": "scalar", "default": 100.0, "unit": "veh/h"},
+            "base_level": ParameterMeta(name="base_level", kind="scalar", default=15.0),
+            "traffic_load": ParameterMeta(name="traffic_load", kind="scalar", default=100.0),
         }
 ```
 

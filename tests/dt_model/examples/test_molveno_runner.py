@@ -319,8 +319,8 @@ def test_structure_contains_categorical_cvs(evaluator: MolvenoEvaluator, model: 
     schema = evaluator.input_schema()
     for cv in (model.inputs.cv_weekday, model.inputs.cv_season, model.inputs.cv_weather):
         assert cv.name in schema, f"Missing CV {cv.name!r} in structure()"
-        assert schema[cv.name]["type"] == "categorical"
-        assert "support" in schema[cv.name]
+        assert schema[cv.name].kind == "categorical"
+        assert schema[cv.name].support
 
 
 def test_structure_contains_capacity_parameters(evaluator: MolvenoEvaluator, model: MolvenoModel) -> None:
@@ -334,7 +334,7 @@ def test_structure_contains_capacity_parameters(evaluator: MolvenoEvaluator, mod
         model.inputs.i_xo_tourists_beach,
     ):
         assert cap.name in schema, f"Missing capacity {cap.name!r} in structure()"
-        assert schema[cap.name]["type"] == "distribution"
+        assert schema[cap.name].kind == "distribution"
 
 
 # ---------------------------------------------------------------------------

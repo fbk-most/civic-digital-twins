@@ -25,6 +25,7 @@ from .runner import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
+    ParameterMeta,
     ResumeState,
 )
 from .scenario import Scenario
@@ -50,6 +51,7 @@ __all__ = [
     "ModelEvaluator",
     "ModelOutput",
     "ModelRunHandle",
+    "ParameterMeta",
     "PartitionedEnsemble",
     "Region",
     "RegionGuard",

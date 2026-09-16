@@ -60,6 +60,7 @@ __all__ = [
     "ModelEvaluator",
     "ModelOutput",
     "ModelRunHandle",
+    "ParameterMeta",
     "ResumeState",
 ]
 
@@ -115,6 +116,25 @@ class EvaluationConfig:
     """
 
     ensemble_size: int
+
+
+@dataclasses.dataclass
+class ParameterMeta:
+    """Structural metadata for one model parameter.
+
+    Deliberately minimal — everything needed to validate or reconstruct a
+    submitted override, nothing that only affects how a widget renders it.
+    Presentation fields (label, description, unit, UI ranges, ...) belong
+    on a subclass built via plain dataclass inheritance.
+    """
+
+    name: str
+    kind: str  # "scalar" | "categorical" | "distribution"
+    distribution_family: str | None = None
+    distribution_fixed_params: dict[str, Any] | None = None
+    support: list[str] = dataclasses.field(default_factory=list)
+    default: float | None = None
+    default_category: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -905,24 +925,16 @@ class ModelEvaluator(ABC, Generic[ModelT, OutputT]):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def input_schema(self) -> dict[str, dict[str, Any]]:
-        """Return a schema dict describing the model's tunable indexes.
+    def input_schema(self) -> dict[str, ParameterMeta]:
+        """Return a schema mapping index names to their parameter metadata.
 
-        Maps each index name to a metadata dict::
-
-            {
-                "parking_cost": {"type": "scalar", "default": 8.0, "unit": "\u20ac"},
-                "weather":      {"type": "categorical", "support": ["good", "bad"]},
-            }
-
-        Used by scenario-creation UIs to know what parameters exist and
-        what values are valid.  A typed schema protocol will replace this
-        plain dict in a future milestone.
+        Used by scenario-creation UIs to know what parameters exist and what
+        values are valid.
 
         Returns
         -------
-        dict[str, dict[str, Any]]
-            Index name \u2192 metadata dict.
+        dict[str, ParameterMeta]
+            Index name \u2192 parameter metadata.
         """
 
     # ------------------------------------------------------------------

@@ -257,16 +257,15 @@ def test_structure_returns_non_empty_dict(evaluator: BolognaEvaluator) -> None:
 
 
 def test_structure_type_values(evaluator: BolognaEvaluator) -> None:
-    """Every entry in structure() must have a 'type' key with 'scalar' or 'distribution'."""
+    """Every entry in structure() must have a 'kind' of 'scalar' or 'distribution'."""
     schema = evaluator.input_schema()
-    valid_types = {"scalar", "distribution"}
-    for name, meta in schema.items():
-        assert "type" in meta, f"structure()['{name}'] missing 'type' key"
-        assert meta["type"] in valid_types, f"structure()['{name}']['type'] = {meta['type']!r} is invalid"
+    valid_kinds = {"scalar", "distribution"}
+    for meta in schema.values():
+        assert meta.kind in valid_kinds, f"structure()[{meta.name!r}].kind = {meta.kind!r} is invalid"
 
 
 def test_structure_contains_distribution_index(evaluator: BolognaEvaluator) -> None:
     """structure() must contain at least one 'distribution' entry for i_b_p50_cost."""
     schema = evaluator.input_schema()
-    distribution_entries = {name: meta for name, meta in schema.items() if meta["type"] == "distribution"}
+    distribution_entries = [meta for meta in schema.values() if meta.kind == "distribution"]
     assert len(distribution_entries) >= 1, "Expected at least one distribution entry in structure()"

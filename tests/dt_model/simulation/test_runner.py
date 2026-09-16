@@ -32,6 +32,7 @@ from civic_digital_twins.dt_model import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
+    ParameterMeta,
     ResumeState,
     Scenario,
     define,
@@ -505,9 +506,9 @@ class _MinimalEvaluator(ModelEvaluator[Model, _StubOutput]):
         """Return a stub output whose value equals ensemble_size."""
         return _StubOutput(config.ensemble_size)
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a minimal schema."""
-        return {"y": {"type": "scalar"}}
+        return {"y": ParameterMeta(name="y", kind="scalar")}
 
     def extract_resume_state(self, output: _StubOutput) -> ResumeState:
         """Unused in these tests."""
@@ -522,7 +523,7 @@ class _ResumableEvaluator(ModelEvaluator[Model, _ResumableOutput]):
         result = _make_result_from(scenario.model, config.ensemble_size)
         return _ResumableOutput(result)
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a minimal schema."""
         return {}
 
@@ -919,7 +920,7 @@ class _DefaultTemplateEvaluator(ModelEvaluator[_SimpleModel, _StubOutput]):
         """Return a stub output wrapping the ensemble size."""
         return _StubOutput(42, include_resume=False)
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a minimal schema."""
         return {}
 
