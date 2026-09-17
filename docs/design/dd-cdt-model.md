@@ -166,6 +166,9 @@ together — omitting one raises `ValueError`) to declare a domain-shaped
 grid of independent draws, every cell resampled fresh per ensemble sample:
 
 ```python
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+row, col = Axis("row", DOMAIN), Axis("col", DOMAIN)
 grid = DistributionIndex("m", stats.randint, {"low": 1, "high": 4}, axes=(row, col), shape=(2, 2))
 ```
 

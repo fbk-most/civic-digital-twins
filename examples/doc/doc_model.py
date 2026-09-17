@@ -44,6 +44,14 @@ def _demo_00_index_modes() -> None:
     assert demand.is_abstract
     _ = load
 
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    row, col = Axis("row", DOMAIN), Axis("col", DOMAIN)
+    grid = DistributionIndex("m", stats.randint, {"low": 1, "high": 4}, axes=(row, col), shape=(2, 2))
+
+    assert grid.shape == (2, 2)
+    assert grid.output_axes == (row, col)
+
 
 # ---------------------------------------------------------------------------
 # Block 01: dd-cdt-model.md — Index Types: CategoricalIndex
@@ -121,6 +129,26 @@ def _demo_02_timeseries_index() -> None:
 
     assert flow.concrete_default is not None
     assert demand_ts.is_abstract
+
+
+# ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — Defining your own named shape: named_shape() factory
+# ---------------------------------------------------------------------------
+
+
+def _demo_named_shape() -> None:
+    """Block: named_shape() factory."""
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    x, y = Axis("x", DOMAIN), Axis("y", DOMAIN)
+
+    from civic_digital_twins.dt_model import named_shape
+
+    GridIndex, ConstGridIndex, DistributionGridIndex = named_shape("Grid", (x, y))
+
+    assert GridIndex.FIXED_AXES == (x, y)
+    assert ConstGridIndex.FIXED_AXES == (x, y)
+    assert DistributionGridIndex.FIXED_AXES == (x, y)
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +469,7 @@ _demo_01_categorical_index()
 _demo_03_conditional_categorical_index()
 _demo_04_conditional_distribution_index()
 _demo_02_timeseries_index()
+_demo_named_shape()
 _demo_05_recommended_api()
 _demo_06_scenario_overrides()
 _demo_08_contract_warnings()

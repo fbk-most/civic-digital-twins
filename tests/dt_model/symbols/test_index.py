@@ -945,9 +945,7 @@ def test_distribution_index_output_axes_reports_declared_axes():
     """A shaped DistributionIndex's output_axes matches the declared axes."""
     row_axis = Axis("row", DOMAIN)
     col_axis = Axis("col", DOMAIN)
-    idx = DistributionIndex(
-        "m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3)
-    )
+    idx = DistributionIndex("m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3))
     assert idx.output_axes == (row_axis, col_axis)
 
 
@@ -955,9 +953,7 @@ def test_distribution_index_shape_property():
     """DistributionIndex.shape returns the declared per-axis sizes, () for scalar."""
     row_axis = Axis("row", DOMAIN)
     col_axis = Axis("col", DOMAIN)
-    shaped = DistributionIndex(
-        "m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3)
-    )
+    shaped = DistributionIndex("m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3))
     assert shaped.shape == (2, 3)
 
     scalar = DistributionIndex("x", stats.norm, {"loc": 0.0, "scale": 1.0})
@@ -968,9 +964,7 @@ def test_distribution_index_sample_shaped():
     """A shaped DistributionIndex.sample() returns shape (size, *shape)."""
     row_axis = Axis("row", DOMAIN)
     col_axis = Axis("col", DOMAIN)
-    idx = DistributionIndex(
-        "m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3)
-    )
+    idx = DistributionIndex("m", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(row_axis, col_axis), shape=(2, 3))
     rng = np.random.default_rng(0)
     samples = idx.sample(rng=rng, size=10)
     assert samples.shape == (10, 2, 3)
