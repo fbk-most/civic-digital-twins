@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-07-24                                     |
+| Last-Updated | 2026-09-17                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -161,6 +161,19 @@ distribution) plus a `params` dict forwarded verbatim.  The `params`
 property supports full replacement (`idx.params = {...}`) and partial
 update via the Python dict-merge operator (`idx.params |= {"loc": 200}`).
 
+`DistributionIndex` also accepts `axes=`/`shape=` (keyword-only, given
+together — omitting one raises `ValueError`) to declare a domain-shaped
+grid of independent draws, every cell resampled fresh per ensemble sample:
+
+```python
+grid = DistributionIndex("m", stats.randint, {"low": 1, "high": 4}, axes=(row, col), shape=(2, 2))
+```
+
+Unlike `Index`/`ConstIndex`, there is no concrete array to deduce `shape`
+from — a `DistributionIndex` never carries a default value — so it must be
+given explicitly. `grid.sample(size=N)` then returns shape `(N, *shape)`
+instead of the scalar case's `(N,)`.
+
 `ConstIndex` is a convenience wrapper that accepts a scalar constant and
 passes it to `Index.__init__`.
 
@@ -292,6 +305,21 @@ class ConstGridIndex(ConstIndex, GridIndex):
     def __init__(self, name, value):
         super().__init__(name, value, axes=self.FIXED_AXES)
 ```
+
+`named_shape(prefix, axes)` automates exactly this recipe, for all three
+concrete index kinds at once — plain `Index`, `ConstIndex`, and
+`DistributionIndex`:
+
+```python
+from civic_digital_twins.dt_model import named_shape
+
+GridIndex, ConstGridIndex, DistributionGridIndex = named_shape("Grid", (x, y))
+```
+
+`DistributionGridIndex` still needs `shape=` per instance
+(`DistributionGridIndex("m", stats.randint, {"low": 1, "high": 4}, shape=(2, 2))`)
+— `named_shape` fixes the axes, not the size, same as `GridIndex` above
+doesn't fix how long an injected array is.
 
 **Contract-boundary verification.** An `Inputs`/`Outputs`/`Expose` field
 annotated with a class carrying `FIXED_AXES` — `GridIndex` above,
