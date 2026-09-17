@@ -16,6 +16,7 @@ from .index import (
     GenericIndex,
     Index,
     TimeseriesIndex,
+    named_shape,
 )
 from .model import (
     AbstractIndexNotInInputsError,
@@ -64,4 +65,5 @@ __all__ = [
     "ModelVariant",
     "PARAMETER",
     "TimeseriesIndex",
+    "named_shape",
 ]

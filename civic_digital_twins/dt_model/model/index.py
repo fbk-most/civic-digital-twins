@@ -906,6 +906,39 @@ class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
         return f"const_timeseries_idx({self._value.tolist()!r})"
 
 
+def named_shape(prefix: str, axes: tuple[Axis, ...]) -> tuple[type, type, type]:
+    """Build the (Index, ConstIndex, DistributionIndex) trio for a named domain shape.
+
+    Generalizes the hand-written ``TimeseriesIndex``/``ConstTimeseriesIndex``
+    recipe (subclass, set ``FIXED_AXES``, thread ``axes=`` through
+    ``__init__``) documented on :attr:`TimeseriesIndex.FIXED_AXES`. Returns
+    ``({prefix}Index, Const{prefix}Index, Distribution{prefix}Index)``.
+
+    The ``Distribution{prefix}Index`` member forwards ``axes=`` via the same
+    recipe, but ``shape=`` is not supplied by the factory — there is nothing
+    to default it to, since it is genuinely per-instance (the same way
+    :class:`TimeseriesIndex` does not fix its array length). Callers of a
+    generated ``Distribution{prefix}Index`` must still pass ``shape=``
+    explicitly::
+
+        RowIndex, ConstRowIndex, DistributionRowIndex = named_shape("Row", (row_axis,))
+        m = DistributionRowIndex("m", stats.randint, {"low": 1, "high": 4}, shape=(3,))
+    """
+
+    def make(cls_name: str, *bases: type) -> type:
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+            kwargs.setdefault("axes", type(self).FIXED_AXES)
+            super(new_cls, self).__init__(*args, **kwargs)
+
+        new_cls = type(cls_name, bases, {"FIXED_AXES": axes, "__init__": __init__})
+        return new_cls
+
+    plain = make(f"{prefix}Index", Index)
+    const = make(f"Const{prefix}Index", ConstIndex, plain)
+    dist = make(f"Distribution{prefix}Index", DistributionIndex)
+    return plain, const, dist
+
+
 class DistributionIndex(Index):
     """Index backed by any scipy-compatible distribution.
 
@@ -937,11 +970,18 @@ class DistributionIndex(Index):
         name: str,
         distribution: Callable[..., Any],
         params: dict[str, Any],
+        *,
+        axes: tuple[Axis, ...] | None = None,
+        shape: tuple[int, ...] | None = None,
     ) -> None:
+        if (axes is None) != (shape is None):
+            raise ValueError(f"DistributionIndex {name!r}: axes and shape must be given together.")
         self._distribution = distribution
         self._params = dict(params)
         self._frozen: Distribution = cast(Distribution, distribution(**params))
-        super().__init__(name, None)  # placeholder; frozen dist stored separately
+        super().__init__(name, None, axes=axes)  # placeholder; frozen dist stored separately
+        if axes is not None and shape is not None:
+            self._sizes = dict(zip((ax.name for ax in axes), shape, strict=True))
 
     @property
     def distribution(self) -> Callable[..., Any]:
@@ -963,6 +1003,11 @@ class DistributionIndex(Index):
         """Always ``True``: a distribution-backed index is always sampled by the ensemble."""
         return True
 
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Per-axis sizes, in declared-axes order; ``()`` for a scalar index."""
+        return tuple(self._sizes[ax.name] for ax in (self._axes or ()))
+
     def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
         """Draw ``size`` samples from the frozen distribution.
 
@@ -977,9 +1022,11 @@ class DistributionIndex(Index):
         Returns
         -------
         np.ndarray
-            Array of shape ``(size,)`` containing the samples.
+            Array of shape ``(size,)`` for a scalar index, or
+            ``(size, *shape)`` for a declared ``axes=``/``shape=`` index.
         """
-        return np.asarray(self._frozen.rvs(size=size, random_state=rng))
+        full_size = (size, *self.shape) if self.shape else size
+        return np.asarray(self._frozen.rvs(size=full_size, random_state=rng))
 
     def __repr__(self) -> str:
         """Return a string representation of the distribution index."""

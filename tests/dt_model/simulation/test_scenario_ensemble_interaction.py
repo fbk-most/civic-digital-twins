@@ -8,6 +8,7 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model import ConstIndex, ConstTimeseriesIndex, TimeseriesIndex, define, inputs, outputs
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.model.index import (
     CategoricalIndex,
     ConditionalCategoricalIndex,
@@ -99,6 +100,27 @@ def test_abstract_no_override():
     assert arr.shape == (100,), f"Expected shape (100,), got {arr.shape}"
     assert arr.dtype.kind == "f"
     assert np.all(np.isfinite(arr))
+
+
+def test_abstract_no_override_shaped():
+    """A shaped DistributionIndex flows through DistributionEnsemble → Evaluation → expected_value.
+
+    Regression coverage for issue #247: DistributionEnsemble.assignments() must
+    request size=(S, *idx.shape) rather than a flat size=S, so the ensemble
+    axis and the index's own declared shape both survive into the result.
+    """
+    row_axis = Axis("row", DOMAIN)
+    x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 1.0}, axes=(row_axis,), shape=(3,))
+    result = Index("result", x.node * 1.0)
+    model = _make_model(x, result)
+    scenario = Scenario(model)
+
+    ens = DistributionEnsemble(scenario, size=100, rng=np.random.default_rng(42))
+    ev = Evaluation(scenario).evaluate(ensemble=ens)
+
+    marginalised = ev.expected_value(result)
+    assert marginalised.shape == (3,)
+    assert np.all((marginalised >= 0.0) & (marginalised <= 1.0))
 
 
 # ---------------------------------------------------------------------------

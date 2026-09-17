@@ -20,6 +20,8 @@ from civic_digital_twins.dt_model import (
     outputs,
     sample_across,
 )
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
 
 # ---------------------------------------------------------------------------
@@ -147,6 +149,31 @@ def test_cpe_mixed_categorical_and_distribution():
     assert season in a
     assert cap in a
     assert len(a[cap]) == 2
+
+
+def test_cpe_shaped_distribution_index_end_to_end():
+    """A shaped DistributionIndex flows through CrossProductEnsemble → Evaluation → expected_value.
+
+    Regression coverage for issue #247: the non-conditional sampling branches
+    in _draw_all/_draw_from_combos must request size=(S_total, *idx.shape)
+    rather than a flat size=S_total, so the index's own declared shape
+    survives into the result. Only the non-conditional path is exercised
+    here — ConditionalDistributionIndex sampling is explicitly out of scope.
+    """
+    row_axis = Axis("row", DOMAIN)
+    cap = DistributionIndex("cap", stats.uniform, {"loc": 0.0, "scale": 1.0}, axes=(row_axis,), shape=(3,))
+    result = Index("result", cap.node * 1.0)
+    model = _simple_model(cap, result)
+    scenario = Scenario(model)
+
+    ens = CrossProductEnsemble(scenario, n_samples_per_combo=50, rng=np.random.default_rng(0))
+    a = ens.assignments()
+    assert a[cap].shape == (ens.size, 3)
+
+    ev = Evaluation(scenario).evaluate(ensemble=ens)
+    marginalised = ev.expected_value(result)
+    assert marginalised.shape == (3,)
+    assert np.all((marginalised >= 0.0) & (marginalised <= 1.0))
 
 
 # ---------------------------------------------------------------------------
