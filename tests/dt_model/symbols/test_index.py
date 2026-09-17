@@ -1178,7 +1178,7 @@ def test_named_shape_const_mro_resolves_construction_to_const_index():
 
 
 # ---------------------------------------------------------------------------
-# named_shape() — conformance with the hand-written TimeseriesIndex trio (issue #247, D6)
+# named_shape() — conformance with the hand-written TimeseriesIndex trio
 # ---------------------------------------------------------------------------
 
 
