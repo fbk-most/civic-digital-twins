@@ -545,6 +545,30 @@ def test_repr():
     t = graph.maximum(a, b)
     assert str(t) == f"n{t.id} = graph.maximum(left=n{a.id}, right=n{b.id}, name='')"
 
+    u1 = graph.minimum(a, b)
+    assert str(u1) == f"n{u1.id} = graph.minimum(left=n{a.id}, right=n{b.id}, name='')"
+
+    u2 = graph.modulo(a, b)
+    assert str(u2) == f"n{u2.id} = graph.modulo(left=n{a.id}, right=n{b.id}, name='')"
+
+    u3 = graph.sqrt(a)
+    assert str(u3) == f"n{u3.id} = graph.sqrt(node=n{a.id}, name='')"
+
+    u4 = graph.abs(a)
+    assert str(u4) == f"n{u4.id} = graph.abs(node=n{a.id}, name='')"
+
+    u5 = graph.sign(a)
+    assert str(u5) == f"n{u5.id} = graph.sign(node=n{a.id}, name='')"
+
+    u6 = graph.floor(a)
+    assert str(u6) == f"n{u6.id} = graph.floor(node=n{a.id}, name='')"
+
+    u7 = graph.ceil(a)
+    assert str(u7) == f"n{u7.id} = graph.ceil(node=n{a.id}, name='')"
+
+    u8 = graph.round(a)
+    assert str(u8) == f"n{u8.id} = graph.round(node=n{a.id}, name='')"
+
     condition = graph.placeholder("condition")
     u = graph.where(condition, a, b)
     assert str(u) == f"n{u.id} = graph.where(condition=n{condition.id}, then=n{a.id}, otherwise=n{b.id}, name='')"
@@ -817,6 +841,29 @@ def test_ensure_node_accepts_hasnode():
     idx = _FakeIndex(n)
     result = graph.ensure_node(idx)
     assert result is n
+
+
+def test_binary_op_accepts_hasnode():
+    """BinaryOp.__init__ (e.g. graph.add) unwraps HasNode operands via ensure_node."""
+    left_n = graph.constant(1.0)
+    right_n = graph.constant(2.0)
+    node = graph.add(_FakeIndex(left_n), _FakeIndex(right_n))
+    assert node.left is left_n
+    assert node.right is right_n
+
+
+def test_unary_op_accepts_hasnode():
+    """UnaryOp.__init__ (e.g. graph.exp) unwraps a HasNode operand via ensure_node.
+
+    Regression test: previously UnaryOp/BinaryOp stored their constructor
+    arguments verbatim, so passing a HasNode object (e.g. a GenericIndex)
+    directly — rather than its .node — silently built a node whose .node/.left/
+    .right pointed at the HasNode wrapper instead of a real graph.Node, which
+    only surfaced as a confusing failure much later during linearize/evaluate.
+    """
+    inner_n = graph.constant(3.0)
+    node = graph.exp(_FakeIndex(inner_n))
+    assert node.node is inner_n
 
 
 def test_function_call_accepts_hasnode_args():

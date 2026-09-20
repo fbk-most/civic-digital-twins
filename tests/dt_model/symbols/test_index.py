@@ -742,6 +742,64 @@ def test_index_hash_is_identity_based():
 
 
 # ---------------------------------------------------------------------------
+# GenericIndex logical operators
+# ---------------------------------------------------------------------------
+
+
+def test_index_logical_operators():
+    """Logical operators return graph nodes (lazy, element-wise evaluation)."""
+    a = ConstIndex("a", True)
+    b = ConstIndex("b", False)
+
+    assert isinstance(a & b, graph.logical_and)
+    assert isinstance(a | b, graph.logical_or)
+    assert isinstance(a ^ b, graph.logical_xor)
+    assert isinstance(~a, graph.logical_not)
+
+
+def test_index_and_evaluates_correctly():
+    """& evaluates to the element-wise logical AND of both operands."""
+    node = ConstIndex("a", True) & ConstIndex("b", False)
+    assert not bool(_eval(node))
+
+
+def test_index_or_evaluates_correctly():
+    """| evaluates to the element-wise logical OR of both operands."""
+    node = ConstIndex("a", True) | ConstIndex("b", False)
+    assert bool(_eval(node))
+
+
+def test_index_invert_evaluates_correctly():
+    """~ evaluates to the element-wise logical NOT of the operand."""
+    node = ~ConstIndex("a", False)
+    assert bool(_eval(node))
+
+
+def test_index_rand_scalar():
+    """Scalar & Index dispatches through __rand__, same result as Index & scalar."""
+    idx = ConstIndex("a", True)
+    node = True & idx
+    assert isinstance(node, graph.logical_and)
+    assert bool(_eval(node))
+
+
+def test_index_ror_scalar():
+    """Scalar | Index dispatches through __ror__, same result as Index | scalar."""
+    idx = ConstIndex("a", False)
+    node = True | idx
+    assert isinstance(node, graph.logical_or)
+    assert bool(_eval(node))
+
+
+def test_index_rxor_scalar():
+    """Scalar ^ Index dispatches through __rxor__, same result as Index ^ scalar."""
+    idx = ConstIndex("a", True)
+    node = True ^ idx
+    assert isinstance(node, graph.logical_xor)
+    assert not bool(_eval(node))
+
+
+# ---------------------------------------------------------------------------
 # GenericIndex.__neg__
 # ---------------------------------------------------------------------------
 

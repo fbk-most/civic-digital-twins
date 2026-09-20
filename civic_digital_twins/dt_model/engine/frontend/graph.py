@@ -559,10 +559,10 @@ class BinaryOp[T](Node[T]):
         right: Second input node
     """
 
-    def __init__(self, left: Node[T], right: Node[T], name="") -> None:
+    def __init__(self, left: Node[T] | HasNode[T], right: Node[T] | HasNode[T], name="") -> None:
         super().__init__(name)
-        self.left = left
-        self.right = right
+        self.left = ensure_node(left)
+        self.right = ensure_node(right)
 
     @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
@@ -577,9 +577,9 @@ class UnaryOp[T](Node[T]):
         node: Input node
     """
 
-    def __init__(self, node: Node[T], name="") -> None:
+    def __init__(self, node: Node[T] | HasNode[T], name="") -> None:
         super().__init__(name)
-        self.node = node
+        self.node = ensure_node(node)
 
     @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
@@ -753,6 +753,70 @@ class maximum[T](BinaryOp[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.maximum(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
+
+class minimum[T](BinaryOp[T]):
+    """Element-wise minimum of two tensors."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.minimum(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
+
+class modulo[T](BinaryOp[T]):
+    """Element-wise modulo of two tensors."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.modulo(left=n{self.left.id}, right=n{self.right.id}, name='{self.name}')"
+
+
+class sqrt[T](UnaryOp[T]):
+    """Element-wise square root of a tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.sqrt(node=n{self.node.id}, name='{self.name}')"
+
+
+class abs[T](UnaryOp[T]):  # noqa: A001 (intentionally shadows builtin to mirror NumPy naming)
+    """Element-wise absolute value of a tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.abs(node=n{self.node.id}, name='{self.name}')"
+
+
+class sign[T](UnaryOp[T]):
+    """Element-wise sign of a tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.sign(node=n{self.node.id}, name='{self.name}')"
+
+
+class floor[T](UnaryOp[T]):
+    """Element-wise floor of a tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.floor(node=n{self.node.id}, name='{self.name}')"
+
+
+class ceil[T](UnaryOp[T]):
+    """Element-wise ceiling of a tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.ceil(node=n{self.node.id}, name='{self.name}')"
+
+
+class round[T](UnaryOp[T]):  # noqa: A001 (intentionally shadows builtin to mirror NumPy naming)
+    """Element-wise rounding of a tensor to the nearest integer."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.round(node=n{self.node.id}, name='{self.name}')"
 
 
 # Conditional operations
