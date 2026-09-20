@@ -304,6 +304,38 @@ class GenericIndex(ABC):
         return self.node >= self._node_of(other)
 
     # ------------------------------------------------------------------
+    # Logical operators — return graph nodes (lazy, element-wise).
+    # ------------------------------------------------------------------
+
+    def __and__(self, other: object) -> graph.Node:
+        """Return a graph node for self & other."""
+        return self.node & self._node_of(other)
+
+    def __rand__(self, other: object) -> graph.Node:
+        """Return a graph node for other & self."""
+        return self._node_of(other) & self.node  # type: ignore[operator]
+
+    def __or__(self, other: object) -> graph.Node:
+        """Return a graph node for self | other."""
+        return self.node | self._node_of(other)
+
+    def __ror__(self, other: object) -> graph.Node:
+        """Return a graph node for other | self."""
+        return self._node_of(other) | self.node  # type: ignore[operator]
+
+    def __xor__(self, other: object) -> graph.Node:
+        """Return a graph node for self ^ other."""
+        return self.node ^ self._node_of(other)
+
+    def __rxor__(self, other: object) -> graph.Node:
+        """Return a graph node for other ^ self."""
+        return self._node_of(other) ^ self.node  # type: ignore[operator]
+
+    def __invert__(self) -> graph.Node:
+        """Return a graph node for ~self."""
+        return ~self.node
+
+    # ------------------------------------------------------------------
     # Reduction and per-axis operators
     # ------------------------------------------------------------------
 

@@ -89,9 +89,9 @@ GenericIndex  (ABC)
 
 `GenericIndex` is the abstract base class.  It exposes:
 
-- **`.node`** — the underlying `graph.Node`; all arithmetic and
-  comparison operators on a `GenericIndex` delegate here, returning a
-  new `graph.Node`.
+- **`.node`** — the underlying `graph.Node`; all arithmetic, comparison,
+  and logical (`&`, `|`, `^`, `~`) operators on a `GenericIndex` delegate
+  here, returning a new `graph.Node`.
 - **Axis reduction methods** — convenience wrappers for axis reduction operators:
   `.sum(axis=...)`, `.mean(axis=...)`, `.min(axis=...)`, `.max(axis=...)`,
   `.std(axis=...)`, `.var(axis=...)`, `.median(axis=...)`, `.prod(axis=...)`,

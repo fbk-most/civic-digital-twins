@@ -559,10 +559,10 @@ class BinaryOp[T](Node[T]):
         right: Second input node
     """
 
-    def __init__(self, left: Node[T], right: Node[T], name="") -> None:
+    def __init__(self, left: Node[T] | HasNode[T], right: Node[T] | HasNode[T], name="") -> None:
         super().__init__(name)
-        self.left = left
-        self.right = right
+        self.left = ensure_node(left)
+        self.right = ensure_node(right)
 
     @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:
@@ -577,9 +577,9 @@ class UnaryOp[T](Node[T]):
         node: Input node
     """
 
-    def __init__(self, node: Node[T], name="") -> None:
+    def __init__(self, node: Node[T] | HasNode[T], name="") -> None:
         super().__init__(name)
-        self.node = node
+        self.node = ensure_node(node)
 
     @functools.cached_property
     def output_axes(self) -> tuple[Axis, ...]:

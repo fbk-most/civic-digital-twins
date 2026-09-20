@@ -843,6 +843,29 @@ def test_ensure_node_accepts_hasnode():
     assert result is n
 
 
+def test_binary_op_accepts_hasnode():
+    """BinaryOp.__init__ (e.g. graph.add) unwraps HasNode operands via ensure_node."""
+    left_n = graph.constant(1.0)
+    right_n = graph.constant(2.0)
+    node = graph.add(_FakeIndex(left_n), _FakeIndex(right_n))
+    assert node.left is left_n
+    assert node.right is right_n
+
+
+def test_unary_op_accepts_hasnode():
+    """UnaryOp.__init__ (e.g. graph.exp) unwraps a HasNode operand via ensure_node.
+
+    Regression test: previously UnaryOp/BinaryOp stored their constructor
+    arguments verbatim, so passing a HasNode object (e.g. a GenericIndex)
+    directly — rather than its .node — silently built a node whose .node/.left/
+    .right pointed at the HasNode wrapper instead of a real graph.Node, which
+    only surfaced as a confusing failure much later during linearize/evaluate.
+    """
+    inner_n = graph.constant(3.0)
+    node = graph.exp(_FakeIndex(inner_n))
+    assert node.node is inner_n
+
+
 def test_function_call_accepts_hasnode_args():
     """function_call.__init__ accepts HasNode in *args and **kwargs."""
     n = graph.constant(1.0)
