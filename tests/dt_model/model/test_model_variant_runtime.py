@@ -4,7 +4,7 @@
 
 import pytest
 
-from civic_digital_twins.dt_model import define, inputs, outputs
+from civic_digital_twins.dt_model import define, expose, inputs, outputs
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
 from civic_digital_twins.dt_model.model.model import IOProxy, Model
@@ -80,8 +80,8 @@ def test_runtime_outputs_are_merged_indexes():
     assert isinstance(mv.outputs.emissions.node, graph.exclusive_multi_clause_where)
 
 
-def test_runtime_inputs_proxies_first_variant():
-    """In runtime mode, inputs proxies the first variant (field names are shared)."""
+def test_runtime_inputs_is_disjoint_union_keyed_by_variant():
+    """In runtime mode too, inputs is a dict keyed by variant, never merged by field name."""
     mode = CategoricalIndex("mode", {"bike": 0.4, "train": 0.6})
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
@@ -92,8 +92,9 @@ def test_runtime_inputs_proxies_first_variant():
         {"bike": bike, "train": train},
         selector=mode,
     )
-    # inputs.capacity is the first variant's capacity (bike)
-    assert mv.inputs.capacity is cap_bike
+    assert set(mv.inputs) == {"bike", "train"}
+    assert mv.inputs["bike"].capacity is cap_bike
+    assert mv.inputs["train"].capacity is cap_train
 
 
 def test_runtime_abstract_indexes_includes_categorical():
@@ -243,3 +244,70 @@ def test_runtime_getattr_unknown_raises_attribute_error():
     mv = ModelVariant("Transport", _make_variants(), selector=mode)
     with pytest.raises(AttributeError):
         _ = mv.this_does_not_exist
+
+
+def test_runtime_merged_outputs_nestable_as_bulk_field():
+    """Runtime mode's merged mv.outputs can be nested as a whole field too.
+
+    Regression test: the merged-graph IOProxy built in ModelVariant.__init__ previously had
+    no `dc=`, so contract validation rejected nesting it in a parent's own @expose field
+    ("Surfacing sub-model diagnostics in bulk" — dd-cdt-modularity.md). Uses single-output,
+    ConstIndex-only variants (rather than _BikeModel/_TrainModel) so the only thing under test
+    is the nesting itself, not unrelated orphaned-placeholder bookkeeping for a deeper composite.
+    """
+    from civic_digital_twins.dt_model.model.index import ConstIndex  # noqa: PLC0415
+
+    @define("A")
+    class _A(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: "_A.Inputs") -> "_A.Outputs":
+            return _A.Outputs(y=Index("y", inputs.x * 1.0))
+
+    @define("B")
+    class _B(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inputs: "_B.Inputs") -> "_B.Outputs":
+            return _B.Outputs(y=Index("y", inputs.x * 10.0))
+
+    mode = CategoricalIndex("mode", {"a": 0.5, "b": 0.5})
+    x = ConstIndex("x", 1.0)
+    mv = ModelVariant(
+        "Group",
+        {"a": _A(inputs=_A.Inputs(x=x)), "b": _B(inputs=_B.Inputs(x=x))},
+        selector=mode,
+    )
+
+    @define("RootBulk")
+    class _RootBulk(Model):
+        @inputs
+        class Inputs:
+            mode: CategoricalIndex
+            x: Index
+
+        @outputs
+        class Outputs:
+            placeholder: Index
+
+        @expose
+        class Expose:
+            sub_out: IOProxy
+
+        def compute(self, inputs: "_RootBulk.Inputs") -> tuple["_RootBulk.Outputs", "_RootBulk.Expose"]:
+            return _RootBulk.Outputs(placeholder=Index("p", 0.0)), _RootBulk.Expose(sub_out=mv.outputs)
+
+    root = _RootBulk(inputs=_RootBulk.Inputs(mode=mode, x=x))
+    assert root.expose.sub_out.y is mv.outputs.y
