@@ -394,10 +394,15 @@ def _demo_10_proxy_attributes() -> None:
         selector="bike",
     )
     mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
-    mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
     mv.indexes                  # index list of the active (BikeModel) variant only
     mv.abstract_indexes()       # delegates to BikeModel.abstract_indexes()
     mv.is_instantiated()        # delegates to BikeModel.is_instantiated()
+
+    # inputs is a disjoint union, keyed by variant — never merged by field name.
+    mv.inputs["bike"].capacity   # == BikeModel.inputs.capacity, unambiguous
+    mv.inputs["train"].capacity  # == TrainModel.inputs.capacity — a different Index entirely
+    assert mv.inputs["bike"] is mv.variants["bike"].inputs
+    assert mv.inputs["train"] is mv.variants["train"].inputs
 
 
 # ---------------------------------------------------------------------------

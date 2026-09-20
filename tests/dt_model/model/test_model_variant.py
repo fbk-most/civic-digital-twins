@@ -6,7 +6,7 @@ import pytest
 
 from civic_digital_twins.dt_model import NumpyBackend, define, expose, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Index
-from civic_digital_twins.dt_model.model.model import Model
+from civic_digital_twins.dt_model.model.model import IOProxy, Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 from civic_digital_twins.dt_model.simulation.evaluation import Evaluation
 from civic_digital_twins.dt_model.simulation.scenario import Scenario
@@ -152,8 +152,8 @@ def test_non_string_selector_raises_value_error():
 # ===========================================================================
 
 
-def test_inputs_proxy_delegates_to_active_variant():
-    """Inputs proxy delegates to the active variant."""
+def test_inputs_is_disjoint_union_keyed_by_variant():
+    """mv.inputs is a dict keyed by variant, never merged by field name."""
     cap_bike = Index("capacity", 100.0)
     cap_train = Index("capacity", 500.0)
     variants = {
@@ -161,8 +161,11 @@ def test_inputs_proxy_delegates_to_active_variant():
         "train": _TrainModel(inputs=_TrainModel.Inputs(capacity=cap_train)),
     }
     mv = ModelVariant("Transport", variants, selector="bike")
-    # inputs.capacity should be the bike model's capacity index (same object)
-    assert mv.inputs.capacity is cap_bike
+    assert set(mv.inputs) == {"bike", "train"}
+    # Both variants' own values are reachable, unmerged — including the inactive one.
+    assert mv.inputs["bike"].capacity is cap_bike
+    assert mv.inputs["train"].capacity is cap_train
+    assert mv.inputs["train"] is mv.variants["train"].inputs
 
 
 def test_outputs_proxy_delegates_to_active_variant():
@@ -264,8 +267,8 @@ def test_direct_attribute_access_forwards_to_active_variant():
     mv = ModelVariant("Transport", {"bike": bike, "train": train}, selector="bike")
     # 'name' is defined directly on ModelVariant, not proxied.
     assert mv.name == "Transport"
-    # inputs is a property on ModelVariant — check field-level forwarding via proxy.
-    assert mv.inputs.capacity is cap_bike
+    # outputs is a property on ModelVariant — check field-level forwarding via proxy.
+    assert mv.outputs.throughput is not None
 
 
 def test_unknown_attribute_raises_attribute_error():
@@ -330,8 +333,8 @@ def test_mismatched_inputs_is_allowed():
     assert mv is not None
 
 
-def test_runtime_inputs_union_includes_all_variant_fields():
-    """Runtime mode inputs proxy exposes the union of all variants' input fields."""
+def test_runtime_inputs_stay_disjoint_by_variant():
+    """Runtime mode inputs stay a disjoint union too — never merged by field name."""
     from civic_digital_twins.dt_model.model.index import CategoricalIndex
 
     cap_bike = Index("capacity", 100.0)
@@ -346,10 +349,12 @@ def test_runtime_inputs_union_includes_all_variant_fields():
         },
         selector=mode,
     )
-    # IOProxy iterates scalar indexes; check by index identity instead.
-    input_indexes = list(mv.inputs)
-    assert cap_bike in input_indexes
-    assert bonus in input_indexes
+    assert set(mv.inputs) == {"bike", "extra"}
+    assert mv.inputs["bike"].capacity is cap_bike
+    assert mv.inputs["extra"].capacity is cap_extra
+    assert mv.inputs["extra"].bonus is bonus
+    # "bike" never declared "bonus" — not merged in from "extra".
+    assert not hasattr(mv.inputs["bike"], "bonus")
 
 
 def test_empty_variants_raises_value_error():
@@ -414,8 +419,8 @@ class _ExposeModel(Model, legacy=True):
         )
 
 
-def test_expose_proxy_field_accessible_on_active_variant():
-    """expose.<field> on active variant is accessible through ModelVariant."""
+def test_expose_proxy_common_field_reads_active_variant_value():
+    """expose.<field> common to all variants reads the active variant's value, in static mode."""
     cap_a = Index("capacity", 100.0)
     cap_b = Index("capacity", 200.0)
     variants: dict[str, Model] = {
@@ -423,8 +428,71 @@ def test_expose_proxy_field_accessible_on_active_variant():
         "b": _ExposeModel(cap_b, "b"),
     }
     mv = ModelVariant("ExposeGroup", variants, selector="a")
-    # The expose.ratio of variant "a" should be accessible.
+    # ratio is common to both variants — accessible through mv.expose, value from "a" (active).
     assert mv.expose.ratio.concrete_default == 1.0
+
+
+class _ExposeModelExtra(Model, legacy=True):
+    """Like ``_ExposeModel``, but its ``Expose`` has one additional field."""
+
+    @inputs
+    class Inputs:
+        capacity: Index
+
+    @outputs
+    class Outputs:
+        throughput: Index
+        emissions: Index
+
+    @expose
+    class Expose:
+        ratio: Index
+        extra: Index
+
+    def __init__(self, capacity: Index, label: str) -> None:
+        Inputs = _ExposeModelExtra.Inputs
+        Outputs = _ExposeModelExtra.Outputs
+        Expose = _ExposeModelExtra.Expose
+
+        throughput = Index("throughput", capacity * 1.0)
+        emissions = Index("emissions", 0.0)
+        ratio = Index("ratio_" + label, 1.0)
+        extra = Index("extra_" + label, 2.0)
+
+        super().__init__(
+            f"ExposeModelExtra-{label}",
+            inputs=Inputs(capacity=capacity),
+            outputs=Outputs(throughput=throughput, emissions=emissions),
+            expose=Expose(ratio=ratio, extra=extra),
+        )
+
+
+def test_expose_static_mode_narrows_to_intersection_across_variants():
+    """mv.expose in static mode only exposes fields common to *all* declared variants.
+
+    A field present only on the active variant (not on an inactive sibling) is not reachable
+    through mv.expose — even though static mode otherwise proxies the active variant directly for
+    outputs/inputs/indexes. This keeps mv.expose's accessible field set independent of which
+    selector value is chosen. mv.variants[key].expose remains available, unrestricted, for a
+    specific variant's full expose shape.
+    """
+    cap_a = Index("capacity", 100.0)
+    cap_b = Index("capacity", 200.0)
+    variants: dict[str, Model] = {
+        "a": _ExposeModelExtra(cap_a, "a"),  # has ratio + extra
+        "b": _ExposeModel(cap_b, "b"),  # has ratio only
+    }
+    mv = ModelVariant("ExposeGroup", variants, selector="a")
+
+    # ratio is common to both — accessible, value from the active variant ("a").
+    assert mv.expose.ratio.concrete_default == 1.0
+
+    # extra only exists on "a" (the active variant!) but not on "b" — narrowed out regardless.
+    with pytest.raises(AttributeError):
+        _ = mv.expose.extra
+
+    # The full, unrestricted shape of a specific variant remains reachable explicitly.
+    assert mv.variants["a"].expose.extra.concrete_default == 2.0
 
 
 def test_expose_indexes_not_in_inactive_variant():
@@ -440,6 +508,71 @@ def test_expose_indexes_not_in_inactive_variant():
     ratio_b = model_b.expose.ratio
     mv_index_ids = {id(idx) for idx in mv.indexes}
     assert id(ratio_b) not in mv_index_ids
+
+
+def test_modelvariant_outputs_and_expose_nestable_as_bulk_field():
+    """mv.outputs/mv.expose can be nested as a whole field, same as a plain Model's.
+
+    Regression test: ModelVariant.outputs/.expose build a synthesized IOProxy with no
+    backing dataclass instance, which previously had no `dc=`, so contract validation
+    (`_check_index_field_value`) rejected nesting them in a parent's own @outputs/@expose
+    field ("Surfacing sub-model diagnostics in bulk" — dd-cdt-modularity.md), even though
+    the identical pattern already worked for a plain Model's own .outputs/.expose.
+    """
+    cap_a = Index("capacity", 100.0)
+    cap_b = Index("capacity", 200.0)
+    variants: dict[str, Model] = {
+        "a": _ExposeModel(cap_a, "a"),
+        "b": _ExposeModel(cap_b, "b"),
+    }
+    mv = ModelVariant("ExposeGroup", variants, selector="a")
+
+    @define("RootBulk")
+    class _RootBulk(Model):
+        @inputs
+        class Inputs:
+            capacity: Index
+
+        @outputs
+        class Outputs:
+            total: Index
+
+        @expose
+        class Expose:
+            sub_out: _ExposeModel.Outputs
+            sub_exp: _ExposeModel.Expose
+
+        def compute(self, inputs: "_RootBulk.Inputs") -> tuple["_RootBulk.Outputs", "_RootBulk.Expose"]:
+            return (
+                _RootBulk.Outputs(total=Index("total", mv.outputs.throughput)),
+                _RootBulk.Expose(sub_out=mv.outputs, sub_exp=mv.expose),
+            )
+
+    root = _RootBulk(inputs=_RootBulk.Inputs(capacity=cap_a))
+    assert root.expose.sub_out.throughput is mv.outputs.throughput
+    assert root.expose.sub_exp.ratio is mv.expose.ratio
+
+
+def test_modelvariant_outputs_cannot_be_nested_in_expose_direction_violation():
+    """An @outputs field must not hold a ModelVariant's .expose, same rule as for a plain Model."""
+    variants = _make_variants()
+    mv = ModelVariant("Transport", variants, selector="bike")
+
+    @define("RootBad")
+    class _RootBad(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            sub_out: IOProxy  # would hold mv.outputs (an @expose value) — forbidden
+
+        def compute(self, inputs: "_RootBad.Inputs") -> "_RootBad.Outputs":
+            return _RootBad.Outputs(sub_out=mv.expose)
+
+    with pytest.raises(TypeError, match="must not hold an .*@expose"):
+        _RootBad(inputs=_RootBad.Inputs())
 
 
 # ===========================================================================
