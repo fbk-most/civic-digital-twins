@@ -73,6 +73,30 @@ def test_round_trip():
     node = graph.maximum(k, p)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.maximum(n{k.id}, n{p.id})"
 
+    node = graph.minimum(k, p)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.minimum(n{k.id}, n{p.id})"
+
+    node = graph.modulo(k, p)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.mod(n{k.id}, n{p.id})"
+
+    node = graph.sqrt(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sqrt(n{k.id})"
+
+    node = graph.abs(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.abs(n{k.id})"
+
+    node = graph.floor(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.floor(n{k.id})"
+
+    node = graph.ceil(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.ceil(n{k.id})"
+
+    node = graph.round(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.round(n{k.id})"
+
+    node = graph.sign(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sign(n{k.id})"
+
     node = graph.where(k, k, p)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.where(n{k.id}, n{k.id}, n{p.id})"
 

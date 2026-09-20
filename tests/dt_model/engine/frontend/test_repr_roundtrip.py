@@ -80,6 +80,12 @@ def test_unary_ops() -> None:
     _assert_roundtrip(graph.logical_not(a), deps)
     _assert_roundtrip(graph.exp(a), deps)
     _assert_roundtrip(graph.log(a), deps)
+    _assert_roundtrip(graph.sqrt(a), deps)
+    _assert_roundtrip(graph.abs(a), deps)
+    _assert_roundtrip(graph.floor(a), deps)
+    _assert_roundtrip(graph.ceil(a), deps)
+    _assert_roundtrip(graph.round(a), deps)
+    _assert_roundtrip(graph.sign(a), deps)
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +113,8 @@ def test_binary_ops() -> None:
     _assert_roundtrip(graph.logical_or(a, b), deps)
     _assert_roundtrip(graph.logical_xor(a, b), deps)
     _assert_roundtrip(graph.maximum(a, b), deps)
+    _assert_roundtrip(graph.minimum(a, b), deps)
+    _assert_roundtrip(graph.modulo(a, b), deps)
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +246,12 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.logical_not,
         graph.exp,
         graph.log,
+        graph.sqrt,
+        graph.abs,
+        graph.floor,
+        graph.ceil,
+        graph.round,
+        graph.sign,
         graph.add,
         graph.subtract,
         graph.multiply,
@@ -253,6 +267,8 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.logical_or,
         graph.logical_xor,
         graph.maximum,
+        graph.minimum,
+        graph.modulo,
         graph.where,
         graph.multi_clause_where,
         graph.exclusive_multi_clause_where,

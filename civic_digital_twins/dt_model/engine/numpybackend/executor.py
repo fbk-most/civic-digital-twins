@@ -51,6 +51,8 @@ _binary_operations: dict[type[graph.BinaryOp], _BinaryOpFunc] = {
     graph.logical_or: np.logical_or,
     graph.logical_xor: np.logical_xor,
     graph.maximum: np.maximum,
+    graph.minimum: np.minimum,
+    graph.modulo: np.mod,
 }
 """Maps a binary op in the graph domain to the corresponding numpy operation.
 
@@ -66,6 +68,12 @@ _unary_operations: dict[type[graph.UnaryOp], _UnaryOpFunc] = {
     graph.logical_not: np.logical_not,
     graph.exp: np.exp,
     graph.log: np.log,
+    graph.sqrt: np.sqrt,
+    graph.abs: np.abs,
+    graph.floor: np.floor,
+    graph.ceil: np.ceil,
+    graph.round: np.round,
+    graph.sign: np.sign,
 }
 """Maps a unary op in the graph domain to the corresponding numpy operation.
 

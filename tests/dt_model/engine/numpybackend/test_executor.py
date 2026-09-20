@@ -339,6 +339,36 @@ def test_comparison_operations():
         assert np.array_equal(state.values[op], expected[op])
 
 
+def test_minimum_modulo_operations():
+    """Test minimum and modulo operations with the executor."""
+    # Create placeholder nodes
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+
+    # Create operation nodes
+    min_node = graph.minimum(x, y)
+    mod_node = graph.modulo(x, y)
+
+    # Create execution plans
+    plans = {op: linearize.forest(op) for op in [min_node, mod_node]}
+
+    # Test data
+    x_val = np.array([[1.0, 5.0, 3.0], [7.0, 2.0, 9.0]])
+    y_val = np.array([[2.0, 2.0, 4.0], [3.0, 6.0, 4.0]])
+
+    # Expected results
+    expected = {
+        min_node: np.minimum(x_val, y_val),
+        mod_node: np.mod(x_val, y_val),
+    }
+
+    # Test each operation
+    for op, plan in plans.items():
+        state = executor.State({x: x_val, y: y_val})
+        executor.evaluate_nodes(state, *plan)
+        assert np.array_equal(state.values[op], expected[op])
+
+
 def test_state_value_access():
     """Test the State.get_node_value method for accessing node values."""
     # Create a node and a state
@@ -441,6 +471,40 @@ def test_unary_operations():
     not_state = executor.State({x: x_boolean})
     executor.evaluate_nodes(not_state, *not_plan)
     assert np.array_equal(not_state.values[not_node], np.logical_not(x_boolean))
+
+    # Test additional unary math operations
+    sqrt_node = graph.sqrt(x)
+    abs_node = graph.abs(x)
+    floor_node = graph.floor(x)
+    ceil_node = graph.ceil(x)
+    round_node = graph.round(x)
+    sign_node = graph.sign(x)
+
+    extra_plans = {
+        sqrt_node: linearize.forest(sqrt_node),
+        abs_node: linearize.forest(abs_node),
+        floor_node: linearize.forest(floor_node),
+        ceil_node: linearize.forest(ceil_node),
+        round_node: linearize.forest(round_node),
+        sign_node: linearize.forest(sign_node),
+    }
+
+    x_frac = np.array([[-1.5, 2.5, -3.2], [4.7, -5.0, 6.1]])
+
+    extra_expected = {
+        sqrt_node: np.sqrt(np.abs(x_frac)),
+        abs_node: np.abs(x_frac),
+        floor_node: np.floor(x_frac),
+        ceil_node: np.ceil(x_frac),
+        round_node: np.round(x_frac),
+        sign_node: np.sign(x_frac),
+    }
+
+    for node, plan in extra_plans.items():
+        input_val = np.abs(x_frac) if node is sqrt_node else x_frac
+        state = executor.State({x: input_val})
+        executor.evaluate_nodes(state, *plan)
+        assert np.array_equal(state.values[node], extra_expected[node])
 
     # Test unsupported unary operation
     class UnsupportedUnaryOp(graph.UnaryOp):
