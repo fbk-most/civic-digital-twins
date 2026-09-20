@@ -70,10 +70,10 @@ _unary_operations: dict[type[graph.UnaryOp], _UnaryOpFunc] = {
     graph.log: np.log,
     graph.sqrt: np.sqrt,
     graph.abs: np.abs,
+    graph.sign: np.sign,
     graph.floor: np.floor,
     graph.ceil: np.ceil,
     graph.round: np.round,
-    graph.sign: np.sign,
 }
 """Maps a unary op in the graph domain to the corresponding numpy operation.
 

@@ -787,6 +787,14 @@ class abs[T](UnaryOp[T]):  # noqa: A001 (intentionally shadows builtin to mirror
         return f"n{self.id} = graph.abs(node=n{self.node.id}, name='{self.name}')"
 
 
+class sign[T](UnaryOp[T]):
+    """Element-wise sign of a tensor."""
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.sign(node=n{self.node.id}, name='{self.name}')"
+
+
 class floor[T](UnaryOp[T]):
     """Element-wise floor of a tensor."""
 
@@ -809,14 +817,6 @@ class round[T](UnaryOp[T]):  # noqa: A001 (intentionally shadows builtin to mirr
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.round(node=n{self.node.id}, name='{self.name}')"
-
-
-class sign[T](UnaryOp[T]):
-    """Element-wise sign of a tensor."""
-
-    def __repr__(self) -> str:
-        """Return a round-trippable SSA representation of the node."""
-        return f"n{self.id} = graph.sign(node=n{self.node.id}, name='{self.name}')"
 
 
 # Conditional operations

@@ -557,17 +557,17 @@ def test_repr():
     u4 = graph.abs(a)
     assert str(u4) == f"n{u4.id} = graph.abs(node=n{a.id}, name='')"
 
-    u5 = graph.floor(a)
-    assert str(u5) == f"n{u5.id} = graph.floor(node=n{a.id}, name='')"
+    u5 = graph.sign(a)
+    assert str(u5) == f"n{u5.id} = graph.sign(node=n{a.id}, name='')"
 
-    u6 = graph.ceil(a)
-    assert str(u6) == f"n{u6.id} = graph.ceil(node=n{a.id}, name='')"
+    u6 = graph.floor(a)
+    assert str(u6) == f"n{u6.id} = graph.floor(node=n{a.id}, name='')"
 
-    u7 = graph.round(a)
-    assert str(u7) == f"n{u7.id} = graph.round(node=n{a.id}, name='')"
+    u7 = graph.ceil(a)
+    assert str(u7) == f"n{u7.id} = graph.ceil(node=n{a.id}, name='')"
 
-    u8 = graph.sign(a)
-    assert str(u8) == f"n{u8.id} = graph.sign(node=n{a.id}, name='')"
+    u8 = graph.round(a)
+    assert str(u8) == f"n{u8.id} = graph.round(node=n{a.id}, name='')"
 
     condition = graph.placeholder("condition")
     u = graph.where(condition, a, b)

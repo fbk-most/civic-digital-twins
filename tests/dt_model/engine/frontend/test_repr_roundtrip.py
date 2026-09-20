@@ -82,10 +82,10 @@ def test_unary_ops() -> None:
     _assert_roundtrip(graph.log(a), deps)
     _assert_roundtrip(graph.sqrt(a), deps)
     _assert_roundtrip(graph.abs(a), deps)
+    _assert_roundtrip(graph.sign(a), deps)
     _assert_roundtrip(graph.floor(a), deps)
     _assert_roundtrip(graph.ceil(a), deps)
     _assert_roundtrip(graph.round(a), deps)
-    _assert_roundtrip(graph.sign(a), deps)
 
 
 # ---------------------------------------------------------------------------
@@ -248,10 +248,10 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.log,
         graph.sqrt,
         graph.abs,
+        graph.sign,
         graph.floor,
         graph.ceil,
         graph.round,
-        graph.sign,
         graph.add,
         graph.subtract,
         graph.multiply,

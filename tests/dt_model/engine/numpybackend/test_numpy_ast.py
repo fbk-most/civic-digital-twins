@@ -85,6 +85,9 @@ def test_round_trip():
     node = graph.abs(k)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.abs(n{k.id})"
 
+    node = graph.sign(k)
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sign(n{k.id})"
+
     node = graph.floor(k)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.floor(n{k.id})"
 
@@ -93,9 +96,6 @@ def test_round_trip():
 
     node = graph.round(k)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.round(n{k.id})"
-
-    node = graph.sign(k)
-    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.sign(n{k.id})"
 
     node = graph.where(k, k, p)
     assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.where(n{k.id}, n{k.id}, n{p.id})"

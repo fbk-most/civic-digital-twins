@@ -483,10 +483,10 @@ def test_unary_operations():
     extra_plans = {
         sqrt_node: linearize.forest(sqrt_node),
         abs_node: linearize.forest(abs_node),
+        sign_node: linearize.forest(sign_node),
         floor_node: linearize.forest(floor_node),
         ceil_node: linearize.forest(ceil_node),
         round_node: linearize.forest(round_node),
-        sign_node: linearize.forest(sign_node),
     }
 
     x_frac = np.array([[-1.5, 2.5, -3.2], [4.7, -5.0, 6.1]])
@@ -494,10 +494,10 @@ def test_unary_operations():
     extra_expected = {
         sqrt_node: np.sqrt(np.abs(x_frac)),
         abs_node: np.abs(x_frac),
+        sign_node: np.sign(x_frac),
         floor_node: np.floor(x_frac),
         ceil_node: np.ceil(x_frac),
         round_node: np.round(x_frac),
-        sign_node: np.sign(x_frac),
     }
 
     for node, plan in extra_plans.items():

@@ -67,10 +67,10 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.log: "log",
     graph.sqrt: "sqrt",
     graph.abs: "abs",
+    graph.sign: "sign",
     graph.floor: "floor",
     graph.ceil: "ceil",
     graph.round: "round",
-    graph.sign: "sign",
     # where
     graph.multi_clause_where: "select",
     graph.where: "where",
