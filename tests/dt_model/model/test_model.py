@@ -998,6 +998,41 @@ def test_orphan_check_visited_guard_formula_diamond():
         _Tri()
 
 
+def test_orphan_check_reports_each_orphan_once():
+    """An orphaned placeholder reachable via two incoming edges is reported only once.
+
+    Regression test: the BFS in ``_find_orphaned_placeholder_nodes`` only
+    marked a node as visited when it was popped off ``to_visit`` as a
+    formula node — an orphaned *placeholder*, appended straight to the
+    result list, was never marked visited. A placeholder reachable via two
+    separate edges (here, ``k``'s node is a dependency of both ``k * 1.0``
+    and the final ``... + k``) was therefore appended twice, producing a
+    duplicate name in the error message.
+
+    Graph: ``out.node = (k * 1.0) + k``.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("DiamondPlaceholder")
+    class _Diamond(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            k = Index("k_dup", 0.5)  # orphaned concrete index, reachable via two paths below
+            out = Index("out", k.node * 1.0 + k.node)
+            return _Diamond.Outputs(out=out)
+
+    with pytest.raises(ValueError) as excinfo:
+        _Diamond()
+    assert str(excinfo.value).count("'k_dup'") == 1
+
+
 def test_orphan_check_no_false_positive_on_formula_backed_input():
     """Orphan detection must not flag nodes inside a formula-backed input as orphans.
 
