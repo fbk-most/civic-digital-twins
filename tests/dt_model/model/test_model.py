@@ -1033,6 +1033,37 @@ def test_orphan_check_reports_each_orphan_once():
     assert str(excinfo.value).count("'k_dup'") == 1
 
 
+def test_orphan_check_traverses_through_broadcast_to():
+    """An orphaned placeholder hidden behind .broadcast() is still detected.
+
+    ``_iter_node_deps`` must know ``graph.broadcast_to`` is a wrapper (one
+    dependency: its own ``.node``), not a leaf — otherwise the BFS would
+    stop there and miss an orphaned placeholder underneath it.
+    """
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    y_axis = Axis("y", DOMAIN)
+
+    @define("BroadcastOrphan")
+    class _BroadcastOrphan(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            k = Index("k_hidden", 0.5)  # orphaned concrete index, reachable only through broadcast_to
+            out = Index("out", k.node.broadcast(y_axis))
+            return _BroadcastOrphan.Outputs(out=out)
+
+    with pytest.raises(ValueError, match="k_hidden"):
+        _BroadcastOrphan()
+
+
 def test_orphan_check_no_false_positive_on_formula_backed_input():
     """Orphan detection must not flag nodes inside a formula-backed input as orphans.
 

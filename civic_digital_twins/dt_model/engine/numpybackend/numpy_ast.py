@@ -93,6 +93,8 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.shift: "shift",
     graph.gradient: "gradient",
     graph.laplacian: "laplacian",
+    # broadcast (structural passthrough)
+    graph.broadcast_to: "asarray",
     # internal
     _InternalTestingNode: "_internal_testing",
 }
@@ -295,11 +297,15 @@ def _simple_graph_node_to_ast_expr(
         kwargs.append(ast.keyword("spacings", ast.Tuple(elts=[ast.Constant(value=s) for s in node.spacings])))
         kwargs.append(ast.keyword("boundaries", ast.Tuple(elts=[ast.Constant(value=b) for b in node.boundaries])))
 
-    # 13. catch all for not implemented operations
+    # 13. evaluate broadcast_to (structural passthrough, no reshape)
+    elif isinstance(node, graph.broadcast_to):
+        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
+
+    # 14. catch all for not implemented operations
     else:
         raise UnsupportedNodeArguments(f"numpy_ast: unsupported node type: {type(node)}")
 
-    # 14. create function call expr
+    # 15. create function call expr
     is_bare_name = type(node) in _BARE_NAME_OPERATIONS
     func = ast.Name(id=f"_{opname}", ctx=ast.Load()) if is_bare_name else _np_attr_name(opname)
     return ast.Call(func=func, args=posargs, keywords=kwargs)

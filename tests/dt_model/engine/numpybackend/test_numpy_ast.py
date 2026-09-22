@@ -123,6 +123,10 @@ def test_round_trip():
     tsp_value = np.asarray([4.0, 5.0])
     assert numpy_ast.graph_node_to_numpy_code(tsp, tsp_value) == f"n{tsp.id} = np.asarray([4.0, 5.0])"
 
+    y_axis = Axis("y", DOMAIN)
+    node = graph.broadcast_to(k, (y_axis,))
+    assert numpy_ast.graph_node_to_numpy_code(node) == f"n{node.id} = np.asarray(n{k.id})"
+
 
 class UnsupportedNode(graph.Node):
     """An unsupported node to verify it causes an exception."""

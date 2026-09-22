@@ -516,6 +516,16 @@ class Node[T]:
         """Return a node computing the difference between this node and its shifted self."""
         return self - self.shift(axis, periods, fill_value)
 
+    def broadcast(self, *axes: Axis) -> Node[T]:
+        """Return a node whose output_axes additionally include *axes*, implicit size-1 there.
+
+        A structural declaration, not a value transformation: the result
+        represents the same values as this node, just considered to
+        additionally range over *axes* — see broadcast_to.
+        """
+        new_axes = tuple(axis for axis in axes if axis not in self.output_axes)
+        return broadcast_to(self, new_axes) if new_axes else self
+
 
 @runtime_checkable
 class HasNode[T](Protocol):
@@ -1530,6 +1540,43 @@ class laplacian[T](Node[T]):
             f"n{self.id} = graph.laplacian(node=n{self.node.id}, axes={self.axes!r}, "
             f"spacings={self.spacings!r}, boundaries={self.boundaries!r}, name='{self.name}')"
         )
+
+
+class broadcast_to[T](Node[T]):
+    """Declares that a node's output additionally spans some axes it doesn't itself carry.
+
+    Widens ``output_axes`` to include *axes*, with implicit size-1 extent
+    along whichever of them *node* doesn't already carry — the same
+    broadcast semantics a ``BinaryOp`` already implies when one operand
+    carries an axis the other doesn't. This is a structural declaration,
+    not a value transformation: the node represents the same values as
+    *node*, just considered to additionally range over *axes*.
+
+    What this buys, regardless of backend: it changes which axes this node
+    is considered to carry for downstream purposes — ``axes=`` verification
+    on a formula-backed :class:`Index`, default-axis resolution, and
+    :class:`AxesInferenceWarning`.
+
+    Args:
+        node: Input tensor.
+        axes: Additional axes this node's output should be considered to
+            carry, alongside whatever *node* already declares.
+        name: Optional node name for debugging.
+    """
+
+    def __init__(self, node: Node[T], axes: tuple[Axis, ...], name: str = "") -> None:
+        super().__init__(name)
+        self.node = node
+        self.axes = axes
+
+    @functools.cached_property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return the union of the operand's own axes and the declared additional axes."""
+        return union_axes(self.node.output_axes, self.axes)
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        return f"n{self.id} = graph.broadcast_to(node=n{self.node.id}, axes={self.axes!r}, name='{self.name}')"
 
 
 # User-defined functions
