@@ -442,6 +442,80 @@ class Node[T]:
         """Lazily check whether one node is logically not."""
         return logical_not(self)
 
+    # ------------------------------------------------------------------
+    # Axis-taking operations (reducers and per-axis ops).
+    #
+    # Unlike GenericIndex's same-named methods (dt_model/model/index.py),
+    # axis is always required here: defaulting it from an axis's semantic
+    # role (e.g. "the sole DOMAIN axis") is a model-layer concern that this
+    # engine layer deliberately does not know about. GenericIndex resolves
+    # the default and delegates to these.
+    # ------------------------------------------------------------------
+
+    def sum(self, axis: Axis) -> Node[T]:
+        """Return a node summing this node's values along axis."""
+        return project_using_sum(self, axis)
+
+    def mean(self, axis: Axis) -> Node[T]:
+        """Return a node averaging this node's values along axis."""
+        return project_using_mean(self, axis)
+
+    def min(self, axis: Axis) -> Node[T]:
+        """Return a node computing the minimum of this node's values along axis."""
+        return project_using_min(self, axis)
+
+    def max(self, axis: Axis) -> Node[T]:
+        """Return a node computing the maximum of this node's values along axis."""
+        return project_using_max(self, axis)
+
+    def std(self, axis: Axis) -> Node[T]:
+        """Return a node computing the standard deviation of this node's values along axis."""
+        return project_using_std(self, axis)
+
+    def var(self, axis: Axis) -> Node[T]:
+        """Return a node computing the variance of this node's values along axis."""
+        return project_using_var(self, axis)
+
+    def median(self, axis: Axis) -> Node[T]:
+        """Return a node computing the median of this node's values along axis."""
+        return project_using_median(self, axis)
+
+    def prod(self, axis: Axis) -> Node[T]:
+        """Return a node computing the product of this node's values along axis."""
+        return project_using_prod(self, axis)
+
+    def any(self, axis: Axis) -> Node[T]:
+        """Return a node testing whether any value along axis is truthy."""
+        return project_using_any(self, axis)
+
+    def all(self, axis: Axis) -> Node[T]:
+        """Return a node testing whether all values along axis are truthy."""
+        return project_using_all(self, axis)
+
+    def count_nonzero(self, axis: Axis) -> Node[T]:
+        """Return a node counting non-zero values along axis."""
+        return project_using_count_nonzero(self, axis)
+
+    def quantile(self, axis: Axis, q: float) -> Node[T]:
+        """Return a node computing the q-quantile of this node's values along axis."""
+        return project_using_quantile(self, axis, q)
+
+    def shift(self, axis: Axis, periods: int = 1, fill_value: float = 0.0) -> Node[T]:
+        """Return a node shifting this node's values along axis, filling exposed positions."""
+        return shift(self, axis, periods, fill_value)
+
+    def roll(self, axis: Axis, periods: int = 1) -> Node[T]:
+        """Return a node circularly shifting this node's values along axis."""
+        return roll(self, axis, periods)
+
+    def cumulative(self, axis: Axis) -> Node[T]:
+        """Return a node computing the cumulative (running) sum of this node's values along axis."""
+        return cumulative(self, axis)
+
+    def diff(self, axis: Axis, periods: int = 1, fill_value: float = 0.0) -> Node[T]:
+        """Return a node computing the difference between this node and its shifted self."""
+        return self - self.shift(axis, periods, fill_value)
+
 
 @runtime_checkable
 class HasNode[T](Protocol):

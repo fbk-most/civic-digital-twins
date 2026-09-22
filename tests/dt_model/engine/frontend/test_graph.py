@@ -1024,3 +1024,86 @@ def test_function_call_functor_input_axes_arity_mismatch_raises():
     ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     with pytest.raises(ValueError, match="input_axes"):
         graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((), ())))
+
+
+# ---------------------------------------------------------------------------
+# Node axis-taking methods (sum, mean, ..., shift, roll, cumulative, diff)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method_name,expected_type",
+    [
+        ("sum", graph.project_using_sum),
+        ("mean", graph.project_using_mean),
+        ("min", graph.project_using_min),
+        ("max", graph.project_using_max),
+        ("std", graph.project_using_std),
+        ("var", graph.project_using_var),
+        ("median", graph.project_using_median),
+        ("prod", graph.project_using_prod),
+        ("any", graph.project_using_any),
+        ("all", graph.project_using_all),
+        ("count_nonzero", graph.project_using_count_nonzero),
+        ("shift", graph.shift),
+        ("roll", graph.roll),
+        ("cumulative", graph.cumulative),
+    ],
+)
+def test_node_axis_methods_wire_node_and_axis(method_name, expected_type):
+    """Each axis-taking Node method builds the matching graph node, wired to self and axis."""
+    time_axis = Axis("time", DOMAIN)
+    node = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="values")
+    result = getattr(node, method_name)(time_axis)
+    assert isinstance(result, expected_type)
+    assert result.node is node
+    assert result.axis is time_axis
+
+
+def test_node_quantile_method_wires_node_axis_and_q():
+    """Node.quantile builds project_using_quantile, wired to self, axis, and q."""
+    time_axis = Axis("time", DOMAIN)
+    node = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="values")
+    result = node.quantile(time_axis, 0.5)
+    assert isinstance(result, graph.project_using_quantile)
+    assert result.node is node
+    assert result.axis is time_axis
+    assert result.q == 0.5
+
+
+def test_node_diff_method_is_self_minus_shifted_self():
+    """Node.diff is self - self.shift(...), matching GenericIndex.diff's documented semantics."""
+    time_axis = Axis("time", DOMAIN)
+    node = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="values")
+    result = node.diff(time_axis)
+    assert isinstance(result, graph.subtract)
+    assert result.left is node
+    assert isinstance(result.right, graph.shift)
+    assert result.right.node is node
+    assert result.right.axis is time_axis
+
+
+def test_node_axis_methods_require_axis_explicit():
+    """Unlike GenericIndex, Node's axis-taking methods have no default — axis is required."""
+    node = graph.constant(1.0)
+    with pytest.raises(TypeError):
+        node.sum()  # type: ignore[call-arg]
+
+
+def test_multiply_result_supports_sum_without_wrapping():
+    """A bare Node produced by arithmetic (e.g. ``a * b``) can call ``.sum(axis)`` directly.
+
+    This is the AreaVerde regression: GenericIndex's arithmetic dunders unwrap to a bare
+    graph.Node, which previously had no axis-taking methods at all, so
+    ``(index_a * index_b).sum(axis=...)`` raised AttributeError even though
+    ``Index("t", index_a * index_b).sum(axis=...)`` worked.
+    """
+    time_axis = Axis("time", DOMAIN)
+    a = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="a")
+    b = graph.array_constant([4.0, 5.0, 6.0], axes=(time_axis,), name="b")
+    raw = a * b
+    assert isinstance(raw, graph.multiply)
+    result = raw.sum(time_axis)
+    assert isinstance(result, graph.project_using_sum)
+    assert result.node is raw
+    assert result.axis is time_axis
