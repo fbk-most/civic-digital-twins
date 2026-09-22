@@ -104,6 +104,11 @@ class ModelVariant:
     :class:`~engine.frontend.graph.exclusive_multi_clause_where` node.
     Parent model formulas can wire these outputs directly.
 
+    ``mv.expose.field`` (for a field common to all variants) is backed by the
+    same kind of merged node, dispatching per scenario — but, unlike
+    ``outputs``, must still not be wired into further formulas (see the
+    ``expose`` note below).
+
     ``mv.abstract_indexes()`` returns the union of all variants' abstract
     indexes plus the :class:`~.index.CategoricalIndex` selector (if
     applicable).
@@ -139,10 +144,10 @@ class ModelVariant:
     reading ``mv.expose.x`` behaves the same either way. For a *specific*
     variant's full expose shape (including fields outside the intersection),
     use ``mv.variants[key].expose`` directly. Static mode's intersected
-    fields still read their values from the *active* variant (the one
-    variant that's actually meaningful); runtime mode reads them from an
-    arbitrary representative variant, since no single variant is uniquely
-    active across scenarios.
+    fields read their values from the *active* variant (the one variant
+    that's actually meaningful); runtime mode dispatches per scenario, via
+    the same merged-node machinery ``outputs`` uses — *not* an arbitrary
+    representative variant (see "Runtime mode — merged graph" above).
 
     ``mv._selector_index`` is a thin :class:`~.index.Index` wrapping
     ``_selector_node``; ``result[mv._selector_index]`` from an
@@ -222,6 +227,11 @@ class ModelVariant:
             object.__setattr__(self, "_is_static", True)
             object.__setattr__(self, "_active_key", selector)
             object.__setattr__(self, "_active", variants_dict[selector])
+            object.__setattr__(
+                self,
+                "_expose_field_names",
+                _intersect_field_names([model.expose for model in variants_dict.values()]),
+            )
             return
 
         # ---------------------------------------------------------------
@@ -240,10 +250,17 @@ class ModelVariant:
 
         selector_node: graph.Node = selector.node if isinstance(selector, GenericIndex) else selector
 
-        # Build branch_map: key → [output_field_node, ...] in field order.
+        # Build branch_map: key → [output_field_node, ..., expose_field_node, ...] in field
+        # order. Output field names are already required to match exactly across variants
+        # (_validate_io_contract); expose field names are narrowed to the intersection across
+        # all variants (see `expose` property and _intersect_field_names).
         output_field_names = _io_field_names(next(iter(variants_dict.values())).outputs)
+        expose_field_names = _intersect_field_names([model.expose for model in variants_dict.values()])
         branch_map: dict[str, list[graph.Node]] = {
-            key: [getattr(model.outputs, field).node for field in output_field_names]
+            key: (
+                [getattr(model.outputs, field).node for field in output_field_names]
+                + [getattr(model.expose, field).node for field in expose_field_names]
+            )
             for key, model in variants_dict.items()
         }
 
@@ -256,7 +273,7 @@ class ModelVariant:
         )
 
         # Build one exclusive_mcw per output field + collect merged Index objects.
-        merged_entries: list[tuple[str, GenericIndex]] = []
+        merged_output_entries: list[tuple[str, GenericIndex]] = []
         merge_nodes: list[graph.Node] = []
         for field in output_field_names:
             clauses = [
@@ -269,12 +286,31 @@ class ModelVariant:
                 name=f"mcw:{name}:{field}",
             )
             merged_idx = Index(f"merged:{name}:{field}", mcw)
-            merged_entries.append((field, merged_idx))
+            merged_output_entries.append((field, merged_idx))
+            merge_nodes.append(mcw)
+
+        # Build one exclusive_mcw per intersected expose field + collect merged Index objects.
+        # Same machinery as outputs above, so expose.field also dispatches per scenario rather
+        # than reading a single variant's value unconditionally.
+        merged_expose_entries: list[tuple[str, GenericIndex]] = []
+        for field in expose_field_names:
+            clauses = [
+                (selector_node == key, getattr(model.expose, field).node) for key, model in variants_dict.items()
+            ]
+            mcw = graph.exclusive_multi_clause_where(
+                clauses=clauses,
+                default_value=graph.constant(float("nan")),
+                companion=vs,
+                name=f"mcw:{name}:expose:{field}",
+            )
+            merged_idx = Index(f"merged:{name}:expose:{field}", mcw)
+            merged_expose_entries.append((field, merged_idx))
             merge_nodes.append(mcw)
 
         vs.merge_nodes = merge_nodes  # complete the variant_selector
 
-        merged_outputs = IOProxy(merged_entries, dc=_MergedOutputsMarker())  # type: ignore[arg-type]
+        merged_outputs = IOProxy(merged_output_entries, dc=_MergedOutputsMarker())  # type: ignore[arg-type]
+        merged_expose = IOProxy(merged_expose_entries, dc=_MergedExposeMarker())  # type: ignore[arg-type]
         selector_index = Index(f"selector:{name}", selector_node)
 
         # Aggregate _node_functions from all branch models.  Node identity is
@@ -291,6 +327,7 @@ class ModelVariant:
         object.__setattr__(self, "_selector_node", selector_node)
         object.__setattr__(self, "_selector_index", selector_index)
         object.__setattr__(self, "_merged_outputs", merged_outputs)
+        object.__setattr__(self, "_merged_expose", merged_expose)
         object.__setattr__(self, "_variant_selector", vs)
         object.__setattr__(self, "_node_functions", merged_node_fns)
 
@@ -391,24 +428,21 @@ class ModelVariant:
         though ``outputs`` requires exact equality rather than an
         intersection), unlike ``inputs``' rule (genuinely mode-dependent:
         active variant only vs. union of all variants). Static mode reads
-        the intersected fields' values from the active variant; runtime mode
-        reads them from an arbitrary representative variant, since no single
-        variant is uniquely active across scenarios. ``expose`` is not part
-        of the I/O contract and must not be used for inter-model wiring. Use
-        ``mv.variants[key].expose`` for a specific variant's full shape.
+        the intersected fields' values from the active variant. Runtime mode
+        dispatches per scenario, via the same
+        :class:`~engine.frontend.graph.exclusive_multi_clause_where`-backed
+        merged-node machinery ``outputs`` uses — built once at construction
+        time, alongside ``outputs``' own merge nodes (see ``__init__``).
+        ``expose`` is not part of the I/O contract and must not be used for
+        inter-model wiring. Use ``mv.variants[key].expose`` for a specific
+        variant's full shape.
         """
-        variants: dict[str, Model] = object.__getattribute__(self, "variants")
-        variant_list = list(variants.values())
-        common = set(_io_field_names(variant_list[0].expose))
-        for v in variant_list[1:]:
-            common &= set(_io_field_names(v.expose))
-        source = (
-            object.__getattribute__(self, "_active").expose
-            if object.__getattribute__(self, "_is_static")
-            else variant_list[0].expose
-        )
-        entries = [(field, getattr(source, field)) for field in _io_field_names(source) if field in common]
-        return IOProxy(entries, dc=_MergedExposeMarker())
+        if object.__getattribute__(self, "_is_static"):
+            common_fields: list[str] = object.__getattribute__(self, "_expose_field_names")
+            source = object.__getattribute__(self, "_active").expose
+            entries = [(field, getattr(source, field)) for field in common_fields]
+            return IOProxy(entries, dc=_MergedExposeMarker())
+        return object.__getattribute__(self, "_merged_expose")
 
     @property
     def indexes(self) -> list[GenericIndex]:
@@ -416,8 +450,9 @@ class ModelVariant:
 
         Static: index list of the active variant only.
         Runtime: deduplicated union of all variants' indexes, plus the merged
-        output indexes, plus the :class:`~.index.CategoricalIndex` selector
-        and selector index (if applicable).
+        output indexes, plus the merged expose indexes, plus the
+        :class:`~.index.CategoricalIndex` selector and selector index (if
+        applicable).
         """
         if object.__getattribute__(self, "_is_static"):
             return object.__getattribute__(self, "_active").indexes
@@ -431,6 +466,11 @@ class ModelVariant:
                     result.append(idx)
         merged_outputs: IOProxy[Any] = object.__getattribute__(self, "_merged_outputs")
         for idx in merged_outputs:
+            if id(idx) not in seen:
+                seen.add(id(idx))
+                result.append(idx)
+        merged_expose: IOProxy[Any] = object.__getattribute__(self, "_merged_expose")
+        for idx in merged_expose:
             if id(idx) not in seen:
                 seen.add(id(idx))
                 result.append(idx)
@@ -527,6 +567,31 @@ def _io_field_names(proxy: IOProxy[Any]) -> list[str]:
     """
     entries: list[tuple[str, Any]] = object.__getattribute__(proxy, "_entries")
     return [key for key, _ in entries]
+
+
+def _intersect_field_names(proxies: list[IOProxy[Any]]) -> list[str]:
+    """Return field names common to every proxy in *proxies*, in the first proxy's declared order.
+
+    Used for ``expose``'s field-set rule: the same intersection is needed both
+    at construction time (runtime mode, to decide which fields get a merged
+    dispatch node) and at property-access time (static mode, to filter the
+    active variant's fields) — a shared helper keeps the two in sync.
+
+    Parameters
+    ----------
+    proxies:
+        One :class:`~.model.IOProxy` per variant, in variant declaration order.
+        Must be non-empty.
+
+    Returns
+    -------
+    list[str]
+        Field names present in every proxy, ordered as in ``proxies[0]``.
+    """
+    common = set(_io_field_names(proxies[0]))
+    for proxy in proxies[1:]:
+        common &= set(_io_field_names(proxy))
+    return [field for field in _io_field_names(proxies[0]) if field in common]
 
 
 def _validate_io_contract(variant_group_name: str, variants: Mapping[str, Model | ModelVariant]) -> None:

@@ -2,11 +2,12 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model import define, expose, inputs, outputs
+from civic_digital_twins.dt_model import DistributionEnsemble, Evaluation, Scenario, define, expose, inputs, outputs
 from civic_digital_twins.dt_model.engine.frontend import graph
-from civic_digital_twins.dt_model.model.index import CategoricalIndex, Index
+from civic_digital_twins.dt_model.model.index import CategoricalIndex, ConstIndex, Index
 from civic_digital_twins.dt_model.model.model import IOProxy, Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
 
@@ -147,6 +148,94 @@ def test_runtime_expose_is_intersection():
     # _BikeModel and _TrainModel have no Expose — intersection is empty.
     assert isinstance(mv.expose, IOProxy)
     assert len(mv.expose) == 0
+
+
+def _make_variants_with_expose() -> tuple[dict[str, Model], dict[str, float]]:
+    """Two single-output variants, each exposing a distinct constant via `diag`."""
+
+    @define("A")
+    class _A(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            diag: Index
+
+        def compute(self, inputs: "_A.Inputs") -> tuple["_A.Outputs", "_A.Expose"]:
+            return _A.Outputs(y=Index("y", 1.0)), _A.Expose(diag=ConstIndex("diag", 111.0))
+
+    @define("B")
+    class _B(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            diag: Index
+
+        def compute(self, inputs: "_B.Inputs") -> tuple["_B.Outputs", "_B.Expose"]:
+            return _B.Outputs(y=Index("y", 2.0)), _B.Expose(diag=ConstIndex("diag", 999.0))
+
+    return {"a": _A(inputs=_A.Inputs()), "b": _B(inputs=_B.Inputs())}, {"a": 111.0, "b": 999.0}
+
+
+def test_runtime_expose_field_backed_by_merged_node():
+    """Regression test for #252: mv.expose.field is a merged node, like mv.outputs.field.
+
+    Before the fix, the runtime-mode `expose` property returned an arbitrary
+    variant's own Index directly — not backed by any dispatch node at all.
+    """
+    variants, _ = _make_variants_with_expose()
+    mode = CategoricalIndex("mode", {"a": 0.5, "b": 0.5})
+    mv = ModelVariant("Group", variants, selector=mode)
+    assert isinstance(mv.expose.diag.node, graph.exclusive_multi_clause_where)
+
+
+def test_runtime_expose_included_in_indexes():
+    """Regression test for #252: the merged expose index is reachable via mv.indexes."""
+    variants, _ = _make_variants_with_expose()
+    mode = CategoricalIndex("mode", {"a": 0.5, "b": 0.5})
+    mv = ModelVariant("Group", variants, selector=mode)
+    idx_ids = {id(idx) for idx in mv.indexes}
+    assert id(mv.expose.diag) in idx_ids
+
+
+def test_runtime_expose_dispatches_per_scenario():
+    """Regression test for #252: mv.expose.field tracks the selector, per scenario.
+
+    Reproduces the original bug report: two variants exposing distinct
+    constants via a common `diag` field; a genuinely mixed CategoricalIndex
+    selector across 20 scenarios. Before the fix, `result[mv.expose.diag]`
+    was constant (one arbitrary variant's value) regardless of selection;
+    after the fix it must track `result[mv._selector_index]` exactly.
+    """
+    variants, expected_by_key = _make_variants_with_expose()
+    mode = CategoricalIndex("mode", {"a": 0.5, "b": 0.5})
+    mv = ModelVariant("Group", variants, selector=mode)
+
+    scenario = Scenario(mv)
+    ensemble = DistributionEnsemble(scenario, size=20, rng=np.random.default_rng(0))
+    result = Evaluation(scenario).evaluate(ensemble=ensemble)
+
+    selected_keys = result[mv._selector_index].ravel()
+    diag_values = result[mv.expose.diag].ravel()
+
+    # Guard against a degenerate sample that happens to pick only one variant.
+    assert set(selected_keys) == {"a", "b"}
+
+    expected = np.array([expected_by_key[key] for key in selected_keys])
+    np.testing.assert_array_equal(diag_values, expected)
 
 
 # ===========================================================================
