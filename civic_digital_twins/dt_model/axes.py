@@ -24,7 +24,6 @@ __all__ = [
     "SequenceType",
     "TimeType",
     "SpaceType",
-    "MeshType",
     "TIME_AXIS",
     "domain_axis_position",
     "filter_by_role",
@@ -208,26 +207,6 @@ class SpaceType(SequenceType):
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
         return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r})"
-
-
-class MeshType:
-    """Irregular domain of N cells with explicit adjacency (graph Laplacian).
-
-    Parameters
-    ----------
-    adjacency:
-        Opaque adjacency structure (e.g. a sparse matrix) consumed by
-        graph-Laplacian operators. Not interpreted in this step.
-    """
-
-    __slots__ = ("adjacency",)
-
-    def __init__(self, adjacency: object = None) -> None:
-        self.adjacency = adjacency
-
-    def __repr__(self) -> str:
-        """Return a round-trippable string representation."""
-        return f"MeshType(adjacency={self.adjacency!r})"
 
 
 TIME_AXIS: DomainAxis = DomainAxis("time", type=TimeType())

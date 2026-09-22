@@ -9,7 +9,6 @@ from civic_digital_twins.dt_model.axes import (
     TIME_AXIS,
     Axis,
     DomainAxis,
-    MeshType,
     SequenceType,
     SetType,
     SpaceType,
@@ -164,16 +163,6 @@ class TestDomainTypeLattice:
         s = SpaceType()
         assert s.spacing == 1.0
         assert s.boundary == "reflect"
-
-    def test_mesh_type_carries_adjacency(self):
-        """MeshType stores an opaque adjacency structure."""
-        adj = {"a": ["b"]}
-        m = MeshType(adjacency=adj)
-        assert m.adjacency is adj
-
-    def test_mesh_type_repr(self):
-        """MeshType's repr shows the adjacency payload, like the other DomainType classes."""
-        assert repr(MeshType(adjacency="adj")) == "MeshType(adjacency='adj')"
 
 
 class TestTopLevelExports:
