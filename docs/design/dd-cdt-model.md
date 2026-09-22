@@ -117,6 +117,13 @@ GenericIndex  (ABC)
     more `SpaceType` axes — the isotropic operator a diffusion process
     needs — reading each axis's `spacing` and `boundary`). Calling either on
     a non-`SpaceType` axis raises `ValueError`.
+- **`.broadcast(*axes)`** — returns a `graph.Node` considered to also carry
+  each axis in *axes* not already present, via `graph.broadcast_to`
+  (§ [Broadcasting](dd-cdt-engine.md#broadcasting)). Needed because `axes=`
+  on `Index` only verifies a formula's inferred axes rather than declaring
+  them — there is no other way to make a formula carry an axis it doesn't
+  already reference. Delegates to the same-named method on the underlying
+  `graph.Node`, exactly like the axis reduction methods above.
 - **Identity-based `__hash__`** — because `__eq__` is overridden to
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as

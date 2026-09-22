@@ -781,6 +781,19 @@ def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
     return kernels.laplacian(operand, tuple(positions), node.spacings, node.boundaries)
 
 
+def _eval_broadcast_to(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a broadcast_to node as a pure passthrough.
+
+    No reshape is needed: every node's evaluated array is already padded to
+    this evaluation's full DOMAIN-axis block regardless of its own declared
+    output_axes (see align_to_domain_block and the leaf-padding convention
+    it implements) — broadcast_to only widens output_axes, a static
+    property with no runtime counterpart to compute here.
+    """
+    node = cast(graph.broadcast_to, node)
+    return state.get_node_value(node.node)
+
+
 def _eval_function(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.function_call, node)
     args: list[np.ndarray] = []
@@ -836,6 +849,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.ProjectionOp, _eval_projection_op),
     (graph.AxisOp, _eval_axis_op),
     (graph.laplacian, _eval_laplacian),
+    (graph.broadcast_to, _eval_broadcast_to),
     (graph.function_call, _eval_function),
 )
 

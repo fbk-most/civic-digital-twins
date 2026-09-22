@@ -13,7 +13,7 @@ import pytest
 from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
-from civic_digital_twins.dt_model.model.index import ConstTimeseriesIndex, Index, TimeseriesIndex
+from civic_digital_twins.dt_model.model.index import ConstIndex, ConstTimeseriesIndex, Index, TimeseriesIndex
 
 _TIME_AXIS = Axis("time", DOMAIN)
 
@@ -186,3 +186,78 @@ class TestIndexAxisMethodMultipleDomainAxes:
         result = idx.shift(axis=x_axis)
         assert isinstance(result, graph.shift)
         assert result.axis == x_axis
+
+
+class TestIndexBroadcast:
+    """Test GenericIndex.broadcast(), delegating to graph.Node.broadcast()."""
+
+    def test_broadcast_adds_missing_axis(self):
+        """broadcast(y) adds y to an index that only carries x."""
+        x_axis = Axis("x", DOMAIN)
+        y_axis = Axis("y", DOMAIN)
+        idx = ConstIndex("ind_x", np.array([1.0, 2.0, 3.0]), axes=(x_axis,))
+        result = idx.broadcast(y_axis)
+        assert isinstance(result, graph.broadcast_to)
+        assert set(result.output_axes) == {x_axis, y_axis}
+
+    def test_broadcast_already_present_axis_is_a_noop(self):
+        """broadcast(x) on an index already carrying x returns the same node, unchanged."""
+        x_axis = Axis("x", DOMAIN)
+        idx = ConstIndex("ind_x", np.array([1.0, 2.0]), axes=(x_axis,))
+        assert idx.broadcast(x_axis) is idx.node
+
+    def test_broadcast_no_axes_is_a_noop(self):
+        """broadcast() with no arguments returns the same node, unchanged."""
+        x_axis = Axis("x", DOMAIN)
+        idx = ConstIndex("ind_x", np.array([1.0, 2.0]), axes=(x_axis,))
+        assert idx.broadcast() is idx.node
+
+    def test_broadcast_needed_to_wrap_a_standalone_index_with_an_extra_axis(self):
+        """axes= on Index only verifies inferred axes — it can't make a standalone index carry an axis.
+
+        This is the motivating case for broadcast(): unlike combining with
+        an operand that already carries the axis (which needs no
+        broadcast(), see test_broadcast_combined_with_partner_needs_no_explicit_broadcast),
+        wrapping an index alone with a wider axes= genuinely has no other
+        way to succeed.
+        """
+        x_axis = Axis("x", DOMAIN)
+        y_axis = Axis("y", DOMAIN)
+        ind_x = ConstIndex("ind_x", np.array([1.0, 2.0, 3.0]), axes=(x_axis,))
+
+        with pytest.raises(ValueError, match="declared axes"):
+            Index("standalone", ind_x, axes=(x_axis, y_axis))
+
+        standalone = Index("standalone", ind_x.broadcast(y_axis), axes=(x_axis, y_axis))
+        assert set(standalone.output_axes) == {x_axis, y_axis}
+
+    def test_broadcast_combined_with_partner_needs_no_explicit_broadcast(self):
+        """Combining with an operand that already carries the axis infers it without broadcast().
+
+        A formula's inferred output_axes is always the union of its
+        operands' axes, so ind_x + ind_xy already carries y — broadcast()
+        is only needed when nothing else in the formula supplies the axis
+        (see test_broadcast_needed_to_wrap_a_standalone_index_with_an_extra_axis).
+        """
+        x_axis = Axis("x", DOMAIN)
+        y_axis = Axis("y", DOMAIN)
+        ind_x = ConstIndex("ind_x", np.array([1.0, 2.0, 3.0]), axes=(x_axis,))
+        ind_xy = ConstIndex("ind_xy", np.ones((3, 2)), axes=(x_axis, y_axis))
+
+        combined = Index("combined", ind_x + ind_xy, axes=(x_axis, y_axis))
+        assert set(combined.output_axes) == {x_axis, y_axis}
+
+    def test_broadcast_evaluates_with_correct_shape_and_values(self):
+        """Evaluating a broadcast index combines correctly with one already carrying the new axis."""
+        x_axis = Axis("x", DOMAIN)
+        y_axis = Axis("y", DOMAIN)
+        ind_x = ConstIndex("ind_x", np.array([1.0, 2.0, 3.0]), axes=(x_axis,))
+        ind_xy = ConstIndex("ind_xy", np.ones((3, 2)), axes=(x_axis, y_axis))
+        combined = Index("combined", ind_x.broadcast(y_axis) * ind_xy)
+
+        state = executor.State({}, domain_axes=(x_axis, y_axis))
+        executor.evaluate_nodes(state, *linearize.forest(combined.node))
+        result = state.values[combined.node]
+
+        assert result.shape == (3, 2)
+        assert np.array_equal(result, np.array([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]))

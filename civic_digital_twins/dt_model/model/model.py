@@ -880,7 +880,7 @@ def _iter_node_deps(node: graph.Node) -> list[graph.Node]:
         for branch_nodes in node.branch_map.values():
             deps.extend(branch_nodes)
         return deps
-    if isinstance(node, (graph.ProjectionOp, graph.AxisOp, graph.laplacian)):
+    if isinstance(node, (graph.ProjectionOp, graph.AxisOp, graph.laplacian, graph.broadcast_to)):
         return [node.node]
     if isinstance(node, graph.function_call):
         return list(node.args) + list(node.kwargs.values())

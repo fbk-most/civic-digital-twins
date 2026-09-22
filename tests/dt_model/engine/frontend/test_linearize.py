@@ -236,6 +236,23 @@ def test_laplacian_operations():
     assert find_node_idx(plan, lap) < find_node_idx(plan, result)
 
 
+def test_broadcast_to_operations():
+    """Test linearization with a broadcast_to node."""
+    z = graph.placeholder("z")
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+
+    field = graph.array_constant([1.0, 2.0], axes=(x_axis,))
+    broadcasted = graph.broadcast_to(field, (y_axis,))
+    result = graph.add(z, broadcasted)
+
+    plan = linearize.forest(result)
+
+    assert find_node_idx(plan, field) < find_node_idx(plan, broadcasted)
+    assert find_node_idx(plan, z) < find_node_idx(plan, result)
+    assert find_node_idx(plan, broadcasted) < find_node_idx(plan, result)
+
+
 def test_multiple_independent_graphs():
     """Test linearization of multiple independent computation graphs."""
     a = graph.placeholder("a")

@@ -336,6 +336,38 @@ class GenericIndex(ABC):
         return ~self.node
 
     # ------------------------------------------------------------------
+    # Shape operators
+    # ------------------------------------------------------------------
+
+    def broadcast(self, *axes: Axis) -> graph.Node:
+        """Return a graph node carrying this index's value plus *axes* it doesn't already carry.
+
+        Needed because ``axes=`` on :class:`Index` only *verifies* a
+        formula's inferred axes rather than declaring or overriding them —
+        there is no way to make a node carry an axis it doesn't
+        structurally reference except by referencing it. For example, an
+        index that only carries ``(x,)`` can't be wrapped as
+        ``axes=(x, y)`` on its own::
+
+            standalone = Index("standalone", ind_x, axes=(x, y))  # ValueError
+
+        ``ind_x.broadcast(y)`` fixes this by making the node itself
+        reference ``y``, with implicit size-1 extent there::
+
+            standalone = Index("standalone", ind_x.broadcast(y), axes=(x, y))
+
+        This is *not* needed just to combine ``ind_x`` with an operand
+        that already carries ``y`` — ``ind_x + ind_xy`` already infers
+        ``(x, y)`` on its own, since a formula's inferred axes are always
+        the union of its operands' axes. Broadcasting only matters when
+        nothing else in the formula supplies the axis.
+
+        See :meth:`graph.Node.broadcast` for what this declares and why
+        evaluating it is a backend concern rather than a frontend one.
+        """
+        return self.node.broadcast(*axes)
+
+    # ------------------------------------------------------------------
     # Reduction and per-axis operators
     # ------------------------------------------------------------------
 

@@ -472,6 +472,38 @@ applies to the per-axis operators `shift()`, `roll()`, `diff()`, and
 > Callers that previously relied on axis *collapsing* (the 0.5.0 default)
 > must now use `np.squeeze` on the result.
 
+#### Broadcasting
+
+`node.broadcast(*axes)` returns a node considered to also carry each axis
+in *axes* not already present in `node.output_axes`, with implicit size-1
+extent along the new ones — `graph.broadcast_to` under the hood, or `node`
+itself unchanged if every axis is already there. It exists because a
+formula's `output_axes` is *inferred*, not declared: `Index(..., axes=...)`
+only *verifies* the inference (see [`Index`](dd-cdt-model.md#index)), so
+there is no way to make a node carry an axis it doesn't structurally
+reference except by referencing it.
+
+`broadcast_to` is a purely structural declaration at the frontend level —
+it says nothing about how a backend must evaluate it, only that the
+resulting node's `output_axes` widens. What that widening is *for*, at the
+frontend/model layer, holds regardless of backend: it's what `Index(...,
+axes=...)` verification, `GenericIndex` default-axis resolution, and
+`AxesInferenceWarning` inspect. Whether producing the actual array costs
+anything is left to each backend. The numpy backend happens to need zero
+work: every node's *evaluated* array is already padded to the evaluation's
+full DOMAIN-axis block regardless of what that node's own `output_axes`
+declares — see `numpybackend.executor.align_to_domain_block` and the
+leaf-padding convention it implements (every `array_constant`/
+`array_placeholder` is padded to the full domain block when read, and
+ordinary numpy broadcasting preserves that padding through every
+downstream computed node) — so `_eval_broadcast_to` is a pure passthrough
+there. A different backend without that convention would be free to
+implement `broadcast_to` as an actual reshape instead; nothing in the
+frontend's contract rules that out.
+
+`GenericIndex.broadcast(*axes)` delegates to the same-named `graph.Node`
+method, exactly like the axis reduction methods above.
+
 #### Accepting Index-Like Objects: the `HasNode` Protocol
 
 Graph-building functions (e.g. arithmetic operators, `graph.function_call`)

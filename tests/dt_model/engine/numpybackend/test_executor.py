@@ -823,3 +823,55 @@ def test_multiply_result_sum_evaluates_correctly_without_wrapping():
     state = executor.State({}, domain_axes=(time_axis,))
     executor.evaluate_nodes(state, *linearize.forest(result))
     assert np.array_equal(state.values[result], np.array([32.0]))  # 1*4 + 2*5 + 3*6
+
+
+def test_broadcast_to_is_a_passthrough_with_correct_shape():
+    """broadcast_to adds no value: the evaluated array already has a size-1 slot for the new axis.
+
+    Every node's evaluated array is already padded to the evaluation's full
+    DOMAIN-axis block (align_to_domain_block), so broadcast_to's evaluator
+    is a pure passthrough — this checks that holds end-to-end, including
+    for a leaf whose own formula never references the new axis at all.
+    """
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    values = graph.array_constant([1.0, 2.0, 3.0], axes=(x_axis,), name="values")
+    broadcasted = values.broadcast(y_axis)
+
+    state = executor.State({}, domain_axes=(x_axis, y_axis))
+    executor.evaluate_nodes(state, *linearize.forest(broadcasted))
+
+    assert state.values[broadcasted].shape == (3, 1)
+    assert np.array_equal(state.values[broadcasted], [[1.0], [2.0], [3.0]])
+
+
+def test_broadcast_to_preserves_dtype():
+    """broadcast_to must not silently promote dtype.
+
+    A real risk for a sloppy implementation of this operation — e.g. one
+    that broadcasts by multiplying by an array of ones — since numpy
+    upcasts an int array multiplied by a float array to float.
+    """
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    values = graph.array_constant(np.array([1, 2, 3], dtype=np.int64), axes=(x_axis,), name="values")
+    broadcasted = values.broadcast(y_axis)
+
+    state = executor.State({}, domain_axes=(x_axis, y_axis))
+    executor.evaluate_nodes(state, *linearize.forest(broadcasted))
+
+    assert state.values[broadcasted].dtype == np.int64
+
+
+def test_broadcast_to_combines_correctly_with_a_partner_over_the_new_axis():
+    """The end-to-end scenario broadcast() exists for: combining indexes over disjoint axes."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    ind_x = graph.array_constant([1.0, 2.0, 3.0], axes=(x_axis,), name="ind_x")
+    ind_xy = graph.array_constant([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]], axes=(x_axis, y_axis), name="ind_xy")
+    combined = ind_x.broadcast(y_axis) * ind_xy
+
+    state = executor.State({}, domain_axes=(x_axis, y_axis))
+    executor.evaluate_nodes(state, *linearize.forest(combined))
+
+    assert np.array_equal(state.values[combined], [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])

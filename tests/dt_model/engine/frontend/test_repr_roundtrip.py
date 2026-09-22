@@ -212,6 +212,19 @@ def test_axis_ops() -> None:
 
 
 # ---------------------------------------------------------------------------
+# broadcast_to
+# ---------------------------------------------------------------------------
+
+
+def test_broadcast_to() -> None:
+    """Round-trip test for broadcast_to."""
+    a = graph.constant(7, name="a")
+    y_ax = Axis("y", DOMAIN)
+    deps = _ctx(a)
+    _assert_roundtrip(graph.broadcast_to(a, (y_ax,)), deps)
+
+
+# ---------------------------------------------------------------------------
 # function_call
 # ---------------------------------------------------------------------------
 
@@ -290,6 +303,7 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.cumulative,
         graph.gradient,
         graph.laplacian,
+        graph.broadcast_to,
         graph.function_call,
     }
 )

@@ -1107,3 +1107,53 @@ def test_multiply_result_supports_sum_without_wrapping():
     assert isinstance(result, graph.project_using_sum)
     assert result.node is raw
     assert result.axis is time_axis
+
+
+# ---------------------------------------------------------------------------
+# Node.broadcast() / graph.broadcast_to
+# ---------------------------------------------------------------------------
+
+
+def test_broadcast_to_repr():
+    """graph.broadcast_to has a round-trippable SSA repr."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    result = graph.broadcast_to(node, (y_axis,))
+    assert str(result) == f"n{result.id} = graph.broadcast_to(node=n{node.id}, axes=({y_axis!r},), name='')"
+
+
+def test_node_broadcast_adds_missing_axes():
+    """Node.broadcast(*axes) wraps in graph.broadcast_to, output_axes widened to the union."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    result = node.broadcast(y_axis)
+    assert isinstance(result, graph.broadcast_to)
+    assert result.node is node
+    assert result.axes == (y_axis,)
+    assert set(result.output_axes) == {x_axis, y_axis}
+
+
+def test_node_broadcast_already_present_axis_is_a_noop():
+    """Node.broadcast() returns the same node, unchanged, when every axis is already carried."""
+    x_axis = Axis("x", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    assert node.broadcast(x_axis) is node
+
+
+def test_node_broadcast_no_axes_is_a_noop():
+    """Node.broadcast() with no arguments returns the same node, unchanged."""
+    x_axis = Axis("x", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    assert node.broadcast() is node
+
+
+def test_node_broadcast_mixed_present_and_missing_axes():
+    """Node.broadcast(x, y) only adds the axes not already carried."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    result = node.broadcast(x_axis, y_axis)
+    assert isinstance(result, graph.broadcast_to)
+    assert result.axes == (y_axis,)
