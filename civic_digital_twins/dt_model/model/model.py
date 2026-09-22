@@ -987,6 +987,7 @@ def _find_orphaned_placeholder_nodes(
                 # from state.values, so they are not orphaned.
                 if isinstance(dep, graph.placeholder) and dep.default_value is not None:
                     continue
+                visited_ids.add(id(dep))  # mark seen so a second incoming edge isn't reported again
                 orphaned.append(dep)  # uncovered placeholder — always a bug
             else:
                 to_visit.append(dep)  # uncovered formula node — traverse further
