@@ -96,9 +96,12 @@ GenericIndex  (ABC)
   `.sum(axis=...)`, `.mean(axis=...)`, `.min(axis=...)`, `.max(axis=...)`,
   `.std(axis=...)`, `.var(axis=...)`, `.median(axis=...)`, `.prod(axis=...)`,
   `.any(axis=...)`, `.all(axis=...)`, `.count_nonzero(axis=...)`,
-  and `.quantile(q, axis=...)`. These delegate to the corresponding
-  `graph.project_using_*` operators. `axis` defaults to the index's unique
-  DOMAIN axis; an index carrying several requires it explicitly.
+  and `.quantile(q, axis=...)`. `axis` defaults to the index's unique DOMAIN
+  axis; an index carrying several requires it explicitly. Once resolved,
+  these delegate to the same-named method on the underlying `graph.Node`
+  (§ [Axis Reduction Operators](dd-cdt-engine.md#axis-reduction-operators)),
+  where `axis` is always required — the DOMAIN-axis defaulting is a
+  model-layer convenience the engine layer deliberately does not know about.
 - **Domain-typed per-axis operators**, gated by the axis's `DomainType`
   (§ [TimeseriesIndex](#timeseriesindex) below covers `TIME_AXIS`'s
   `TimeType`; see `axes.py` for the full lattice):

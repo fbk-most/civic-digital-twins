@@ -391,7 +391,7 @@ class GenericIndex(ABC):
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
-        return graph.project_using_sum(self.node, self._resolve_domain_axis(axis))
+        return self.node.sum(self._resolve_domain_axis(axis))
 
     def mean(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
@@ -400,7 +400,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_mean(self.node, self._resolve_domain_axis(axis))
+        return self.node.mean(self._resolve_domain_axis(axis))
 
     def min(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the minimum of this index over the given axis.
@@ -409,7 +409,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_min(self.node, self._resolve_domain_axis(axis))
+        return self.node.min(self._resolve_domain_axis(axis))
 
     def max(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the maximum of this index over the given axis.
@@ -418,7 +418,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_max(self.node, self._resolve_domain_axis(axis))
+        return self.node.max(self._resolve_domain_axis(axis))
 
     def std(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the standard deviation of this index over the given axis.
@@ -427,7 +427,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_std(self.node, self._resolve_domain_axis(axis))
+        return self.node.std(self._resolve_domain_axis(axis))
 
     def var(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the variance of this index over the given axis.
@@ -436,7 +436,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_var(self.node, self._resolve_domain_axis(axis))
+        return self.node.var(self._resolve_domain_axis(axis))
 
     def median(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the median of this index over the given axis.
@@ -445,7 +445,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_median(self.node, self._resolve_domain_axis(axis))
+        return self.node.median(self._resolve_domain_axis(axis))
 
     def prod(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the product of this index over the given axis.
@@ -454,7 +454,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_prod(self.node, self._resolve_domain_axis(axis))
+        return self.node.prod(self._resolve_domain_axis(axis))
 
     def any(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if any elements of this index are True over the given axis.
@@ -463,7 +463,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_any(self.node, self._resolve_domain_axis(axis))
+        return self.node.any(self._resolve_domain_axis(axis))
 
     def all(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if all elements of this index are True over the given axis.
@@ -472,7 +472,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_all(self.node, self._resolve_domain_axis(axis))
+        return self.node.all(self._resolve_domain_axis(axis))
 
     def count_nonzero(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that counts non-zero elements of this index over the given axis.
@@ -481,7 +481,7 @@ class GenericIndex(ABC):
         timeseries index); an index carrying several DOMAIN axes must pass
         ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_count_nonzero(self.node, self._resolve_domain_axis(axis))
+        return self.node.count_nonzero(self._resolve_domain_axis(axis))
 
     def quantile(self, q: float, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the quantile of this index over the given axis.
@@ -493,7 +493,7 @@ class GenericIndex(ABC):
                 to the index's sole DOMAIN axis (time, for a timeseries
                 index); required when the index carries several.
         """
-        return graph.project_using_quantile(self.node, self._resolve_domain_axis(axis), q)
+        return self.node.quantile(self._resolve_domain_axis(axis), q)
 
     def shift(self, periods: int = 1, *, axis: Axis | None = None, fill_value: float = 0.0) -> graph.Node:
         """Return a graph node shifting this index along the given axis, filling exposed positions.
@@ -511,7 +511,7 @@ class GenericIndex(ABC):
                 several.
             fill_value: Value used for positions exposed at the boundary.
         """
-        return graph.shift(self.node, self._resolve_domain_axis(axis), periods, fill_value)
+        return self.node.shift(self._resolve_domain_axis(axis), periods, fill_value)
 
     def roll(self, periods: int = 1, *, axis: Axis | None = None) -> graph.Node:
         """Return a graph node circularly shifting this index along the given axis.
@@ -527,7 +527,7 @@ class GenericIndex(ABC):
                 index's sole DOMAIN axis; required when the index carries
                 several.
         """
-        return graph.roll(self.node, self._resolve_domain_axis(axis), periods)
+        return self.node.roll(self._resolve_domain_axis(axis), periods)
 
     def diff(self, periods: int = 1, *, axis: Axis | None = None, fill_value: float = 0.0) -> graph.Node:
         """Return a graph node computing the difference between this index and its shifted self.
@@ -544,8 +544,7 @@ class GenericIndex(ABC):
             fill_value: Value assumed for positions before the axis start
                 (or after its end, for negative *periods*).
         """
-        resolved = self._resolve_domain_axis(axis)
-        return graph.subtract(self.node, graph.shift(self.node, resolved, periods, fill_value))
+        return self.node.diff(self._resolve_domain_axis(axis), periods, fill_value)
 
     def cumulative(self, *, axis: Axis | None = None) -> graph.Node:
         """Return a graph node computing the cumulative (running) sum of this index along the given axis.
@@ -555,7 +554,7 @@ class GenericIndex(ABC):
                 index's sole DOMAIN axis; required when the index carries
                 several.
         """
-        return graph.cumulative(self.node, self._resolve_domain_axis(axis))
+        return self.node.cumulative(self._resolve_domain_axis(axis))
 
     def gradient(self, *, axis: Axis | None = None) -> graph.Node:
         """Return a graph node computing the first partial derivative of this index along the given axis.

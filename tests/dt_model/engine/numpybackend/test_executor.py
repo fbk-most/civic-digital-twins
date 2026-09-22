@@ -807,3 +807,19 @@ def test_projection_rejects_an_axis_outside_the_declared_domain_axes():
     state = executor.State({p: np.array([1.0, 2.0])}, domain_axes=(space,))
     with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
         executor.evaluate_nodes(state, *linearize.forest(proj))
+
+
+def test_multiply_result_sum_evaluates_correctly_without_wrapping():
+    """The AreaVerde regression, evaluated end-to-end.
+
+    ``(a * b).sum(axis)`` called directly on the bare Node produced by
+    multiplication (never wrapped in an Index) must compute the same
+    reduced value ``graph.project_using_sum(a * b, axis)`` would.
+    """
+    time_axis = Axis("time", DOMAIN)
+    a = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="a")
+    b = graph.array_constant([4.0, 5.0, 6.0], axes=(time_axis,), name="b")
+    result = (a * b).sum(time_axis)
+    state = executor.State({}, domain_axes=(time_axis,))
+    executor.evaluate_nodes(state, *linearize.forest(result))
+    assert np.array_equal(state.values[result], np.array([32.0]))  # 1*4 + 2*5 + 3*6

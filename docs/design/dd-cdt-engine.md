@@ -433,6 +433,13 @@ e.g. `axis=TIME_AXIS`. The NumPy backend currently only supports
 reducing along `TIME_AXIS` — passing any other `Axis` raises
 `UnsupportedOperation` at evaluation time.
 
+Each operator is also available as a same-named method directly on
+`graph.Node` — `node.sum(axis=TIME_AXIS)` is equivalent to
+`graph.project_using_sum(node, axis=TIME_AXIS)` — so a raw node produced by
+combining other nodes (e.g. `a * b`) does not need to be wrapped in
+anything to call it. `axis` is required either way; the engine layer never
+defaults it from an axis's semantic role.
+
 | Operation | NumPy Equivalent | Description |
 | --------- | --------------- | ----------- |
 | `graph.project_using_sum(node, axis=TIME_AXIS)` | `np.sum(..., keepdims=True)` | Sum reduction |
@@ -453,7 +460,12 @@ reducing along `TIME_AXIS` — passing any other `Axis` raises
 `GenericIndex` provides convenience wrapper methods for all axis reduction operators:
 `sum()`, `mean()`, `min()`, `max()`, `std()`, `var()`, `median()`, `prod()`,
 `any()`, `all()`, `count_nonzero()`, and `quantile(q)`. These are the recommended
-way to use axis reduction operations at the model layer.
+way to use axis reduction operations at the model layer. Unlike the
+`graph.Node` methods above, `axis` is optional here: it defaults to the
+index's unique DOMAIN axis, raising if there isn't exactly one (see
+[`GenericIndex`](dd-cdt-model.md#genericindex)). The same distinction
+applies to the per-axis operators `shift()`, `roll()`, `diff()`, and
+`cumulative()`, also mirrored on `graph.Node` with `axis` required.
 
 > **Note on keepdims semantics.**
 > All axis reduction operations always preserve the reduced axis as a size-1 dimension.
