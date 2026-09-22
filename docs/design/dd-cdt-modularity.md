@@ -638,8 +638,8 @@ differences that follow directly from the static/runtime distinction above:
 |---|---|---|
 | `mv.outputs` | proxied from active variant | each output field is an `Index` backed by a merged graph node |
 | `mv.inputs` | `dict[str, IOProxy]` keyed by variant — disjoint union | same disjoint union — identical to static |
-| `mv.expose` | intersection of field names across all variants, values from active | intersection of field names across all variants, values from a representative variant |
-| `mv.indexes` | active variant only | union of all variants' indexes + selector + merged output indexes |
+| `mv.expose` | intersection of field names across all variants, values from active | intersection of field names across all variants, each field backed by a merged graph node (dispatches per scenario, same as `outputs`) |
+| `mv.indexes` | active variant only | union of all variants' indexes + selector + merged output indexes + merged expose indexes |
 | `mv.abstract_indexes()` | active variant only | union of all variants' abstract indexes + selector (if `CategoricalIndex`) |
 | `mv.is_instantiated()` | delegates to active | always `False` |
 
@@ -1578,15 +1578,16 @@ class ModelVariant:
 |--------------------|---------|
 | `inputs` | `dict[str, IOProxy]` keyed by variant — identical to static mode |
 | `outputs` | `IOProxy` where each field is an `Index` backed by a merged `exclusive_multi_clause_where` graph node |
-| `expose` | `IOProxy` over the **intersection** of field names present in all variants, values from an arbitrary representative variant |
-| `indexes` | deduplicated union of all variants' `indexes` + selector (if `CategoricalIndex`) + merged output indexes |
+| `expose` | `IOProxy` over the **intersection** of field names present in all variants, each field likewise backed by a merged `exclusive_multi_clause_where` graph node — dispatches per scenario, same mechanism as `outputs` |
+| `indexes` | deduplicated union of all variants' `indexes` + selector (if `CategoricalIndex`) + merged output indexes + merged expose indexes |
 | `abstract_indexes()` | union of all variants' `abstract_indexes()` + selector (if `CategoricalIndex`) |
 | `is_instantiated()` | always `False` |
 | `_selector_index` | thin `Index` wrapping the selector node; `result[mv._selector_index]` → `(S, 1)` variant-key string array |
 
-`inputs` and `expose` are the two attributes with identical logic in both rows above; every other
-attribute genuinely differs by mode. They differ from each other in strictness — `inputs` never
-merges by field name (disjoint union), `expose` merges down to the common subset (intersection).
+`inputs` is the one attribute with identical logic *and* identical mechanism in both rows above —
+a plain disjoint union either way. `expose`'s field-set *rule* (the intersection) is likewise
+mode-independent, but its *mechanism* now differs by mode just like `outputs`': static mode still
+proxies the active variant directly, runtime mode dispatches per scenario via a merged graph node.
 See "Why is `expose` narrowed to the intersection in both modes?" below.
 
 **`guards_to_selector(guards)`**
