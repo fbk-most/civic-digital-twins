@@ -186,6 +186,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overridable, never swept per ensemble member, never added to
   `self.indexes` — and `@config` rejects any field holding a `GenericIndex`
   (the opposite direction from `@inputs`, which requires one).
+- `default_config()` — the same `default_inputs()`/`default_fns()` class-method
+  idiom, returning a pre-populated `Config` instance for the reference
+  scenario. 
 
 **Typed parameter schema and scenario builder**
 

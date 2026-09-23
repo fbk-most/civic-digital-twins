@@ -503,6 +503,10 @@ Three boundaries keep `@config` from becoming a second, ad hoc channel next to
   input-side only; there is no symmetric "raw output" escape hatch (no ad
   hoc `self.foo = bar` during `compute()`).
 
+A model that declares `@config` typically provides a matching `default_config()` class method, the
+same idiom as `default_inputs()`/`default_fns()` — see
+[dd-cdt-modularity.md](dd-cdt-modularity.md) for the full convention.
+
 ### Direct subclassing with `legacy=True`
 
 For composite models that wire sub-models together, or any model that cannot be expressed
