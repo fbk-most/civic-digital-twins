@@ -211,6 +211,12 @@ the full [`CI (release)`](.github/workflows/ci-release.yml) workflow (all
 Python versions, doc examples, domain examples, SPDX check, dependency
 audit, and build smoke test).
 
+Significant portions of this codebase — implementation, tests, and
+documentation — are developed with AI coding assistants (primarily
+Claude/Claude Code, also GitHub Copilot and OpenAI tools), directed and
+reviewed by the project's maintainers, who remain responsible for the
+correctness and design of everything merged.
+
 ## Updating Dependencies
 
 ```bash

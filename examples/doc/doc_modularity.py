@@ -22,6 +22,7 @@ from civic_digital_twins.dt_model import (
     NumpyBackend,
     Scenario,
     TimeseriesIndex,
+    config,
     define,
     expose,
     functions,
@@ -244,6 +245,46 @@ assert pipeline.outputs.result is not None
 assert pipeline.is_instantiated() is False
 # The wired output is reachable through the pipeline's index list
 assert _id_in(pipeline.outputs.result, pipeline.indexes)
+
+
+# ---------------------------------------------------------------------------
+# dd-cdt-modularity.md — default_inputs()/default_fns()/default_config()
+# class methods (default_inputs() receiving a sibling default_config())
+# ---------------------------------------------------------------------------
+
+
+@define("Zone")
+class ZoneModel(Model):
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    @inputs
+    class Inputs:
+        capacity: Index
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    @classmethod
+    def default_config(cls) -> Config:
+        return cls.Config(policy="default")
+
+    @classmethod
+    def default_inputs(cls, config: Config) -> Inputs:
+        capacity = 200.0 if config.policy == "peak" else 100.0
+        return cls.Inputs(capacity=ConstIndex("zone_capacity", capacity))
+
+    def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+        cost = Index("zone_cost", inputs.capacity * 2.0)
+        return ZoneModel.Outputs(cost=cost)
+
+
+zone_config = ZoneModel.default_config()
+m = ZoneModel(inputs=ZoneModel.default_inputs(zone_config), config=zone_config)
+assert m.outputs.cost is not None
 
 
 # ---------------------------------------------------------------------------

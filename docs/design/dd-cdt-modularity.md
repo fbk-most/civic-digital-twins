@@ -238,11 +238,14 @@ class PipelineModel(Model):
         return PipelineModel.Outputs(result=stage_b.outputs.result)
 ```
 
-### `default_inputs()` class method
+### `default_inputs()`, `default_fns()`, `default_config()` class methods
 
-Models with many inputs often provide a `default_inputs()` class method that returns a pre-populated
-`Inputs` instance for the reference scenario.  Callers can construct the model directly from defaults
-or override individual fields:
+Models with many inputs, functions, or config fields often provide a `default_inputs()`,
+`default_fns()`, and/or `default_config()` class method — one per declared contract that needs
+reference-scenario values — each returning a pre-populated instance of that contract.  Callers can
+construct the model directly from defaults or override individual fields.  `BikeModel` below only
+needs `default_inputs()`, and its `capacity` parameter shows that a `default_XXX()` method may itself
+take arguments to parametrize the reference scenario it builds:
 
 ```python
 @define("Bike")
@@ -265,8 +268,44 @@ class BikeModel(Model):
         return BikeModel.Outputs(emissions=emissions)
 ```
 
-Models that also declare a `@functions` inner class may similarly provide a `default_fns()` class
-method returning a pre-populated `Functions` instance — see the next section.
+A model that also declares a `@functions` and/or `@config` inner class typically provides the
+matching `default_fns()`/`default_config()` class method the same way.  A `default_XXX()` method's
+argument is not limited to a plain scalar — it can be another contract instance, including one
+produced by a sibling `default_XXX()` method.  A common case is `default_inputs()` picking its values
+based on the `Config` returned by `default_config()`:
+
+```python
+@define("Zone")
+class ZoneModel(Model):
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    @inputs
+    class Inputs:
+        capacity: Index
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    @classmethod
+    def default_config(cls) -> Config:
+        return cls.Config(policy="default")
+
+    @classmethod
+    def default_inputs(cls, config: Config) -> Inputs:
+        capacity = 200.0 if config.policy == "peak" else 100.0
+        return cls.Inputs(capacity=ConstIndex("zone_capacity", capacity))
+
+    def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+        cost = Index("zone_cost", inputs.capacity * 2.0)
+        return ZoneModel.Outputs(cost=cost)
+
+zone_config = ZoneModel.default_config()
+m = ZoneModel(inputs=ZoneModel.default_inputs(zone_config), config=zone_config)
+```
 
 ### `@functions` — typed functor injection
 
