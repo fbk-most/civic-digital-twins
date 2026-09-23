@@ -591,11 +591,10 @@ class GenericIndex(ABC):
     def gradient(self, *, axis: Axis | None = None) -> graph.Node:
         """Return a graph node computing the first partial derivative of this index along the given axis.
 
-        The axis must carry :class:`~..axes.SpaceType` metadata (spacing) —
-        see :class:`~..axes.DomainAxis`. Computed via central differences,
-        one-sided at the array boundary (no boundary condition is applied:
-        unlike :meth:`laplacian`, a first derivative needs no value outside
-        the array to evaluate at the edge).
+        The axis must carry :class:`~..axes.SpaceType` metadata (spacing and
+        boundary condition) — see :class:`~..axes.DomainAxis`. Computed via
+        central differences, honoring the axis's declared
+        :class:`~..axes.BoundaryCondition` at the two ends.
 
         Args:
             axis: Semantic ``SpaceType`` axis along which to differentiate.
@@ -604,7 +603,7 @@ class GenericIndex(ABC):
         """
         resolved = self._resolve_domain_axis(axis)
         space_type = _require_space_type(resolved)
-        return graph.gradient(self.node, resolved, space_type.spacing)
+        return graph.gradient(self.node, resolved, space_type.spacing, space_type.boundary)
 
     def laplacian(self, *, axes: tuple[Axis, ...] | None = None) -> graph.Node:
         """Return a graph node computing the Laplacian (sum of second partial derivatives) of this index.

@@ -608,12 +608,12 @@ def test_iter_node_deps_axis_op():
 
 def test_iter_node_deps_laplacian():
     """function_call reachable through a laplacian node is claimed."""
-    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis, Reflect
 
     p = graph.placeholder("inp", default_value=1.0)
     fc = graph.function_call("solve", p)
     axis = Axis("x", DOMAIN)
-    lap = graph.laplacian(fc, (axis,), (1.0,), ("reflect",))
+    lap = graph.laplacian(fc, (axis,), (1.0,), (Reflect,))
     inp_idx = Index("inp", p)
     functor = NumpyBackend.adapt(lambda x: x)
     m = _simple_model_with_output(lap, inp_idx, functor)

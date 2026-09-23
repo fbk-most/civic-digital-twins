@@ -117,18 +117,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   methods reading no axis metadata — matching xarray's own `shift` (fill, a
   plain `fill_value`) vs. `roll` (circular) split. `diff` composes as
   `self - self.shift(...)`, so it needs no new graph node. `gradient`
-  (`np.gradient`, central differences) and `laplacian` (a padded
-  finite-difference stencil honoring each axis's `SpaceType.boundary`,
-  summed isotropically over one or more axes) read their axis's
-  `spacing`/`boundary` once at graph-construction time and bake
-  the resolved values onto the new `graph.shift`/`graph.roll`/
-  `graph.cumulative`/`graph.gradient`/`graph.laplacian` nodes — axis `type`
-  is not reliably available at evaluation time, since `DomainAxis` equality
-  and hashing deliberately exclude it. `numpy_ast`'s debug codegen renders
-  `roll`/`cumulative`/`gradient` as direct `np.*` calls and `shift`/
-  `laplacian` (which have no single-call NumPy equivalent) as calls to a
-  small local helper, mirroring how it already renders user-defined
-  functions as bare-name calls.
+  (first derivative) and `laplacian` (sum of second derivatives, isotropic,
+  over one or more axes) are both padded finite-difference stencils
+  honoring each axis's declared `SpaceType.boundary` at its two ends, via
+  shared ghost-padding logic in `numpybackend/kernels.py`. They read their
+  axis's `spacing`/`boundary` once at graph-construction
+  time and bake the resolved values onto the new
+  `graph.shift`/`graph.roll`/`graph.cumulative`/`graph.gradient`/
+  `graph.laplacian` nodes — axis `type` is not reliably available at
+  evaluation time, since `DomainAxis` equality and hashing deliberately
+  exclude it. `numpy_ast`'s debug codegen renders `roll`/`cumulative` as
+  direct `np.*` calls and `shift`/`gradient`/`laplacian` (which have no
+  single-call NumPy equivalent) as calls to a small local helper, mirroring
+  how it already renders user-defined functions as bare-name calls.
+- **`BoundaryCondition` vocabulary.** `SpaceType.boundary` is a closed set
+  of typed classes — `Constant(value=0.0)` (field value fixed at the
+  border; `Dirichlet` is a plain alias for the same class, for callers who
+  prefer the PDE-standard term), `Neumann(value=0.0)` (spatial derivative
+  fixed at the border; `SpaceType`'s default is `Reflect`, a plain alias
+  for the `Neumann(0.0)` singleton, the classical zero-flux/"reflecting"
+  case), `Nearest()` (repeats the outermost cell), `Wrap()` (periodic,
+  opposite borders connect), and `Linear()` (extends the local linear
+  trend). `Constant`, `Dirichlet`, `Neumann`, `Reflect`, `Nearest`, `Wrap`,
+  `Linear`, and `BoundaryCondition` are all exported from
+  `civic_digital_twins.dt_model`.
 - **Shaped `DistributionIndex`.** `DistributionIndex` accepts `axes=`/`shape=`
   (given together) — a domain-shaped grid of independent draws, every cell
   resampled fresh per ensemble sample. Threaded through `DistributionEnsemble`,
