@@ -4,7 +4,7 @@
 
 import pytest
 
-from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis, Reflect
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 
 
@@ -226,7 +226,7 @@ def test_laplacian_operations():
     y_axis = Axis("y", DOMAIN)
 
     field = graph.array_constant([[1.0, 2.0], [3.0, 4.0]], axes=(x_axis, y_axis))
-    lap = graph.laplacian(field, (x_axis, y_axis), (1.0, 1.0), ("reflect", "reflect"))
+    lap = graph.laplacian(field, (x_axis, y_axis), (1.0, 1.0), (Reflect, Reflect))
     result = graph.add(x, lap)
 
     plan = linearize.forest(result)

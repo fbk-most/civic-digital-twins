@@ -16,7 +16,17 @@ where ``body(r)`` strips the leading ``nX = `` assignment.
 
 from typing import Any
 
-from civic_digital_twins.dt_model.axes import DOMAIN, Axis, DomainAxis, TimeType
+from civic_digital_twins.dt_model.axes import (
+    DOMAIN,
+    Axis,
+    Constant,
+    DomainAxis,
+    Linear,
+    Nearest,
+    Neumann,
+    TimeType,
+    Wrap,
+)
 from civic_digital_twins.dt_model.engine.frontend import graph
 
 
@@ -36,7 +46,17 @@ def _assert_roundtrip(node: graph.Node, extra_ctx: dict[str, Any] | None = None)
     Exec's ``repr(node)`` in a context that contains ``graph``, ``Axis``,
     and all provided dependency nodes, then checks body equality.
     """
-    ctx: dict[str, Any] = {"graph": graph, "Axis": Axis, "DomainAxis": DomainAxis, "TimeType": TimeType}
+    ctx: dict[str, Any] = {
+        "graph": graph,
+        "Axis": Axis,
+        "DomainAxis": DomainAxis,
+        "TimeType": TimeType,
+        "Constant": Constant,
+        "Linear": Linear,
+        "Nearest": Nearest,
+        "Neumann": Neumann,
+        "Wrap": Wrap,
+    }
     if extra_ctx:
         ctx.update(extra_ctx)
     exec(repr(node), ctx)  # noqa: S102
@@ -207,8 +227,8 @@ def test_axis_ops() -> None:
     _assert_roundtrip(graph.shift(a, ax, periods=2, fill_value=1.5), deps)
     _assert_roundtrip(graph.roll(a, ax, periods=2), deps)
     _assert_roundtrip(graph.cumulative(a, ax), deps)
-    _assert_roundtrip(graph.gradient(a, space_ax, spacing=0.5), deps)
-    _assert_roundtrip(graph.laplacian(a, (space_ax,), (0.5,), ("reflect",)), deps)
+    _assert_roundtrip(graph.gradient(a, space_ax, spacing=0.5, boundary=Neumann(1.5)), deps)
+    _assert_roundtrip(graph.laplacian(a, (space_ax,), (0.5,), (Constant(2.0),)), deps)
 
 
 # ---------------------------------------------------------------------------

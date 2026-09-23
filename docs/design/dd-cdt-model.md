@@ -112,11 +112,17 @@ GenericIndex  (ABC)
     split), `.diff(periods=1, *, axis=..., fill_value=0.0)`
     (`self - self.shift(...)`), and `.cumulative(*, axis=...)` (running sum).
   - A `SpaceType` DOMAIN axis additionally supports `.gradient(*, axis=...)`
-    (first derivative, central differences, reading the axis's `spacing`)
-    and `.laplacian(*, axes=...)` (sum of second derivatives over one or
-    more `SpaceType` axes — the isotropic operator a diffusion process
-    needs — reading each axis's `spacing` and `boundary`). Calling either on
-    a non-`SpaceType` axis raises `ValueError`.
+    (first derivative, central differences) and `.laplacian(*, axes=...)`
+    (sum of second derivatives over one or more `SpaceType` axes — the
+    isotropic operator a diffusion process needs). Both read the axis's
+    `spacing` *and* `boundary` — a `BoundaryCondition` (`Constant`, aliased
+    as `Dirichlet` for the PDE-standard name; `Neumann`, whose `value=0.0`
+    default is aliased as `Reflect`; `Nearest`; `Wrap`; or `Linear`; see
+    `axes.py`) honored at the two ends of the axis via a shared
+    ghost-padding stencil, so a formula combining several `SpaceType` axes
+    gets consistent edge behavior from both operators. Calling either on a
+    non-`SpaceType` axis raises
+    `ValueError`.
 - **`.broadcast(*axes)`** — returns a `graph.Node` considered to also carry
   each axis in *axes* not already present, via `graph.broadcast_to`
   (§ [Broadcasting](dd-cdt-engine.md#broadcasting)). Needed because `axes=`

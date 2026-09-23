@@ -9,13 +9,13 @@ SpaceType-gated spatial operators.
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.axes import TIME_AXIS, DomainAxis, SpaceType
+from civic_digital_twins.dt_model.axes import TIME_AXIS, DomainAxis, Reflect, SpaceType, Wrap
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import Index
 
 _X_AXIS = DomainAxis("x", type=SpaceType(spacing=1.0))
-_Y_AXIS = DomainAxis("y", type=SpaceType(spacing=2.0, boundary="wrap"))
+_Y_AXIS = DomainAxis("y", type=SpaceType(spacing=2.0, boundary=Wrap()))
 
 
 class TestIndexGradientCreation:
@@ -73,7 +73,8 @@ class TestIndexLaplacianCreation:
         assert isinstance(result, graph.laplacian)
         assert result.axes == (_X_AXIS, _Y_AXIS)
         assert result.spacings == (1.0, 2.0)
-        assert result.boundaries == ("reflect", "wrap")
+        assert result.boundaries[0] is Reflect
+        assert isinstance(result.boundaries[1], Wrap)
 
     def test_laplacian_explicit_axes_subset(self):
         """laplacian(axes=...) restricts to the given axes."""

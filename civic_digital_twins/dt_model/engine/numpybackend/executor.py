@@ -756,9 +756,25 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
         return np.roll(operand, node.periods, axis=position)
     if isinstance(node, graph.cumulative):
         return np.cumsum(operand, axis=position)
-    if isinstance(node, graph.gradient):
-        return np.gradient(operand, node.spacing, axis=position)
     raise UnsupportedOperation(f"executor: unsupported axis operation: {type(node)}")
+
+
+def _eval_gradient(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a gradient node, honoring its declared boundary condition at the axis's two ends.
+
+    Resolves the axis to a numpy dimension exactly as :func:`_eval_axis_op`
+    does.
+    """
+    node = cast(graph.gradient, node)
+    try:
+        position = domain_axis_position(state.domain_axes, node.axis)
+    except ValueError:
+        raise UnsupportedOperation(
+            f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
+            f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
+        ) from None
+    operand = state.get_node_value(node.node)
+    return kernels.gradient(operand, position, node.spacing, node.boundary)
 
 
 def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
@@ -847,6 +863,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.MultiClauseOp, _eval_multi_clause_where_op),
     (graph.variant_selector, _eval_variant_selector_noop),
     (graph.ProjectionOp, _eval_projection_op),
+    (graph.gradient, _eval_gradient),
     (graph.AxisOp, _eval_axis_op),
     (graph.laplacian, _eval_laplacian),
     (graph.broadcast_to, _eval_broadcast_to),

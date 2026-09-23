@@ -8,11 +8,18 @@ from civic_digital_twins.dt_model.axes import (
     PARAMETER,
     TIME_AXIS,
     Axis,
+    Constant,
+    Dirichlet,
     DomainAxis,
+    Linear,
+    Nearest,
+    Neumann,
+    Reflect,
     SequenceType,
     SetType,
     SpaceType,
     TimeType,
+    Wrap,
     domain_axis_position,
     filter_by_role,
     union_axes,
@@ -111,13 +118,13 @@ class TestDomainAxis:
 
     def test_repr_roundtrip(self):
         """DomainAxis.__repr__ is executable and reconstructs an equal instance."""
-        ax = DomainAxis("x", type=SpaceType(spacing=5.0, boundary="wrap"))
-        ctx = {"DomainAxis": DomainAxis, "SpaceType": SpaceType}
+        ax = DomainAxis("x", type=SpaceType(spacing=5.0, boundary=Wrap()))
+        ctx = {"DomainAxis": DomainAxis, "SpaceType": SpaceType, "Wrap": Wrap}
         rebuilt = eval(repr(ax), ctx)  # noqa: S307
         assert rebuilt == ax
         assert isinstance(rebuilt.type, SpaceType)
         assert rebuilt.type.spacing == 5.0
-        assert rebuilt.type.boundary == "wrap"
+        assert isinstance(rebuilt.type.boundary, Wrap)
 
 
 class TestTimeAxisTyped:
@@ -153,16 +160,55 @@ class TestDomainTypeLattice:
 
     def test_space_type_is_a_sequence_type(self):
         """SpaceType extends SequenceType and carries a metric + boundary."""
-        s = SpaceType(spacing=2.5, boundary="constant")
+        s = SpaceType(spacing=2.5, boundary=Constant(1.0))
         assert isinstance(s, SequenceType)
         assert s.spacing == 2.5
-        assert s.boundary == "constant"
+        assert isinstance(s.boundary, Constant)
+        assert s.boundary.value == 1.0
 
     def test_space_type_defaults(self):
-        """SpaceType defaults to unit spacing and reflect boundary."""
+        """SpaceType defaults to unit spacing and the Reflect (zero-flux) boundary."""
         s = SpaceType()
         assert s.spacing == 1.0
-        assert s.boundary == "reflect"
+        assert s.boundary is Reflect
+
+
+class TestBoundaryConditions:
+    """BoundaryCondition classes: repr round-trip and default values."""
+
+    def test_constant_repr_and_default(self):
+        """Constant defaults to value=0.0 and has a round-trippable repr."""
+        assert Constant().value == 0.0
+        assert repr(Constant(2.5)) == "Constant(value=2.5)"
+
+    def test_dirichlet_is_an_alias_for_constant(self):
+        """Dirichlet is the same class as Constant, not a distinct subclass."""
+        assert Dirichlet is Constant
+        assert isinstance(Dirichlet(1.0), Constant)
+
+    def test_neumann_repr_and_default(self):
+        """Neumann defaults to value=0.0 (the zero-flux/"reflecting" case)."""
+        assert Neumann().value == 0.0
+        assert repr(Neumann(1.5)) == "Neumann(value=1.5)"
+
+    def test_reflect_is_an_alias_for_the_zero_flux_neumann_instance(self):
+        """Reflect is Neumann(0.0) itself, not a distinct subclass or a fresh equal instance."""
+        assert isinstance(Reflect, Neumann)
+        assert Reflect.value == 0.0
+        assert repr(Reflect) == "Neumann(value=0.0)"
+        assert SpaceType().boundary is Reflect
+
+    def test_nearest_repr(self):
+        """Nearest is a parameterless marker."""
+        assert repr(Nearest()) == "Nearest()"
+
+    def test_wrap_repr(self):
+        """Wrap is a parameterless marker."""
+        assert repr(Wrap()) == "Wrap()"
+
+    def test_linear_repr(self):
+        """Linear is a parameterless marker."""
+        assert repr(Linear()) == "Linear()"
 
 
 class TestTopLevelExports:

@@ -187,7 +187,7 @@ from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
-from ...axes import Axis, union_axes
+from ...axes import Axis, BoundaryCondition, Reflect, union_axes
 from .. import atomic, compileflags
 
 Scalar = bool | float | int | str
@@ -1476,24 +1476,35 @@ class cumulative[T](AxisOp[T]):
 class gradient[T](AxisOp[T]):
     """Computes the first partial derivative along a domain axis (central differences).
 
-    *spacing* is a plain value carried on the node; this class never
-    inspects the axis's own metadata (e.g. a ``SpaceType``) to derive it.
+    *spacing* and *boundary* are plain values carried on the node; this
+    class never inspects the axis's own metadata (e.g. a ``SpaceType``) to
+    derive them.
 
     Args:
         node: Input tensor.
         axis: Semantic axis along which to differentiate.
         spacing: Grid spacing between samples along *axis*.
+        boundary: Boundary-condition policy at the two ends of *axis*.
+            Defaults to ``Reflect`` (``Neumann(0.0)``, zero-flux).
     """
 
-    def __init__(self, node: Node[T], axis: Axis, spacing: float = 1.0, name: str = "") -> None:
+    def __init__(
+        self,
+        node: Node[T],
+        axis: Axis,
+        spacing: float = 1.0,
+        boundary: BoundaryCondition = Reflect,
+        name: str = "",
+    ) -> None:
         super().__init__(node, axis, name)
         self.spacing = spacing
+        self.boundary = boundary
 
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return (
             f"n{self.id} = graph.gradient(node=n{self.node.id}, axis={self.axis!r}, "
-            f"spacing={self.spacing!r}, name='{self.name}')"
+            f"spacing={self.spacing!r}, boundary={self.boundary!r}, name='{self.name}')"
         )
 
 
@@ -1520,7 +1531,7 @@ class laplacian[T](Node[T]):
         node: Node[T],
         axes: tuple[Axis, ...],
         spacings: tuple[float, ...],
-        boundaries: tuple[str, ...],
+        boundaries: tuple[BoundaryCondition, ...],
         name: str = "",
     ) -> None:
         super().__init__(name)

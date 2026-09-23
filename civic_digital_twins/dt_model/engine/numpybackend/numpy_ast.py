@@ -16,8 +16,9 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ...axes import domain_axis_position
+from ...axes import BoundaryCondition, Constant, Neumann, domain_axis_position
 from ..frontend import graph
+from .kernels import gradient as _gradient  # noqa: F401 (re-exported: generated code calls it by this name)
 from .kernels import laplacian as _laplacian  # noqa: F401 (re-exported: generated code calls it by this name)
 from .kernels import shift as _shift  # noqa: F401 (re-exported: generated code calls it by this name)
 
@@ -99,19 +100,34 @@ _operation_names: dict[type[graph.Node], str] = {
     _InternalTestingNode: "_internal_testing",
 }
 
-_BARE_NAME_OPERATIONS: tuple[type[graph.Node], ...] = (graph.shift, graph.laplacian)
+_BARE_NAME_OPERATIONS: tuple[type[graph.Node], ...] = (graph.shift, graph.gradient, graph.laplacian)
 """Node types whose generated call targets a bare, underscore-prefixed name
 (``_<name>``) rather than ``np.<name>``.
 
-``shift`` (fill-padded, unlike the circular ``roll``) and ``laplacian`` (a
-multi-axis finite-difference stencil) have no single-call NumPy equivalent,
-so they render as calls to :func:`kernels.shift`/:func:`kernels.laplacian`
-(imported above as ``_shift``/``_laplacian``) instead — mirroring how
-:func:`_graph_function_to_ast_expr` already renders user-defined functions
-as bare-name calls. The leading underscore is added at the call site (see
-"create function call expr" below), not stored in ``_operation_names``. See
-``kernels.py`` for why the underlying logic lives in one shared module
-rather than being reimplemented here."""
+``shift`` (fill-padded, unlike the circular ``roll``), ``gradient``, and
+``laplacian`` (finite-difference stencils honoring a boundary condition)
+have no single-call NumPy equivalent, so they render as calls to
+:func:`kernels.shift`/:func:`kernels.gradient`/:func:`kernels.laplacian`
+(imported above as ``_shift``/``_gradient``/``_laplacian``) instead —
+mirroring how :func:`_graph_function_to_ast_expr` already renders
+user-defined functions as bare-name calls. The leading underscore is added
+at the call site (see "create function call expr" below), not stored in
+``_operation_names``. See ``kernels.py`` for why the underlying logic lives
+in one shared module rather than being reimplemented here."""
+
+
+def _boundary_to_ast_expr(boundary: BoundaryCondition) -> ast.expr:
+    """Render a ``BoundaryCondition`` instance as a constructor-call AST expr.
+
+    ``ast.Constant`` only accepts literal values, not arbitrary objects, so
+    a boundary condition (a plain object, not a literal) needs its own
+    small AST built by hand: a call to its class's bare name, mirroring how
+    its ``__repr__`` renders it.
+    """
+    kwargs: list[ast.keyword] = []
+    if isinstance(boundary, (Constant, Neumann)):
+        kwargs.append(ast.keyword("value", ast.Constant(value=boundary.value)))
+    return ast.Call(func=ast.Name(id=type(boundary).__name__, ctx=ast.Load()), args=[], keywords=kwargs)
 
 
 def _node_name(node: graph.Node) -> str:
@@ -277,35 +293,41 @@ def _simple_graph_node_to_ast_expr(
         ):
             kwargs.append(ast.keyword("keepdims", ast.Constant(value=True)))
 
-    # 11. evaluate axis operations (shape-preserving)
+    # 11. evaluate gradient (shape-preserving, boundary-aware)
+    elif isinstance(node, graph.gradient):
+        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
+        (position,) = _axis_as_tuple(node.axis, domain_axes)
+        kwargs.append(ast.keyword("axis", ast.Constant(value=position)))
+        kwargs.append(ast.keyword("spacing", ast.Constant(value=node.spacing)))
+        kwargs.append(ast.keyword("boundary", _boundary_to_ast_expr(node.boundary)))
+
+    # 12. evaluate axis operations (shape-preserving)
     elif isinstance(node, graph.AxisOp):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         (position,) = _axis_as_tuple(node.axis, domain_axes)
         if isinstance(node, (graph.shift, graph.roll)):
             posargs.append(ast.Constant(value=node.periods))
-        if isinstance(node, graph.gradient):
-            posargs.append(ast.Constant(value=node.spacing))
         kwargs.append(ast.keyword("axis", ast.Constant(value=position)))
         if isinstance(node, graph.shift):
             kwargs.append(ast.keyword("fill_value", ast.Constant(value=node.fill_value)))
 
-    # 12. evaluate laplacian (shape-preserving, multi-axis)
+    # 13. evaluate laplacian (shape-preserving, multi-axis)
     elif isinstance(node, graph.laplacian):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         positions = tuple(_axis_as_tuple(ax, domain_axes)[0] for ax in node.axes)
         kwargs.append(ast.keyword("axes", ast.Tuple(elts=[ast.Constant(value=p) for p in positions])))
         kwargs.append(ast.keyword("spacings", ast.Tuple(elts=[ast.Constant(value=s) for s in node.spacings])))
-        kwargs.append(ast.keyword("boundaries", ast.Tuple(elts=[ast.Constant(value=b) for b in node.boundaries])))
+        kwargs.append(ast.keyword("boundaries", ast.Tuple(elts=[_boundary_to_ast_expr(b) for b in node.boundaries])))
 
-    # 13. evaluate broadcast_to (structural passthrough, no reshape)
+    # 14. evaluate broadcast_to (structural passthrough, no reshape)
     elif isinstance(node, graph.broadcast_to):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
 
-    # 14. catch all for not implemented operations
+    # 15. catch all for not implemented operations
     else:
         raise UnsupportedNodeArguments(f"numpy_ast: unsupported node type: {type(node)}")
 
-    # 15. create function call expr
+    # 16. create function call expr
     is_bare_name = type(node) in _BARE_NAME_OPERATIONS
     func = ast.Name(id=f"_{opname}", ctx=ast.Load()) if is_bare_name else _np_attr_name(opname)
     return ast.Call(func=func, args=posargs, keywords=kwargs)

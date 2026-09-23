@@ -10,7 +10,7 @@ Overview" for the module-role convention behind this layout.)
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Iterable, Sequence
-from typing import Literal, Protocol
+from typing import Protocol
 
 __all__ = [
     "AxisRole",
@@ -24,6 +24,14 @@ __all__ = [
     "SequenceType",
     "TimeType",
     "SpaceType",
+    "BoundaryCondition",
+    "Constant",
+    "Dirichlet",
+    "Neumann",
+    "Reflect",
+    "Nearest",
+    "Wrap",
+    "Linear",
     "TIME_AXIS",
     "domain_axis_position",
     "filter_by_role",
@@ -179,6 +187,119 @@ class TimeType(SequenceType):
         return "TimeType()"
 
 
+class Constant:
+    """Boundary condition: the field value just outside the domain is fixed to a constant.
+
+    ``field[border+1] = value`` — the ghost point beyond the domain edge is
+    pinned to *value*, independent of the field's actual data (the classical
+    Dirichlet boundary condition — :data:`Dirichlet` is a plain alias for
+    this class, for callers who prefer the PDE-standard term).
+
+    Parameters
+    ----------
+    value:
+        The fixed field value at the border.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: float = 0.0) -> None:
+        self.value = value
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"Constant(value={self.value!r})"
+
+
+Dirichlet = Constant
+"""Alias for :class:`Constant` — the classical PDE name for the same boundary condition."""
+
+
+class Neumann:
+    """Boundary condition: the spatial derivative just outside the domain is fixed to a constant.
+
+    On the right border: ``field[N+1] = field[N-1] + 2 * spacing * value``.
+    On the left border: ``field[0] = field[2] - 2 * spacing * value``. Each
+    ghost point is chosen so the central-difference derivative *at that
+    border node* equals *value* exactly. *value*'s sign is the derivative
+    in the direction of increasing index — the same on both borders, so a
+    field with a genuinely constant slope gets that slope back at both ends
+    (the minus sign on the left is not a special case: it falls out of
+    solving the same central-difference equation at the left node).
+    ``Neumann()`` (``value=0.0``, the zero-flux/"reflecting" case) is
+    :class:`SpaceType`'s default boundary — :data:`Reflect` is a plain
+    alias for that specific instance, for callers who prefer the
+    descriptive name over ``Neumann(0.0)``.
+
+    Parameters
+    ----------
+    value:
+        The fixed spatial derivative at the border, in the direction of
+        increasing index.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: float = 0.0) -> None:
+        self.value = value
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return f"Neumann(value={self.value!r})"
+
+
+Reflect = Neumann(0.0)
+"""Alias for the zero-flux ``Neumann(0.0)`` instance — :class:`SpaceType`'s default boundary."""
+
+
+class Nearest:
+    """Boundary condition: values just outside the domain repeat the outermost cell.
+
+    ``field[border+1] = field[border]``.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return "Nearest()"
+
+
+class Wrap:
+    """Boundary condition: opposite borders of the domain connect to each other (periodic).
+
+    ``field[border+1] = field[opposite_border]``.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return "Wrap()"
+
+
+class Linear:
+    """Boundary condition: values just outside the domain extend the local linear trend.
+
+    ``field[border+1] = 2 * field[border] - field[border-1]``.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return a round-trippable string representation."""
+        return "Linear()"
+
+
+BoundaryCondition = Constant | Neumann | Nearest | Wrap | Linear
+"""Closed vocabulary of boundary-condition policies for :class:`SpaceType`.
+
+The finite-difference operators that consume this (``gradient``,
+``laplacian``) own the runtime semantics; this module only carries the
+declared policy and its parameter, if any.
+"""
+
+
 class SpaceType(SequenceType):
     """:class:`SequenceType` with a metric (grid spacing) and boundary condition.
 
@@ -188,10 +309,9 @@ class SpaceType(SequenceType):
         Grid spacing used by finite-difference operators (gradient,
         laplacian).
     boundary:
-        Boundary-condition policy for neighbourhood operators: one of
-        ``"reflect"``, ``"constant"``, ``"wrap"``, ``"nearest"``. The value
-        is validated at authoring time by the ``Literal`` annotation; the
-        finite-difference operators that consume it own the runtime semantics.
+        Boundary-condition policy for neighbourhood operators — a
+        :data:`BoundaryCondition` instance. Defaults to :data:`Reflect`
+        (``Neumann(0.0)``, zero-flux / "reflecting").
     """
 
     __slots__ = ("spacing", "boundary")
@@ -199,7 +319,7 @@ class SpaceType(SequenceType):
     def __init__(
         self,
         spacing: float = 1.0,
-        boundary: Literal["reflect", "constant", "wrap", "nearest"] = "reflect",
+        boundary: BoundaryCondition = Reflect,
     ) -> None:
         self.spacing = spacing
         self.boundary = boundary
