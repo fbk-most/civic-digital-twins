@@ -222,6 +222,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+**`ModelVariant` outputs/inputs/expose semantics**
+
+- **Breaking:** `ModelVariant.expose` now returns the field-name
+  **intersection** across all declared variants, in both static and runtime
+  mode — static mode was previously a full, unchecked passthrough to the
+  active variant, so which fields were accessible silently depended on
+  which variant happened to be selected.
+- **Breaking:** `ModelVariant.inputs` is now a **disjoint union**
+  (`dict[str, IOProxy]` keyed by variant), never merged by field name in
+  either mode — the previous runtime-mode "first-seen-wins" union could
+  silently return one variant's value for a field name that coincidentally
+  matched another variant's.
+- `ModelVariant.outputs`/`.expose` can now be nested as a bulk field inside a
+  parent model's own `@outputs`/`@expose`, matching what already worked for
+  a plain `Model`.
+
 - `Node[T]`'s documentation (`dd-cdt-engine.md`, `graph.py`'s module
   docstring, `doc_engine.py`) no longer frames `T` around array dimensions
   (`TimeDimension`/`EnsembleDimension`) — that reads as a second, competing
@@ -313,22 +329,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remains `True`, keeping `TimeseriesIndex` usable as the "time-shaped,
   whatever the value source" annotation in model `Inputs`/`Outputs`
   contracts.  Its constructor, node type, and `repr` are unchanged.
-
-**`ModelVariant` outputs/inputs/expose semantics**
-
-- **Breaking:** `ModelVariant.expose` now returns the field-name
-  **intersection** across all declared variants, in both static and runtime
-  mode — static mode was previously a full, unchecked passthrough to the
-  active variant, so which fields were accessible silently depended on
-  which variant happened to be selected.
-- **Breaking:** `ModelVariant.inputs` is now a **disjoint union**
-  (`dict[str, IOProxy]` keyed by variant), never merged by field name in
-  either mode — the previous runtime-mode "first-seen-wins" union could
-  silently return one variant's value for a field name that coincidentally
-  matched another variant's.
-- `ModelVariant.outputs`/`.expose` can now be nested as a bulk field inside a
-  parent model's own `@outputs`/`@expose`, matching what already worked for
-  a plain `Model`.
 
 ### Fixed
 
