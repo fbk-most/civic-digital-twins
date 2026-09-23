@@ -69,6 +69,26 @@ def _demo_01_categorical_index() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Block 02: dd-cdt-model.md — CategoricalIndex: weight-free form
+# ---------------------------------------------------------------------------
+
+
+def _demo_02_categorical_index_weight_free() -> None:
+    """Block 02: CategoricalIndex weight-free (support-only) form."""
+    from civic_digital_twins.dt_model import CategoricalIndex
+
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+
+    assert mode_param.support == ["bike", "train"]
+    try:
+        mode_param.outcomes
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
+
+
+# ---------------------------------------------------------------------------
 # Block 03: dd-cdt-model.md — ConditionalCategoricalIndex
 # ---------------------------------------------------------------------------
 
@@ -466,6 +486,7 @@ def _demo_18_19_overtourism() -> None:
 
 _demo_00_index_modes()
 _demo_01_categorical_index()
+_demo_02_categorical_index_weight_free()
 _demo_03_conditional_categorical_index()
 _demo_04_conditional_distribution_index()
 _demo_02_timeseries_index()
