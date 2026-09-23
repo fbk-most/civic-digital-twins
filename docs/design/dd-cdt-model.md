@@ -227,7 +227,7 @@ abstract and must be resolved in every scenario.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | `str` | Human-readable name. |
-| `outcomes` | `dict[str, float]` | Maps outcome key to probability.  Values must be positive and sum to 1.0. |
+| `outcomes` | `dict[str, float] \| Iterable[str]` | A weighted mapping from outcome key to probability (positive, summing to 1.0), or a bare, weight-free set of outcome keys — see below. |
 
 ```python
 from civic_digital_twins.dt_model import CategoricalIndex
@@ -237,6 +237,16 @@ mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
 
 Because the full `GenericIndex` algebra protocol is inherited, `mode == "bike"` produces a
 `graph.equal` node usable in formulas and `graph.piecewise` guards.
+
+`outcomes` may also be a bare `Iterable[str]` with no weights, for indexes only ever used
+where weights don't matter — guard conditions and deterministic `parameters=` grid sweeps:
+
+```python
+mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+```
+
+Such a *weight-free* index has `.support` but no `.outcomes`: accessing `.outcomes` or calling
+`.sample()` raises `ValueError` rather than silently assuming uniform weights.
 
 For the usage pattern and integration with `ModelVariant`, see
 [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection).

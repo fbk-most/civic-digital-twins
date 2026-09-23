@@ -129,6 +129,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `laplacian` (which have no single-call NumPy equivalent) as calls to a
   small local helper, mirroring how it already renders user-defined
   functions as bare-name calls.
+- **Shaped `DistributionIndex`.** `DistributionIndex` accepts `axes=`/`shape=`
+  (given together) — a domain-shaped grid of independent draws, every cell
+  resampled fresh per ensemble sample. Threaded through `DistributionEnsemble`,
+  `PartitionedEnsemble`, and `CrossProductEnsemble`'s non-conditional branch
+  (`ConditionalDistributionIndex` and `sample_across` remain out of scope —
+  the distribution itself varies per replicate there). `named_shape(prefix,
+  axes)` generalizes the hand-written `TimeseriesIndex`/`ConstTimeseriesIndex`
+  "named shape" recipe (subclass, fix `FIXED_AXES`, thread `axes=` through
+  `__init__`) into one call producing all three index kinds at once:
+  `{prefix}Index`, `Const{prefix}Index`, `Distribution{prefix}Index`.
+- **Axis-taking methods promoted to `graph.Node`.** The 16 axis-taking
+  convenience methods (`sum`/`mean`/…/`shift`/`roll`/`cumulative`/`diff`)
+  previously existed only on `GenericIndex`; they're now on `graph.Node`
+  itself, each requiring `axis` explicitly with no DOMAIN-role defaulting
+  (that stays a model-layer convenience). `GenericIndex`'s own methods now
+  delegate to `self.node.<method>(resolved_axis)` instead of duplicating the
+  `graph.project_using_*` calls.
+- **`graph.Node.broadcast(*axes)`** (backed by a new `graph.broadcast_to`
+  node) — returns a node considered to also carry each axis in `*axes` it
+  doesn't already carry, with implicit size-1 extent there. Needed because
+  `axes=` on `Index(...)` only *verifies* a formula's inferred axes rather
+  than declaring or overriding them. Purely structural — never touches data;
+  the numpy backend evaluates it as a pure passthrough, since every node's
+  evaluated array is already padded to the evaluation's full DOMAIN-axis
+  block regardless of what `output_axes` declares. `GenericIndex.broadcast(*axes)`
+  delegates to the same-named `graph.Node` method.
+
+**Operator vocabulary expansion**
+
+- `graph.sqrt`/`abs`/`minimum`/`modulo`/`floor`/`ceil`/`round`/`sign` — eight
+  new math operators, following the existing `exp`/`log`/`maximum` pattern.
+- `Index`/`GenericIndex` gain the logical dunders `&`/`|`/`^`/`~`
+  (`__and__`/`__rand__`/`__or__`/`__ror__`/`__xor__`/`__rxor__`/`__invert__`),
+  mirroring `graph.Node`'s existing ones.
+
+**Construction-time configuration (`@config`)**
+
+- `@config` decorator and a model's `Config` inner class — construction-time,
+  non-`Index` data (policy strings, small lookup dicts, selector values) that
+  `compute()` needs to pick a formula branch or parametrize a nested
+  `ModelVariant`, but that has no business being wrapped as an `Index`. A
+  `Config` field is baked in once at construction — never `Scenario`-
+  overridable, never swept per ensemble member, never added to
+  `self.indexes` — and `@config` rejects any field holding a `GenericIndex`
+  (the opposite direction from `@inputs`, which requires one).
+
+**Typed parameter schema and scenario builder**
+
+- `ParameterMeta` — typed replacement for `ModelEvaluator.input_schema()`'s
+  return shape (previously untyped `dict[str, dict[str, Any]]`), giving each
+  tunable parameter's kind, default, and (for distribution-backed
+  parameters) enough metadata to reconstruct a frozen `scipy.stats`
+  distribution. `build_scenario()` is the round-trip counterpart: resolves a
+  string-keyed `param_overrides` dict — the shape a frontend submits — into
+  a `Scenario`, dispatching on `ParameterMeta.kind`. Lives in
+  `simulation/runner.py`, to avoid a circular import back into `scenario.py`.
+  `EvaluationConfig` gained `ensemble_seed` (converted to an
+  `np.random.Generator` by `ModelEvaluator.make_ensemble()`'s default) and
+  `n_samples_per_combo`, read by evaluators that build their own
+  `CrossProductEnsemble`.
+
+**Contract validation tightening**
+
+- `Model.__init__`'s contract validators now check direction and depth that
+  were previously unchecked: an `@expose`-marked value can no longer be
+  smuggled into an `@outputs` field; `config=` is now type-checked against
+  the declared `Config` class at the model boundary
+  (`ConfigTypeMismatchError`, sibling of `InputsTypeMismatchError`); and
+  `@config`'s `GenericIndex` rejection now recurses into any nested
+  dataclass field (not just `@outputs`/`@expose`-marked ones), naming the
+  full nested field path in the error.
+
+**Other additions**
+
+- `CategoricalIndex(name, outcomes)` now also accepts a bare `Iterable[str]`
+  of outcome keys with no weights, for indexes only ever used where weights
+  don't matter (guard conditions, deterministic `parameters=` grid sweeps).
+  Such a weight-free index has `.support` but no `.outcomes`: accessing
+  `.outcomes` or calling `.sample()` raises `ValueError` rather than
+  silently assuming uniform weights.
 
 ### Changed
 
@@ -216,6 +296,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remains `True`, keeping `TimeseriesIndex` usable as the "time-shaped,
   whatever the value source" annotation in model `Inputs`/`Outputs`
   contracts.  Its constructor, node type, and `repr` are unchanged.
+
+**`ModelVariant` outputs/inputs/expose semantics**
+
+- `ModelVariant.expose` now returns the field-name **intersection** across
+  all declared variants, in both static and runtime mode — static mode was
+  previously a full, unchecked passthrough to the active variant, so which
+  fields were accessible silently depended on which variant happened to be
+  selected. `ModelVariant.inputs` is now a **disjoint union**
+  (`dict[str, IOProxy]` keyed by variant), never merged by field name in
+  either mode — the previous runtime-mode "first-seen-wins" union could
+  silently return one variant's value for a field name that coincidentally
+  matched another variant's. `ModelVariant.outputs`/`.expose` can now be
+  nested as a bulk field inside a parent model's own `@outputs`/`@expose`,
+  matching what already worked for a plain `Model`.
+- `ModelVariant.expose` in runtime mode now dispatches **per scenario**, via
+  the same merged-node machinery `outputs` already uses, instead of reading
+  one arbitrary variant's own field directly (whose value therefore never
+  actually varied by scenario regardless of which variant the selector
+  picked). The merged expose nodes are wired into
+  `variant_selector.branch_map` so the "regional" evaluation-plan strategy
+  partitions them correctly, and `mv.indexes` (runtime mode) now includes
+  them.
+
+### Fixed
+
+- **Engine**: `graph.Node.output_axes` is now memoized
+  (`functools.cached_property`) instead of recomputed on every access. Fixes
+  a real-world model (~6,000 `Index`/`TimeseriesIndex` objects) that took
+  4m30s to build instead of ~6s, from repeatedly recomputing `output_axes`
+  for DAG subgraphs shared by many downstream nodes. Purely a performance
+  fix — output identical before and after.
+- **Multi-domain axes**: a shaped `DistributionIndex` declared with axes in
+  non-canonical order (e.g. `axes=(y, x)` vs. `axes=(x, y)`) wasn't aligned
+  to canonical DOMAIN order before substitution — two such indexes could
+  silently broadcast onto the wrong dimensions when combined arithmetically.
+  Fixed by routing through the existing `executor.align_to_domain_block` at
+  the one leaf site that had never needed it before shaped
+  `DistributionIndex` existed.
+- **Operator vocabulary**: `UnaryOp`/`BinaryOp` constructors now call
+  `ensure_node()`, like every other `Node`-argument-taking constructor
+  already did. Previously `graph.exp(some_index)` — passing an `Index`
+  directly instead of `.node` — silently built a corrupt node, surfacing
+  only as a confusing `TypeError` deep inside `linearize`/`executor`, not at
+  the call site.
+- **Model contract**: the "undeclared index" error message no longer
+  reports the same orphaned placeholder name twice when it's reachable via
+  two incoming edges in the formula DAG (e.g. the same index used twice in
+  an expression).
 
 ## [0.11.1] - 2026-08-20
 
