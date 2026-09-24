@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from ..engine.frontend import graph
 from ..engine.numpybackend.executor import Functor
-from .index import GenericIndex, Index, TimeseriesIndex
+from .index import GenericIndex, Index
 
 
 class ModelContractViolation(Exception):
@@ -131,6 +131,27 @@ class FunctionsTypeMismatchError(ModelContractError):
     by field name — either way the failure only surfaces much later, as a
     missing-function error at evaluation time, far from its cause.  Checking
     the type at construction turns that into an immediate, located error.
+    """
+
+
+class ConfigTypeMismatchError(ModelContractError):
+    """Raised when the ``config`` argument is not an instance of the subclass's own ``Config``.
+
+    The :class:`Config` analogue of :class:`InputsTypeMismatchError` and
+    :class:`FunctionsTypeMismatchError`: raised when a model that declares a
+    ``@config`` inner class is constructed with a ``config`` value that is
+    not an instance of that declared ``Config`` class — most commonly
+    another model's ``Config`` by mistake, or an unrelated object.
+
+    ``Config`` is graph-inert and never forwarded to :class:`Model.__init__`
+    (see :func:`~.contracts.config`), so this check is performed by the
+    ``__init__`` that ``@define`` generates, before ``compute()`` is called.
+    Without it, two unrelated ``Config`` dataclasses that coincidentally
+    share field names would be silently accepted and mapped by name — the
+    wrong policy/config data would be wired in and only surface later as
+    confusing behavior deep inside ``compute()``, far from its cause.
+    Checking the type at construction turns that into an immediate, located
+    error.
     """
 
 
@@ -659,8 +680,8 @@ class Model:
             if caller_frame is not None:
                 _check_inputs_contract(caller_frame, concrete_cls, self.inputs)
 
-            # Dropped-index check: any graph.placeholder or
-            # graph.timeseries_placeholder node that is reachable from the
+            # Dropped-index check: any graph.placeholder or domain-carrying
+            # graph.array_placeholder node that is reachable from the
             # model's internally-built formula nodes but not itself covered
             # by a declared index will never receive a value at evaluation time.
             # This catches both sub-model concrete indexes and inline
@@ -672,7 +693,7 @@ class Model:
             _input_formula_nodes: tuple[graph.Node, ...] = tuple(
                 idx.node
                 for idx in self.inputs
-                if not isinstance(idx.node, (graph.placeholder, graph.timeseries_placeholder))
+                if not isinstance(idx.node, (graph.placeholder, graph.array_placeholder))
             )
             _orphaned = _find_orphaned_placeholder_nodes(self.indexes, _input_formula_nodes)
             if _orphaned:
@@ -773,6 +794,14 @@ class Model:
             # follow-up, together with ``legacy=True`` removal itself.
             functions: Any = ...,
             fns: Any = ...,
+            # ``config``: @define's synthesized __init__ takes this keyword when
+            # a ``@config`` inner class is declared (see contracts.config). There
+            # is no base-class counterpart to satisfy here — unlike functions/fns,
+            # `Model.__init__` above has no real `config=` parameter, since
+            # @config fields are graph-inert and are consumed entirely inside the
+            # generated __init__ before it calls super().__init__(). Only one
+            # name is needed for that reason.
+            config: Any = ...,
         ) -> None: ...
 
     def abstract_indexes(self) -> list[GenericIndex]:
@@ -794,7 +823,7 @@ class Model:
         as an input (e.g. a distribution-backed behavioural parameter sampled
         internally by the ensemble).
         """
-        return [index for index in self.indexes if isinstance(index, (Index, TimeseriesIndex)) and index.is_abstract]
+        return [index for index in self.indexes if isinstance(index, Index) and index.is_abstract]
 
     def is_instantiated(self) -> bool:
         """Return ``True`` when all indexes have concrete, evaluable values.
@@ -818,9 +847,8 @@ def _iter_node_deps(node: graph.Node) -> list[graph.Node]:
     """Return direct graph dependencies of *node* for backward traversal.
 
     This function is exhaustive over all non-leaf node types.  Leaf nodes
-    (``constant``, ``placeholder``, ``timeseries_constant``,
-    ``timeseries_placeholder``) have no dependencies and fall through to the
-    ``return []`` at the end.
+    (``constant``, ``placeholder``, ``array_constant``, ``array_placeholder``)
+    have no dependencies and fall through to the ``return []`` at the end.
 
     **Maintenance note**: every new non-leaf ``graph.Node`` subclass must be
     handled here; omitting one will silently stop BFS traversal at that node,
@@ -852,11 +880,11 @@ def _iter_node_deps(node: graph.Node) -> list[graph.Node]:
         for branch_nodes in node.branch_map.values():
             deps.extend(branch_nodes)
         return deps
-    if isinstance(node, graph.ProjectionOp):
+    if isinstance(node, (graph.ProjectionOp, graph.AxisOp, graph.laplacian, graph.broadcast_to)):
         return [node.node]
     if isinstance(node, graph.function_call):
         return list(node.args) + list(node.kwargs.values())
-    # Leaf nodes: constant, placeholder, timeseries_constant, timeseries_placeholder.
+    # Leaf nodes: constant, placeholder, array_constant, array_placeholder.
     return []
 
 
@@ -891,7 +919,7 @@ def _find_orphaned_placeholder_nodes(
     Traverses the computation graph **backward** from the model's internally-
     built formula nodes (outputs and expose) using :func:`_iter_node_deps`.
     Any :class:`~engine.frontend.graph.placeholder` or
-    :class:`~engine.frontend.graph.timeseries_placeholder` node that is
+    :class:`~engine.frontend.graph.array_placeholder` node that is
     reachable but whose identity is *not* among ``{idx.node for idx in indexes}``
     is returned as **orphaned**.
 
@@ -940,7 +968,7 @@ def _find_orphaned_placeholder_nodes(
     internal_formula_starts: list[graph.Node] = [
         node
         for node in covered_nodes
-        if not isinstance(node, (graph.placeholder, graph.timeseries_placeholder)) and id(node) not in input_formula_ids
+        if not isinstance(node, (graph.placeholder, graph.array_placeholder)) and id(node) not in input_formula_ids
     ]
     visited_ids: set[int] = set()
     to_visit: list[graph.Node] = list(internal_formula_starts)
@@ -953,12 +981,13 @@ def _find_orphaned_placeholder_nodes(
         for dep in _iter_node_deps(node):
             if id(dep) in visited_ids or id(dep) in covered_ids or id(dep) in input_formula_ids:
                 continue  # already handled or belongs to another model
-            if isinstance(dep, (graph.placeholder, graph.timeseries_placeholder)):
+            if isinstance(dep, (graph.placeholder, graph.array_placeholder)):
                 # placeholder nodes with a default_value are self-contained:
                 # the executor falls back to that value when the node is absent
                 # from state.values, so they are not orphaned.
                 if isinstance(dep, graph.placeholder) and dep.default_value is not None:
                     continue
+                visited_ids.add(id(dep))  # mark seen so a second incoming edge isn't reported again
                 orphaned.append(dep)  # uncovered placeholder — always a bug
             else:
                 to_visit.append(dep)  # uncovered formula node — traverse further

@@ -1,6 +1,6 @@
 """Acceptance tests for typed-axes milestone (#142, #134).
 
-Covers the checklist in docs/design/sessions/typed-axes.md §7:
+Covers the milestone's acceptance checklist:
 - Canonical shape contract
 - S == T regression (historical #142 failure mode)
 - Broadcasting correctness (scalar ↔ timeseries)

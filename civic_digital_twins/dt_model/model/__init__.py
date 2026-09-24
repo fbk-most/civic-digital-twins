@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from ..axes import DOMAIN, ENSEMBLE, PARAMETER, Axis, AxisRole
-from .contracts import define, expose, functions, inputs, outputs
+from .contracts import config, define, expose, functions, inputs, outputs
 from .index import (
+    AxesInferenceWarning,
     CategoricalIndex,
     ConditionalCategoricalIndex,
     ConditionalDistributionIndex,
@@ -15,9 +16,11 @@ from .index import (
     GenericIndex,
     Index,
     TimeseriesIndex,
+    named_shape,
 )
 from .model import (
     AbstractIndexNotInInputsError,
+    ConfigTypeMismatchError,
     FunctionsTypeMismatchError,
     InputsContractError,
     InputsTypeMismatchError,
@@ -30,7 +33,9 @@ from .model_variant import ModelVariant
 
 __all__ = [
     "AbstractIndexNotInInputsError",
+    "AxesInferenceWarning",
     "Axis",
+    "config",
     "define",
     "expose",
     "functions",
@@ -40,6 +45,7 @@ __all__ = [
     "CategoricalIndex",
     "ConditionalCategoricalIndex",
     "ConditionalDistributionIndex",
+    "ConfigTypeMismatchError",
     "ConstIndex",
     "ConstTimeseriesIndex",
     "Distribution",
@@ -59,4 +65,5 @@ __all__ = [
     "ModelVariant",
     "PARAMETER",
     "TimeseriesIndex",
+    "named_shape",
 ]

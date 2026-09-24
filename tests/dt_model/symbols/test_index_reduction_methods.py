@@ -51,20 +51,20 @@ class TestIndexReductionMethodCreation:
     @pytest.mark.parametrize("method,operator_class,name", INDEX_REDUCTION_METHODS)
     def test_method_returns_correct_operator(self, method, operator_class, name):
         """Test that reduction method returns correct operator node type."""
-        idx = Index("test_index", 5.0)
+        idx = TimeseriesIndex("test_index")
         result = method(idx)
         assert isinstance(result, operator_class)
 
     def test_quantile_method_returns_quantile_operator(self):
         """Test that quantile method returns quantile operator."""
-        idx = Index("test_index", 5.0)
+        idx = TimeseriesIndex("test_index")
         result = _quantile_method(idx, q=0.5)
         assert isinstance(result, graph.project_using_quantile)
         assert result.q == 0.5
 
     def test_quantile_method_different_q_values(self):
         """Test quantile method with different q values."""
-        idx = Index("test_index", 5.0)
+        idx = TimeseriesIndex("test_index")
         for q in [0.0, 0.25, 0.5, 0.75, 1.0]:
             result = _quantile_method(idx, q=q)
             assert result.q == q
@@ -74,7 +74,7 @@ class TestIndexReductionMethodCreation:
         """Test that reduction method creates operator with the default time axis."""
         from civic_digital_twins.dt_model.axes import DOMAIN, Axis
 
-        idx = Index("test_index", 5.0)
+        idx = TimeseriesIndex("test_index")
         result = method(idx)
         assert result.axis == Axis("time", DOMAIN)
 
@@ -82,12 +82,12 @@ class TestIndexReductionMethodCreation:
 class TestTimeseriesIndexReductionExecution:
     """Test execution of index reduction methods on TimeseriesIndex.
 
-    Uses :class:`~model.index.ConstTimeseriesIndex` so the graph node is a
-    ``timeseries_constant`` and can be evaluated without state injection.
-    ``TimeseriesIndex(arr)`` now produces a ``timeseries_placeholder`` (D1a);
-    direct evaluation of its reduction nodes requires the placeholder value to
-    be present in the executor state — see :class:`TestBatchedReductionExecution`
-    for that pattern.
+    Uses :class:`~model.index.ConstTimeseriesIndex` so the graph node is an
+    ``array_constant`` over ``axes=(TIME_AXIS,)`` and can be evaluated without
+    state injection. ``TimeseriesIndex(arr)`` produces an ``array_placeholder``
+    over the same axes; direct evaluation of its reduction nodes requires the
+    placeholder value to be present in the executor state — see
+    :class:`TestBatchedReductionExecution` for that pattern.
     """
 
     def test_sum_evaluation(self):
@@ -95,7 +95,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
         node = ts.sum()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         # Sum with keepdims over 1-D array returns shape (1,)
@@ -106,7 +106,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([2.0, 4.0, 6.0]))
         node = ts.mean()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(np.sum(result), 4.0)
@@ -116,7 +116,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([3.0, 1.0, 5.0, 2.0]))
         node = ts.min()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(np.min(result), 1.0)
@@ -126,7 +126,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([3.0, 1.0, 5.0, 2.0]))
         node = ts.max()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(np.max(result), 5.0)
@@ -136,7 +136,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
         node = ts.std()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         expected_std = np.std(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), keepdims=True)
@@ -147,7 +147,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([1.0, 5.0, 3.0, 2.0, 4.0]))
         node = ts.median()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(np.median(result), 3.0)
@@ -157,7 +157,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0]))
         node = ts.prod()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(np.prod(result), 24.0)
@@ -167,7 +167,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([False, False, True, False]))
         node = ts.any()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert bool(np.any(result)) is True
@@ -177,7 +177,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([True, True, False, True]))
         node = ts.all()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert bool(np.all(result)) is False
@@ -187,7 +187,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([1.0, 0.0, 3.0, 0.0, 5.0]))
         node = ts.count_nonzero()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert int(np.sum(result)) == 3
@@ -197,7 +197,7 @@ class TestTimeseriesIndexReductionExecution:
         ts = ConstTimeseriesIndex("ts", np.array([1.0, 2.0, 3.0, 4.0, 5.0]))
         node = ts.quantile(q=0.5)
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         expected = np.quantile(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), 0.5, keepdims=True)
@@ -216,7 +216,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.sum()
         values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -227,7 +227,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.mean()
         values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -238,7 +238,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.min()
         values = np.array([[3.0, 1.0, 2.0], [6.0, 4.0, 5.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -249,7 +249,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.max()
         values = np.array([[3.0, 1.0, 2.0], [6.0, 4.0, 5.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -260,7 +260,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.std()
         values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -272,7 +272,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.var()
         values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -284,7 +284,7 @@ class TestBatchedReductionExecution:
         ts = TimeseriesIndex("ts")
         node = ts.quantile(q=0.5)
         values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (2, 1)
@@ -297,13 +297,13 @@ class TestIndexReductionWithPlaceholders:
 
     def test_sum_with_placeholder(self):
         """Test sum() with placeholder node."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         sum_node = idx.sum()
         plan = linearize.forest(sum_node)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.sum(x_val, axis=-1, keepdims=True)
@@ -311,13 +311,13 @@ class TestIndexReductionWithPlaceholders:
 
     def test_mean_with_placeholder(self):
         """Test mean() with placeholder node."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         mean_node = idx.mean()
         plan = linearize.forest(mean_node)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.mean(x_val, axis=-1, keepdims=True)
@@ -325,13 +325,13 @@ class TestIndexReductionWithPlaceholders:
 
     def test_min_with_placeholder(self):
         """Test min() with placeholder node."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         min_node = idx.min()
         plan = linearize.forest(min_node)
 
         x_val = np.array([[3.0, 1.0, 5.0], [6.0, 4.0, 2.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.min(x_val, axis=-1, keepdims=True)
@@ -339,13 +339,13 @@ class TestIndexReductionWithPlaceholders:
 
     def test_max_with_placeholder(self):
         """Test max() with placeholder node."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         max_node = idx.max()
         plan = linearize.forest(max_node)
 
         x_val = np.array([[3.0, 1.0, 5.0], [6.0, 4.0, 2.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.max(x_val, axis=-1, keepdims=True)
@@ -353,13 +353,13 @@ class TestIndexReductionWithPlaceholders:
 
     def test_quantile_with_placeholder(self):
         """Test quantile() with placeholder node."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         quantile_node = idx.quantile(q=0.5)
         plan = linearize.forest(quantile_node)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.quantile(x_val, 0.5, axis=-1, keepdims=True)
@@ -371,14 +371,14 @@ class TestIndexReductionComposition:
 
     def test_min_of_min(self):
         """Test composing min methods (both reduce the time/last axis)."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         min1 = idx.min()
         min2 = graph.project_using_min(min1, axis=_TIME_AXIS)
         plan = linearize.forest(min2)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.min(np.min(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
@@ -386,14 +386,14 @@ class TestIndexReductionComposition:
 
     def test_sum_of_max(self):
         """Test composing sum of max (both reduce the time/last axis)."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         max_node = idx.max()
         sum_node = graph.project_using_sum(max_node, axis=_TIME_AXIS)
         plan = linearize.forest(sum_node)
 
         x_val = np.array([[1.0, 5.0, 3.0], [2.0, 4.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.sum(np.max(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
@@ -401,14 +401,14 @@ class TestIndexReductionComposition:
 
     def test_mean_of_std(self):
         """Test composing mean of std (both reduce the time/last axis)."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         std_node = idx.std()
         mean_node = graph.project_using_mean(std_node, axis=_TIME_AXIS)
         plan = linearize.forest(mean_node)
 
         x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         expected = np.mean(np.std(x_val, axis=-1, keepdims=True), axis=-1, keepdims=True)
@@ -416,14 +416,14 @@ class TestIndexReductionComposition:
 
     def test_quantile_of_quantile(self):
         """Test composing quantile of quantile (both reduce the time/last axis)."""
-        x_placeholder = graph.placeholder("x")
+        x_placeholder = graph.array_placeholder("x", axes=(_TIME_AXIS,))
         idx = Index("x", x_placeholder)
         q1_node = idx.quantile(q=0.5)
         q2_node = graph.project_using_quantile(q1_node, axis=_TIME_AXIS, q=0.75)
         plan = linearize.forest(q2_node)
 
         x_val = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        state = executor.State({x_placeholder: x_val})
+        state = executor.State({x_placeholder: x_val}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
 
         intermediate = np.quantile(x_val, 0.5, axis=-1, keepdims=True)
@@ -439,7 +439,7 @@ class TestIndexReductionEdgeCases:
         ts = TimeseriesIndex("ts")
         node = ts.sum()
         values = np.array([[1.0, 2.0, 3.0]])
-        state = executor.State({ts.node: values})
+        state = executor.State({ts.node: values}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *linearize.forest(node))
         result = state.values[node]
         assert result.shape == (1, 1)
@@ -449,7 +449,7 @@ class TestIndexReductionEdgeCases:
         ts = ConstTimeseriesIndex("ts", np.array([5.0, 5.0, 5.0, 5.0]))
         node = ts.quantile(q=0.5)
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(result, 5.0)
@@ -459,7 +459,7 @@ class TestIndexReductionEdgeCases:
         ts = ConstTimeseriesIndex("ts", np.array([0.0, 0.0, 0.0, 0.0]))
         node = ts.count_nonzero()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(result, 0.0)
@@ -469,7 +469,7 @@ class TestIndexReductionEdgeCases:
         ts = ConstTimeseriesIndex("ts", np.array([-1.0, -2.0, -3.0]))
         node = ts.prod()
         plan = linearize.forest(node)
-        state = executor.State({})
+        state = executor.State({}, domain_axes=(_TIME_AXIS,))
         executor.evaluate_nodes(state, *plan)
         result = state.values[node]
         assert np.isclose(result, -6.0)

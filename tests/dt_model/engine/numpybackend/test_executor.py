@@ -5,7 +5,7 @@
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.axes import PARAMETER, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, PARAMETER, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
@@ -339,6 +339,36 @@ def test_comparison_operations():
         assert np.array_equal(state.values[op], expected[op])
 
 
+def test_minimum_modulo_operations():
+    """Test minimum and modulo operations with the executor."""
+    # Create placeholder nodes
+    x = graph.placeholder("x")
+    y = graph.placeholder("y")
+
+    # Create operation nodes
+    min_node = graph.minimum(x, y)
+    mod_node = graph.modulo(x, y)
+
+    # Create execution plans
+    plans = {op: linearize.forest(op) for op in [min_node, mod_node]}
+
+    # Test data
+    x_val = np.array([[1.0, 5.0, 3.0], [7.0, 2.0, 9.0]])
+    y_val = np.array([[2.0, 2.0, 4.0], [3.0, 6.0, 4.0]])
+
+    # Expected results
+    expected = {
+        min_node: np.minimum(x_val, y_val),
+        mod_node: np.mod(x_val, y_val),
+    }
+
+    # Test each operation
+    for op, plan in plans.items():
+        state = executor.State({x: x_val, y: y_val})
+        executor.evaluate_nodes(state, *plan)
+        assert np.array_equal(state.values[op], expected[op])
+
+
 def test_state_value_access():
     """Test the State.get_node_value method for accessing node values."""
     # Create a node and a state
@@ -442,6 +472,40 @@ def test_unary_operations():
     executor.evaluate_nodes(not_state, *not_plan)
     assert np.array_equal(not_state.values[not_node], np.logical_not(x_boolean))
 
+    # Test additional unary math operations
+    sqrt_node = graph.sqrt(x)
+    abs_node = graph.abs(x)
+    floor_node = graph.floor(x)
+    ceil_node = graph.ceil(x)
+    round_node = graph.round(x)
+    sign_node = graph.sign(x)
+
+    extra_plans = {
+        sqrt_node: linearize.forest(sqrt_node),
+        abs_node: linearize.forest(abs_node),
+        sign_node: linearize.forest(sign_node),
+        floor_node: linearize.forest(floor_node),
+        ceil_node: linearize.forest(ceil_node),
+        round_node: linearize.forest(round_node),
+    }
+
+    x_frac = np.array([[-1.5, 2.5, -3.2], [4.7, -5.0, 6.1]])
+
+    extra_expected = {
+        sqrt_node: np.sqrt(np.abs(x_frac)),
+        abs_node: np.abs(x_frac),
+        sign_node: np.sign(x_frac),
+        floor_node: np.floor(x_frac),
+        ceil_node: np.ceil(x_frac),
+        round_node: np.round(x_frac),
+    }
+
+    for node, plan in extra_plans.items():
+        input_val = np.abs(x_frac) if node is sqrt_node else x_frac
+        state = executor.State({x: input_val})
+        executor.evaluate_nodes(state, *plan)
+        assert np.array_equal(state.values[node], extra_expected[node])
+
     # Test unsupported unary operation
     class UnsupportedUnaryOp(graph.UnaryOp):
         pass
@@ -473,9 +537,32 @@ def test_axis_operations():
 
     unsupported_node = UnsupportedProjectionOp(x, axis=time_axis)
     unsupported_plan = linearize.forest(unsupported_node)
-    unsupported_state = executor.State({x: x_val})
+    unsupported_state = executor.State({x: x_val}, domain_axes=(time_axis,))
 
     with pytest.raises(executor.UnsupportedOperation):
+        executor.evaluate_nodes(unsupported_state, *unsupported_plan)
+
+
+def test_axis_op_unsupported_operation():
+    """Test error handling for an unsupported AxisOp subclass.
+
+    shift/roll/cumulative are comprehensively tested in
+    tests/dt_model/engine/numpybackend/test_axis_shape_preserving_operators.py
+    """
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    x = graph.placeholder("x")
+    x_val = np.array([1.0, 2.0, 3.0])
+    time_axis = Axis("time", DOMAIN)
+
+    class UnsupportedAxisOp(graph.AxisOp):
+        pass
+
+    unsupported_node = UnsupportedAxisOp(x, axis=time_axis)
+    unsupported_plan = linearize.forest(unsupported_node)
+    unsupported_state = executor.State({x: x_val}, domain_axes=(time_axis,))
+
+    with pytest.raises(executor.UnsupportedOperation, match="unsupported axis operation"):
         executor.evaluate_nodes(unsupported_state, *unsupported_plan)
 
 
@@ -617,18 +704,18 @@ def test_state_set_node_value():
 
 
 def test_timeseries_constant_evaluation():
-    """Test evaluation of timeseries_constant nodes."""
+    """Test evaluation of a time-axis array_constant node."""
     values = np.array([1.0, 2.0, 3.0])
-    node = graph.timeseries_constant(values)
+    node = graph.array_constant(values, axes=(TIME_AXIS,))
     plan = linearize.forest(node)
-    state = executor.State({})
+    state = executor.State({}, domain_axes=(TIME_AXIS,))
     executor.evaluate_nodes(state, *plan)
     assert np.array_equal(state.values[node], values)
 
 
 def test_timeseries_placeholder_evaluation():
-    """Test evaluation of timeseries_placeholder nodes with a provided value."""
-    node = graph.timeseries_placeholder("ts")
+    """Test evaluation of a time-axis array_placeholder node with a provided value."""
+    node = graph.array_placeholder("ts", axes=(TIME_AXIS,))
     plan = linearize.forest(node)
     values = np.array([4.0, 5.0, 6.0])
     state = executor.State({node: values})
@@ -637,8 +724,8 @@ def test_timeseries_placeholder_evaluation():
 
 
 def test_timeseries_placeholder_missing():
-    """Test that evaluating a timeseries_placeholder without a value raises an error."""
-    node = graph.timeseries_placeholder("ts")
+    """Test that evaluating a time-axis array_placeholder without a value raises an error."""
+    node = graph.array_placeholder("ts", axes=(TIME_AXIS,))
     plan = linearize.forest(node)
     state = executor.State({})
     with pytest.raises(executor.PlaceholderValueNotProvided):
@@ -646,11 +733,11 @@ def test_timeseries_placeholder_missing():
 
 
 def test_timeseries_in_arithmetic():
-    """Test that timeseries_constant participates correctly in arithmetic operations."""
-    ts = graph.timeseries_constant([2.0, 4.0, 6.0])
+    """Test that a time-axis array_constant participates correctly in arithmetic operations."""
+    ts = graph.array_constant([2.0, 4.0, 6.0], axes=(TIME_AXIS,))
     result = ts * graph.constant(0.5)
     plan = linearize.forest(result)
-    state = executor.State({})
+    state = executor.State({}, domain_axes=(TIME_AXIS,))
     executor.evaluate_nodes(state, *plan)
     assert np.allclose(state.values[result], [1.0, 2.0, 3.0])
 
@@ -676,7 +763,7 @@ def test_neg_operator_evaluation():
 
 
 def test_projection_op_unsupported_axis_raises():
-    """Executor raises UnsupportedOperation when a ProjectionOp uses a non-time axis."""
+    """Executor raises UnsupportedOperation projecting an axis the evaluation does not carry."""
     node = graph.constant(1.0)
     bad_axis = Axis("space", PARAMETER)
     proj = graph.project_using_sum(node, axis=bad_axis)
@@ -685,3 +772,106 @@ def test_projection_op_unsupported_axis_raises():
     executor.evaluate_nodes(state, *plan[:-1])  # evaluate prerequisites
     with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
         executor.evaluate_nodes(state, proj)
+
+
+def test_projection_resolves_each_declared_domain_axis_to_its_position():
+    """With several DOMAIN axes, each projection reduces the dimension its axis names."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    # Layout (x, y): x is the second-to-last numpy dim, y the last.
+    values = np.arange(6.0).reshape(2, 3)
+    p = graph.placeholder("field")
+
+    for axis, expected in ((x, values.sum(axis=-2, keepdims=True)), (y, values.sum(axis=-1, keepdims=True))):
+        proj = graph.project_using_sum(p, axis=axis)
+        state = executor.State({p: values}, domain_axes=(x, y))
+        executor.evaluate_nodes(state, *linearize.forest(proj))
+        assert np.array_equal(state.values[proj], expected)
+
+
+def test_projection_along_a_non_time_domain_axis():
+    """A model with no time axis at all can still reduce along its own DOMAIN axis."""
+    space = Axis("space", DOMAIN)
+    p = graph.placeholder("field")
+    proj = graph.project_using_sum(p, axis=space)
+    state = executor.State({p: np.array([1.0, 2.0, 3.0])}, domain_axes=(space,))
+    executor.evaluate_nodes(state, *linearize.forest(proj))
+    assert np.array_equal(state.values[proj], np.array([6.0]))
+
+
+def test_projection_rejects_an_axis_outside_the_declared_domain_axes():
+    """Declaring domain_axes narrows what is projectable: time is not implicitly available."""
+    space = Axis("space", DOMAIN)
+    p = graph.placeholder("field")
+    proj = graph.project_using_sum(p, axis=TIME_AXIS)
+    state = executor.State({p: np.array([1.0, 2.0])}, domain_axes=(space,))
+    with pytest.raises(executor.UnsupportedOperation, match="numpybackend only supports projection"):
+        executor.evaluate_nodes(state, *linearize.forest(proj))
+
+
+def test_multiply_result_sum_evaluates_correctly_without_wrapping():
+    """The AreaVerde regression, evaluated end-to-end.
+
+    ``(a * b).sum(axis)`` called directly on the bare Node produced by
+    multiplication (never wrapped in an Index) must compute the same
+    reduced value ``graph.project_using_sum(a * b, axis)`` would.
+    """
+    time_axis = Axis("time", DOMAIN)
+    a = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="a")
+    b = graph.array_constant([4.0, 5.0, 6.0], axes=(time_axis,), name="b")
+    result = (a * b).sum(time_axis)
+    state = executor.State({}, domain_axes=(time_axis,))
+    executor.evaluate_nodes(state, *linearize.forest(result))
+    assert np.array_equal(state.values[result], np.array([32.0]))  # 1*4 + 2*5 + 3*6
+
+
+def test_broadcast_to_is_a_passthrough_with_correct_shape():
+    """broadcast_to adds no value: the evaluated array already has a size-1 slot for the new axis.
+
+    Every node's evaluated array is already padded to the evaluation's full
+    DOMAIN-axis block (align_to_domain_block), so broadcast_to's evaluator
+    is a pure passthrough — this checks that holds end-to-end, including
+    for a leaf whose own formula never references the new axis at all.
+    """
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    values = graph.array_constant([1.0, 2.0, 3.0], axes=(x_axis,), name="values")
+    broadcasted = values.broadcast(y_axis)
+
+    state = executor.State({}, domain_axes=(x_axis, y_axis))
+    executor.evaluate_nodes(state, *linearize.forest(broadcasted))
+
+    assert state.values[broadcasted].shape == (3, 1)
+    assert np.array_equal(state.values[broadcasted], [[1.0], [2.0], [3.0]])
+
+
+def test_broadcast_to_preserves_dtype():
+    """broadcast_to must not silently promote dtype.
+
+    A real risk for a sloppy implementation of this operation — e.g. one
+    that broadcasts by multiplying by an array of ones — since numpy
+    upcasts an int array multiplied by a float array to float.
+    """
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    values = graph.array_constant(np.array([1, 2, 3], dtype=np.int64), axes=(x_axis,), name="values")
+    broadcasted = values.broadcast(y_axis)
+
+    state = executor.State({}, domain_axes=(x_axis, y_axis))
+    executor.evaluate_nodes(state, *linearize.forest(broadcasted))
+
+    assert state.values[broadcasted].dtype == np.int64
+
+
+def test_broadcast_to_combines_correctly_with_a_partner_over_the_new_axis():
+    """The end-to-end scenario broadcast() exists for: combining indexes over disjoint axes."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    ind_x = graph.array_constant([1.0, 2.0, 3.0], axes=(x_axis,), name="ind_x")
+    ind_xy = graph.array_constant([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]], axes=(x_axis, y_axis), name="ind_xy")
+    combined = ind_x.broadcast(y_axis) * ind_xy
+
+    state = executor.State({}, domain_axes=(x_axis, y_axis))
+    executor.evaluate_nodes(state, *linearize.forest(combined))
+
+    assert np.array_equal(state.values[combined], [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])

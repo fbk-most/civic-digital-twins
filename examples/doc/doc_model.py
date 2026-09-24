@@ -44,6 +44,14 @@ def _demo_00_index_modes() -> None:
     assert demand.is_abstract
     _ = load
 
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    row, col = Axis("row", DOMAIN), Axis("col", DOMAIN)
+    grid = DistributionIndex("m", stats.randint, {"low": 1, "high": 4}, axes=(row, col), shape=(2, 2))
+
+    assert grid.shape == (2, 2)
+    assert grid.output_axes == (row, col)
+
 
 # ---------------------------------------------------------------------------
 # Block 01: dd-cdt-model.md — Index Types: CategoricalIndex
@@ -58,6 +66,26 @@ def _demo_01_categorical_index() -> None:
 
     assert mode.is_abstract
     assert mode.support == ["bike", "train"]
+
+
+# ---------------------------------------------------------------------------
+# Block 02: dd-cdt-model.md — CategoricalIndex: weight-free form
+# ---------------------------------------------------------------------------
+
+
+def _demo_02_categorical_index_weight_free() -> None:
+    """Block 02: CategoricalIndex weight-free (support-only) form."""
+    from civic_digital_twins.dt_model import CategoricalIndex
+
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+
+    assert mode_param.support == ["bike", "train"]
+    try:
+        mode_param.outcomes
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +152,63 @@ def _demo_02_timeseries_index() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — Defining your own named shape: manual FIXED_AXES subclass
+# ---------------------------------------------------------------------------
+
+
+def _demo_named_shape_manual_subclass() -> None:
+    """Block: manual FIXED_AXES subclass (GridIndex/ConstGridIndex)."""
+    from typing import ClassVar
+
+    import numpy as np
+
+    from civic_digital_twins.dt_model import ConstIndex, Index
+    from civic_digital_twins.dt_model.axes import Axis, DomainAxis, SpaceType
+
+    x = DomainAxis("x", type=SpaceType(spacing=1.0))
+    y = DomainAxis("y", type=SpaceType(spacing=1.0))
+
+    class GridIndex(Index):
+        FIXED_AXES: ClassVar[tuple[Axis, ...]] = (x, y)
+
+        def __init__(self, name, value=None):
+            super().__init__(name, value, axes=self.FIXED_AXES)
+
+    # A Const variant follows ConstTimeseriesIndex's own pattern: multiple
+    # inheritance, ConstIndex first so it wins construction, GridIndex second
+    # purely as a shape declaration.
+    class ConstGridIndex(ConstIndex, GridIndex):
+        def __init__(self, name, value):
+            super().__init__(name, value, axes=self.FIXED_AXES)
+
+    grid = GridIndex("grid", np.ones((2, 2)))
+    const_grid = ConstGridIndex("const_grid", np.zeros((2, 2)))
+
+    assert grid.output_axes == (x, y)
+    assert const_grid.output_axes == (x, y)
+
+
+# ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — Defining your own named shape: named_shape() factory
+# ---------------------------------------------------------------------------
+
+
+def _demo_named_shape() -> None:
+    """Block: named_shape() factory."""
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+    x, y = Axis("x", DOMAIN), Axis("y", DOMAIN)
+
+    from civic_digital_twins.dt_model import named_shape
+
+    GridIndex, ConstGridIndex, DistributionGridIndex = named_shape("Grid", (x, y))
+
+    assert GridIndex.FIXED_AXES == (x, y)
+    assert ConstGridIndex.FIXED_AXES == (x, y)
+    assert DistributionGridIndex.FIXED_AXES == (x, y)
+
+
+# ---------------------------------------------------------------------------
 # Block 05: dd-cdt-model.md — Model: Recommended API abstract_indexes / is_instantiated
 # ---------------------------------------------------------------------------
 
@@ -157,6 +242,39 @@ def _demo_05_recommended_api() -> None:
     assert any(idx is x for idx in m.abstract_indexes())
     assert any(idx is y for idx in m.abstract_indexes())
     assert m.is_instantiated() is False
+
+
+# ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — @config: RoutingModel example
+# ---------------------------------------------------------------------------
+
+
+def _demo_config_routing() -> None:
+    """Block: @config — RoutingModel example."""
+    from civic_digital_twins.dt_model import Index, Model, config, define, inputs, outputs
+
+    @define("Routing")
+    class RoutingModel(Model):
+
+        @inputs
+        class Inputs:
+            demand: Index
+
+        @config
+        class Config:
+            policy: str = "shortest_path"
+
+        @outputs
+        class Outputs:
+            cost: Index
+
+        def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+            factor = 2.0 if config.policy == "shortest_path" else 1.0
+            return RoutingModel.Outputs(cost=Index("cost", inputs.demand * factor))
+
+    demand = Index("demand", None)
+    m = RoutingModel(inputs=RoutingModel.Inputs(demand=demand), config=RoutingModel.Config(policy="shortest_path"))
+    assert m.outputs.cost is not None
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +323,60 @@ def _demo_08_contract_warnings() -> None:
     with warnings.catch_warnings():
         warnings.filterwarnings("error", category=ModelContractWarning)
         # All ModelContractWarning subclasses are now raised as hard errors.
+
+
+# ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — Contract Violations: BadModel/GoodModel InputsContractError
+# ---------------------------------------------------------------------------
+
+
+def _demo_contract_violations_bad_good_model() -> None:
+    """Block: Contract Violations — BadModel/GoodModel InputsContractError example."""
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import DistributionIndex, Index, InputsContractError, Model, outputs
+
+    class BadModel(Model, legacy=True):
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        def __init__(self, x: DistributionIndex) -> None:
+            # x is a GenericIndex parameter but not in Inputs — raises!
+            z = Index("z", x + x)
+            super().__init__("bad", outputs=BadModel.Outputs(z=z))
+
+    from civic_digital_twins.dt_model import inputs
+
+    class GoodModel(Model, legacy=True):
+
+        @inputs
+        class Inputs:
+            x: DistributionIndex
+
+        @outputs
+        class Outputs:
+            z: Index
+
+        def __init__(self, x: DistributionIndex) -> None:
+            z = Index("z", x + x)
+            super().__init__(
+                "good",
+                inputs=GoodModel.Inputs(x=x),
+                outputs=GoodModel.Outputs(z=z),
+            )
+
+    x = DistributionIndex("x", stats.uniform, {"loc": 0.0, "scale": 10.0})
+
+    try:
+        BadModel(x)
+        raise AssertionError("Expected InputsContractError when a GenericIndex parameter is absent from Inputs")
+    except InputsContractError:
+        pass
+
+    good = GoodModel(x)
+    assert good.outputs.z is not None
 
 
 # ---------------------------------------------------------------------------
@@ -438,12 +610,17 @@ def _demo_18_19_overtourism() -> None:
 
 _demo_00_index_modes()
 _demo_01_categorical_index()
+_demo_02_categorical_index_weight_free()
 _demo_03_conditional_categorical_index()
 _demo_04_conditional_distribution_index()
 _demo_02_timeseries_index()
+_demo_named_shape_manual_subclass()
+_demo_named_shape()
 _demo_05_recommended_api()
+_demo_config_routing()
 _demo_06_scenario_overrides()
 _demo_08_contract_warnings()
+_demo_contract_violations_bad_good_model()
 _demo_12_distribution_ensemble()
 _demo_14_15_end_to_end()
 _demo_17_constraint()

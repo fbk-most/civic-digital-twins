@@ -345,7 +345,7 @@ def test_distribution_ensemble_with_rng_is_reproducible():
 
 
 # ---------------------------------------------------------------------------
-# functions= and NumpyBackend (Step 2 / #162)
+# functions= and NumpyBackend (#162)
 # ---------------------------------------------------------------------------
 
 

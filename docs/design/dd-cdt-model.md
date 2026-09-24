@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-07-24                                     |
+| Last-Updated | 2026-09-23                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -89,15 +89,47 @@ GenericIndex  (ABC)
 
 `GenericIndex` is the abstract base class.  It exposes:
 
-- **`.node`** — the underlying `graph.Node`; all arithmetic and
-  comparison operators on a `GenericIndex` delegate here, returning a
-  new `graph.Node`.
+- **`.node`** — the underlying `graph.Node`; all arithmetic, comparison,
+  and logical (`&`, `|`, `^`, `~`) operators on a `GenericIndex` delegate
+  here, returning a new `graph.Node`.
 - **Axis reduction methods** — convenience wrappers for axis reduction operators:
-  `.sum(axis=-1)`, `.mean(axis=-1)`, `.min(axis=-1)`, `.max(axis=-1)`,
-  `.std(axis=-1)`, `.var(axis=-1)`, `.median(axis=-1)`, `.prod(axis=-1)`,
-  `.any(axis=-1)`, `.all(axis=-1)`, `.count_nonzero(axis=-1)`,
-  and `.quantile(q, axis=-1)`. These delegate to the corresponding
-  `graph.project_using_*` operators.
+  `.sum(axis=...)`, `.mean(axis=...)`, `.min(axis=...)`, `.max(axis=...)`,
+  `.std(axis=...)`, `.var(axis=...)`, `.median(axis=...)`, `.prod(axis=...)`,
+  `.any(axis=...)`, `.all(axis=...)`, `.count_nonzero(axis=...)`,
+  and `.quantile(q, axis=...)`. `axis` defaults to the index's unique DOMAIN
+  axis; an index carrying several requires it explicitly. Once resolved,
+  these delegate to the same-named method on the underlying `graph.Node`
+  (§ [Axis Reduction Operators](dd-cdt-engine.md#axis-reduction-operators)),
+  where `axis` is always required — the DOMAIN-axis defaulting is a
+  model-layer convenience the engine layer deliberately does not know about.
+- **Domain-typed per-axis operators**, gated by the axis's `DomainType`
+  (§ [TimeseriesIndex](#timeseriesindex) below covers `TIME_AXIS`'s
+  `TimeType`; see `axes.py` for the full lattice):
+  - Any `SequenceType`-or-untyped DOMAIN axis (i.e. any axis, since untyped
+    behaves as `SequenceType`) supports `.shift(periods=1, *, axis=..., fill_value=0.0)`
+    (fill-padded), `.roll(periods=1, *, axis=...)` (circular — two distinct
+    methods reading no axis metadata, matching xarray's own `shift`/`roll`
+    split), `.diff(periods=1, *, axis=..., fill_value=0.0)`
+    (`self - self.shift(...)`), and `.cumulative(*, axis=...)` (running sum).
+  - A `SpaceType` DOMAIN axis additionally supports `.gradient(*, axis=...)`
+    (first derivative, central differences) and `.laplacian(*, axes=...)`
+    (sum of second derivatives over one or more `SpaceType` axes — the
+    isotropic operator a diffusion process needs). Both read the axis's
+    `spacing` *and* `boundary` — a `BoundaryCondition` (`Constant`, aliased
+    as `Dirichlet` for the PDE-standard name; `Neumann`, whose `value=0.0`
+    default is aliased as `Reflect`; `Nearest`; `Wrap`; or `Linear`; see
+    `axes.py`) honored at the two ends of the axis via a shared
+    ghost-padding stencil, so a formula combining several `SpaceType` axes
+    gets consistent edge behavior from both operators. Calling either on a
+    non-`SpaceType` axis raises
+    `ValueError`.
+- **`.broadcast(*axes)`** — returns a `graph.Node` considered to also carry
+  each axis in *axes* not already present, via `graph.broadcast_to`
+  (§ [Broadcasting](dd-cdt-engine.md#broadcasting)). Needed because `axes=`
+  on `Index` only verifies a formula's inferred axes rather than declaring
+  them — there is no other way to make a formula carry an axis it doesn't
+  already reference. Delegates to the same-named method on the underlying
+  `graph.Node`, exactly like the axis reduction methods above.
 - **Identity-based `__hash__`** — because `__eq__` is overridden to
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as
@@ -145,6 +177,22 @@ distribution) plus a `params` dict forwarded verbatim.  The `params`
 property supports full replacement (`idx.params = {...}`) and partial
 update via the Python dict-merge operator (`idx.params |= {"loc": 200}`).
 
+`DistributionIndex` also accepts `axes=`/`shape=` (keyword-only, given
+together — omitting one raises `ValueError`) to declare a domain-shaped
+grid of independent draws, every cell resampled fresh per ensemble sample:
+
+```python
+from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+
+row, col = Axis("row", DOMAIN), Axis("col", DOMAIN)
+grid = DistributionIndex("m", stats.randint, {"low": 1, "high": 4}, axes=(row, col), shape=(2, 2))
+```
+
+Unlike `Index`/`ConstIndex`, there is no concrete array to deduce `shape`
+from — a `DistributionIndex` never carries a default value — so it must be
+given explicitly. `grid.sample(size=N)` then returns shape `(N, *shape)`
+instead of the scalar case's `(N,)`.
+
 `ConstIndex` is a convenience wrapper that accepts a scalar constant and
 passes it to `Index.__init__`.
 
@@ -185,7 +233,7 @@ abstract and must be resolved in every scenario.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `name` | `str` | Human-readable name. |
-| `outcomes` | `dict[str, float]` | Maps outcome key to probability.  Values must be positive and sum to 1.0. |
+| `outcomes` | `dict[str, float] \| Iterable[str]` | A weighted mapping from outcome key to probability (positive, summing to 1.0), or a bare, weight-free set of outcome keys — see below. |
 
 ```python
 from civic_digital_twins.dt_model import CategoricalIndex
@@ -195,6 +243,16 @@ mode = CategoricalIndex("mode", {"bike": 0.3, "train": 0.7})
 
 Because the full `GenericIndex` algebra protocol is inherited, `mode == "bike"` produces a
 `graph.equal` node usable in formulas and `graph.piecewise` guards.
+
+`outcomes` may also be a bare `Iterable[str]` with no weights, for indexes only ever used
+where weights don't matter — guard conditions and deterministic `parameters=` grid sweeps:
+
+```python
+mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+```
+
+Such a *weight-free* index has `.support` but no `.outcomes`: accessing `.outcomes` or calling
+`.sample()` raises `ValueError` rather than silently assuming uniform weights.
 
 For the usage pattern and integration with `ModelVariant`, see
 [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection).
@@ -229,9 +287,9 @@ in `graph.piecewise` guards.
 
 | `values` type | Mode | graph node created |
 | ------------- | ---- | ------------------ |
-| `np.ndarray` | fixed array | `graph.timeseries_constant` |
+| `np.ndarray` | fixed array | `graph.array_placeholder` over `axes=(TIME_AXIS,)`; the array is the default, seeded via `Index.concrete_default` and overridable by Scenario |
 | `graph.Node` | formula | the node itself |
-| `None` (default) | placeholder | `graph.timeseries_placeholder` |
+| `None` (default) | placeholder | `graph.array_placeholder` over `axes=(TIME_AXIS,)` |
 
 ```python
 import numpy as np
@@ -244,6 +302,76 @@ flow = TimeseriesIndex("flow", np.array([10.0, 20.0, 30.0]))
 # Placeholder (externally supplied)
 demand_ts = TimeseriesIndex("demand_ts")
 ```
+
+### Defining your own named shape
+
+`TimeseriesIndex` is not special-cased by the engine or the model layer — it
+is the first instance of a general, user-extensible pattern for giving a
+recurring shape a name. Fixing `axes=` via a class-level `FIXED_AXES`
+constant, rather than repeating the tuple at every call site, buys two
+things: less boilerplate, and (see below) a runtime-checked `Inputs`/
+`Outputs`/`Expose` field annotation.
+
+```python
+from typing import ClassVar
+
+from civic_digital_twins.dt_model import ConstIndex, Index
+from civic_digital_twins.dt_model.axes import Axis, DomainAxis, SpaceType
+
+x = DomainAxis("x", type=SpaceType(spacing=1.0))
+y = DomainAxis("y", type=SpaceType(spacing=1.0))
+
+class GridIndex(Index):
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (x, y)
+
+    def __init__(self, name, value=None):
+        super().__init__(name, value, axes=self.FIXED_AXES)
+
+# A Const variant follows ConstTimeseriesIndex's own pattern: multiple
+# inheritance, ConstIndex first so it wins construction, GridIndex second
+# purely as a shape declaration.
+class ConstGridIndex(ConstIndex, GridIndex):
+    def __init__(self, name, value):
+        super().__init__(name, value, axes=self.FIXED_AXES)
+```
+
+`named_shape(prefix, axes)` automates exactly this recipe, for all three
+concrete index kinds at once — plain `Index`, `ConstIndex`, and
+`DistributionIndex`:
+
+```python
+from civic_digital_twins.dt_model import named_shape
+
+GridIndex, ConstGridIndex, DistributionGridIndex = named_shape("Grid", (x, y))
+```
+
+`DistributionGridIndex` still needs `shape=` per instance
+(`DistributionGridIndex("m", stats.randint, {"low": 1, "high": 4}, shape=(2, 2))`)
+— `named_shape` fixes the axes, not the size, same as `GridIndex` above
+doesn't fix how long an injected array is.
+
+**Contract-boundary verification.** An `Inputs`/`Outputs`/`Expose` field
+annotated with a class carrying `FIXED_AXES` — `GridIndex` above,
+`TimeseriesIndex`, or `list[...]`/`dict[str, ...]` of either — has the
+*actual* value's `output_axes` checked against it at construction time,
+raising `ValueError` on a mismatch. A plain `Index`/`ConstIndex`/
+`GenericIndex` annotation (no `FIXED_AXES`) is unchecked, exactly as before
+this existed.
+
+The check is **structural, never nominal**: it compares axis sets, and never
+asks `isinstance`. A value built by an unrelated class — even one sharing no
+inheritance with `GridIndex` at all — satisfies a `field: GridIndex`
+annotation as long as its `output_axes` matches `GridIndex.FIXED_AXES`. This
+is deliberate: it is what lets independently-authored components interoperate
+around the same shape without agreeing on a common class hierarchy for it,
+the same way a plain `Axis("x", DOMAIN)` has always compared equal to a
+`DomainAxis("x", type=SpaceType(...))` sharing its name.
+
+**Extension point, not yet implemented**: a shape used in exactly one model
+does not necessarily deserve its own named class. An `Annotated[Index,
+Axes(...)]`-style inline declaration — verified the same structural way,
+without minting a type — is a natural addition if that need materializes; it
+has not been built because no concrete case has needed it yet.
 
 ## Model
 
@@ -329,6 +457,55 @@ This is enough to define a single leaf model. For advanced topics not
 covered here — `@expose`, `@functions`, `default_inputs()`, and composite
 ("root") models that wire several sub-models together — see the full
 `@define`/`compute()` guide in [dd-cdt-modularity.md](dd-cdt-modularity.md).
+
+**`@config`** carries construction-time, non-`Index` data — policy strings,
+small lookup dicts, selector values — that `compute()` needs to pick a
+formula branch or parametrize a nested `ModelVariant`, but that has no
+business being wrapped as an `Index`:
+
+```python
+@define("Routing")
+class RoutingModel(Model):
+
+    @inputs
+    class Inputs:
+        demand: Index
+
+    @config
+    class Config:
+        policy: str = "shortest_path"
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+        factor = 2.0 if config.policy == "shortest_path" else 1.0
+        return RoutingModel.Outputs(cost=Index("cost", inputs.demand * factor))
+
+m = RoutingModel(inputs=RoutingModel.Inputs(demand=demand), config=RoutingModel.Config(policy="shortest_path"))
+```
+
+Three boundaries keep `@config` from becoming a second, ad hoc channel next to
+`Inputs`/`Outputs`/`Expose`:
+
+* **`Config` never enters the graph.** A `Config` field is baked in once at
+  construction — never `Scenario`-overridable, never swept per ensemble
+  member, never added to `self.indexes`. `@config` rejects any field holding
+  a `GenericIndex` (the opposite validation direction from `@inputs`, which
+  requires one) — values that need to be inspectable, swept, or overridden
+  belong in `Inputs`, not `Config`.
+* **I/O still doesn't belong in `compute()`.** `@config` could technically
+  carry a file path or external ID to parametrize a lookup, but disk reads
+  and external computation pipelines stay out of `compute()` regardless —
+  this is contract-level guidance, not something `@config` changes.
+* **`Outputs`/`Expose` remain the only output surface.** `@config` is
+  input-side only; there is no symmetric "raw output" escape hatch (no ad
+  hoc `self.foo = bar` during `compute()`).
+
+A model that declares `@config` typically provides a matching `default_config()` class method, the
+same idiom as `default_inputs()`/`default_fns()` — see
+[dd-cdt-modularity.md](dd-cdt-modularity.md) for the full convention.
 
 ### Direct subclassing with `legacy=True`
 

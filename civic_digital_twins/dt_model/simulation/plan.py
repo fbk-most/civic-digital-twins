@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 
+from ..axes import Axis
 from ..engine.frontend import graph
 from ..model.index import GenericIndex
 from ..model.model import Model
@@ -75,11 +76,11 @@ class Region:
     ----------
     nodes:
         Topologically sorted computation-graph nodes in this region.
-    has_timeseries:
-        ``True`` when any node in :attr:`nodes` is a
-        :class:`~engine.frontend.graph.timeseries_constant` or
-        :class:`~engine.frontend.graph.timeseries_placeholder`; controls
-        trailing-singleton injection during shape normalisation.
+    domain_axes:
+        The DOMAIN axes carried by any node in :attr:`nodes`, in canonical
+        (name-sorted) order.  Controls how many trailing dimensions shape
+        normalisation reserves, and which position each one occupies.  Empty
+        for a region whose nodes are all scalar.
     guards:
         Ordered tuple of execution guards (outermost first), or ``()`` for an
         unconditional region.  The executor evaluates the region only for
@@ -88,7 +89,7 @@ class Region:
     """
 
     nodes: tuple[graph.Node, ...]
-    has_timeseries: bool
+    domain_axes: tuple[Axis, ...] = ()
     guards: tuple[RegionGuard, ...] = ()
 
 

@@ -100,6 +100,7 @@ from civic_digital_twins.dt_model.simulation.runner import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
+    ParameterMeta,
 )
 
 try:
@@ -1115,7 +1116,7 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
 
         return ModelRunHandle(future, _post)
 
-    def input_schema(self) -> dict[str, dict[str, Any]]:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a schema dict describing the Molveno model's tunable indexes.
 
         Includes entries for the three categorical context variables
@@ -1124,20 +1125,20 @@ class MolvenoEvaluator(ModelEvaluator[MolvenoModel, MolvenoOutput]):
 
         Returns
         -------
-        dict[str, dict[str, Any]]
-            Maps each index name to a metadata dict describing its type and,
-            for categoricals, its full support.
+        dict[str, ParameterMeta]
+            Maps each index name to parameter metadata describing its kind
+            and, for categoricals, its full support.
 
         Examples
         --------
         >>> evaluator.input_schema()
-        {"weekday": {"type": "categorical", "support": [...]}, ...}
+        {"weekday": ParameterMeta(name="weekday", kind="categorical", support=[...]), ...}
         """
         model = self._model
-        schema: dict[str, dict[str, Any]] = {}
+        schema: dict[str, ParameterMeta] = {}
         for idx in model.inputs:
             if isinstance(idx, CategoricalIndex):
-                schema[idx.name] = {"type": "categorical", "support": list(idx.support)}
+                schema[idx.name] = ParameterMeta(name=idx.name, kind="categorical", support=list(idx.support))
             elif isinstance(idx, DistributionIndex):
-                schema[idx.name] = {"type": "distribution"}
+                schema[idx.name] = ParameterMeta(name=idx.name, kind="distribution")
         return schema

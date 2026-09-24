@@ -22,6 +22,7 @@ from civic_digital_twins.dt_model import (
     NumpyBackend,
     Scenario,
     TimeseriesIndex,
+    config,
     define,
     expose,
     functions,
@@ -56,25 +57,27 @@ class TrafficModel(Model):
     class Inputs:
         ts_inflow:         TimeseriesIndex
         ts_starting:       TimeseriesIndex
-        modified_inflow:   Index
-        modified_starting: Index
+        modified_inflow:   TimeseriesIndex
+        modified_starting: TimeseriesIndex
 
     @outputs
     class Outputs:
         traffic:                TimeseriesIndex
         modified_traffic:       TimeseriesIndex
         total_modified_traffic: Index
-        inflow_ratio:           Index
-        starting_ratio:         Index
-        traffic_ratio:          Index
+        inflow_ratio:           TimeseriesIndex
+        starting_ratio:         TimeseriesIndex
+        traffic_ratio:          TimeseriesIndex
 
     def compute(self, inputs: Inputs) -> Outputs:
         traffic = TimeseriesIndex("reference traffic", inputs.ts_inflow + inputs.ts_starting)
         modified_traffic = TimeseriesIndex("modified traffic", inputs.modified_inflow + inputs.modified_starting)
+        # One aggregate over the whole horizon; every other output stays per-hour,
+        # so the policy's effect can be read at the peak rather than averaged away.
         total_modified_traffic = Index("total modified traffic", modified_traffic.sum())
-        inflow_ratio     = Index("inflow ratio", inputs.ts_inflow / inputs.modified_inflow)
-        starting_ratio   = Index("starting ratio", inputs.ts_starting / inputs.modified_starting)
-        traffic_ratio    = Index("traffic ratio", traffic / modified_traffic)
+        inflow_ratio     = TimeseriesIndex("inflow ratio", inputs.modified_inflow / inputs.ts_inflow)
+        starting_ratio   = TimeseriesIndex("starting ratio", inputs.modified_starting / inputs.ts_starting)
+        traffic_ratio    = TimeseriesIndex("traffic ratio", modified_traffic / traffic)
         return TrafficModel.Outputs(
             traffic=traffic,
             modified_traffic=modified_traffic,
@@ -87,8 +90,10 @@ class TrafficModel(Model):
 
 ts_in = TimeseriesIndex("inflow", np.array([10.0, 20.0, 30.0]))
 ts_st = TimeseriesIndex("starting", np.array([5.0, 10.0, 15.0]))
-mod_in = Index("modified_inflow", 0.9)
-mod_st = Index("modified_starting", 0.95)
+# A congestion charge that bites only as traffic builds: no effect in the first
+# hour, -10% then -20% on inflow, and a weaker -5% / -10% on starting vehicles.
+mod_in = TimeseriesIndex("modified_inflow", np.array([10.0, 18.0, 24.0]))
+mod_st = TimeseriesIndex("modified_starting", np.array([5.0, 9.5, 13.5]))
 m = TrafficModel(inputs=TrafficModel.Inputs(
     ts_inflow=ts_in,
     ts_starting=ts_st,
@@ -115,8 +120,8 @@ def _demo_02_level1_access() -> None:
     """Block 02: Level 1 contractual attribute access."""
     ts_i = TimeseriesIndex("ts_inflow_demo", np.array([10.0, 20.0, 30.0]))
     ts_s = TimeseriesIndex("ts_starting_demo", np.array([5.0, 10.0, 15.0]))
-    mod_i = Index("mod_inflow_demo", 0.9)
-    mod_s = Index("mod_starting_demo", 0.95)
+    mod_i = TimeseriesIndex("mod_inflow_demo", np.array([10.0, 18.0, 24.0]))
+    mod_s = TimeseriesIndex("mod_starting_demo", np.array([5.0, 9.5, 13.5]))
     traffic = TrafficModel(inputs=TrafficModel.Inputs(
         ts_inflow=ts_i,
         ts_starting=ts_s,
@@ -240,6 +245,46 @@ assert pipeline.outputs.result is not None
 assert pipeline.is_instantiated() is False
 # The wired output is reachable through the pipeline's index list
 assert _id_in(pipeline.outputs.result, pipeline.indexes)
+
+
+# ---------------------------------------------------------------------------
+# dd-cdt-modularity.md — default_inputs()/default_fns()/default_config()
+# class methods (default_inputs() receiving a sibling default_config())
+# ---------------------------------------------------------------------------
+
+
+@define("Zone")
+class ZoneModel(Model):
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    @inputs
+    class Inputs:
+        capacity: Index
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    @classmethod
+    def default_config(cls) -> Config:
+        return cls.Config(policy="default")
+
+    @classmethod
+    def default_inputs(cls, config: Config) -> Inputs:
+        capacity = 200.0 if config.policy == "peak" else 100.0
+        return cls.Inputs(capacity=ConstIndex("zone_capacity", capacity))
+
+    def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+        cost = Index("zone_cost", inputs.capacity * 2.0)
+        return ZoneModel.Outputs(cost=cost)
+
+
+zone_config = ZoneModel.default_config()
+m = ZoneModel(inputs=ZoneModel.default_inputs(zone_config), config=zone_config)
+assert m.outputs.cost is not None
 
 
 # ---------------------------------------------------------------------------
@@ -390,10 +435,15 @@ def _demo_10_proxy_attributes() -> None:
         selector="bike",
     )
     mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
-    mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
     mv.indexes                  # index list of the active (BikeModel) variant only
     mv.abstract_indexes()       # delegates to BikeModel.abstract_indexes()
     mv.is_instantiated()        # delegates to BikeModel.is_instantiated()
+
+    # inputs is a disjoint union, keyed by variant — never merged by field name.
+    mv.inputs["bike"].capacity   # == BikeModel.inputs.capacity, unambiguous
+    mv.inputs["train"].capacity  # == TrainModel.inputs.capacity — a different Index entirely
+    assert mv.inputs["bike"] is mv.variants["bike"].inputs
+    assert mv.inputs["train"] is mv.variants["train"].inputs
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +593,7 @@ class TrainModelPres(Model):
 
 def _demo_catidx_param_axis_1d() -> None:
     """1-D deterministic sweep: mode ∈ {bike, train}, constant capacity variants."""
-    mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])  # support-only, no weights
     mv_param = ModelVariant(
         "TransportParam",
         variants={
@@ -572,7 +622,7 @@ def _demo_catidx_param_axis_1d() -> None:
 
 def _demo_catidx_param_axis_2d() -> None:
     """2-D deterministic grid: mode × presence, presence-aware variants."""
-    mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+    mode_param = CategoricalIndex("mode_param", ["bike", "train"])
     presence = Index("presence", None)  # abstract — swept by the grid
     mv_grid = ModelVariant(
         "TransportGrid",

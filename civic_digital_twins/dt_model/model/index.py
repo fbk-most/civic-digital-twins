@@ -7,14 +7,130 @@ be a constant, a distribution, or a symbolic expression.
 """
 # SPDX-License-Identifier: Apache-2.0
 
+import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
-from typing import Any, Protocol, cast, runtime_checkable
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
 
-from ..axes import TIME_AXIS, Axis
+from ..axes import DOMAIN, TIME_AXIS, Axis, SpaceType, filter_by_role
 from ..engine.frontend import graph
+
+
+class AxesInferenceWarning(UserWarning):
+    """Warns that a formula's inferred axes are unlikely to be what was intended.
+
+    Emitted when an undeclared formula-backed index combines operands in a way
+    that broadens the result's axes (see :class:`Index`). The trigger is a
+    heuristic, not a contract: silence it for a formula that is deliberately an
+    outer product either by declaring ``axes=`` on the index — which states the
+    intent and is verified — or by filtering this category.
+    """
+
+
+def _combining_operand_axes(node: graph.Node) -> list[tuple[Axis, ...]] | None:
+    """Return each operand's own axes for a combining node, or ``None`` if it is not one.
+
+    "Combining" means a node whose ``output_axes`` is the union of several
+    independently axis-carrying operands — ``BinaryOp``, ``where``, and
+    ``MultiClauseOp``. Those are the only shapes that can produce the emergent
+    outer product :func:`_surprising_axes_reason` looks for.
+    """
+    if isinstance(node, graph.BinaryOp):
+        return [node.left.output_axes, node.right.output_axes]
+    if isinstance(node, graph.where):
+        return [node.condition.output_axes, node.then.output_axes, node.otherwise.output_axes]
+    if isinstance(node, graph.MultiClauseOp):
+        operand_axes = [ax for cond, val in node.clauses for ax in (cond.output_axes, val.output_axes)]
+        operand_axes.append(node.default_value.output_axes)
+        return operand_axes
+    return None
+
+
+def _surprising_axes_reason(node: graph.Node) -> str | None:
+    """Return why *node*'s inferred axes may be unintended, or ``None`` if they look fine.
+
+    Two independent triggers:
+
+    * **Emergent outer product** — a combining node whose result axes are a
+      strict superset of *every* operand's own axes. No operand already
+      carried the full result, so the extra axes emerged from combining
+      disjoint contributions (``a:(time,) * b:(space,)`` -> ``(time, space)``).
+      Broadcasting a scalar, or combining operands that already share the
+      result's axes, is not surprising and does not trigger.
+    * **Unsigned function_call** — a ``function_call`` with non-empty axes and
+      no functor-declared ``output_axes``. Its inference is a conservative
+      union, so it over-estimates whenever the function reduces an axis — even
+      when only one axis is involved.
+    """
+    if isinstance(node, graph.function_call):
+        if node.output_axes and not node.has_declared_output_axes:
+            return "function_call axis inference is a conservative union and may over-estimate"
+        return None
+    operand_axes = _combining_operand_axes(node)
+    if operand_axes is None:
+        return None
+    result = set(node.output_axes)
+    if all(set(operand) != result for operand in operand_axes):
+        return "combining operands with disjoint axes produced a result broader than any single operand"
+    return None
+
+
+def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[Axis, ...]) -> None:
+    """Raise ``ValueError`` unless *declared* and *actual* hold the same axes.
+
+    Compared as **sets**: for a formula, the order of inferred ``output_axes``
+    is an artifact of how ``union_axes`` walked the operands (``a * b`` and
+    ``b * a`` order the same result differently), so it carries no meaning to
+    assert against. Contrast the injected-value modes, where *axes* is zipped
+    positionally against the array's shape and order is load-bearing.
+
+    Shared by two call sites: :class:`Index`'s own construction-time check
+    (a formula's declared ``axes=`` against its graph-inferred
+    ``output_axes``), and ``model.contracts``' contract-boundary check (a
+    field's ``FIXED_AXES`` against the actual value's ``output_axes``).
+    Structural both times: it never asks what type produced *actual*, only
+    what axes it carries.
+    """
+    if set(declared) != set(actual):
+        raise ValueError(
+            f"{owner}: declared axes {declared!r} do not match the actual "
+            f"output_axes {actual!r} (compared as sets, order is not significant). "
+            f"Declaring axes verifies the shape, it cannot relabel it — fix whichever "
+            f"of the two is wrong."
+        )
+
+
+def _warn_if_axes_surprising(owner: str, node: graph.Node) -> None:
+    """Emit :class:`AxesInferenceWarning` if *node*'s inferred axes look unintended."""
+    reason = _surprising_axes_reason(node)
+    if reason is not None:
+        warnings.warn(
+            f"{owner}: inferred output_axes={node.output_axes!r} — {reason}. "
+            f"Pass axes=... to declare the result explicitly (it is verified against "
+            f"the formula), or restructure the formula to avoid combining the axes.",
+            AxesInferenceWarning,
+            stacklevel=3,
+        )
+
+
+def _require_space_type(axis: Axis) -> SpaceType:
+    """Return *axis*'s :class:`~..axes.SpaceType`, or raise if it does not carry one.
+
+    Gates ``gradient``/``laplacian`` to axes that actually carry the metric
+    (``spacing``) and boundary policy those operators need. ``isinstance``
+    against the ``SetType``/``SequenceType``/``SpaceType`` lattice is the
+    right check here: an axis's *capability* (what operator vocabulary it
+    unlocks) is exactly what that lattice models.
+    """
+    axis_type = getattr(axis, "type", None)
+    if not isinstance(axis_type, SpaceType):
+        raise ValueError(
+            f"gradient/laplacian require a SpaceType axis; {axis!r} does not carry one. "
+            f"Construct it as DomainAxis(name, type=SpaceType(spacing=...))."
+        )
+    return axis_type
 
 
 @runtime_checkable
@@ -188,164 +304,414 @@ class GenericIndex(ABC):
         return self.node >= self._node_of(other)
 
     # ------------------------------------------------------------------
-    # Reduction operators
+    # Logical operators — return graph nodes (lazy, element-wise).
     # ------------------------------------------------------------------
 
-    def sum(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def __and__(self, other: object) -> graph.Node:
+        """Return a graph node for self & other."""
+        return self.node & self._node_of(other)
+
+    def __rand__(self, other: object) -> graph.Node:
+        """Return a graph node for other & self."""
+        return self._node_of(other) & self.node  # type: ignore[operator]
+
+    def __or__(self, other: object) -> graph.Node:
+        """Return a graph node for self | other."""
+        return self.node | self._node_of(other)
+
+    def __ror__(self, other: object) -> graph.Node:
+        """Return a graph node for other | self."""
+        return self._node_of(other) | self.node  # type: ignore[operator]
+
+    def __xor__(self, other: object) -> graph.Node:
+        """Return a graph node for self ^ other."""
+        return self.node ^ self._node_of(other)
+
+    def __rxor__(self, other: object) -> graph.Node:
+        """Return a graph node for other ^ self."""
+        return self._node_of(other) ^ self.node  # type: ignore[operator]
+
+    def __invert__(self) -> graph.Node:
+        """Return a graph node for ~self."""
+        return ~self.node
+
+    # ------------------------------------------------------------------
+    # Shape operators
+    # ------------------------------------------------------------------
+
+    def broadcast(self, *axes: Axis) -> graph.Node:
+        """Return a graph node carrying this index's value plus *axes* it doesn't already carry.
+
+        Needed because ``axes=`` on :class:`Index` only *verifies* a
+        formula's inferred axes rather than declaring or overriding them —
+        there is no way to make a node carry an axis it doesn't
+        structurally reference except by referencing it. For example, an
+        index that only carries ``(x,)`` can't be wrapped as
+        ``axes=(x, y)`` on its own::
+
+            standalone = Index("standalone", ind_x, axes=(x, y))  # ValueError
+
+        ``ind_x.broadcast(y)`` fixes this by making the node itself
+        reference ``y``, with implicit size-1 extent there::
+
+            standalone = Index("standalone", ind_x.broadcast(y), axes=(x, y))
+
+        This is *not* needed just to combine ``ind_x`` with an operand
+        that already carries ``y`` — ``ind_x + ind_xy`` already infers
+        ``(x, y)`` on its own, since a formula's inferred axes are always
+        the union of its operands' axes. Broadcasting only matters when
+        nothing else in the formula supplies the axis.
+
+        See :meth:`graph.Node.broadcast` for what this declares and why
+        evaluating it is a backend concern rather than a frontend one.
+        """
+        return self.node.broadcast(*axes)
+
+    # ------------------------------------------------------------------
+    # Reduction and per-axis operators
+    # ------------------------------------------------------------------
+
+    def _resolve_domain_axis(self, axis: Axis | None) -> Axis:
+        """Resolve the axis an operation applies to, defaulting to the index's unique DOMAIN axis.
+
+        Shared by every axis-taking operator on this class — reductions
+        (``sum``, ``mean``, ...) and per-axis operators (``shift``, ``roll``,
+        ``diff``, ``cumulative``) alike.
+
+        When *axis* is given it is used verbatim. When it is ``None``:
+
+        * exactly one DOMAIN axis → that axis (a timeseries index has exactly
+          one, time, so operations keep defaulting to time as before);
+        * any other number → there is no unambiguous default, so an explicit
+          ``axis=`` is required and a ``ValueError`` is raised.
+
+        An index carrying *no* DOMAIN axis is included in that second case:
+        there is no dimension to operate over, so nothing can be inferred. It
+        used to fall back to the time axis, reproducing a "use the last
+        dimension" convention from when every array was a timeseries. The
+        executor now resolves an axis to the position its name identifies, so
+        that fallback would ask it to operate on a time axis the evaluation
+        does not carry.
+        """
+        if axis is not None:
+            return axis
+        domain_axes = filter_by_role(self.node.output_axes, DOMAIN)
+        if len(domain_axes) == 1:
+            return domain_axes[0]
+        if not domain_axes:
+            raise ValueError(
+                f"{type(self).__name__} needs an explicit axis=: this index carries no "
+                f"DOMAIN axis, so there is no dimension to operate over. Declare the index's shape "
+                f"with axes=, or pass the axis explicitly."
+            )
+        raise ValueError(
+            f"{type(self).__name__} needs an explicit axis=: this index carries "
+            f"{len(domain_axes)} DOMAIN axes {[ax.name for ax in domain_axes]}, "
+            f"so there is no unique default axis to operate over."
+        )
+
+    def sum(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that sums this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``, which sums across the
-        time dimension.  The reduced axis is always preserved as size 1,
+        The default axis is the index's sole DOMAIN axis (for a timeseries
+        index, ``Axis("time", DOMAIN)``); an index carrying several DOMAIN
+        axes must pass ``axis=`` explicitly.  The reduced axis is always
+        preserved as size 1,
         ensuring the result broadcasts correctly against both plain timeseries
         ``(T,)`` and ensemble-batched timeseries ``(size, T)``:
 
         * ``(T,)``      → ``(1,)``      (scalar-like, broadcasts with any T)
         * ``(size, T)`` → ``(size, 1)`` (per-sample scalar in correct shape)
         """
-        return graph.project_using_sum(self.node, axis)
+        return self.node.sum(self._resolve_domain_axis(axis))
 
-    def mean(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def mean(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that averages this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_mean(self.node, axis)
+        return self.node.mean(self._resolve_domain_axis(axis))
 
-    def min(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def min(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the minimum of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_min(self.node, axis)
+        return self.node.min(self._resolve_domain_axis(axis))
 
-    def max(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def max(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the maximum of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_max(self.node, axis)
+        return self.node.max(self._resolve_domain_axis(axis))
 
-    def std(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def std(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the standard deviation of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_std(self.node, axis)
+        return self.node.std(self._resolve_domain_axis(axis))
 
-    def var(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def var(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the variance of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_var(self.node, axis)
+        return self.node.var(self._resolve_domain_axis(axis))
 
-    def median(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def median(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the median of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_median(self.node, axis)
+        return self.node.median(self._resolve_domain_axis(axis))
 
-    def prod(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def prod(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the product of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_prod(self.node, axis)
+        return self.node.prod(self._resolve_domain_axis(axis))
 
-    def any(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def any(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if any elements of this index are True over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_any(self.node, axis)
+        return self.node.any(self._resolve_domain_axis(axis))
 
-    def all(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def all(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that tests if all elements of this index are True over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_all(self.node, axis)
+        return self.node.all(self._resolve_domain_axis(axis))
 
-    def count_nonzero(self, axis: Axis = TIME_AXIS) -> graph.Node:
+    def count_nonzero(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that counts non-zero elements of this index over the given axis.
 
-        The default axis is ``Axis("time", DOMAIN)``; the reduced axis is
-        always preserved as size 1.
+        The default axis is the index's sole DOMAIN axis (time, for a
+        timeseries index); an index carrying several DOMAIN axes must pass
+        ``axis=`` explicitly. The reduced axis is always preserved as size 1.
         """
-        return graph.project_using_count_nonzero(self.node, axis)
+        return self.node.count_nonzero(self._resolve_domain_axis(axis))
 
-    def quantile(self, q: float, axis: Axis = TIME_AXIS) -> graph.Node:
+    def quantile(self, q: float, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that computes the quantile of this index over the given axis.
 
         Args:
             q: Quantile level in the range [0, 1]. For example, 0.5 for the median,
                0.95 for the 95th percentile.
-            axis: Semantic axis along which to compute the quantile (default:
-                ``Axis("time", DOMAIN)``).
+            axis: Semantic axis along which to compute the quantile. Defaults
+                to the index's sole DOMAIN axis (time, for a timeseries
+                index); required when the index carries several.
         """
-        return graph.project_using_quantile(self.node, axis, q)
+        return self.node.quantile(self._resolve_domain_axis(axis), q)
+
+    def shift(self, periods: int = 1, *, axis: Axis | None = None, fill_value: float = 0.0) -> graph.Node:
+        """Return a graph node shifting this index along the given axis, filling exposed positions.
+
+        Positive *periods* moves values towards higher indices; negative
+        moves towards lower indices. Positions exposed at the boundary are
+        set to *fill_value*. This is the fill (non-circular) counterpart to
+        :meth:`roll` — mirroring pandas' and xarray's ``shift``, which never
+        wraps; use :meth:`roll` explicitly for circular behavior.
+
+        Args:
+            periods: Number of positions to shift by (may be negative).
+            axis: Semantic axis along which to shift. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+            fill_value: Value used for positions exposed at the boundary.
+        """
+        return self.node.shift(self._resolve_domain_axis(axis), periods, fill_value)
+
+    def roll(self, periods: int = 1, *, axis: Axis | None = None) -> graph.Node:
+        """Return a graph node circularly shifting this index along the given axis.
+
+        Values shifted past the boundary wrap around to the other end. This
+        is the circular counterpart to :meth:`shift` — e.g. the convention
+        used by a periodic recurrence such as a circular ``np.roll``-based
+        solver.
+
+        Args:
+            periods: Number of positions to roll by (may be negative).
+            axis: Semantic axis along which to roll. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+        """
+        return self.node.roll(self._resolve_domain_axis(axis), periods)
+
+    def diff(self, periods: int = 1, *, axis: Axis | None = None, fill_value: float = 0.0) -> graph.Node:
+        """Return a graph node computing the difference between this index and its shifted self.
+
+        Equivalent to ``self - self.shift(periods, axis=axis, fill_value=fill_value)``
+        (pandas' and xarray's ``diff``), so the position exposed by the shift
+        carries ``value - fill_value`` rather than an undefined result.
+
+        Args:
+            periods: Number of positions to look back (may be negative).
+            axis: Semantic axis along which to difference. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+            fill_value: Value assumed for positions before the axis start
+                (or after its end, for negative *periods*).
+        """
+        return self.node.diff(self._resolve_domain_axis(axis), periods, fill_value)
+
+    def cumulative(self, *, axis: Axis | None = None) -> graph.Node:
+        """Return a graph node computing the cumulative (running) sum of this index along the given axis.
+
+        Args:
+            axis: Semantic axis along which to accumulate. Defaults to the
+                index's sole DOMAIN axis; required when the index carries
+                several.
+        """
+        return self.node.cumulative(self._resolve_domain_axis(axis))
+
+    def gradient(self, *, axis: Axis | None = None) -> graph.Node:
+        """Return a graph node computing the first partial derivative of this index along the given axis.
+
+        The axis must carry :class:`~..axes.SpaceType` metadata (spacing and
+        boundary condition) — see :class:`~..axes.DomainAxis`. Computed via
+        central differences, honoring the axis's declared
+        :class:`~..axes.BoundaryCondition` at the two ends.
+
+        Args:
+            axis: Semantic ``SpaceType`` axis along which to differentiate.
+                Defaults to the index's sole DOMAIN axis; required when the
+                index carries several.
+        """
+        resolved = self._resolve_domain_axis(axis)
+        space_type = _require_space_type(resolved)
+        return graph.gradient(self.node, resolved, space_type.spacing, space_type.boundary)
+
+    def laplacian(self, *, axes: tuple[Axis, ...] | None = None) -> graph.Node:
+        """Return a graph node computing the Laplacian (sum of second partial derivatives) of this index.
+
+        Each axis must carry :class:`~..axes.SpaceType` metadata (spacing and
+        boundary condition) — see :class:`~..axes.DomainAxis`. This is the
+        isotropic operator a diffusion process needs: for a 2-D grid it is
+        ``d2/dx2 + d2/dy2``.
+
+        Args:
+            axes: Semantic ``SpaceType`` axes to sum the second derivative
+                over. Defaults to every ``SpaceType`` DOMAIN axis this index
+                carries; raises if there are none and *axes* is not given.
+        """
+        resolved_axes = axes if axes is not None else self._resolve_space_axes()
+        space_types = [_require_space_type(ax) for ax in resolved_axes]
+        spacings = tuple(st.spacing for st in space_types)
+        boundaries = tuple(st.boundary for st in space_types)
+        return graph.laplacian(self.node, resolved_axes, spacings, boundaries)
+
+    def _resolve_space_axes(self) -> tuple[Axis, ...]:
+        """Return every ``SpaceType`` DOMAIN axis this index carries, for :meth:`laplacian`'s default.
+
+        Raises ``ValueError`` if there is none — mirroring
+        :meth:`_resolve_domain_axis`'s "no unambiguous default" behavior.
+        """
+        domain_axes = filter_by_role(self.node.output_axes, DOMAIN)
+        space_axes = tuple(ax for ax in domain_axes if isinstance(getattr(ax, "type", None), SpaceType))
+        if not space_axes:
+            raise ValueError(
+                f"{type(self).__name__}.laplacian needs an explicit axes=: this index carries no "
+                f"SpaceType DOMAIN axis to default to."
+            )
+        return space_axes
 
 
 class Index(GenericIndex):
-    """Scalar-valued index variable.
+    """Index variable, scalar or domain-carrying.
+
+    An ``Index`` is *any* index. Its shape is **declared** via ``axes=`` when
+    the value comes from outside (concrete/placeholder — nothing else can know
+    it) and **derived** from the computation graph when the value is computed
+    by a formula (the graph already knows it exactly, via
+    :attr:`~GenericIndex.output_axes`).
 
     Immutable after construction: ``name``, ``value``, and ``node`` are
     read-only.  To vary an index value across runs, use
     :class:`~simulation.scenario.Scenario`.
 
-    Three modes:
+    Value-source modes — orthogonal to the domain signature, so each applies
+    with or without ``axes=``:
 
-    * **Concrete** — ``Index("cost", 8.0)``: scalar default; node is a
-      ``graph.placeholder`` filled by Scenario at evaluation time.
-    * **Placeholder** — ``Index("cost", None)``: no default; value must be
-      supplied via Scenario or ``parameters=`` before evaluation.
+    * **Concrete** — ``Index("cost", 8.0)`` (scalar; node is a
+      ``graph.placeholder``) or ``Index("field", arr, axes=(x, y))`` (node is
+      an ``array_placeholder``, per-axis sizes deduced by zipping *axes*
+      against the array's shape in declaration order, so the array's rank must
+      match the number of axes). The value is a default, injected by Scenario
+      at evaluation time.
+    * **Placeholder** — ``Index("cost")`` / ``Index("field", axes=(x, y))``:
+      no default; value must be supplied via Scenario or ``parameters=``
+      before evaluation.
     * **Formula** — ``Index("cost", formula_node)``: computed by the engine;
-      no external injection needed.  Another :class:`Index` (or a subclass,
-      e.g. :class:`ConstIndex`) is also accepted here and coerced to its
-      underlying ``.node`` (reusing the formula), the same unwrapping the
-      arithmetic operators perform. A sibling type carrying a different
-      shape — :class:`TimeseriesIndex` — is deliberately *not* accepted;
-      mixing shapes this way is almost always a mistake, not a formula reuse.
+      no external injection needed. Another :class:`GenericIndex` is also
+      accepted here and unwrapped to its underlying ``.node`` (reusing the
+      formula), the same unwrapping the arithmetic operators perform.
+
+    In formula mode ``axes=`` is an optional *assertion* about the formula's
+    inferred ``output_axes`` — ``None`` declares nothing, ``()`` declares the
+    result scalar, ``(x, y)`` declares those axes. It is a **verification, not
+    an override**: a mismatch raises ``ValueError``, and there is no mechanism
+    to relabel a formula's axes. The comparison is by **set**, since a
+    formula's axis order is a traversal artifact rather than something the
+    author chose (contrast the injected modes above, where order is zipped
+    against the array's shape and does matter).
+
+    Declaring ``axes=`` on a formula is also how you state intent: an
+    undeclared formula whose inferred axes look accidental — an outer product
+    emerging from operands with disjoint axes, or an unsigned ``function_call``
+    whose union may over-estimate — raises :class:`AxesInferenceWarning`.
 
     For distribution-backed indexes use :class:`DistributionIndex`.
     """
 
+    # Instance state, declared once here rather than in whichever __init__
+    # branch happens to run first.  Subclasses that deliberately bypass
+    # Index.__init__ (ConstIndex and its specializations, which build a
+    # constant node instead of a placeholder) must set all five.
+    _name: str
+    _axes: tuple[Axis, ...] | None
+    _value: "graph.Scalar | np.ndarray | graph.Node | None"
+    _node: graph.Node
+    _sizes: dict[str, int]
+
     def __init__(
         self,
         name: str,
-        value: "graph.Scalar | graph.Node | Index | None",
+        value: "graph.Scalar | np.ndarray | graph.Node | GenericIndex | None" = None,
+        *,
+        axes: tuple[Axis, ...] | None = None,
     ) -> None:
         self._name = name
+        self._axes = axes
 
-        # Coerce another Index to its underlying node so a formula that reuses
-        # it (``Index("y", inp.x)``) is treated as formula-backed, matching how
-        # the arithmetic operators unwrap indexes via _node_of. Scoped to
-        # Index (not the broader GenericIndex) so that passing a
-        # differently-shaped sibling like TimeseriesIndex is a static/runtime
-        # error rather than a silent shape mismatch.
-        if isinstance(value, Index):
+        # Unwrap a sibling index to its underlying node so a formula that
+        # reuses it (``Index("y", inp.x)``) is treated as formula-backed,
+        # matching how the arithmetic operators unwrap indexes via _node_of.
+        if isinstance(value, GenericIndex):
             value = value.node
-        elif isinstance(value, GenericIndex):
-            # A differently-shaped sibling (e.g. TimeseriesIndex) is rejected
-            # explicitly rather than falling through to the "concrete scalar"
-            # branch below, which would silently store the index object
-            # itself as the default value — the same degenerate-semantics bug
-            # the Index coercion above exists to avoid, just for a mismatched
-            # shape instead of a missing ``.node``.
-            raise TypeError(
-                f"Index {name!r} cannot be initialised from a {type(value).__name__}. "
-                f"Pass its .node explicitly if the shape mismatch is intentional."
-            )
 
         if isinstance(value, Distribution):
             raise TypeError(
@@ -353,21 +719,45 @@ class Index(GenericIndex):
                 f"Use DistributionIndex for distribution-backed indexes."
             )
 
-        # Formula node: reuse it directly as this index's node.
+        # Formula node: reuse it directly as this index's node. Any declared
+        # *axes* is an assertion about its inferred output_axes, not an
+        # override — sizes come from the graph, never from the declaration.
         if isinstance(value, graph.Node):
             value.maybe_set_name(name)
-            self._value: graph.Scalar | graph.Node | None = value
-            self._node: graph.Node = value
-
-        # Concrete scalar: placeholder injected by Scenario at evaluation time.
-        elif value is not None:
             self._value = value
-            self._node = graph.placeholder(name)
+            self._node = value
+            self._sizes = {}
+            if axes is not None:
+                _verify_declared_axes(f"{type(self).__name__} {name!r}", axes, value.output_axes)
+            else:
+                _warn_if_axes_surprising(f"{type(self).__name__} {name!r}", value)
+
+        # Concrete value: placeholder injected by Scenario at evaluation time.
+        elif value is not None:
+            if axes:
+                arr = np.asarray(value)
+                self._value = arr
+                self._node = self._make_placeholder_node(name, axes)
+                self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+            else:
+                self._value = value
+                self._node = graph.placeholder(name)
+                self._sizes = {}
 
         # Bare placeholder.
         else:
             self._value = None
-            self._node = graph.placeholder(name)
+            self._node = self._make_placeholder_node(name, axes) if axes else graph.placeholder(name)
+            self._sizes = {}
+
+    @staticmethod
+    def _make_placeholder_node(name: str, axes: tuple[Axis, ...]) -> graph.Node:
+        """Build the placeholder node for the concrete/bare-placeholder modes.
+
+        Subclasses fixing a named shape (:class:`TimeseriesIndex`) simply pass
+        their *axes*; the node type is the same generic one either way.
+        """
+        return graph.array_placeholder(name, axes)
 
     @property
     def name(self) -> str:
@@ -380,13 +770,29 @@ class Index(GenericIndex):
         return self._node
 
     @property
+    def axes(self) -> tuple[Axis, ...] | None:
+        """The domain axes *declared* for this index, in order, or ``None``.
+
+        ``None`` means no declaration was made: for an injected value that
+        implies a scalar, and for a formula it means the shape is left to
+        graph inference. Read :attr:`~GenericIndex.output_axes` for the axes
+        the value actually carries.
+        """
+        return self._axes
+
+    @property
+    def sizes(self) -> dict[str, int]:
+        """Per-axis-name sizes deduced from a concrete array; empty otherwise."""
+        return dict(self._sizes)
+
+    @property
     def is_abstract(self) -> bool:
         """Whether this index requires an external value before evaluation."""
         return self._value is None
 
     @property
-    def concrete_default(self) -> graph.Scalar | None:
-        """The index's concrete scalar default, or ``None`` if unset or formula-backed.
+    def concrete_default(self) -> "graph.Scalar | np.ndarray | None":
+        """The index's concrete default, or ``None`` if unset or formula-backed.
 
         Used by :class:`~simulation.scenario.Scenario` to seed the executor
         state with each index's default before overrides are applied. Most
@@ -397,6 +803,13 @@ class Index(GenericIndex):
 
     def __repr__(self) -> str:
         """Return a string representation of the index."""
+        if self._axes:
+            axes_suffix = f", axes={self._axes!r}"
+            if self._value is None:
+                return f"idx({self._name!r}, placeholder{axes_suffix})"
+            if isinstance(self._value, graph.Node):
+                return f"idx({self._name!r}, <formula>{axes_suffix})"
+            return f"idx({self._name!r}, {np.asarray(self._value).tolist()!r}{axes_suffix})"
         if self._value is None:
             return f"idx({self._name!r})"
         if isinstance(self._value, graph.Node):
@@ -405,43 +818,74 @@ class Index(GenericIndex):
 
 
 class ConstIndex(Index):
-    """Index baked into the computation graph as a ``graph.constant``.
+    """Index baked into the computation graph as a constant node.
 
-    Immutable after construction; the node is permanently fixed.  Use this
-    when the value is a structural constant (e.g. a unit conversion factor),
-    not a scenario parameter.
+    Whereas a concrete :class:`Index` builds an overwritable placeholder (its
+    value is a default a Scenario may replace), a ``ConstIndex`` bakes its
+    value into a constant node: it is permanently fixed and cannot be
+    overridden per scenario. Choosing between the two is a modeling decision
+    about whether the value is a structural constant of the model (e.g. a unit
+    conversion factor) or a scenario-varying input.
+
+    Like :class:`Index`, it is scalar by default and domain-carrying when
+    ``axes=`` is declared (``ConstIndex("field", arr, axes=(x, y))``, whose
+    array rank must match the number of axes). Immutable after construction.
     """
 
     def __init__(
         self,
         name: str,
-        value: float,
+        value: "float | np.ndarray",
+        *,
+        axes: tuple[Axis, ...] | None = None,
     ) -> None:
         # Bypass Index.__init__: it would create a placeholder node first.
         self._name = name
-        self._value: graph.Scalar | graph.Node | None = value
-        self._node: graph.Node = graph.constant(value, name)
+        self._axes = axes
+        if axes:
+            arr = np.asarray(value)
+            self._value = arr
+            self._node = self._make_constant_node(arr, axes, name)
+            self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
+        else:
+            self._value = cast(graph.Scalar, value)
+            self._node = graph.constant(self._value, name)
+            self._sizes = {}
+
+    @staticmethod
+    def _make_constant_node(value: np.ndarray, axes: tuple[Axis, ...], name: str) -> graph.Node:
+        """Build the constant node for the domain-carrying mode.
+
+        Subclasses fixing a named shape (:class:`ConstTimeseriesIndex`) simply
+        pass their *axes*; the node type is the same generic one either way.
+        """
+        return graph.array_constant(value, axes, name)
 
     def __repr__(self) -> str:
         """Return a string representation of the constant index."""
+        if self._axes:
+            return f"const_idx({self._name!r}, {np.asarray(self._value).tolist()!r}, axes={self._axes!r})"
         return f"const_idx({self._value!r})"
 
 
-class TimeseriesIndex(GenericIndex):
+class TimeseriesIndex(Index):
     """Time-indexed quantity.
 
-    Sibling of :class:`Index` (both extend :class:`GenericIndex` directly);
-    not a subclass — ``Index`` is scalar-valued, ``TimeseriesIndex`` carries
-    a DOMAIN (time) axis.  Immutable after construction.
+    Specialization of :class:`Index` fixing ``axes=(TIME_AXIS,)``: a thin
+    backward-compatible convenience over the generic domain-carrying index,
+    not a new concept, and the model for any named-shape convenience — see
+    :attr:`FIXED_AXES` for how to define your own.  Immutable after
+    construction.
 
     Three modes mirror :class:`Index`:
 
     * **Fixed array** — ``TimeseriesIndex(name, np.array([...]))``
-      Node is a ``timeseries_placeholder``; the array is the default,
-      injected by :class:`~simulation.scenario.Scenario` at evaluation time.
+      Node is an ``array_placeholder`` over ``axes=(TIME_AXIS,)``; the array
+      is the default, injected by :class:`~simulation.scenario.Scenario` at
+      evaluation time.
     * **Placeholder** — ``TimeseriesIndex(name)``
-      Node is a ``timeseries_placeholder``; value must be supplied via
-      Scenario or ``parameters=`` before evaluation.
+      Node is an ``array_placeholder`` over ``axes=(TIME_AXIS,)``; value must
+      be supplied via Scenario or ``parameters=`` before evaluation.
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
       Node is the formula node directly; value is computed by the engine.
       Another :class:`TimeseriesIndex` is also accepted here and coerced to
@@ -451,69 +895,26 @@ class TimeseriesIndex(GenericIndex):
       formula reuse.
     """
 
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (TIME_AXIS,)
+    """The axes this class fixes.
+
+    Read by ``model.contracts``: an ``Inputs``/``Outputs``/``Expose`` field
+    annotated with a class carrying ``FIXED_AXES`` is verified at
+    construction time against the actual value's
+    :attr:`~GenericIndex.output_axes` — structurally, by comparing axis sets,
+    never by ``isinstance``.  This is the general recipe for a named shape:
+    subclass :class:`Index`, set ``FIXED_AXES``, and pass it to ``axes=`` in
+    your own ``__init__`` (mirror :class:`ConstIndex` too, via multiple
+    inheritance, for a constant-valued variant — see
+    :class:`ConstTimeseriesIndex`).
+    """
+
     def __init__(
         self,
         name: str,
         value: "np.ndarray | graph.Node | TimeseriesIndex | None" = None,
     ) -> None:
-        self._name = name
-
-        # Coerce another TimeseriesIndex to its underlying node so a formula
-        # that reuses it is treated as formula-backed, mirroring Index's
-        # unwrap of a sibling Index. Scoped to TimeseriesIndex (not the
-        # broader GenericIndex) so that passing a differently-shaped sibling
-        # like Index is a static/runtime error rather than a silent shape
-        # mismatch.
-        if isinstance(value, TimeseriesIndex):
-            value = value.node
-        elif isinstance(value, GenericIndex):
-            raise TypeError(
-                f"TimeseriesIndex {name!r} cannot be initialised from a {type(value).__name__}. "
-                f"Pass its .node explicitly if the shape mismatch is intentional."
-            )
-
-        # Formula node: reuse it directly as this index's node.
-        if isinstance(value, graph.Node):
-            value.maybe_set_name(name)
-            self._value: np.ndarray | graph.Node | None = value
-            self._node: graph.Node = value
-
-        # Concrete array: placeholder injected by Scenario at evaluation time.
-        elif value is not None:
-            arr = np.asarray(value)
-            self._value = arr
-            self._node = graph.timeseries_placeholder(name)
-
-        # Bare placeholder.
-        else:
-            self._value = None
-            self._node = graph.timeseries_placeholder(name)
-
-    @property
-    def name(self) -> str:
-        """The human-readable name of the index."""
-        return self._name
-
-    @property
-    def node(self) -> graph.Node:
-        """The underlying computation graph node."""
-        return self._node
-
-    @property
-    def is_abstract(self) -> bool:
-        """Whether this index requires an external value before evaluation."""
-        return self._value is None
-
-    @property
-    def concrete_default(self) -> np.ndarray | None:
-        """The index's concrete array default, or ``None`` if unset or formula-backed.
-
-        Used by :class:`~simulation.scenario.Scenario` to seed the executor
-        state with each index's default before overrides are applied. Most
-        model-authoring code should not need this — read values through the
-        computation graph (``.node``) instead.
-        """
-        return None if isinstance(self._value, graph.Node) else self._value
+        super().__init__(name, value, axes=self.FIXED_AXES)
 
     def __repr__(self) -> str:
         """Return a string representation of the timeseries index."""
@@ -524,11 +925,22 @@ class TimeseriesIndex(GenericIndex):
         return "timeseries_idx(<formula>)"
 
 
-class ConstTimeseriesIndex(TimeseriesIndex):
-    """TimeseriesIndex baked into the graph as a ``timeseries_constant``.
+class ConstTimeseriesIndex(ConstIndex, TimeseriesIndex):
+    """ConstIndex baked into the graph as an ``array_constant`` over ``axes=(TIME_AXIS,)``.
 
-    Timeseries analogue of :class:`ConstIndex`.  Immutable after
-    construction; the node is permanently fixed.
+    Specialization of :class:`ConstIndex` fixing ``axes=(TIME_AXIS,)`` (via
+    the :attr:`~TimeseriesIndex.FIXED_AXES` inherited from
+    :class:`TimeseriesIndex`).  Immutable after construction; the node is
+    permanently fixed.
+
+    It is *also* a :class:`TimeseriesIndex`, deliberately: that is the type
+    that means "time-shaped, whatever the value source", and it is what model
+    ``Inputs``/``Outputs`` contracts annotate a time-shaped field with. Only
+    :class:`ConstIndex` participates in behavioural dispatch (Scenario refuses
+    to override a structural constant before any timeseries-specific
+    validation is reached), so the second base is a shape declaration, not a
+    behavioural one. Construction resolves to :meth:`ConstIndex.__init__`,
+    which builds the node directly.
 
     Parameters
     ----------
@@ -536,7 +948,8 @@ class ConstTimeseriesIndex(TimeseriesIndex):
         Human-readable name for this index.
     value:
         Fixed array of time-step values.  Stored via :func:`numpy.asarray`
-        and used to create a ``timeseries_constant`` graph node.
+        and used to create an ``array_constant`` graph node over
+        ``axes=(TIME_AXIS,)``.
 
     Examples
     --------
@@ -547,16 +960,45 @@ class ConstTimeseriesIndex(TimeseriesIndex):
     """
 
     def __init__(self, name: str, value: np.ndarray) -> None:
-        # Bypass TimeseriesIndex.__init__: it would create a timeseries_placeholder first.
-        self._name = name
-        arr = np.asarray(value)
-        self._value: np.ndarray | graph.Node | None = arr
-        self._node: graph.Node = graph.timeseries_constant(arr, name)
+        super().__init__(name, value, axes=self.FIXED_AXES)
 
     def __repr__(self) -> str:
         """Return a string representation of the constant timeseries index."""
         assert isinstance(self._value, np.ndarray)
         return f"const_timeseries_idx({self._value.tolist()!r})"
+
+
+def named_shape(prefix: str, axes: tuple[Axis, ...]) -> tuple[type, type, type]:
+    """Build the (Index, ConstIndex, DistributionIndex) trio for a named domain shape.
+
+    Generalizes the hand-written ``TimeseriesIndex``/``ConstTimeseriesIndex``
+    recipe (subclass, set ``FIXED_AXES``, thread ``axes=`` through
+    ``__init__``) documented on :attr:`TimeseriesIndex.FIXED_AXES`. Returns
+    ``({prefix}Index, Const{prefix}Index, Distribution{prefix}Index)``.
+
+    The ``Distribution{prefix}Index`` member forwards ``axes=`` via the same
+    recipe, but ``shape=`` is not supplied by the factory — there is nothing
+    to default it to, since it is genuinely per-instance (the same way
+    :class:`TimeseriesIndex` does not fix its array length). Callers of a
+    generated ``Distribution{prefix}Index`` must still pass ``shape=``
+    explicitly::
+
+        RowIndex, ConstRowIndex, DistributionRowIndex = named_shape("Row", (row_axis,))
+        m = DistributionRowIndex("m", stats.randint, {"low": 1, "high": 4}, shape=(3,))
+    """
+
+    def make(cls_name: str, *bases: type) -> type:
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+            kwargs.setdefault("axes", type(self).FIXED_AXES)
+            super(new_cls, self).__init__(*args, **kwargs)
+
+        new_cls = type(cls_name, bases, {"FIXED_AXES": axes, "__init__": __init__})
+        return new_cls
+
+    plain = make(f"{prefix}Index", Index)
+    const = make(f"Const{prefix}Index", ConstIndex, plain)
+    dist = make(f"Distribution{prefix}Index", DistributionIndex)
+    return plain, const, dist
 
 
 class DistributionIndex(Index):
@@ -590,11 +1032,18 @@ class DistributionIndex(Index):
         name: str,
         distribution: Callable[..., Any],
         params: dict[str, Any],
+        *,
+        axes: tuple[Axis, ...] | None = None,
+        shape: tuple[int, ...] | None = None,
     ) -> None:
+        if (axes is None) != (shape is None):
+            raise ValueError(f"DistributionIndex {name!r}: axes and shape must be given together.")
         self._distribution = distribution
         self._params = dict(params)
         self._frozen: Distribution = cast(Distribution, distribution(**params))
-        super().__init__(name, None)  # placeholder; frozen dist stored separately
+        super().__init__(name, None, axes=axes)  # placeholder; frozen dist stored separately
+        if axes is not None and shape is not None:
+            self._sizes = dict(zip((ax.name for ax in axes), shape, strict=True))
 
     @property
     def distribution(self) -> Callable[..., Any]:
@@ -616,6 +1065,11 @@ class DistributionIndex(Index):
         """Always ``True``: a distribution-backed index is always sampled by the ensemble."""
         return True
 
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Per-axis sizes, in declared-axes order; ``()`` for a scalar index."""
+        return tuple(self._sizes[ax.name] for ax in (self._axes or ()))
+
     def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
         """Draw ``size`` samples from the frozen distribution.
 
@@ -630,9 +1084,11 @@ class DistributionIndex(Index):
         Returns
         -------
         np.ndarray
-            Array of shape ``(size,)`` containing the samples.
+            Array of shape ``(size,)`` for a scalar index, or
+            ``(size, *shape)`` for a declared ``axes=``/``shape=`` index.
         """
-        return np.asarray(self._frozen.rvs(size=size, random_state=rng))
+        full_size = (size, *self.shape) if self.shape else size
+        return np.asarray(self._frozen.rvs(size=full_size, random_state=rng))
 
     def __repr__(self) -> str:
         """Return a string representation of the distribution index."""
@@ -770,46 +1226,83 @@ class CategoricalIndex(Index):
             (1.2,   True),
         ))
 
+    *outcomes* may also be a bare support set — a ``list[str]`` or other
+    ``Iterable[str]`` with no weights — for indexes that are only ever used
+    where weights don't matter: guard conditions (``idx == "value"``) and
+    deterministic ``parameters=`` grid sweeps::
+
+        mode_param = CategoricalIndex("mode_param", ["bike", "train"])
+
+    Such a *weight-free* index has a ``.support`` but no ``.outcomes``:
+    accessing :attr:`outcomes` or calling :meth:`sample` raises
+    ``ValueError`` rather than silently assuming uniform weights.
+
     Parameters
     ----------
     name:
         Human-readable name.
     outcomes:
-        Maps each outcome key to its probability.  All values must be
-        strictly positive and sum to 1.0 (validated within a small
-        tolerance at construction time).
+        Either a ``dict[str, float]`` mapping each outcome key to its
+        probability (all values strictly positive, summing to 1.0 within a
+        small tolerance), or a non-empty ``Iterable[str]`` of outcome keys
+        with no weights (weight-free / support-only).
 
     Raises
     ------
     ValueError
-        If *outcomes* is empty, any probability is non-positive, or the
-        probabilities do not sum to 1.0.
+        If *outcomes* is empty, contains duplicate keys (support-only form),
+        any probability is non-positive (weighted form), or the
+        probabilities do not sum to 1.0 (weighted form).
     """
 
-    def __init__(self, name: str, outcomes: dict[str, float]) -> None:
-        if not outcomes:
-            raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
-        non_positive = [k for k, p in outcomes.items() if p <= 0]
-        if non_positive:
-            raise ValueError(
-                f"CategoricalIndex {name!r}: all probabilities must be strictly positive; "
-                f"non-positive keys: {non_positive}."
-            )
-        total = sum(outcomes.values())
-        if not np.isclose(total, 1.0):
-            raise ValueError(f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}.")
-        self._outcomes = dict(outcomes)
+    def __init__(self, name: str, outcomes: dict[str, float] | Iterable[str]) -> None:
+        if isinstance(outcomes, dict):
+            if not outcomes:
+                raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
+            non_positive = [k for k, p in outcomes.items() if p <= 0]
+            if non_positive:
+                raise ValueError(
+                    f"CategoricalIndex {name!r}: all probabilities must be strictly positive; "
+                    f"non-positive keys: {non_positive}."
+                )
+            total = sum(outcomes.values())
+            if not np.isclose(total, 1.0):
+                raise ValueError(f"CategoricalIndex {name!r}: probabilities must sum to 1.0; got {total}.")
+            self._outcomes: dict[str, float] | None = dict(outcomes)
+            self._support: list[str] = list(outcomes)
+        else:
+            support = list(outcomes)
+            if not support:
+                raise ValueError(f"CategoricalIndex {name!r}: 'outcomes' must not be empty.")
+            duplicates = [k for k in dict.fromkeys(support) if support.count(k) > 1]
+            if duplicates:
+                raise ValueError(f"CategoricalIndex {name!r}: outcome keys must be unique; duplicates: {duplicates}.")
+            self._outcomes = None
+            self._support = support
         super().__init__(name, None)  # placeholder mode
 
     @property
     def outcomes(self) -> dict[str, float]:
-        """Outcome probabilities, in declaration order."""
+        """Outcome probabilities, in declaration order.
+
+        Raises
+        ------
+        ValueError
+            If this index was constructed weight-free (support-only) — there
+            are no probabilities to return.
+        """
+        if self._outcomes is None:
+            raise ValueError(
+                f"CategoricalIndex {self.name!r} was constructed without weights (support-only); "
+                "'.outcomes' is unavailable. Pass a dict[str, float] at construction, or a "
+                "scenario override, to give it weights before using it probabilistically."
+            )
         return dict(self._outcomes)
 
     @property
     def support(self) -> list[str]:
         """Ordered list of outcome keys."""
-        return list(self._outcomes)
+        return list(self._support)
 
     def sample(self, rng: np.random.Generator | None = None, size: int = 1) -> np.ndarray:
         """Draw ``size`` keys proportionally to outcome probabilities.
@@ -826,7 +1319,19 @@ class CategoricalIndex(Index):
         -------
         np.ndarray
             Object-dtype array of shape ``(size,)`` containing the sampled keys.
+
+        Raises
+        ------
+        ValueError
+            If this index was constructed weight-free (support-only) — there
+            are no weights to sample from.
         """
+        if self._outcomes is None:
+            raise ValueError(
+                f"CategoricalIndex {self.name!r} was constructed without weights (support-only); "
+                "cannot sample it. Pass a dict[str, float] at construction, or a scenario "
+                "override, to give it weights before sampling."
+            )
         keys = self.support
         probs = [self._outcomes[k] for k in keys]
         if rng is not None:
@@ -835,7 +1340,8 @@ class CategoricalIndex(Index):
 
     def __repr__(self) -> str:
         """Return a string representation of the categorical index."""
-        return f"CategoricalIndex({self.name!r}, {self._outcomes!r})"
+        payload = self._outcomes if self._outcomes is not None else self._support
+        return f"CategoricalIndex({self.name!r}, {payload!r})"
 
 
 class ConditionalCategoricalIndex(Index):

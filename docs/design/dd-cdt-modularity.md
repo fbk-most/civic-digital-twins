@@ -5,7 +5,7 @@
 |              | Document data                                  |
 |--------------| ---------------------------------------------- |
 | Author       | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-07-24                                     |
+| Last-Updated | 2026-09-23                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -37,25 +37,27 @@ class TrafficModel(Model):
     class Inputs:
         ts_inflow:         TimeseriesIndex
         ts_starting:       TimeseriesIndex
-        modified_inflow:   Index
-        modified_starting: Index
+        modified_inflow:   TimeseriesIndex
+        modified_starting: TimeseriesIndex
 
     @outputs
     class Outputs:
         traffic:                TimeseriesIndex
         modified_traffic:       TimeseriesIndex
         total_modified_traffic: Index
-        inflow_ratio:           Index
-        starting_ratio:         Index
-        traffic_ratio:          Index
+        inflow_ratio:           TimeseriesIndex
+        starting_ratio:         TimeseriesIndex
+        traffic_ratio:          TimeseriesIndex
 
     def compute(self, inputs: Inputs) -> Outputs:
         traffic                = TimeseriesIndex("reference traffic", inputs.ts_inflow + inputs.ts_starting)
         modified_traffic       = TimeseriesIndex("modified traffic", inputs.modified_inflow + inputs.modified_starting)
+        # One aggregate over the whole horizon; every other output stays per-hour,
+        # so the policy's effect can be read at the peak rather than averaged away.
         total_modified_traffic = Index("total modified traffic", modified_traffic.sum())
-        inflow_ratio           = Index("inflow ratio", inputs.ts_inflow / inputs.modified_inflow)
-        starting_ratio         = Index("starting ratio", inputs.ts_starting / inputs.modified_starting)
-        traffic_ratio          = Index("traffic ratio", traffic / modified_traffic)
+        inflow_ratio           = TimeseriesIndex("inflow ratio", inputs.modified_inflow / inputs.ts_inflow)
+        starting_ratio         = TimeseriesIndex("starting ratio", inputs.modified_starting / inputs.ts_starting)
+        traffic_ratio          = TimeseriesIndex("traffic ratio", modified_traffic / traffic)
         return TrafficModel.Outputs(
             traffic=traffic,
             modified_traffic=modified_traffic,
@@ -69,8 +71,10 @@ class TrafficModel(Model):
 Construct the model by passing an `Inputs` instance:
 
 ```python
-mod_in = Index("modified_inflow", 0.9)
-mod_st = Index("modified_starting", 0.95)
+# A congestion charge that bites only as traffic builds: no effect in the first
+# hour, -10% then -20% on inflow, and a weaker -5% / -10% on starting vehicles.
+mod_in = TimeseriesIndex("modified_inflow", np.array([10.0, 18.0, 24.0]))
+mod_st = TimeseriesIndex("modified_starting", np.array([5.0, 9.5, 13.5]))
 
 m = TrafficModel(inputs=TrafficModel.Inputs(
     ts_inflow=ts_in,
@@ -234,11 +238,14 @@ class PipelineModel(Model):
         return PipelineModel.Outputs(result=stage_b.outputs.result)
 ```
 
-### `default_inputs()` class method
+### `default_inputs()`, `default_fns()`, `default_config()` class methods
 
-Models with many inputs often provide a `default_inputs()` class method that returns a pre-populated
-`Inputs` instance for the reference scenario.  Callers can construct the model directly from defaults
-or override individual fields:
+Models with many inputs, functions, or config fields often provide a `default_inputs()`,
+`default_fns()`, and/or `default_config()` class method — one per declared contract that needs
+reference-scenario values — each returning a pre-populated instance of that contract.  Callers can
+construct the model directly from defaults or override individual fields.  `BikeModel` below only
+needs `default_inputs()`, and its `capacity` parameter shows that a `default_XXX()` method may itself
+take arguments to parametrize the reference scenario it builds:
 
 ```python
 @define("Bike")
@@ -261,8 +268,44 @@ class BikeModel(Model):
         return BikeModel.Outputs(emissions=emissions)
 ```
 
-Models that also declare a `@functions` inner class may similarly provide a `default_fns()` class
-method returning a pre-populated `Functions` instance — see the next section.
+A model that also declares a `@functions` and/or `@config` inner class typically provides the
+matching `default_fns()`/`default_config()` class method the same way.  A `default_XXX()` method's
+argument is not limited to a plain scalar — it can be another contract instance, including one
+produced by a sibling `default_XXX()` method.  A common case is `default_inputs()` picking its values
+based on the `Config` returned by `default_config()`:
+
+```python
+@define("Zone")
+class ZoneModel(Model):
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    @inputs
+    class Inputs:
+        capacity: Index
+
+    @outputs
+    class Outputs:
+        cost: Index
+
+    @classmethod
+    def default_config(cls) -> Config:
+        return cls.Config(policy="default")
+
+    @classmethod
+    def default_inputs(cls, config: Config) -> Inputs:
+        capacity = 200.0 if config.policy == "peak" else 100.0
+        return cls.Inputs(capacity=ConstIndex("zone_capacity", capacity))
+
+    def compute(self, inputs: Inputs, *, config: Config) -> Outputs:
+        cost = Index("zone_cost", inputs.capacity * 2.0)
+        return ZoneModel.Outputs(cost=cost)
+
+zone_config = ZoneModel.default_config()
+m = ZoneModel(inputs=ZoneModel.default_inputs(zone_config), config=zone_config)
+```
 
 ### `@functions` — typed functor injection
 
@@ -404,6 +447,8 @@ m.expose.inflow_out.modified_inflow       # sub-model output, for inspection onl
 
 All indexes reachable through these nested proxies are included in `m.indexes`, so they can be
 read from an `EvaluationResult` via `result[m.expose.inflow.i_fraction_anticipating]`.
+
+This works the same way when the sub-model is a `ModelVariant` instead of a plain `Model`.
 
 ### Level 3 — Internal (local variables inside `compute()`)
 
@@ -565,8 +610,41 @@ so a single `except ModelContractViolation` catches either regardless of which o
 
 ## `ModelVariant` — Switching Between Implementations
 
-`ModelVariant` selects one `Model` instance from a named mapping at construction time and then acts as
-a fully transparent proxy for the chosen (active) variant.
+### The general problem
+
+A composite often needs to choose between several `Model` implementations that share the same output
+contract — different transport assumptions for different cities, a policy-dependent behavioral model,
+alternative routing strategies.  The choice can be made once, when the composite is built, or per
+scenario, as one more thing the ensemble varies.
+
+There are two ways to make that choice:
+
+- **Plain Python control flow** — construct whichever variant applies and assign it to a local, e.g.
+  `sub = ModelA(...) if config.x else ModelB(...)`.  Nothing checks that the two branches agree on
+  anything; if `ModelA`'s and `ModelB`'s outputs diverge, or a later line reads a field only one of
+  them has, the failure is an ordinary `AttributeError` — and only for whichever branch actually runs.
+  A mismatch in a branch nobody has exercised yet stays invisible.
+- **`ModelVariant`** — the same choice, but validated: variants must agree on `outputs`, and
+  `inputs`/`expose` get defined, mode-independent semantics instead of whatever plain attribute access
+  happens to do.
+
+The rest of this section covers `ModelVariant`; ["The if/else alternative"](#the-ifelse-alternative)
+below covers precisely what you give up by not using it.
+
+### Static vs. runtime — the two modes
+
+`ModelVariant` supports two distinct ways of resolving *which* variant is active, controlled by
+`selector`'s type:
+
+- **Static** (`selector: str`) — resolved once, at construction.  Only the active variant's graph is
+  ever evaluated; the inactive variant(s) still have to be fully constructed (see "Construction"
+  below), but their formulas never run.  No merged graph, no per-scenario dispatch.
+- **Runtime** (`selector: CategoricalIndex | graph.Node`) — resolved per scenario.  Every variant's
+  graph is built into one merged computation graph at construction time, so `mv.outputs.x` is a real
+  node usable in parent formulas regardless of which variant ends up active for any given scenario.
+
+This distinction is why some of `ModelVariant`'s attributes behave differently depending on mode, and
+why others are defined identically regardless of mode — covered next.
 
 ### Construction
 
@@ -582,43 +660,45 @@ mv = ModelVariant(
 ```
 
 - `variants` is a mapping from `str` key to an **already-constructed** `Model` instance.  Each variant
-  is fully built before `ModelVariant` is created; there is no lazy or deferred construction.
-- `selector` is a plain string literal resolved once at construction time.  The active variant does not
-  change after construction.
+  is fully built before `ModelVariant` is created; there is no lazy or deferred construction — true in
+  both modes, so a static group still pays the *construction* cost of every variant, just not the
+  *evaluation* cost of the inactive ones.
+- `selector` — a plain string picks static mode; a `CategoricalIndex` or `graph.Node` picks runtime
+  mode (see above).
 - `ModelVariant` raises `ValueError` immediately if `selector` is not a key in `variants`, if
   `variants` is empty, or if the `outputs` field names differ across variants.
 
-### Transparent proxy
+### Attribute behavior, mode by mode
 
-After construction, `mv` behaves as though it *is* the active variant:
+After construction, `mv` behaves mostly as though it *is* the active variant — but "mostly" hides real
+differences that follow directly from the static/runtime distinction above:
+
+| Attribute | Static mode | Runtime mode |
+|---|---|---|
+| `mv.outputs` | proxied from active variant | each output field is an `Index` backed by a merged graph node |
+| `mv.inputs` | `dict[str, IOProxy]` keyed by variant — disjoint union | same disjoint union — identical to static |
+| `mv.expose` | intersection of field names across all variants, values from active | intersection of field names across all variants, each field backed by a merged graph node (dispatches per scenario, same as `outputs`) |
+| `mv.indexes` | active variant only | union of all variants' indexes + selector + merged output indexes + merged expose indexes |
+| `mv.abstract_indexes()` | active variant only | union of all variants' abstract indexes + selector (if `CategoricalIndex`) |
+| `mv.is_instantiated()` | delegates to active | always `False` |
+
+Any attribute not defined directly on `ModelVariant` is forwarded to the active variant via
+`__getattr__` in static mode — there is no single "active variant" to forward to in runtime mode — so
+a static `ModelVariant` can be passed anywhere a plain `Model` is expected:
 
 ```python
 mv.outputs.emissions        # delegates to BikeModel.outputs.emissions
-mv.inputs.capacity          # delegates to BikeModel.inputs.capacity
 mv.indexes                  # index list of the active (BikeModel) variant only
 mv.abstract_indexes()       # delegates to BikeModel.abstract_indexes()
 mv.is_instantiated()        # delegates to BikeModel.is_instantiated()
 ```
 
-Any attribute not defined directly on `ModelVariant` itself is forwarded to the active variant via
-`__getattr__`, so a `ModelVariant` can be passed anywhere a plain `Model` is expected.
+Three of these deserve a closer look, since they don't just "differ by mode" uniformly:
 
-### Accessing inactive variants
-
-Inactive variants' indexes are **not** reachable through `mv.indexes` or normal attribute access.
-They are accessible only via explicit navigation:
-
-```python
-mv.variants["train"].outputs.emissions   # explicit — reaches inactive variant
-mv.variants["train"].indexes             # index list of TrainModel only
-```
-
-### Interface contract
-
-The `outputs` field *names* must be identical across all variants — this is what makes `ModelVariant`
-a true drop-in replacement: downstream code that reads `mv.outputs.emissions` works regardless of
-which variant is active.  `inputs` field names may differ across variants — `mv.inputs` delegates
-to the active variant.
+**`outputs` — the one hard equality.**  Field *names* must be identical across every variant,
+validated eagerly (`ValueError` at `ModelVariant.__init__`), regardless of mode.  This is what makes
+`ModelVariant` a true drop-in replacement: code reading `mv.outputs.emissions` works no matter which
+variant is active.
 
 ```python
 # Both BikeModel and TrainModel must declare identically-named Outputs fields, e.g.:
@@ -630,12 +710,80 @@ to the active variant.
 # A mismatch in Outputs field names raises ValueError at ModelVariant construction time.
 ```
 
+See ["Why are only `outputs` field names required to match across
+variants?"](#why-are-only-outputs-field-names-required-to-match-across-variants) for the reasoning.
+
+**`inputs` — never merged, in either mode.**  The models making up a group aren't necessarily authored
+with that group in mind, so the same field name on two variants may carry unrelated meanings (a
+`total` field meaning "total passengers" on one, "total bikes" on the other).  So `mv.inputs` doesn't
+merge by name at all — it's a disjoint union, `mv.inputs[key] is mv.variants[key].inputs`, covering
+every declared variant identically in both modes:
+
+```python
+mv.inputs["bike"].capacity   # == BikeModel.inputs.capacity, unambiguous
+mv.inputs["train"].capacity  # == TrainModel.inputs.capacity — a different Index entirely
+```
+
+See ["Why is `inputs` a disjoint union rather than merged by
+name?"](#why-is-inputs-a-disjoint-union-rather-than-merged-by-name) for why this is a different
+problem from `outputs`.
+
+**`expose` — the softer, symmetric rule.**  Unlike `inputs`, `expose` field names *are* merged — but
+only down to their intersection, and identically in both modes (unlike `outputs`' full equality).  See
+["Why is `expose` narrowed to the intersection in both
+modes?"](#why-is-expose-narrowed-to-the-intersection-in-both-modes) for the reasoning, including the
+real production case (two variants with identical outputs but different diagnostics) that ruled out
+requiring equality here too.
+
+`mv._selector_index` is a thin `Index` wrapping the selector node (runtime mode only).  After
+evaluation, `result[mv._selector_index]` returns a `(S, 1)` string array of the active variant key per
+scenario — useful for post-evaluation analysis.
+
+### Accessing inactive variants
+
+Inactive variants' indexes are **not** reachable through `mv.indexes` or normal attribute access.
+They are accessible only via explicit navigation:
+
+```python
+mv.variants["train"].outputs.emissions   # explicit — reaches inactive variant
+mv.variants["train"].indexes             # index list of TrainModel only
+```
+
+### The if/else alternative
+
+Static selection doesn't require `ModelVariant` at all — the equivalent, without it:
+
+```python
+if config.strategy == "parallel":
+    behavior = ParallelBehaviorModel(...)
+else:
+    behavior = SequentialBehaviorModel(...)
+```
+
+This is a legitimate, real-world pattern — not a workaround to avoid.  It's simpler for the common
+case, and it's the *only* option when the two implementations were never meant to be interchangeable
+in the first place.  But it carries none of `ModelVariant`'s guarantees:
+
+- **No `outputs`-equality check.**  If `ParallelBehaviorModel` and `SequentialBehaviorModel` disagree
+  on an output field name, nothing catches it at the point `behavior` is constructed — only a later
+  `behavior.outputs.some_field` access fails, as an ordinary `AttributeError`, and only if that
+  specific line runs for that specific branch.
+- **No defined `inputs`/`expose` semantics.**  Whatever `behavior` turns out to be, its
+  `.inputs`/`.expose` are just that one class's own, with none of `mv.inputs`'/`mv.expose`'s
+  disjoint-union/intersection guarantees — there is no group at all, just a variable.
+- **Most importantly: the branch that isn't taken this run is never checked.**  A mismatch in
+  `SequentialBehaviorModel`'s shape stays completely invisible until some later call actually selects
+  `"sequential"` — `ModelVariant`'s upfront validation checks every variant unconditionally, regardless
+  of which one `selector` picks for *this* construction.
+
+Use `ModelVariant` when you want that upfront guarantee.  Use plain `if`/`else` when you don't need
+it — but then that's an explicit choice, not an accident.
+
 ### Runtime variant selection
 
 `selector` can be a **`CategoricalIndex`** or a **`graph.Node`** to make the active variant
-per-scenario rather than fixed for the entire run.  Because different scenarios may take different
-branches, `mv.inputs` in runtime mode surfaces a union of all variants' inputs rather than
-delegating to a single active variant.
+per-scenario rather than fixed for the entire run — see "Static vs. runtime" above for what this
+changes.
 
 #### `CategoricalIndex` selector — probabilistic, independent choice
 
@@ -706,7 +854,7 @@ side-by-side, without any probabilistic ensemble.  Pass it directly to `paramete
 array of outcome strings, and wrap the model in `Scenario` before `Evaluation`:
 
 ```python
-mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+mode_param = CategoricalIndex("mode_param", ["bike", "train"])  # support-only, no weights
 mv_param = ModelVariant(
     "TransportParam",
     variants={
@@ -730,10 +878,11 @@ can be combined with numeric PARAMETER axes for a 2-D grid.  Variant sub-models 
 accept the numeric index as an abstract input:
 
 ```python
-# CategoricalIndex is always abstract (a placeholder node, see dd-cdt-model.md);
-# the outcome weights are required at construction but go unused on this fully
-# deterministic path — parameters= supplies the swept values directly.
-mode_param = CategoricalIndex("mode_param", {"bike": 0.5, "train": 0.5})
+# CategoricalIndex is always abstract (a placeholder node, see dd-cdt-model.md).
+# The support-only form carries no weights — fine here since parameters=
+# supplies the swept values directly and this fully deterministic path never
+# samples mode_param (sampling a weight-free CategoricalIndex raises ValueError).
+mode_param = CategoricalIndex("mode_param", ["bike", "train"])
 presence = Index("presence", None)  # abstract — swept by the grid
 mv_grid = ModelVariant(
     "TransportGrid",
@@ -758,25 +907,6 @@ result = Evaluation(Scenario(mv_grid)).evaluate(
 
 The variant ordering in the result follows the order of entries in the `parameters=` array,
 not the declaration order of `variants`.
-
-#### Runtime mode — what changes
-
-In runtime mode `ModelVariant` builds a **merged computation graph** at construction time.
-`mv.outputs.x` is always a real `Index` backed by a real graph node, usable in parent model
-formulas regardless of which variant will be active per scenario.
-
-| Property | Static mode | Runtime mode |
-|---|---|---|
-| `mv.inputs` | proxied from active variant | **union** of all variants' input fields |
-| `mv.outputs.x` | proxied from active variant | `Index` backed by a merged graph node |
-| `mv.expose` | proxied from active variant | **intersection** of field names across all variants |
-| `mv.abstract_indexes()` | active variant only | **union** across all variants + selector (if `CategoricalIndex`) |
-| `mv.indexes` | active variant only | union of all variants' indexes + selector + merged output indexes |
-| `mv.is_instantiated()` | delegates to active | always `False` |
-
-`mv._selector_index` is a thin `Index` wrapping the selector node.  After evaluation,
-`result[mv._selector_index]` returns a `(S, 1)` string array of the active variant key per
-scenario — useful for post-evaluation analysis.
 
 #### `CategoricalIndex` as a formula guard (standalone)
 
@@ -1469,13 +1599,13 @@ class ModelVariant:
 | `name` | `str` | Name passed at construction. |
 | `variants` | `dict[str, Model \| ModelVariant]` | Full mapping of all variants (active and inactive). |
 
-**Proxy attributes — static mode** (delegate to the active variant)
+**Proxy attributes — static mode** (delegate to the active variant, except `inputs`/`expose`)
 
 | Attribute / Method | Delegates to |
 |--------------------|--------------|
-| `inputs` | `active.inputs` |
+| `inputs` | `dict[str, IOProxy]` keyed by variant — `mv.inputs[key] is mv.variants[key].inputs`, every declared variant |
 | `outputs` | `active.outputs` |
-| `expose` | `active.expose` |
+| `expose` | `IOProxy` over the **intersection** of field names present in all variants, values from `active.expose` |
 | `indexes` | `active.indexes` |
 | `abstract_indexes()` | `active.abstract_indexes()` |
 | `is_instantiated()` | always `False` |
@@ -1485,13 +1615,19 @@ class ModelVariant:
 
 | Attribute / Method | Returns |
 |--------------------|---------|
-| `inputs` | `IOProxy` over the **union** of all variants' input fields (first-seen wins on name collision) |
+| `inputs` | `dict[str, IOProxy]` keyed by variant — identical to static mode |
 | `outputs` | `IOProxy` where each field is an `Index` backed by a merged `exclusive_multi_clause_where` graph node |
-| `expose` | `IOProxy` over the **intersection** of field names present in all variants |
-| `indexes` | deduplicated union of all variants' `indexes` + selector (if `CategoricalIndex`) + merged output indexes |
+| `expose` | `IOProxy` over the **intersection** of field names present in all variants, each field likewise backed by a merged `exclusive_multi_clause_where` graph node — dispatches per scenario, same mechanism as `outputs` |
+| `indexes` | deduplicated union of all variants' `indexes` + selector (if `CategoricalIndex`) + merged output indexes + merged expose indexes |
 | `abstract_indexes()` | union of all variants' `abstract_indexes()` + selector (if `CategoricalIndex`) |
 | `is_instantiated()` | always `False` |
 | `_selector_index` | thin `Index` wrapping the selector node; `result[mv._selector_index]` → `(S, 1)` variant-key string array |
+
+`inputs` is the one attribute with identical logic *and* identical mechanism in both rows above —
+a plain disjoint union either way. `expose`'s field-set *rule* (the intersection) is likewise
+mode-independent, but its *mechanism* now differs by mode just like `outputs`': static mode still
+proxies the active variant directly, runtime mode dispatches per scenario via a merged graph node.
+See "Why is `expose` narrowed to the intersection in both modes?" below.
 
 **`guards_to_selector(guards)`**
 
@@ -1738,11 +1874,60 @@ unrealized future work with no concrete plan or tracking issue.
 
 ### Why are only `outputs` field names required to match across variants?
 
-Only `outputs` names must be identical: the merge graph (runtime mode) and the transparent proxy
-(static mode) both expose `mv.outputs.x` to downstream code, so a name mismatch would break that
-access for one variant.  `inputs` names are free to differ — in static mode `mv.inputs` delegates
-to the active variant only, and in runtime mode all variants' inputs are surfaced as a union, so
-there is no ambiguity in either case.
+Only `outputs` names must be identical, validated eagerly (a `ValueError` at `ModelVariant.__init__`)
+regardless of static or runtime mode: `outputs` are explicitly meant to be wired into further parent
+model formulas, so a mismatch is very likely to actually matter, and failing immediately, right at
+construction, with a precise "these two variants disagree" message beats a generic `AttributeError`
+surfacing arbitrarily deep in a composite later.  `inputs` names are free to differ, and even a
+shared name across variants carries no shared meaning — see the next section.
+
+### Why is `inputs` a disjoint union rather than merged by name?
+
+Unlike `outputs`/`expose`, `inputs` field names are never merged across variants at all — not by
+equality, not by intersection, not by union. `mv.inputs` is a plain `dict[str, IOProxy]` keyed by
+variant, `mv.inputs[key] is mv.variants[key].inputs`, identical in static and runtime mode.
+
+The reasoning that justifies merging `outputs`/`expose` by name doesn't transfer to `inputs`: an
+earlier design merged `inputs` by name too (active-only in static mode, a first-seen-wins union in
+runtime mode), reasoning by analogy with a `Protocol`/implementation relationship — but that analogy
+doesn't hold here. `Protocol` implementations are written *for* the interface they satisfy, so a
+shared parameter name is guaranteed to share a meaning. `ModelVariant`'s variants are not necessarily
+authored with the group in mind — they're independent, pre-existing models composed together after
+the fact — so a shared input field name is coincidence, not agreement. A `total` input could mean
+"total passengers" on one variant and "total bikes" on another; merging them by name, in either
+direction, would silently treat two unrelated parameters as one. The old union design's
+"first-seen-wins" resolution made this concrete: two variants supplying genuinely different values
+under the same field name would silently return whichever variant happened to be first in `variants`'
+iteration order — with no relationship to which variant was actually selected, including in a runtime
+group whose selector was pinned to always pick a specific *other* variant. Reaching a specific
+variant's inputs unambiguously, via `mv.inputs[key]`, was already possible before this change (as
+`mv.variants[key].inputs`) — this only removes the unsafe merged shortcut, it doesn't remove any
+capability.
+
+### Why is `expose` narrowed to the intersection in both modes?
+
+`expose` gets a different, looser rule than `outputs`: `mv.expose` is always the intersection of all
+declared variants' expose field names, in both static and runtime mode, rather than outputs' strict
+equality. Two things justify this instead of either "match exactly, like outputs" or "no check at
+all, like static mode used to do":
+
+- **Why not require exact equality, like `outputs`?** `expose` fields are diagnostic-only and, by the
+  no-inter-model-wiring rule above, are never consumed by further required computation — a
+  composite's own contractual output never depends on a specific variant's diagnostic existing. A
+  real production case (AreaVerde's `BehaviorModel`, selecting between `ParallelBehaviorModel` and
+  `SequentialBehaviorModel`) has two variants with identical `outputs` but different `expose` — the
+  parallel variant exposes four extra per-mechanism diagnostics the sequential one has no equivalent
+  for. Forcing exact equality would make that composite impossible to express as a `ModelVariant` at
+  all, for no safety benefit `outputs`' equality rule doesn't already provide.
+- **Why not leave static mode as a full, unchecked proxy (its original design)?** Because that makes
+  `mv.expose`'s accessible field set depend on which variant happens to be selected — code reading
+  `mv.expose.some_field` could work today and break the day someone changes the selector's value (or
+  promotes it from a static string to a runtime `CategoricalIndex`/`graph.Node`), with no signal at
+  the point the code was written. The intersection makes `mv.expose`'s contract stable across any
+  selector value and across the static/runtime boundary — the same guarantee `outputs`' unconditional
+  check already gives, just computed as an intersection instead of exact equality, matching `expose`'s
+  lower stakes. `mv.variants[key].expose` remains available, unrestricted, whenever a caller
+  deliberately wants one specific variant's full diagnostic set.
 
 ### Why the merged graph rather than split-evaluate-merge?
 

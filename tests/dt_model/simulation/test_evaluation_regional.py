@@ -563,7 +563,7 @@ def test_regional_timeseries_branch_scatter_normalise():
 def _make_const_ts_selector_mv(keys: list[str]) -> "ModelVariant":
     """Build a ModelVariant whose selector is a ConstTimeseriesIndex holding *keys*.
 
-    ConstTimeseriesIndex creates a timeseries_constant node — no Scenario needed.
+    ConstTimeseriesIndex creates an array_constant node over axes=(TIME_AXIS,) — no Scenario needed.
     With an ensemble (n_full=1) the selector broadcasts to shape (S, len(keys)).
     Branch keys are "bike" / "train".
     """
@@ -667,7 +667,7 @@ def test_regional_leading_mask_singleton_timeseries_selector_with_ensemble():
     ens = DistributionEnsemble(scenario, size=10)
     plan = ev.build_plan(strategy="regional")
     result = ev.execute_plan(plan, ens)
-    # Verify both outputs are present. extra_ts=1 (selector is timeseries_constant)
+    # Verify both outputs are present. extra_ts=1 (selector is a time-axis array_constant)
     # adds a trailing (1,) to nodes without DOMAIN axes, so shape is (S, 1).
     assert result[mv.outputs.throughput].shape == (10, 1)
     assert result[mv.outputs.emissions].shape == (10, 1)
@@ -1568,8 +1568,8 @@ def test_scoped_abstract_indexes_raises_on_overlap():
         model=m,
         nodes_of_interest=(x, y),
         regions=(
-            Region(nodes=(x.node,), has_timeseries=False, guards=()),
-            Region(nodes=(x.node, y.node), has_timeseries=False, guards=()),
+            Region(nodes=(x.node,), domain_axes=(), guards=()),
+            Region(nodes=(x.node, y.node), domain_axes=(), guards=()),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
@@ -1809,8 +1809,8 @@ def test_scoped_abstract_indexes_unions_same_guards_regions() -> None:
         model=m,
         nodes_of_interest=(x, y),
         regions=(
-            Region(nodes=(x.node,), has_timeseries=False, guards=()),
-            Region(nodes=(y.node,), has_timeseries=False, guards=()),
+            Region(nodes=(x.node,), domain_axes=(), guards=()),
+            Region(nodes=(y.node,), domain_axes=(), guards=()),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
@@ -1854,8 +1854,8 @@ def test_scoped_sampling_defensive_wrong_order_plan_raises() -> None:
         model=mv,
         nodes_of_interest=(mv.outputs.throughput,),
         regions=(
-            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(bike_guard,)),
-            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
+            Region(nodes=(weather_bike.node,), domain_axes=(), guards=(bike_guard,)),
+            Region(nodes=(mode.node,), domain_axes=(), guards=()),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )
@@ -1880,8 +1880,8 @@ def test_scoped_sampling_empty_active_positions() -> None:
         model=mv,
         nodes_of_interest=(mv.outputs.throughput,),
         regions=(
-            Region(nodes=(mode.node,), has_timeseries=False, guards=()),
-            Region(nodes=(weather_bike.node,), has_timeseries=False, guards=(unmatched_guard,)),
+            Region(nodes=(mode.node,), domain_axes=(), guards=()),
+            Region(nodes=(weather_bike.node,), domain_axes=(), guards=(unmatched_guard,)),
         ),
         dependencies=(frozenset(), frozenset({0})),
     )

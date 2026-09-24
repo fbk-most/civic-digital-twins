@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for EvaluationHandle (incremental evaluation) — Step 3 of engine-control.md."""
+"""Tests for EvaluationHandle (incremental evaluation)."""
 
 from typing import Any
 

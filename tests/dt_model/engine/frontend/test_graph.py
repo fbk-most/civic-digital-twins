@@ -6,7 +6,9 @@ import subprocess
 import textwrap
 from collections.abc import Iterable
 
-from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+import pytest
+
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
@@ -543,6 +545,30 @@ def test_repr():
     t = graph.maximum(a, b)
     assert str(t) == f"n{t.id} = graph.maximum(left=n{a.id}, right=n{b.id}, name='')"
 
+    u1 = graph.minimum(a, b)
+    assert str(u1) == f"n{u1.id} = graph.minimum(left=n{a.id}, right=n{b.id}, name='')"
+
+    u2 = graph.modulo(a, b)
+    assert str(u2) == f"n{u2.id} = graph.modulo(left=n{a.id}, right=n{b.id}, name='')"
+
+    u3 = graph.sqrt(a)
+    assert str(u3) == f"n{u3.id} = graph.sqrt(node=n{a.id}, name='')"
+
+    u4 = graph.abs(a)
+    assert str(u4) == f"n{u4.id} = graph.abs(node=n{a.id}, name='')"
+
+    u5 = graph.sign(a)
+    assert str(u5) == f"n{u5.id} = graph.sign(node=n{a.id}, name='')"
+
+    u6 = graph.floor(a)
+    assert str(u6) == f"n{u6.id} = graph.floor(node=n{a.id}, name='')"
+
+    u7 = graph.ceil(a)
+    assert str(u7) == f"n{u7.id} = graph.ceil(node=n{a.id}, name='')"
+
+    u8 = graph.round(a)
+    assert str(u8) == f"n{u8.id} = graph.round(node=n{a.id}, name='')"
+
     condition = graph.placeholder("condition")
     u = graph.where(condition, a, b)
     assert str(u) == f"n{u.id} = graph.where(condition=n{condition.id}, then=n{a.id}, otherwise=n{b.id}, name='')"
@@ -597,38 +623,40 @@ def test_function_creation():
     assert n5.kwargs["d"] is n4
 
 
-def test_timeseries_constant_creation():
-    """Test creation of timeseries_constant nodes."""
-    node = graph.timeseries_constant([1.0, 2.0, 3.0], name="ts")
-    assert node.name == "ts"
+# ---------------------------------------------------------------------------
+# Generic array_constant / array_placeholder nodes
+# ---------------------------------------------------------------------------
+
+
+def test_array_constant_output_axes():
+    """array_constant.output_axes returns the declared axes tuple, in order."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    node = graph.array_constant([[1.0, 2.0], [3.0, 4.0]], axes=(x, y), name="grid")
+    assert node.output_axes == (x, y)
     assert isinstance(node.values, Iterable)
-    assert list(node.values) == [1.0, 2.0, 3.0]
+    assert list(node.values) == [[1.0, 2.0], [3.0, 4.0]]
 
 
-def test_timeseries_placeholder_creation():
-    """Test creation of timeseries_placeholder nodes."""
-    node = graph.timeseries_placeholder("ts_ph")
-    assert node.name == "ts_ph"
+def test_array_constant_no_axes():
+    """array_constant with no declared axes has empty output_axes (scalar-like)."""
+    node = graph.array_constant(1.0)
+    assert node.output_axes == ()
 
 
-def test_timeseries_constant_repr():
-    """Test the __repr__ of timeseries_constant."""
-    node = graph.timeseries_constant([10.0, 20.0], name="cap")
-    assert str(node) == f"n{node.id} = graph.timeseries_constant(values=[10.0, 20.0], name='cap')"
+def test_array_placeholder_output_axes():
+    """array_placeholder.output_axes returns the declared axes tuple, in order."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    node = graph.array_placeholder("field", axes=(x, y))
+    assert node.name == "field"
+    assert node.output_axes == (x, y)
 
 
-def test_timeseries_placeholder_repr():
-    """Test the __repr__ of timeseries_placeholder."""
-    node = graph.timeseries_placeholder("ts_ph")
-    assert str(node) == f"n{node.id} = graph.timeseries_placeholder(name='ts_ph')"
-
-
-def test_timeseries_constant_identity():
-    """Test identity semantics of timeseries_constant nodes."""
-    n1 = graph.timeseries_constant([1.0, 2.0])
-    n2 = graph.timeseries_constant([1.0, 2.0])
-    assert n1 is not n2
-    assert hash(n1) != hash(n2)
+def test_array_placeholder_no_axes():
+    """array_placeholder with no declared axes has empty output_axes."""
+    node = graph.array_placeholder("scalar_ph")
+    assert node.output_axes == ()
 
 
 def test_negate_creation():
@@ -815,6 +843,29 @@ def test_ensure_node_accepts_hasnode():
     assert result is n
 
 
+def test_binary_op_accepts_hasnode():
+    """BinaryOp.__init__ (e.g. graph.add) unwraps HasNode operands via ensure_node."""
+    left_n = graph.constant(1.0)
+    right_n = graph.constant(2.0)
+    node = graph.add(_FakeIndex(left_n), _FakeIndex(right_n))
+    assert node.left is left_n
+    assert node.right is right_n
+
+
+def test_unary_op_accepts_hasnode():
+    """UnaryOp.__init__ (e.g. graph.exp) unwraps a HasNode operand via ensure_node.
+
+    Regression test: previously UnaryOp/BinaryOp stored their constructor
+    arguments verbatim, so passing a HasNode object (e.g. a GenericIndex)
+    directly — rather than its .node — silently built a node whose .node/.left/
+    .right pointed at the HasNode wrapper instead of a real graph.Node, which
+    only surfaced as a confusing failure much later during linearize/evaluate.
+    """
+    inner_n = graph.constant(3.0)
+    node = graph.exp(_FakeIndex(inner_n))
+    assert node.node is inner_n
+
+
 def test_function_call_accepts_hasnode_args():
     """function_call.__init__ accepts HasNode in *args and **kwargs."""
     n = graph.constant(1.0)
@@ -874,8 +925,235 @@ def test_axis_eq_returns_not_implemented_for_non_axis():
 def test_where_output_axes_propagates_time_axis():
     """where.output_axes returns the union of condition, then, and otherwise axes."""
     time_axis = Axis("time", DOMAIN)
-    ts = graph.timeseries_constant([1.0, 2.0], name="ts")
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
     cond = graph.greater(ts, graph.constant(0.0))
     default = graph.constant(0.0)
     w = graph.where(cond, ts, default)
     assert time_axis in w.output_axes
+
+
+def test_output_axes_is_memoized_on_reconvergent_dag(monkeypatch):
+    """output_axes is cached per node, so a DAG with heavy reconvergence costs linear (not exponential) work.
+
+    Each node in this chain takes the previous *two* nodes as its operands
+    (Fibonacci-style sharing), so a node N layers deep is reachable from the
+    root via exponentially many paths. A naive, uncached ``output_axes``
+    would re-walk the whole shared ancestry on every access — the same
+    blowup as naive recursive Fibonacci — costing O(fib(depth)) calls to
+    ``union_axes``. With memoization each node's ``output_axes`` is computed
+    exactly once, so the call count scales linearly with depth instead.
+    """
+    calls = 0
+    original_union_axes = graph.union_axes
+
+    def counting_union_axes(*args):
+        nonlocal calls
+        calls += 1
+        return original_union_axes(*args)
+
+    monkeypatch.setattr(graph, "union_axes", counting_union_axes)
+
+    depth = 30
+    leaf = graph.array_constant([1.0], axes=(TIME_AXIS,), name="leaf")
+    prev2, prev1 = leaf, leaf
+    for _ in range(depth):
+        prev2, prev1 = prev1, graph.add(prev1, prev2)
+
+    assert prev1.output_axes == (TIME_AXIS,)
+    # Without memoization this would be on the order of fib(depth) (~1.3M for
+    # depth=30); with memoization it is bounded by the number of nodes built.
+    assert calls <= depth * 2
+
+
+# ---------------------------------------------------------------------------
+# function_call functor axis signature
+# ---------------------------------------------------------------------------
+
+
+class _SignedFunctor:
+    """Minimal stand-in for executor.Functor exposing a declared axis signature."""
+
+    def __init__(self, output_axes=None, input_axes=None):
+        self.output_axes = output_axes
+        self.input_axes = input_axes
+
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+def test_function_call_without_functor_falls_back_to_conservative_union():
+    """With no functor, output_axes stays the conservative union of the input axes."""
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
+    fc = graph.function_call("reduce", ts)
+    assert fc.output_axes == ts.output_axes
+    assert fc.has_declared_output_axes is False
+
+
+def test_function_call_functor_output_axes_replaces_the_union():
+    """A functor declaring output_axes makes the inference exact instead of conservative."""
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
+    fc = graph.function_call("reduce", ts, functor=_SignedFunctor(output_axes=()))
+    assert fc.output_axes == ()
+    assert fc.has_declared_output_axes is True
+
+
+def test_function_call_functor_input_axes_verified_at_build_time():
+    """A declared input_axes that contradicts the actual arguments raises at graph-build time."""
+    time_axis = Axis("time", DOMAIN)
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
+    # The functor claims a scalar input, but ts carries the time axis.
+    with pytest.raises(ValueError, match="input_axes"):
+        graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((),)))
+    # A matching signature is accepted.
+    graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((time_axis,),)))
+
+
+def test_function_call_functor_input_axes_covers_keyword_arguments():
+    """input_axes entries line up with positional arguments first, then keyword ones."""
+    time_axis = Axis("time", DOMAIN)
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
+    scalar = graph.constant(1.0)
+    functor = _SignedFunctor(input_axes=((time_axis,), ()))
+    graph.function_call("blend", ts, weight=scalar, functor=functor)
+    with pytest.raises(ValueError, match="input_axes"):
+        graph.function_call("blend", scalar, weight=ts, functor=functor)
+
+
+def test_function_call_functor_input_axes_arity_mismatch_raises():
+    """A declared input_axes with the wrong number of entries raises ValueError."""
+    ts = graph.array_constant([1.0, 2.0], axes=(TIME_AXIS,), name="ts")
+    with pytest.raises(ValueError, match="input_axes"):
+        graph.function_call("reduce", ts, functor=_SignedFunctor(input_axes=((), ())))
+
+
+# ---------------------------------------------------------------------------
+# Node axis-taking methods (sum, mean, ..., shift, roll, cumulative, diff)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method_name,expected_type",
+    [
+        ("sum", graph.project_using_sum),
+        ("mean", graph.project_using_mean),
+        ("min", graph.project_using_min),
+        ("max", graph.project_using_max),
+        ("std", graph.project_using_std),
+        ("var", graph.project_using_var),
+        ("median", graph.project_using_median),
+        ("prod", graph.project_using_prod),
+        ("any", graph.project_using_any),
+        ("all", graph.project_using_all),
+        ("count_nonzero", graph.project_using_count_nonzero),
+        ("shift", graph.shift),
+        ("roll", graph.roll),
+        ("cumulative", graph.cumulative),
+    ],
+)
+def test_node_axis_methods_wire_node_and_axis(method_name, expected_type):
+    """Each axis-taking Node method builds the matching graph node, wired to self and axis."""
+    time_axis = Axis("time", DOMAIN)
+    node = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="values")
+    result = getattr(node, method_name)(time_axis)
+    assert isinstance(result, expected_type)
+    assert result.node is node
+    assert result.axis is time_axis
+
+
+def test_node_quantile_method_wires_node_axis_and_q():
+    """Node.quantile builds project_using_quantile, wired to self, axis, and q."""
+    time_axis = Axis("time", DOMAIN)
+    node = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="values")
+    result = node.quantile(time_axis, 0.5)
+    assert isinstance(result, graph.project_using_quantile)
+    assert result.node is node
+    assert result.axis is time_axis
+    assert result.q == 0.5
+
+
+def test_node_diff_method_is_self_minus_shifted_self():
+    """Node.diff is self - self.shift(...), matching GenericIndex.diff's documented semantics."""
+    time_axis = Axis("time", DOMAIN)
+    node = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="values")
+    result = node.diff(time_axis)
+    assert isinstance(result, graph.subtract)
+    assert result.left is node
+    assert isinstance(result.right, graph.shift)
+    assert result.right.node is node
+    assert result.right.axis is time_axis
+
+
+def test_node_axis_methods_require_axis_explicit():
+    """Unlike GenericIndex, Node's axis-taking methods have no default — axis is required."""
+    node = graph.constant(1.0)
+    with pytest.raises(TypeError):
+        node.sum()  # type: ignore[call-arg]
+
+
+def test_multiply_result_supports_sum_without_wrapping():
+    """A bare Node produced by arithmetic (e.g. ``a * b``) can call ``.sum(axis)`` directly.
+
+    This is the AreaVerde regression: GenericIndex's arithmetic dunders unwrap to a bare
+    graph.Node, which previously had no axis-taking methods at all, so
+    ``(index_a * index_b).sum(axis=...)`` raised AttributeError even though
+    ``Index("t", index_a * index_b).sum(axis=...)`` worked.
+    """
+    time_axis = Axis("time", DOMAIN)
+    a = graph.array_constant([1.0, 2.0, 3.0], axes=(time_axis,), name="a")
+    b = graph.array_constant([4.0, 5.0, 6.0], axes=(time_axis,), name="b")
+    raw = a * b
+    assert isinstance(raw, graph.multiply)
+    result = raw.sum(time_axis)
+    assert isinstance(result, graph.project_using_sum)
+    assert result.node is raw
+    assert result.axis is time_axis
+
+
+# ---------------------------------------------------------------------------
+# Node.broadcast() / graph.broadcast_to
+# ---------------------------------------------------------------------------
+
+
+def test_broadcast_to_repr():
+    """graph.broadcast_to has a round-trippable SSA repr."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    result = graph.broadcast_to(node, (y_axis,))
+    assert str(result) == f"n{result.id} = graph.broadcast_to(node=n{node.id}, axes=({y_axis!r},), name='')"
+
+
+def test_node_broadcast_adds_missing_axes():
+    """Node.broadcast(*axes) wraps in graph.broadcast_to, output_axes widened to the union."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    result = node.broadcast(y_axis)
+    assert isinstance(result, graph.broadcast_to)
+    assert result.node is node
+    assert result.axes == (y_axis,)
+    assert set(result.output_axes) == {x_axis, y_axis}
+
+
+def test_node_broadcast_already_present_axis_is_a_noop():
+    """Node.broadcast() returns the same node, unchanged, when every axis is already carried."""
+    x_axis = Axis("x", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    assert node.broadcast(x_axis) is node
+
+
+def test_node_broadcast_no_axes_is_a_noop():
+    """Node.broadcast() with no arguments returns the same node, unchanged."""
+    x_axis = Axis("x", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    assert node.broadcast() is node
+
+
+def test_node_broadcast_mixed_present_and_missing_axes():
+    """Node.broadcast(x, y) only adds the axes not already carried."""
+    x_axis = Axis("x", DOMAIN)
+    y_axis = Axis("y", DOMAIN)
+    node = graph.array_constant([1.0, 2.0], axes=(x_axis,), name="values")
+    result = node.broadcast(x_axis, y_axis)
+    assert isinstance(result, graph.broadcast_to)
+    assert result.axes == (y_axis,)

@@ -79,6 +79,11 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python_version }} pytest
 
+      # Only need to verify the optional xarray path once; 3.12 is the reference.
+      - name: Run xarray-dependent tests with xarray present
+        if: matrix['python_version'] == '3.12'
+        run: uv run --with xarray --python ${{ matrix.python_version }} pytest tests/dt_model/simulation/test_labeled_array.py -k xarray
+
       # Upload coverage only once (3.12) and only on push (not on PR), so that
       # the Codecov trend reflects merged code on main, not open PR branches.
       - name: Upload coverage to Codecov

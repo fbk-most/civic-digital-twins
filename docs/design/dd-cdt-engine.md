@@ -6,7 +6,7 @@
 |--------------|------------------------------------------------|
 | Author       | [@bassosimone](https://github.com/bassosimone) |
 | Co-authors   | [@pistore](https://github.com/pistore)         |
-| Last-Updated | 2026-07-24                                     |
+| Last-Updated | 2026-09-22                                     |
 | Status       | Draft                                          |
 | Approved-By  | N/A                                            |
 
@@ -80,18 +80,15 @@ from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 
 
-# Define types
-class TimeDimension:
-    """Represents nodes in the time dimension."""
-
-
-class EnsembleDimension:
-    """Represents nodes in the ensemble dimension."""
+# Define a quantity kind, so a type checker rejects accidentally
+# mixing this node's values with an unrelated quantity
+class VehicleCount:
+    """Represents a count of vehicles."""
 
 
 # Define a type-aware DAG
-a = graph.placeholder[TimeDimension]("a")
-b = graph.placeholder[TimeDimension]("b")
+a = graph.placeholder[VehicleCount]("a")
+b = graph.placeholder[VehicleCount]("b")
 k0 = graph.constant(3, name="k0")
 c = a + b * k0
 c1 = graph.function_call("reduce", c)
@@ -265,14 +262,16 @@ d = c * b + scale
 ```
 
 In practice, assigning distinct types to distinct nodes is
-beneficial to avoid programming mistakes, especially with
-shapes. For example, a real model could have the ensemble
-dimension with shape `(1,)` and the time dimension with
-shape `(255,)`. To perform computations in the time-ensemble
-dimension, one needs to expand vectors into the `(255,1)`
-space. By using types correctly, we avoid mixing dimensions
-and reduce the risk of combining nodes with incorrect
-shapes by mistake.
+beneficial to avoid programming mistakes, especially when a
+model mixes several *kinds* of quantity — population counts,
+currency, probabilities, temperatures. `T` names the quantity
+a node represents, so a static type checker flags an accidental
+`vehicle_count + euros`. It says nothing about array shape: a
+node's actual axes (time, space, ensemble, ...) are tracked
+separately, at runtime, by the axis-labeling machinery described
+in [`dd-cdt-model.md`](dd-cdt-model.md) — two nodes can share a
+`T` while carrying entirely different axes, or carry the same
+axes while representing unrelated quantities.
 
 Regarding how `graph.py` could be implemented, a very simplified
 implementation looks like this:
@@ -376,35 +375,45 @@ These three nodes are used by the model layer to implement runtime `ModelVariant
 [`dd-cdt-modularity.md`](dd-cdt-modularity.md#runtime-variant-selection) for the model-layer
 perspective.
 
-### Timeseries Nodes
+### Domain-Carrying Nodes
 
 In addition to scalar `constant` and `placeholder`, `graph.py` provides
-two nodes for representing time-indexed data:
+two nodes for representing array data shaped by one or more DOMAIN axes
+(time, a spatial grid, or any combination):
 
-- **`graph.timeseries_constant(values, name="")`** — stores a fixed 1-D
-  array of values (one per time step).  At evaluation time the executor
-  converts it to a `np.ndarray` of the corresponding shape.
+- **`graph.array_constant(values, axes, name="")`** — stores a fixed array
+  of values, one dimension per axis in `axes`.  At evaluation time the
+  executor converts it to a `np.ndarray` of the corresponding shape.
 
-- **`graph.timeseries_placeholder(name)`** — a placeholder whose value
-  is a 1-D array supplied at evaluation time (e.g. a measured time-series).
+- **`graph.array_placeholder(name, axes)`** — a placeholder whose value is
+  an array of the declared shape, supplied at evaluation time (e.g. a
+  measured time-series).
+
+A timeseries is simply the common case of `axes=(TIME_AXIS,)`. Earlier
+versions of this module had dedicated `timeseries_constant`/
+`timeseries_placeholder` node types; once `array_constant`/`array_placeholder`
+gained generic `axes=` support, those became redundant and were removed —
+shape, including a timeseries' shape, lives entirely in `axes` rather than in
+the node type.
 
 Example:
 
 ```python
 import numpy as np
 from civic_digital_twins.dt_model.engine.frontend import graph
+from civic_digital_twins.dt_model.axes import TIME_AXIS
 
 # A fixed time series (e.g. 24 hourly demand values)
-demand = graph.timeseries_constant(np.arange(24, dtype=float), "demand")
+demand = graph.array_constant(np.arange(24, dtype=float), axes=(TIME_AXIS,), name="demand")
 
 # A placeholder for an externally supplied time series
-traffic = graph.timeseries_placeholder("traffic")
+traffic = graph.array_placeholder("traffic", axes=(TIME_AXIS,))
 
-# Formulas can combine timeseries nodes with scalar nodes
+# Formulas can combine domain-carrying nodes with scalar nodes
 scaled = demand * graph.constant(0.5)
 ```
 
-The executor evaluates timeseries nodes in the same way as scalar nodes;
+The executor evaluates domain-carrying nodes in the same way as scalar nodes;
 the difference is purely in the shape of the resulting `np.ndarray`.
 
 ### Axis Management
@@ -423,6 +432,13 @@ semantics). There is no default; callers always pass `axis=` explicitly,
 e.g. `axis=TIME_AXIS`. The NumPy backend currently only supports
 reducing along `TIME_AXIS` — passing any other `Axis` raises
 `UnsupportedOperation` at evaluation time.
+
+Each operator is also available as a same-named method directly on
+`graph.Node` — `node.sum(axis=TIME_AXIS)` is equivalent to
+`graph.project_using_sum(node, axis=TIME_AXIS)` — so a raw node produced by
+combining other nodes (e.g. `a * b`) does not need to be wrapped in
+anything to call it. `axis` is required either way; the engine layer never
+defaults it from an axis's semantic role.
 
 | Operation | NumPy Equivalent | Description |
 | --------- | --------------- | ----------- |
@@ -444,12 +460,49 @@ reducing along `TIME_AXIS` — passing any other `Axis` raises
 `GenericIndex` provides convenience wrapper methods for all axis reduction operators:
 `sum()`, `mean()`, `min()`, `max()`, `std()`, `var()`, `median()`, `prod()`,
 `any()`, `all()`, `count_nonzero()`, and `quantile(q)`. These are the recommended
-way to use axis reduction operations at the model layer.
+way to use axis reduction operations at the model layer. Unlike the
+`graph.Node` methods above, `axis` is optional here: it defaults to the
+index's unique DOMAIN axis, raising if there isn't exactly one (see
+[`GenericIndex`](dd-cdt-model.md#genericindex)). The same distinction
+applies to the per-axis operators `shift()`, `roll()`, `diff()`, and
+`cumulative()`, also mirrored on `graph.Node` with `axis` required.
 
 > **Note on keepdims semantics.**
 > All axis reduction operations always preserve the reduced axis as a size-1 dimension.
 > Callers that previously relied on axis *collapsing* (the 0.5.0 default)
 > must now use `np.squeeze` on the result.
+
+#### Broadcasting
+
+`node.broadcast(*axes)` returns a node considered to also carry each axis
+in *axes* not already present in `node.output_axes`, with implicit size-1
+extent along the new ones — `graph.broadcast_to` under the hood, or `node`
+itself unchanged if every axis is already there. It exists because a
+formula's `output_axes` is *inferred*, not declared: `Index(..., axes=...)`
+only *verifies* the inference (see [`Index`](dd-cdt-model.md#index)), so
+there is no way to make a node carry an axis it doesn't structurally
+reference except by referencing it.
+
+`broadcast_to` is a purely structural declaration at the frontend level —
+it says nothing about how a backend must evaluate it, only that the
+resulting node's `output_axes` widens. What that widening is *for*, at the
+frontend/model layer, holds regardless of backend: it's what `Index(...,
+axes=...)` verification, `GenericIndex` default-axis resolution, and
+`AxesInferenceWarning` inspect. Whether producing the actual array costs
+anything is left to each backend. The numpy backend happens to need zero
+work: every node's *evaluated* array is already padded to the evaluation's
+full DOMAIN-axis block regardless of what that node's own `output_axes`
+declares — see `numpybackend.executor.align_to_domain_block` and the
+leaf-padding convention it implements (every `array_constant`/
+`array_placeholder` is padded to the full domain block when read, and
+ordinary numpy broadcasting preserves that padding through every
+downstream computed node) — so `_eval_broadcast_to` is a pure passthrough
+there. A different backend without that convention would be free to
+implement `broadcast_to` as an actual reshape instead; nothing in the
+frontend's contract rules that out.
+
+`GenericIndex.broadcast(*axes)` delegates to the same-named `graph.Node`
+method, exactly like the axis reduction methods above.
 
 #### Accepting Index-Like Objects: the `HasNode` Protocol
 

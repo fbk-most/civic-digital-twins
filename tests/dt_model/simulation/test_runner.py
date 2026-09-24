@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for Step 1 of scenario-runner-protocol.md.
+"""Tests for the scenario-runner protocol.
 
 Covers:
 - ``EvaluationConfig`` dataclass
@@ -8,7 +8,7 @@ Covers:
 - ``ModelOutput`` ABC: ``is_resumable`` flag mechanics and round-trip via a
   concrete stub subclass
 - ``ModelRunHandle``: ``get()``, ``poll()``, ``cancel()``
-- ``AsyncEvaluationHandle.future`` property (precondition for Step 1)
+- ``AsyncEvaluationHandle.future`` property
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from scipy import stats
 
 from civic_digital_twins.dt_model import (
     AsyncEvaluationHandle,
+    CategoricalIndex,
     DistributionEnsemble,
     Evaluation,
     EvaluationConfig,
@@ -32,17 +33,20 @@ from civic_digital_twins.dt_model import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
+    ParameterMeta,
     ResumeState,
     Scenario,
+    build_scenario,
     define,
     inputs,
     outputs,
 )
+from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
-from civic_digital_twins.dt_model.model.index import DistributionIndex, Index
+from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
 from civic_digital_twins.dt_model.model.model_variant import ModelVariant
-from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value
+from civic_digital_twins.dt_model.simulation.runner import _encode_result, _format_value, _own_index_value
 
 # ---------------------------------------------------------------------------
 # Minimal model fixture (reused from other simulation tests)
@@ -108,6 +112,41 @@ def _make_scalar_model() -> tuple[Index, _ScalarModel]:
     return cost, _ScalarModel(inputs=_ScalarModel.Inputs(cost=cost))
 
 
+# A third model exercising all three build_scenario() dispatch kinds at once:
+# a scalar Index, a CategoricalIndex, and a DistributionIndex.
+
+
+@define("BuildScenarioModel")
+class _BuildScenarioModel(Model):
+    """Model with one scalar, one categorical, and one distribution input."""
+
+    @inputs
+    class Inputs:
+        scalar_param: Index
+        cat_param: CategoricalIndex
+        dist_param: DistributionIndex
+
+    @outputs
+    class Outputs:
+        out: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        """Pass the scalar input through unchanged."""
+        out = Index("out", inputs.scalar_param.node)
+        return _BuildScenarioModel.Outputs(out=out)
+
+
+def _make_build_scenario_model() -> tuple[Index, CategoricalIndex, DistributionIndex, _BuildScenarioModel]:
+    """Return (scalar_param, cat_param, dist_param, model) ready for build_scenario()."""
+    scalar_param = Index("scalar_param", 1.0)
+    cat_param = CategoricalIndex("cat_param", ["a", "b"])
+    dist_param = DistributionIndex("dist_param", stats.norm, {"loc": 0.0, "scale": 1.0})
+    model = _BuildScenarioModel(
+        inputs=_BuildScenarioModel.Inputs(scalar_param=scalar_param, cat_param=cat_param, dist_param=dist_param)
+    )
+    return scalar_param, cat_param, dist_param, model
+
+
 # ---------------------------------------------------------------------------
 # Minimal concrete ModelOutput stub
 # ---------------------------------------------------------------------------
@@ -161,9 +200,15 @@ class TestEvaluationConfig:
         assert dataclasses.is_dataclass(EvaluationConfig)
 
     def test_field_names(self) -> None:
-        """EvaluationConfig has exactly one field: ensemble_size."""
+        """EvaluationConfig has ensemble_size, ensemble_seed, and n_samples_per_combo."""
         fields = {f.name for f in dataclasses.fields(EvaluationConfig)}
-        assert fields == {"ensemble_size"}
+        assert fields == {"ensemble_size", "ensemble_seed", "n_samples_per_combo"}
+
+    def test_ensemble_seed_and_n_samples_per_combo_defaults(self) -> None:
+        """ensemble_seed defaults to None and n_samples_per_combo defaults to 1."""
+        cfg = EvaluationConfig(ensemble_size=100)
+        assert cfg.ensemble_seed is None
+        assert cfg.n_samples_per_combo == 1
 
     def test_equality(self) -> None:
         """Two configs with equal ensemble_size compare equal."""
@@ -412,12 +457,12 @@ class TestModelRunHandle:
 
 
 # ---------------------------------------------------------------------------
-# AsyncEvaluationHandle.future property (Step 1 precondition)
+# AsyncEvaluationHandle.future property
 # ---------------------------------------------------------------------------
 
 
 class TestAsyncEvaluationHandleFutureProperty:
-    """Verify the public ``future`` property added as a Step 1 precondition."""
+    """Verify the public ``future`` property."""
 
     def test_future_property_returns_future(self) -> None:
         """AsyncEvaluationHandle.future returns a concurrent.futures.Future."""
@@ -443,12 +488,12 @@ class TestAsyncEvaluationHandleFutureProperty:
 
 
 # ---------------------------------------------------------------------------
-# Scenario.overrides property (Step 2 precondition)
+# Scenario.overrides property
 # ---------------------------------------------------------------------------
 
 
 class TestScenarioOverrides:
-    """Verify the public overrides property added as a Step 2 precondition."""
+    """Verify the public overrides property."""
 
     def test_overrides_empty_for_base_scenario(self) -> None:
         """Overrides is empty when no overrides were given."""
@@ -504,9 +549,9 @@ class _MinimalEvaluator(ModelEvaluator[Model, _StubOutput]):
         """Return a stub output whose value equals ensemble_size."""
         return _StubOutput(config.ensemble_size)
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a minimal schema."""
-        return {"y": {"type": "scalar"}}
+        return {"y": ParameterMeta(name="y", kind="scalar")}
 
     def extract_resume_state(self, output: _StubOutput) -> ResumeState:
         """Unused in these tests."""
@@ -521,7 +566,7 @@ class _ResumableEvaluator(ModelEvaluator[Model, _ResumableOutput]):
         result = _make_result_from(scenario.model, config.ensemble_size)
         return _ResumableOutput(result)
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a minimal schema."""
         return {}
 
@@ -710,6 +755,31 @@ class TestGetModelValues:
 
 
 # ---------------------------------------------------------------------------
+# _own_index_value() — GenericIndex extension point
+# ---------------------------------------------------------------------------
+
+
+def test_own_index_value_falls_back_to_none_for_a_bare_generic_index() -> None:
+    """A GenericIndex that is neither a DistributionIndex nor an Index yields None.
+
+    Every concrete index shipped by this library (Index, DistributionIndex,
+    and their specializations) derives from Index, so this is the fallback
+    for a third-party GenericIndex extension that does not.
+    """
+
+    class _BareGenericIndex(GenericIndex):
+        @property
+        def node(self) -> graph.Node:
+            return graph.constant(1.0)
+
+        @property
+        def name(self) -> str:
+            return "bare"
+
+    assert _own_index_value(_BareGenericIndex()) is None
+
+
+# ---------------------------------------------------------------------------
 # ModelEvaluator — resume()
 # ---------------------------------------------------------------------------
 
@@ -893,7 +963,7 @@ class _DefaultTemplateEvaluator(ModelEvaluator[_SimpleModel, _StubOutput]):
         """Return a stub output wrapping the ensemble size."""
         return _StubOutput(42, include_resume=False)
 
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a minimal schema."""
         return {}
 
@@ -938,6 +1008,34 @@ class TestModelEvaluatorDefaultTemplate:
         state = evaluator.extract_resume_state(output)
         assert isinstance(state, ResumeState)
         assert isinstance(state.result, EvaluationResult)
+
+    def test_make_ensemble_same_seed_yields_same_samples(self) -> None:
+        """make_ensemble with equal ensemble_seed produces identical draws."""
+        x, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        scenario = Scenario(model)
+        config = EvaluationConfig(ensemble_size=5, ensemble_seed=42)
+        samples_a = evaluator.make_ensemble(scenario, config).assignments()[x]
+        samples_b = evaluator.make_ensemble(scenario, config).assignments()[x]
+        np.testing.assert_array_equal(samples_a, samples_b)
+
+    def test_make_ensemble_different_seed_yields_different_samples(self) -> None:
+        """make_ensemble with different ensemble_seed values produces different draws."""
+        x, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        scenario = Scenario(model)
+        config_a = EvaluationConfig(ensemble_size=5, ensemble_seed=42)
+        config_b = EvaluationConfig(ensemble_size=5, ensemble_seed=43)
+        samples_a = evaluator.make_ensemble(scenario, config_a).assignments()[x]
+        samples_b = evaluator.make_ensemble(scenario, config_b).assignments()[x]
+        assert not np.array_equal(samples_a, samples_b)
+
+    def test_make_ensemble_no_seed_uses_no_rng(self) -> None:
+        """make_ensemble without ensemble_seed still returns a usable ensemble."""
+        _, model = _make_simple_model()
+        evaluator = _DefaultTemplateEvaluator(model)
+        ensemble = evaluator.make_ensemble(Scenario(model), EvaluationConfig(ensemble_size=5))
+        assert isinstance(ensemble, DistributionEnsemble)
 
 
 # ---------------------------------------------------------------------------
@@ -1015,3 +1113,88 @@ class TestIncrementalRun:
         run2 = evaluator.resume(scenario, output2, config)
         assert isinstance(run2, IncrementalRun)
         assert isinstance(run2.result, EvaluationResult)
+
+
+# ---------------------------------------------------------------------------
+# build_scenario()
+# ---------------------------------------------------------------------------
+
+
+class TestBuildScenario:
+    """Unit tests for build_scenario()."""
+
+    def test_scalar_override(self) -> None:
+        """A non-distribution, non-categorical kind resolves to a float override."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"scalar_param": ParameterMeta(name="scalar_param", kind="scalar")}
+        scenario = build_scenario(model, {"scalar_param": 5}, index_map, spec_map)
+        assert scenario.overrides == {scalar_param: 5.0}
+
+    def test_categorical_override(self) -> None:
+        """A "categorical" kind passes the value through as a string."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"cat_param": ParameterMeta(name="cat_param", kind="categorical", support=["a", "b"])}
+        scenario = build_scenario(model, {"cat_param": "b"}, index_map, spec_map)
+        assert scenario.overrides == {cat_param: "b"}
+
+    def test_distribution_override(self) -> None:
+        """A "distribution" kind reconstructs a frozen distribution from a (lo, hi) tuple."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"dist_param": ParameterMeta(name="dist_param", kind="distribution", distribution_family="uniform")}
+        scenario = build_scenario(model, {"dist_param": (1.0, 3.0)}, index_map, spec_map)
+        dist = scenario.overrides[dist_param]
+        assert isinstance(dist, Distribution)
+        assert dist.mean() == pytest.approx(2.0)
+        assert dist.support() == (1.0, 3.0)  # type: ignore[attr-defined]
+
+    def test_distribution_override_with_fixed_params(self) -> None:
+        """distribution_fixed_params are passed through to the reconstructed distribution."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {
+            "dist_param": ParameterMeta(
+                name="dist_param",
+                kind="distribution",
+                distribution_family="truncnorm",
+                distribution_fixed_params={"a": -2.0, "b": 2.0},
+            )
+        }
+        scenario = build_scenario(model, {"dist_param": (0.0, 1.0)}, index_map, spec_map)
+        dist = scenario.overrides[dist_param]
+        assert isinstance(dist, Distribution)
+        assert dist.kwds == {"a": -2.0, "b": 2.0, "loc": 0.0, "scale": 1.0}  # type: ignore[attr-defined]
+
+    def test_absent_key_left_unoverridden(self) -> None:
+        """Keys absent from param_overrides are not present in the resulting overrides."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map = {"scalar_param": ParameterMeta(name="scalar_param", kind="scalar")}
+        scenario = build_scenario(model, {}, index_map, spec_map)
+        assert scenario.overrides == {}
+
+    def test_key_missing_from_index_map_is_skipped(self) -> None:
+        """A param_overrides key absent from index_map is silently skipped."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param}
+        spec_map = {"scalar_param": ParameterMeta(name="scalar_param", kind="scalar")}
+        scenario = build_scenario(model, {"unknown_param": 1.0, "scalar_param": 5}, index_map, spec_map)
+        assert scenario.overrides == {scalar_param: 5.0}
+
+    def test_key_missing_from_spec_map_is_skipped(self) -> None:
+        """A param_overrides key absent from spec_map is silently skipped."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map: dict[str, ParameterMeta] = {}
+        scenario = build_scenario(model, {"scalar_param": 5}, index_map, spec_map)
+        assert scenario.overrides == {}
+
+    def test_parameter_axes_forwarded(self) -> None:
+        """parameter_axes is forwarded unchanged to the constructed Scenario."""
+        scalar_param, cat_param, dist_param, model = _make_build_scenario_model()
+        index_map = {"scalar_param": scalar_param, "cat_param": cat_param, "dist_param": dist_param}
+        spec_map: dict[str, ParameterMeta] = {}
+        scenario = build_scenario(model, {}, index_map, spec_map, parameter_axes=[dist_param])
+        assert scenario.parameter_axes == [dist_param]

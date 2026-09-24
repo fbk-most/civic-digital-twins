@@ -1,13 +1,15 @@
-"""Tests for the @inputs, @outputs, and @expose contract decorators."""
+"""Tests for the @inputs, @outputs, @expose, and @config contract decorators."""
 
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
 import warnings
 
+import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model import define, expose, inputs, outputs
+from civic_digital_twins.dt_model import config, define, expose, inputs, outputs
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
 from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import Model
 
@@ -203,6 +205,259 @@ def test_expose_validates_fields():
 
     with pytest.raises(TypeError, match="expected GenericIndex"):
         Expose(z="bad")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# @config
+# ---------------------------------------------------------------------------
+
+
+def test_config_decorator_applies_dataclass():
+    """@config applies @dataclass so the class becomes a dataclass."""
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    assert dataclasses.is_dataclass(Config)
+
+
+def test_config_decorator_stamps_marker():
+    """@config sets _is_config = True on the decorated class."""
+
+    @config
+    class Config:
+        policy: str = "default"
+
+    assert getattr(Config, "_is_config", False) is True
+
+
+def test_config_accepts_plain_values():
+    """Plain, non-Index values (str, dict, list) are accepted without error."""
+
+    @config
+    class Config:
+        policy: str
+        lookup: dict
+        selectors: list
+
+    c = Config(policy="peak", lookup={"a": 1}, selectors=["x", "y"])
+    assert c.policy == "peak"
+    assert c.lookup == {"a": 1}
+    assert c.selectors == ["x", "y"]
+
+
+def test_config_supports_default_values():
+    """A Config field with a default value can be omitted at construction time.
+
+    @config wraps @dataclass, so ordinary dataclass default-value semantics
+    apply: declaring `policy: str = "default"` makes `policy` optional.
+    """
+
+    @config
+    class Config:
+        policy: str = "default"
+        retries: int = 3
+
+    assert Config().policy == "default"
+    assert Config().retries == 3
+    assert Config(policy="peak").policy == "peak"
+    assert Config(policy="peak").retries == 3  # untouched fields keep their default
+
+
+def test_config_rejects_generic_index_field():
+    """A Config field holding a GenericIndex raises TypeError.
+
+    This is the opposite validation direction from @inputs/@outputs/@expose,
+    which require a GenericIndex: @config fields are graph-inert and must
+    never become a side channel into the graph.
+    """
+
+    @config
+    class Config:
+        x: Index
+
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(x=Index("x", 1.0))  # type: ignore[arg-type]
+
+
+def test_config_rejects_generic_index_in_list_field():
+    """A Config list field containing a GenericIndex raises TypeError with field[i] context."""
+
+    @config
+    class Config:
+        xs: list
+
+    with pytest.raises(TypeError, match=r"xs\[0\].*must not hold a GenericIndex"):
+        Config(xs=[Index("x", 1.0)])  # type: ignore[arg-type]
+
+
+def test_config_rejects_generic_index_in_dict_field():
+    """A Config dict field containing a GenericIndex raises TypeError with field['key'] context."""
+
+    @config
+    class Config:
+        xs: dict
+
+    with pytest.raises(TypeError, match=r"xs\['k'\].*must not hold a GenericIndex"):
+        Config(xs={"k": Index("x", 1.0)})  # type: ignore[arg-type]
+
+
+def test_config_rejects_generic_index_nested_in_raw_outputs_dataclass():
+    """A Config field holding a raw @outputs dataclass with a GenericIndex field raises TypeError.
+
+    @config's own GenericIndex check must recurse into nested @outputs/@expose
+    dataclass values, not just check the field's own direct value — mirroring
+    the recursion @inputs/@outputs/@expose already perform in the opposite
+    direction (accepting, rather than rejecting, a GenericIndex).
+    """
+
+    @outputs
+    class Inner:
+        a: Index
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]  # deliberately wrong: nests a GenericIndex
+
+    a = Index("a", 1.0)
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(inner=Inner(a=a))
+
+
+def test_config_rejects_generic_index_nested_in_outputs_proxy():
+    """A Config field holding an IOProxy wrapping @outputs with a GenericIndex raises TypeError."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @config
+    class Config:
+        leaf_out: LeafModel.Outputs  # type: ignore[arg-type]  # IOProxy wrapping @outputs
+
+    x = Index("x", 1.0)
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=x))
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(leaf_out=leaf.outputs)
+
+
+def test_config_rejects_generic_index_in_list_nested_inside_outputs_dataclass():
+    """A GenericIndex hidden in a list field of a nested @outputs dataclass is still caught.
+
+    Exercises the recursive helper's own list-handling branch (reached only
+    when recursing into a nested dataclass's field, as opposed to the
+    top-level list check @config already performed directly).
+    """
+
+    @outputs
+    class Inner:
+        items: list
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]  # nested @outputs dataclass with a list field
+
+    a = Index("a", 1.0)
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(inner=Inner(items=[a]))
+
+
+def test_config_rejects_generic_index_in_dict_nested_inside_outputs_dataclass():
+    """A GenericIndex hidden in a dict field of a nested @outputs dataclass is still caught.
+
+    Exercises the recursive helper's own dict-handling branch (reached only
+    when recursing into a nested dataclass's field, as opposed to the
+    top-level dict check @config already performed directly).
+    """
+
+    @outputs
+    class Inner:
+        items: dict
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]  # nested @outputs dataclass with a dict field
+
+    a = Index("a", 1.0)
+    with pytest.raises(TypeError, match="must not hold a GenericIndex"):
+        Config(inner=Inner(items={"k": a}))
+
+
+def test_config_rejects_generic_index_nested_in_plain_dataclass():
+    """A Config field holding a plain (undecorated) nested dataclass with a GenericIndex raises TypeError.
+
+    The recursion isn't limited to @outputs/@expose-marked dataclasses —
+    any nested dataclass instance is walked, since a GenericIndex smuggled
+    inside one would be just as invisible to Scenario/inspection.
+    """
+
+    @dataclasses.dataclass
+    class PlainInner:
+        a: Index
+
+    @config
+    class Config:
+        inner: PlainInner  # type: ignore[arg-type]  # deliberately wrong: nests a GenericIndex
+
+    with pytest.raises(TypeError, match=r"inner\.a.*must not hold a GenericIndex"):
+        Config(inner=PlainInner(a=Index("a", 1.0)))
+
+
+def test_config_accepts_plain_dataclass_without_generic_index():
+    """A Config field holding a plain nested dataclass with no GenericIndex is accepted."""
+
+    @dataclasses.dataclass
+    class PlainInner:
+        threshold: float
+        tag: str
+
+    @config
+    class Config:
+        inner: PlainInner
+
+    c = Config(inner=PlainInner(threshold=0.5, tag="x"))
+    assert c.inner.threshold == 0.5
+    assert c.inner.tag == "x"
+
+
+def test_config_rejects_generic_index_error_names_the_nested_path():
+    """The raised error identifies the exact nested field, not just the outer Config field."""
+
+    @outputs
+    class Inner:
+        a: Index
+
+    @config
+    class Config:
+        inner: Inner  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match=r"Config\.inner\.a: Config fields must not hold a GenericIndex"):
+        Config(inner=Inner(a=Index("a", 1.0)))
+
+
+def test_config_supports_both_call_forms():
+    """@config and @config() both work."""
+
+    @config
+    class A:
+        policy: str
+
+    @config()
+    class B:
+        policy: str
+
+    assert A(policy="a").policy == "a"
+    assert B(policy="b").policy == "b"
 
 
 # ---------------------------------------------------------------------------
@@ -616,3 +871,207 @@ def test_raw_outputs_dataclass_indexes_reachable():
 
     m = M()
     assert any(idx is a for idx in m.indexes)
+
+
+# ---------------------------------------------------------------------------
+# @outputs must not accept @expose values (the reverse direction is fine)
+# ---------------------------------------------------------------------------
+
+
+def test_outputs_rejects_raw_expose_dataclass():
+    """An @outputs field must not hold a raw @expose dataclass instance.
+
+    @outputs is the model's public contract; @expose is for non-contractual,
+    internal diagnostics only. Accepting an @expose value here would let
+    diagnostic-only data silently leak into the contractual outputs surface.
+    """
+
+    @expose
+    class Inner:
+        a: Index
+
+    @outputs
+    class Outer:
+        inner: Inner  # type: ignore[arg-type]  # deliberately wrong marker
+
+    a = Index("a", 7.0)
+    with pytest.raises(TypeError, match="must not hold an @expose value"):
+        Outer(inner=Inner(a=a))
+
+
+def test_outputs_rejects_nested_expose_proxy():
+    """An @outputs field must not hold an IOProxy wrapping an @expose dataclass."""
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        @expose
+        class Expose:
+            mid: Index
+
+        def compute(self, inp: Inputs) -> tuple[Outputs, Expose]:
+            mid = Index("mid", inp.x)
+            return LeafModel.Outputs(y=mid), LeafModel.Expose(mid=mid)
+
+    @outputs
+    class BadOuter:
+        leaf: LeafModel.Expose  # type: ignore[arg-type]  # IOProxy wrapping @expose, disallowed here
+
+    x = Index("x", 1.0)
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=x))
+    with pytest.raises(TypeError, match="must not hold an IOProxy wrapping an @expose value"):
+        BadOuter(leaf=leaf.expose)
+
+
+def test_expose_still_accepts_nested_outputs_proxy_after_marker_check():
+    """The reverse direction — @expose holding an IOProxy wrapping @outputs — remains allowed.
+
+    Regression guard for the #236 fix: adding the @outputs->@expose rejection
+    must not affect this pre-existing, still-valid direction.
+    """
+
+    @define("Leaf")
+    class LeafModel(Model):
+        @inputs
+        class Inputs:
+            x: Index
+
+        @outputs
+        class Outputs:
+            y: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            return LeafModel.Outputs(y=Index("y", inp.x))
+
+    @expose
+    class Outer:
+        leaf_out: LeafModel.Outputs  # IOProxy wrapping @outputs — still fine
+
+    x = Index("x", 1.0)
+    leaf = LeafModel(inputs=LeafModel.Inputs(x=x))
+    outer = Outer(leaf_out=leaf.outputs)  # must not raise
+    assert outer.leaf_out is not None
+
+
+# ---------------------------------------------------------------------------
+# FIXED_AXES shape verification at the contract boundary
+# ---------------------------------------------------------------------------
+
+
+def test_field_with_matching_shape_is_accepted():
+    """A TimeseriesIndex value satisfies a field annotated TimeseriesIndex."""
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+    inst = Inputs(field=ts)
+    assert inst.field is ts
+
+
+def test_field_with_mismatched_shape_is_rejected():
+    """A value whose output_axes disagrees with the field's FIXED_AXES raises.
+
+    Previously silent (pyright-only): field: TimeseriesIndex historically
+    carried no runtime check at all, only isinstance(val, GenericIndex).
+    """
+    x = Axis("x", DOMAIN)
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    mismatched = Index("field", np.array([1.0, 2.0]), axes=(x,))
+    with pytest.raises(ValueError, match=r"declared axes .* do not match the actual output_axes"):
+        Inputs(field=mismatched)  # type: ignore[arg-type]
+
+
+def test_structurally_equivalent_but_unrelated_class_is_accepted():
+    """A value from a *different* class satisfies the field, if its axes match.
+
+    The check is purely structural (output_axes), never isinstance: a
+    hand-rolled index type sharing no inheritance with TimeseriesIndex still
+    satisfies a field: TimeseriesIndex slot as long as FIXED_AXES agree.
+    This is what lets independently-authored components interoperate
+    without agreeing on a common class hierarchy for the same shape.
+    """
+
+    class TimeIndex(Index):
+        FIXED_AXES = (TIME_AXIS,)
+
+        def __init__(self, name: str, value=None) -> None:
+            super().__init__(name, value, axes=self.FIXED_AXES)
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    ti = TimeIndex("ti", np.array([1.0, 2.0]))
+    inst = Inputs(field=ti)  # type: ignore[arg-type]  # pyright can't see the structural match; that's the point
+    assert inst.field is ti
+
+
+def test_field_without_fixed_axes_is_unchecked():
+    """A plain Index field (no FIXED_AXES) accepts any shape, same as before this feature."""
+
+    @inputs
+    class Inputs:
+        field: Index
+
+    x = Axis("x", DOMAIN)
+    val = Index("field", np.array([1.0, 2.0]), axes=(x,))
+    inst = Inputs(field=val)  # must not raise
+    assert inst.field is val
+
+
+def test_list_field_checks_each_element():
+    """list[TimeseriesIndex] verifies every element's shape independently."""
+
+    @inputs
+    class Inputs:
+        fields: list[TimeseriesIndex]
+
+    good = TimeseriesIndex("good", np.array([1.0, 2.0]))
+    bad = Index("bad", np.array([1.0, 2.0]), axes=(Axis("x", DOMAIN),))
+    Inputs(fields=[good])  # must not raise
+    with pytest.raises(ValueError, match=r"fields\[0\]: declared axes"):
+        Inputs(fields=[bad])  # type: ignore[arg-type]
+
+
+def test_dict_field_checks_each_value():
+    """dict[str, TimeseriesIndex] verifies every value's shape independently."""
+
+    @inputs
+    class Inputs:
+        fields: dict[str, TimeseriesIndex]
+
+    good = TimeseriesIndex("good", np.array([1.0, 2.0]))
+    bad = Index("bad", np.array([1.0, 2.0]), axes=(Axis("x", DOMAIN),))
+    Inputs(fields={"a": good})  # must not raise
+    with pytest.raises(ValueError, match=r"fields\['b'\]: declared axes"):
+        Inputs(fields={"b": bad})  # type: ignore[arg-type]
+
+
+def test_unresolvable_annotation_falls_back_to_no_check():
+    """An annotation typing.get_type_hints cannot resolve is treated as having no declared shape.
+
+    Not a special case in the implementation: any GenericIndex is still
+    accepted regardless, exactly as for a plain Index field.
+    """
+
+    @inputs
+    class Inputs:
+        field: "NameNotDefinedAnywhere"  # type: ignore[name-defined]  # noqa: F821
+
+    x = Axis("x", DOMAIN)
+    val = Index("field", np.array([1.0, 2.0]), axes=(x,))
+    inst = Inputs(field=val)  # must not raise despite the unresolvable annotation
+    assert inst.field is val

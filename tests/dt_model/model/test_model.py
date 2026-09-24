@@ -12,6 +12,7 @@ from civic_digital_twins.dt_model import expose, functions, inputs, outputs
 from civic_digital_twins.dt_model.model.index import Distribution, GenericIndex, Index, TimeseriesIndex
 from civic_digital_twins.dt_model.model.model import (
     AbstractIndexNotInInputsError,
+    ConfigTypeMismatchError,
     FunctionsTypeMismatchError,
     InputsContractError,
     InputsTypeMismatchError,
@@ -501,6 +502,13 @@ def test_functions_type_mismatch_error_shares_violation_base():
     assert not issubclass(FunctionsTypeMismatchError, ModelContractWarning)
 
 
+def test_config_type_mismatch_error_shares_violation_base():
+    """ConfigTypeMismatchError is a ModelContractError/Violation, not a warning."""
+    assert issubclass(ConfigTypeMismatchError, ModelContractError)
+    assert issubclass(ConfigTypeMismatchError, ModelContractViolation)
+    assert not issubclass(ConfigTypeMismatchError, ModelContractWarning)
+
+
 def test_inputs_contract_error_is_subclass_of_model_contract_error_not_warning():
     """InputsContractError is a ModelContractError, not a ModelContractWarning."""
     assert issubclass(InputsContractError, ModelContractError)
@@ -988,6 +996,72 @@ def test_orphan_check_visited_guard_formula_diamond():
 
     with pytest.raises(ValueError, match="k_tri"):
         _Tri()
+
+
+def test_orphan_check_reports_each_orphan_once():
+    """An orphaned placeholder reachable via two incoming edges is reported only once.
+
+    Regression test: the BFS in ``_find_orphaned_placeholder_nodes`` only
+    marked a node as visited when it was popped off ``to_visit`` as a
+    formula node — an orphaned *placeholder*, appended straight to the
+    result list, was never marked visited. A placeholder reachable via two
+    separate edges (here, ``k``'s node is a dependency of both ``k * 1.0``
+    and the final ``... + k``) was therefore appended twice, producing a
+    duplicate name in the error message.
+
+    Graph: ``out.node = (k * 1.0) + k``.
+    """
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    @define("DiamondPlaceholder")
+    class _Diamond(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            k = Index("k_dup", 0.5)  # orphaned concrete index, reachable via two paths below
+            out = Index("out", k.node * 1.0 + k.node)
+            return _Diamond.Outputs(out=out)
+
+    with pytest.raises(ValueError) as excinfo:
+        _Diamond()
+    assert str(excinfo.value).count("'k_dup'") == 1
+
+
+def test_orphan_check_traverses_through_broadcast_to():
+    """An orphaned placeholder hidden behind .broadcast() is still detected.
+
+    ``_iter_node_deps`` must know ``graph.broadcast_to`` is a wrapper (one
+    dependency: its own ``.node``), not a leaf — otherwise the BFS would
+    stop there and miss an orphaned placeholder underneath it.
+    """
+    from civic_digital_twins.dt_model.axes import DOMAIN, Axis
+    from civic_digital_twins.dt_model.model.contracts import define, inputs, outputs
+
+    y_axis = Axis("y", DOMAIN)
+
+    @define("BroadcastOrphan")
+    class _BroadcastOrphan(Model, legacy=True):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inp: Inputs) -> Outputs:
+            k = Index("k_hidden", 0.5)  # orphaned concrete index, reachable only through broadcast_to
+            out = Index("out", k.node.broadcast(y_axis))
+            return _BroadcastOrphan.Outputs(out=out)
+
+    with pytest.raises(ValueError, match="k_hidden"):
+        _BroadcastOrphan()
 
 
 def test_orphan_check_no_false_positive_on_formula_backed_input():

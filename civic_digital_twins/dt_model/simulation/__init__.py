@@ -16,6 +16,7 @@ from .ensemble import (
 )
 from .evaluation import Evaluation, EvaluationResult
 from .handle import AsyncEvaluationHandle, EvaluationHandle
+from .labeled_array import LabeledArray
 from .plan import EvaluationPlan, Region, RegionGuard
 from .runner import (
     EvaluationConfig,
@@ -24,7 +25,9 @@ from .runner import (
     ModelEvaluator,
     ModelOutput,
     ModelRunHandle,
+    ParameterMeta,
     ResumeState,
+    build_scenario,
 )
 from .scenario import Scenario
 
@@ -45,14 +48,17 @@ __all__ = [
     "FrozenEnsemble",
     "IncompatibleResultError",
     "IncrementalRun",
+    "LabeledArray",
     "ModelEvaluator",
     "ModelOutput",
     "ModelRunHandle",
+    "ParameterMeta",
     "PartitionedEnsemble",
     "Region",
     "RegionGuard",
     "ResumeState",
     "Scenario",
     "WeightedScenario",
+    "build_scenario",
     "sample_across",
 ]

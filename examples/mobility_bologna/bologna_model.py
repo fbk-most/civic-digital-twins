@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -32,6 +31,7 @@ from civic_digital_twins.dt_model import (
 from civic_digital_twins.dt_model.simulation.runner import (
     ModelEvaluator,
     ModelOutput,
+    ParameterMeta,
 )
 
 _LN2: float = math.log(2)
@@ -798,26 +798,27 @@ class BolognaEvaluator(ModelEvaluator[BolognaModel, BolognaOutput]):
     # Abstract interface
     # ------------------------------------------------------------------
 
-    def input_schema(self) -> dict[str, dict[str, Any]]:
+    def input_schema(self) -> dict[str, ParameterMeta]:
         """Return a schema dict for the tunable policy and behavioural indexes.
 
         Covers all fields declared on :class:`~mobility_bologna.bologna_model.BolognaModel.Inputs`.
-        Each scalar :class:`~dt_model.Index` maps to ``{"type": "scalar"}``; each
-        :class:`~dt_model.DistributionIndex` maps to ``{"type": "distribution"}``.
-        List-valued fields (``i_p_cost``) produce one entry per element.
+        Each scalar :class:`~dt_model.Index` maps to a ``ParameterMeta`` with
+        ``kind="scalar"``; each :class:`~dt_model.DistributionIndex` maps to
+        ``kind="distribution"``. List-valued fields (``i_p_cost``) produce one
+        entry per element.
 
         Returns
         -------
-        dict[str, dict[str, Any]]
-            Index name to metadata dict.
+        dict[str, ParameterMeta]
+            Index name to parameter metadata.
         """
         m = self._model
         inputs = m.inputs
-        result: dict[str, dict[str, Any]] = {}
+        result: dict[str, ParameterMeta] = {}
 
         def _add(idx: Index | DistributionIndex) -> None:
             entry_type = "distribution" if isinstance(idx, DistributionIndex) else "scalar"
-            result[idx.name] = {"type": entry_type}
+            result[idx.name] = ParameterMeta(name=idx.name, kind=entry_type)
 
         _add(inputs.i_p_start_time)
         _add(inputs.i_p_end_time)

@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 
-from ..axes import DOMAIN
+from ..axes import DOMAIN, Axis
 from ..engine.frontend import graph
 from .axis_layout import AxisLayout
 
@@ -52,21 +52,27 @@ class RegionArrayOps:
     """Node-aware mask/gather/scatter operations for guarded-region execution.
 
     Bound to one execution context: the leading (PARAMETER + ENSEMBLE)
-    layout and whether the evaluation carries a trailing timeseries
-    dimension.
+    layout and the DOMAIN axes the evaluation carries as trailing
+    dimensions.
 
     Parameters
     ----------
     layout:
-        The leading evaluation layout (no DOMAIN axes yet — the time axis
-        is appended to the result layout only after execution).
-    has_timeseries:
-        Whether scalar (non-DOMAIN) values must be padded with a trailing
-        singleton so they broadcast against timeseries ``(T,)`` values.
+        The leading evaluation layout (no DOMAIN axes yet — they are
+        appended to the result layout only after execution).
+    domain_axes:
+        The evaluation's DOMAIN axes, in canonical order.  Scalar
+        (non-DOMAIN) values are padded with one trailing singleton per axis
+        so they broadcast against domain-carrying values.
     """
 
     layout: AxisLayout
-    has_timeseries: bool
+    domain_axes: tuple[Axis, ...] = ()
+
+    @property
+    def n_domain(self) -> int:
+        """Number of trailing DOMAIN dimensions this evaluation reserves."""
+        return len(self.domain_axes)
 
     def _align_to_leading(self, node: graph.Node, value: Any) -> np.ndarray:
         """Return *value* normalised and broadcast over the leading layout.
@@ -151,8 +157,8 @@ class RegionArrayOps:
                     f"Regional scatter for node {getattr(node, 'name', repr(node))!r}: "
                     f"branch result first dimension {arr.shape[0]} does not match selected size {k}."
                 )
-        if self.has_timeseries and not _has_domain_axis(node) and arr.ndim == 1:
-            arr = arr.reshape(arr.shape + (1,))
+        if self.n_domain and not _has_domain_axis(node) and arr.ndim == 1:
+            arr = arr.reshape(arr.shape + (1,) * self.n_domain)
         out_dtype, fill_value = _branch_fill_value(arr.dtype)
         full_flat = np.full((self.layout.leading_size,) + arr.shape[1:], fill_value, dtype=out_dtype)
         full_flat[flat_idx] = arr.astype(out_dtype, copy=False)
@@ -160,5 +166,5 @@ class RegionArrayOps:
 
     def empty_branch_value(self) -> np.ndarray:
         """Create a broadcast-compatible inactive value for an unselected branch."""
-        trailing = (1,) if self.has_timeseries else ()
+        trailing = (1,) * self.n_domain
         return np.full(self.layout.leading_shape + trailing, np.nan, dtype=float)
