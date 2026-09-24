@@ -86,6 +86,11 @@ Homepage = "https://github.com/fbk-most/civic-digital-twins"
 # The top-level package to include into the wheel
 packages = ["civic_digital_twins"]
 
+# Coverage configuration — write repo-relative paths so Codecov's diff/patch
+# matching works regardless of the machine or CI runner that produced the report.
+[tool.coverage.run]
+relative_files = true
+
 # Pytest Configuration
 [tool.pytest.ini_options]
 
