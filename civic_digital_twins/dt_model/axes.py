@@ -392,4 +392,5 @@ def union_axes(*seqs: tuple[Axis, ...]) -> tuple[Axis, ...]:
 
 def filter_by_role(axes: Iterable[Axis], role: AxisRole) -> tuple[Axis, ...]:
     """Return the axes whose role equals *role*, preserving input order."""
-    return tuple(ax for ax in axes if ax.role == role)
+    matching = tuple(ax for ax in axes if ax.role == role)
+    return matching
