@@ -29,9 +29,45 @@ x2 = DistributionIndex("x2", stats.norm, {"loc": 1.0, "scale": 0.2})
 
 
 # =============================================================================
-# PART 1 -- DistributionEnsemble: continuous noise only
+# PART 0 -- no uncertainty: no ensemble at all
 # =============================================================================
 print("=" * 74)
+print("PART 0 -- no uncertainty: evaluate without an ensemble")
+print("=" * 74)
+
+
+@define("fixed")
+class CertainModel(Model):
+    @inputs
+    class Inputs:
+        k1: Index
+        k2: Index
+
+    @outputs
+    class Outputs:
+        y: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        return CertainModel.Outputs(y=Index("y", inputs.k1 * inputs.k2))
+
+
+k1 = Index("k1", 100.0)                                       # plain constants,
+k2 = Index("k2", 1.0)                                         # nothing to sample
+
+cert_model = CertainModel(inputs=CertainModel.Inputs(k1=k1, k2=k2))
+cert_scenario = Scenario(cert_model)
+
+cert_res = Evaluation(cert_scenario).evaluate()             # no ensemble=
+cert_y = np.asarray(cert_res[cert_model.outputs.y])
+
+print(f"\n  abstract indexes : {list(cert_scenario.abstract_indexes())}")
+print(f"  y                : {float(cert_y)}   (shape {cert_y.shape})")
+
+
+# =============================================================================
+# PART 1 -- DistributionEnsemble: continuous noise only
+# =============================================================================
+print("\n" + "=" * 74)
 print("PART 1 -- DistributionEnsemble: continuous noise, distribution wanted")
 print("=" * 74)
 
@@ -76,16 +112,104 @@ print(f"    P(y > 150) = {float((basic_draws > 150).mean()):.4f}")
 
 
 # =============================================================================
-# PART 2 -- CrossProductEnsemble: the same model, plus categorical structure
+# PART 2 -- PartitionedEnsemble: which uncertainty drives the output?
 # =============================================================================
 print("\n" + "=" * 74)
-print("PART 2 -- CrossProductEnsemble: per-branch answers, and a rare branch")
+print("PART 2 -- PartitionedEnsemble: attributing the spread to each source")
+print("=" * 74)
+
+part_ens = PartitionedEnsemble(
+    basic_scenario,
+    axes=[
+        EnsembleAxisSpec("x1_axis", indexes=[x1], size=60),
+        EnsembleAxisSpec("x2_axis", indexes=[x2], size=40),
+    ],
+    rng=np.random.default_rng(0),
+)
+part_res = Evaluation(basic_scenario).evaluate(ensemble=part_ens)
+grid = np.asarray(part_res[basic_model.outputs.y])
+
+print(f"\n  ensemble axes : {[a.name for a in part_ens.ensemble_axes]}")
+print(f"  raw result    : shape {grid.shape}  <- a GRID, not a flat sample")
+print(f"  draws used    : 60 + 40 = 100, covering {60 * 40} combinations")
+print(f"  E[y]          : "
+      f"{float(part_res.expected_value(basic_model.outputs.y)):.2f}"
+      f"   (true 100 x 1.0 = 100)")
+
+# Marginalise one axis at a time to isolate each source.
+by_x1 = grid.mean(axis=1)   # average out x2
+by_x2 = grid.mean(axis=0)   # average out x1
+print("\n  marginalising ONE axis at a time isolates each driver:")
+print(f"    vary x1, average over x2 -> {by_x1.shape}, sd {by_x1.std():5.2f}")
+print(f"    vary x2, average over x1 -> {by_x2.shape}, sd {by_x2.std():5.2f}")
+
+
+# =============================================================================
+# PART 3 -- CrossProductEnsemble: the same model, plus categorical structure
+# =============================================================================
+print("\n" + "=" * 74)
+print("PART 3 -- CrossProductEnsemble: per-branch answers, and a rare branch")
 print("=" * 74)
 
 cat1 = CategoricalIndex("cat1", {"a": 0.99, "b": 0.01})
 cat2 = CategoricalIndex("cat2", {"p": 0.80, "q": 0.20})
 
 
+# The Part 1 model, with the two categoricals added as inputs.
+@define("cat")
+class CatModel(Model):
+    @inputs
+    class Inputs:
+        cat1: CategoricalIndex
+        cat2: CategoricalIndex
+        x1: DistributionIndex
+        x2: DistributionIndex
+
+    @outputs
+    class Outputs:
+        y: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        return CatModel.Outputs(y=Index("y", inputs.x1 * inputs.x2))
+
+
+cat_model = CatModel(inputs=CatModel.Inputs(cat1=cat1, cat2=cat2, x1=x1, x2=x2))
+cat_scenario = Scenario(cat_model)
+
+
+# --- 3a. Same model, same budget (1000 rows), two ensembles -----------------
+def rows_and_probability(ensemble):
+    """Return {(cat1, cat2): (rows, total weight)} for one ensemble."""
+    res = Evaluation(cat_scenario).evaluate(ensemble=ensemble)
+    (w,) = ensemble.ensemble_weights
+    c1 = np.asarray(res[cat1]).ravel()
+    c2 = np.asarray(res[cat2]).ravel()
+    out = {}
+    for c1_outcome in ("a", "b"):
+        for c2_outcome in ("p", "q"):
+            mask = (c1 == c1_outcome) & (c2 == c2_outcome)
+            out[c1_outcome, c2_outcome] = (int(mask.sum()), float(w[mask].sum()))
+    return out
+
+
+sampled = rows_and_probability(
+    DistributionEnsemble(cat_scenario, size=1_000, rng=np.random.default_rng(0)))
+enumerated = rows_and_probability(
+    CrossProductEnsemble(cat_scenario, n_samples_per_combo=250,
+                         rng=np.random.default_rng(0)))
+
+print("\n  same model, same budget (1000 rows), two ensembles:")
+print(f"    {'':11s} {'DistributionEnsemble':>21s}   {'CrossProductEnsemble':>21s}")
+print(f"    {'cat1':5s} {'cat2':5s} {'rows':>6s} {'P (estimated)':>14s}   "
+      f"{'rows':>6s} {'P (exact)':>14s}")
+for branch in sampled:
+    s_rows, s_prob = sampled[branch]
+    e_rows, e_prob = enumerated[branch]
+    print(f"    {branch[0]:5s} {branch[1]:5s} {s_rows:6d} {s_prob:14.4f}   "
+          f"{e_rows:6d} {e_prob:14.4f}")
+
+
+# --- 3b. Add xc: a distribution that depends on the branch ------------------
 # xc depends on BOTH categoricals: a CONDITIONAL distribution. The factory
 # receives parents as keyword arguments named after them.
 def xc_dist(cat1: str, cat2: str):
@@ -122,7 +246,13 @@ full_model = FullModel(inputs=FullModel.Inputs(
 ))
 full_scenario = Scenario(full_model)
 
-# --- 2a. A deliberately tiny ensemble: 4 branches x 2 samples = 8 scenarios --
+print("\n  DistributionEnsemble on the FULL model (xc is conditional):")
+try:
+    DistributionEnsemble(full_scenario, size=1_000, rng=np.random.default_rng(0))
+except ValueError as err:
+    print(f"    ValueError: {err}")
+
+# --- 3c. A deliberately tiny ensemble: 4 branches x 2 samples = 8 scenarios --
 tiny_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=2,
                                 rng=np.random.default_rng(0))
 tiny_res = Evaluation(full_scenario).evaluate(ensemble=tiny_ens)
@@ -141,7 +271,7 @@ for i in range(len(tiny_w)):
           f"{tiny_w[i]:8.5f} {tiny_y[i]:10.3f}")
 print(f"    weights sum to {tiny_w.sum():.4f}  <- over the WHOLE ensemble")
 
-# --- 2b. Weights and renormalisation ----------------------------------------
+# --- 3d. Weights and renormalisation ----------------------------------------
 #     E[y | branch] = sum(w_i * y_i) / sum(w_i)        over that branch only
 b_mask = tiny_c1 == "b"
 w_sub = tiny_w[b_mask]
@@ -158,7 +288,7 @@ print(f"    sum(w*y)  [NO division]          = "
       f"{np.sum(w_sub * y_sub):12.4f}  <- WRONG (branch contribution)")
 print(f"    y_sub.mean()  [no weights]       = {y_sub.mean():12.4f}  <- WRONG (counts != probabilities)")
 
-# --- 2c. Joint and marginal views -------------------------------------------
+# --- 3e. Joint and marginal views -------------------------------------------
 print("\n  JOINT branches -- one mask per categorical, combined with &:")
 print(f"    {'cat1':5s} {'cat2':5s} {'n':>3s} {'P (exact)':>10s} "
       f"{'E[y|branch]':>13s}")
@@ -194,7 +324,7 @@ marginal_report(tiny_c2, ("p", "q"),
                 "MARGINAL over cat1 -- mask on cat2 ONLY:",
                 "cat2", tiny_w, tiny_y)
 
-# --- 2d. Conditional vs plain distribution index, across the branches -------
+# --- 3f. Conditional vs plain distribution index, across the branches -------
 tiny_xc = np.asarray(tiny_res[xc]).ravel()
 tiny_x2 = np.asarray(tiny_res[x2]).ravel()
 print("\n  the two kinds of distribution index behave differently by branch:")
@@ -207,7 +337,7 @@ for c1_outcome in ("a", "b"):
               f"{str(np.round(tiny_xc[mask], 1)):>20s} "
               f"{str(np.round(tiny_x2[mask], 3)):>18s}")
 
-# --- 2e. Law of total expectation: the branches decompose the mean EXACTLY ---
+# --- 3g. Law of total expectation: the branches decompose the mean EXACTLY ---
 contributions = []
 for c1_outcome in ("a", "b"):
     for c2_outcome in ("p", "q"):
@@ -223,7 +353,7 @@ print("\n  check (law of total expectation, on the 8 rows above):")
 print(f"    sum of P(branch) * E[y|branch] = {sum(contributions):.4f}")
 print(f"    expected_value()               = {tiny_overall:.4f}")
 
-# --- 2f. The reportable run: same model, 5000 samples per branch -------------
+# --- 3h. The reportable run: same model, 5000 samples per branch -------------
 full_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=5000,
                                 rng=np.random.default_rng(0))
 full_res = Evaluation(full_scenario).evaluate(ensemble=full_ens)
@@ -247,39 +377,6 @@ for c1_outcome in ("a", "b"):
               f"{np.percentile(branch_values, 99):11.2f}")
 print(f"    E[y] overall = "
       f"{float(full_res.expected_value(full_model.outputs.y)):.4f}")
-
-
-# =============================================================================
-# PART 3 -- PartitionedEnsemble: which uncertainty drives the output?
-# =============================================================================
-print("\n" + "=" * 74)
-print("PART 3 -- PartitionedEnsemble: attributing the spread to each source")
-print("=" * 74)
-
-part_ens = PartitionedEnsemble(
-    basic_scenario,
-    axes=[
-        EnsembleAxisSpec("x1_axis", indexes=[x1], size=60),
-        EnsembleAxisSpec("x2_axis", indexes=[x2], size=40),
-    ],
-    rng=np.random.default_rng(0),
-)
-part_res = Evaluation(basic_scenario).evaluate(ensemble=part_ens)
-grid = np.asarray(part_res[basic_model.outputs.y])
-
-print(f"\n  ensemble axes : {[a.name for a in part_ens.ensemble_axes]}")
-print(f"  raw result    : shape {grid.shape}  <- a GRID, not a flat sample")
-print(f"  draws used    : 60 + 40 = 100, covering {60 * 40} combinations")
-print(f"  E[y]          : "
-      f"{float(part_res.expected_value(basic_model.outputs.y)):.2f}"
-      f"   (true 100 x 1.0 = 100)")
-
-# Marginalise one axis at a time to isolate each source.
-by_x1 = grid.mean(axis=1)   # average out x2
-by_x2 = grid.mean(axis=0)   # average out x1
-print("\n  marginalising ONE axis at a time isolates each driver:")
-print(f"    vary x1, average over x2 -> {by_x1.shape}, sd {by_x1.std():5.2f}")
-print(f"    vary x2, average over x1 -> {by_x2.shape}, sd {by_x2.std():5.2f}")
 
 
 # =============================================================================
