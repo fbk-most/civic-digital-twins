@@ -36,23 +36,44 @@ and why you cannot express one with the other.
 
 ## The model used throughout
 
+Every part uses this one model. `p1` and `p2` are **parameters**: abstract
+indexes with no value, which you will supply. `cat` and `x` are
+**uncertainties**, which an ensemble integrates away.
+
 ```python
 p1 = Index("p1")          # note: no value. An abstract Index IS the parameter.
 p2 = Index("p2")
 cat = CategoricalIndex("cat", {"a": 0.7, "b": 0.3})
 x = DistributionIndex("x", stats.norm, {"loc": 1.0, "scale": 0.1})
 
-def compute(self, inputs: Inputs) -> Outputs:
-    factor = 1.0 + 2.0 * (inputs.cat == "b")      # outcome "b" triples y
-    return SweepModel.Outputs(
-        y=Index("y", inputs.p1 * inputs.p2 * inputs.x * factor)
-    )
+
+@define("sweep")
+class SweepModel(Model):
+    @inputs
+    class Inputs:
+        p1: Index
+        p2: Index
+        cat: CategoricalIndex
+        x: DistributionIndex
+
+    @outputs
+    class Outputs:
+        y: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        # outcome "b" triples the output, so the categorical's weighting is
+        # visible in every number below.
+        factor = 1.0 + 2.0 * (inputs.cat == "b")
+        return SweepModel.Outputs(
+            y=Index("y", inputs.p1 * inputs.p2 * inputs.x * factor)
+        )
+
+
+model = SweepModel(inputs=SweepModel.Inputs(p1=p1, p2=p2, cat=cat, x=x))
 ```
 
-`p1`, `p2` are parameters (abstract indexes with no value); `cat` and `x` are
-uncertainties the ensemble integrates away. Since `E[x] = 1`, at `p1 = p2 = 1`
-the expected output is `0.7·1 + 0.3·3 = 1.6` — useful for checking the numbers
-below.
+Since `E[x] = 1`, at `p1 = p2 = 1` the expected output is
+`0.7·1 + 0.3·3 = 1.6`, which is useful for checking the numbers below.
 
 ---
 
@@ -73,6 +94,32 @@ one_d = Evaluation(base_scenario).evaluate(
     parameters={p1: np.array([1.0, 2.0, 3.0]), p2: np.array([1.0])},
 )
 ```
+
+The `Scenario` no longer treats `p1` and `p2` as things to sample: only `cat`
+and `x` are left for the ensemble, which has 2 `cat` branches × 400 samples:
+
+```text
+>>> list(base_scenario.abstract_indexes())
+[CategoricalIndex('cat', {'a': 0.7, 'b': 0.3}), dist_idx('x', <scipy.stats._continuous_distns.norm_gen object at 0x...>, {'loc': 1.0, 'scale': 0.1})]
+>>> len(base_ens)
+800
+```
+
+The raw result keeps **every** dimension: one per parameter, plus the ensemble.
+`expected_value()` integrates the ensemble away and keeps the parameters:
+
+```text
+>>> np.asarray(one_d[model.outputs.y]).shape        # (p1, p2, ensemble)
+(3, 1, 800)
+>>> one_d.expected_value(model.outputs.y)           # (p1, p2): one E[y] per p1
+array([[1.59601589],
+       [3.19203177],
+       [4.78804766]])
+>>> one_d.parameter_values_for(p1)
+array([1., 2., 3.])
+```
+
+The script prints the layout and the sweep:
 
 ```text
   the result layout now carries the parameters as real dimensions:
@@ -95,8 +142,9 @@ numbers are directly comparable — they differ *only* by `p1`.
 
 ## PART 2 — two parameters: a grid, not nested loops
 
-Every parameter axis is independent, so supplying two arrays gives their full
-cross product in one shot. The result is genuinely 2-D and labelled by name:
+Same `base_scenario` and `base_ens` as PART 1. Every parameter axis is
+independent, so supplying two arrays gives their full cross product in one
+shot. The result is genuinely 2-D and labelled by name:
 
 ```python
 grid_res = Evaluation(base_scenario).evaluate(
@@ -105,6 +153,17 @@ grid_res = Evaluation(base_scenario).evaluate(
 )
 labelled = grid_res.labeled(model.outputs.y)      # dims ('p1', 'p2')
 ```
+
+```text
+>>> grid_res.expected_value(model.outputs.y)        # rows: p1, columns: p2
+array([[15.96015886, 31.92031772],
+       [31.92031772, 63.84063543],
+       [47.88047658, 95.76095315]])
+>>> labelled
+LabeledArray(dims=('p1', 'p2'), shape=(3, 2))
+```
+
+The script prints it as a table:
 
 ```text
   expected_value shape : (3, 2)   dims ('p1', 'p2')
@@ -120,13 +179,11 @@ labelled = grid_res.labeled(model.outputs.y)      # dims ('p1', 'p2')
 Six answers, still **one** evaluation and **one** ensemble. Because the axes are
 named, you select by meaning rather than position:
 
-```python
-labelled.sel(p1=0, p2=1)          # indices into each parameter axis -> p1=1, p2=20
-grid_res.parameter_values_for(p1) # the actual values along that axis
-```
-
 ```text
-  labelled.sel(p1=0, p2=1) = 31.920   (p1=1, p2=20)
+>>> labelled.sel(p1=0, p2=1).values       # indices into each axis -> p1=1, p2=20
+np.float64(31.920317717125087)
+>>> grid_res.parameter_values_for(p2)     # the actual values along that axis
+array([10., 20.])
 ```
 
 Every cell is just the PART 1 base value (≈ 1.596) times `p1 · p2`, e.g.
@@ -154,14 +211,30 @@ There are four override forms:
 | `list[str]`          | **restrict** | keep a subset, renormalise its weights         |
 | a distribution       | **replace**  | for a `DistributionIndex`, swap the law        |
 
+Each scenario is built from the same `model`, and each gets its own ensemble
+and its own run:
+
 ```python
 scenarios = {
     "baseline":            Scenario(model, parameter_axes=[p1, p2]),
-    "reweight a=.2 b=.8":  Scenario(model, overrides={cat: {"a": 0.2, "b": 0.8}}, ...),
-    "pin cat='b'":         Scenario(model, overrides={cat: "b"}, ...),
-    "restrict to ['a']":   Scenario(model, overrides={cat: ["a"]}, ...),
-    "replace x law":       Scenario(model, overrides={x: stats.norm(loc=2.0, scale=0.1)}, ...),
+    "reweight a=.2 b=.8":  Scenario(model, overrides={cat: {"a": 0.2, "b": 0.8}},
+                                    parameter_axes=[p1, p2]),
+    "pin cat='b'":         Scenario(model, overrides={cat: "b"},
+                                    parameter_axes=[p1, p2]),
+    "restrict to ['a']":   Scenario(model, overrides={cat: ["a"]},
+                                    parameter_axes=[p1, p2]),
+    "replace x law":       Scenario(model,
+                                    overrides={x: stats.norm(loc=2.0, scale=0.1)},
+                                    parameter_axes=[p1, p2]),
 }
+
+for label, sc in scenarios.items():
+    ens = CrossProductEnsemble(sc, n_samples_per_combo=400,
+                               rng=np.random.default_rng(0))
+    res = Evaluation(sc).evaluate(
+        ensemble=ens,
+        parameters={p1: np.array([1.0]), p2: np.array([1.0])},
+    )
 ```
 
 ```text
@@ -191,8 +264,18 @@ This is the normal shape of a real study. Each scenario is its own run; the
 parameter sweep happens *within* it:
 
 ```python
+sweep_values = np.array([1.0, 2.0, 3.0])
+study = {
+    "baseline":       Scenario(model, parameter_axes=[p1, p2]),
+    "pessimistic":    Scenario(model, overrides={cat: {"a": 0.2, "b": 0.8}},
+                               parameter_axes=[p1, p2]),
+    "cat pinned 'a'": Scenario(model, overrides={cat: "a"},
+                               parameter_axes=[p1, p2]),
+}
+
 for label, sc in study.items():
-    ens = CrossProductEnsemble(sc, n_samples_per_combo=400, rng=np.random.default_rng(0))
+    ens = CrossProductEnsemble(sc, n_samples_per_combo=400,
+                               rng=np.random.default_rng(0))
     res = Evaluation(sc).evaluate(
         ensemble=ens,
         parameters={p1: sweep_values, p2: np.array([1.0])},
@@ -231,9 +314,19 @@ Adding a new uncertainty means editing the model.
 ### 5b. An index cannot be both a parameter and an override
 
 ```python
-clash = Scenario(model, overrides={p1: 5.0}, parameter_axes=[p1, p2])
-Evaluation(clash).evaluate(...)
-# ValueError: The following indexes appear in both parameters= and Scenario.overrides: 'p1'
+try:
+    clash = Scenario(model, overrides={p1: 5.0}, parameter_axes=[p1, p2])
+    Evaluation(clash).evaluate(
+        ensemble=CrossProductEnsemble(clash, n_samples_per_combo=10),
+        parameters={p1: np.array([1.0]), p2: np.array([1.0])},
+    )
+except ValueError as exc:
+    print(f"      raises: {str(exc)[:96]}")
+```
+
+```text
+  5b. an index cannot be both a parameter and an override
+      raises: The following indexes appear in both parameters= and Scenario.overrides: 'p1'
 ```
 
 Sensible: one says "sweep this", the other says "fix this".
@@ -241,7 +334,17 @@ Sensible: one says "sweep this", the other says "fix this".
 ### 5c. Parameters carry no probability, and are never averaged over
 
 ```python
-weighted.expected_value(model.outputs.y).shape     # (3, 1) -- one value PER p1
+weighted = Evaluation(base_scenario).evaluate(
+    ensemble=base_ens,
+    parameters={p1: sweep_values, p2: np.array([1.0])},
+)
+```
+
+```text
+>>> weighted.expected_value(model.outputs.y)        # one value PER p1
+array([[1.59601589],
+       [3.19203177],
+       [4.78804766]])
 ```
 
 The **ensemble** axis was integrated away; the **parameter** axis was kept. If

@@ -16,17 +16,24 @@ import numpy as np
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
-    define, inputs, outputs, Index, Model, CategoricalIndex, DistributionIndex,
-    ConditionalDistributionIndex, Scenario,
-    DistributionEnsemble, CrossProductEnsemble, Evaluation,
-    PartitionedEnsemble, EnsembleAxisSpec, sample_across, AxisEnsemble,
+    AxisEnsemble,
+    CategoricalIndex,
+    ConditionalDistributionIndex,
+    CrossProductEnsemble,
+    DistributionEnsemble,
+    DistributionIndex,
+    EnsembleAxisSpec,
+    Evaluation,
+    Index,
+    Model,
+    PartitionedEnsemble,
+    Scenario,
+    define,
+    inputs,
+    outputs,
+    sample_across,
 )
-from civic_digital_twins.dt_model.axes import Axis, ENSEMBLE
-
-# The two continuous uncertainties used throughout the file.
-x1 = DistributionIndex("x1", stats.norm, {"loc": 100.0, "scale": 25.0})
-x2 = DistributionIndex("x2", stats.norm, {"loc": 1.0, "scale": 0.2})
-
+from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
 
 # =============================================================================
 # PART 0 -- no uncertainty: no ensemble at all
@@ -87,24 +94,33 @@ class BasicModel(Model):
         return BasicModel.Outputs(y=Index("y", inputs.x1 * inputs.x2))
 
 
-basic_model = BasicModel(inputs=BasicModel.Inputs(x1=x1, x2=x2))
-basic_scenario = Scenario(basic_model)
+x1 = DistributionIndex("x1", stats.norm, {"loc": 100.0, "scale": 25.0})   # Mean 100
+x2 = DistributionIndex("x2", stats.norm, {"loc": 1.0, "scale": 0.2})      # Mean 1
+
+basic_model = BasicModel(inputs=BasicModel.Inputs(x1=x1, x2=x2))          # Create the model
+basic_scenario = Scenario(basic_model)                                    # Create the scenario
+
+basic_ens = DistributionEnsemble(basic_scenario, size=50_000,
+                                  rng=np.random.default_rng(0))
+
+basic_res = Evaluation(basic_scenario).evaluate(ensemble=basic_ens)   # Evaluate the scenario
+
+basic_draws = np.asarray(basic_res[basic_model.outputs.y]).ravel()    # Access values through 'y' Index
+
+(basic_w,) = basic_ens.ensemble_weights                               # Access the weights of each sample in ensemble
+
+basic_x1 = np.asarray(basic_res[x1]).ravel()                          # Access values x1 took using directly the 'x1' Index
 
 print("\n  convergence of the mean (true value 100 x 1.0 = 100):")
 for size in (100, 1_000, 10_000, 100_000):
-    basic_res = Evaluation(basic_scenario).evaluate(
+    conv_res = Evaluation(basic_scenario).evaluate(
         ensemble=DistributionEnsemble(basic_scenario, size=size,
                                       rng=np.random.default_rng(0)),
     )
     print(f"    size={size:7d} -> E[y] = "
-          f"{float(basic_res.expected_value(basic_model.outputs.y)):8.3f}")
+          f"{float(conv_res.expected_value(basic_model.outputs.y)):8.3f}")
 
 # Every draw carries the SAME weight (1/size), so plain numpy percentiles work.
-basic_res = Evaluation(basic_scenario).evaluate(
-    ensemble=DistributionEnsemble(basic_scenario, size=50_000,
-                                  rng=np.random.default_rng(0)),
-)
-basic_draws = np.asarray(basic_res[basic_model.outputs.y]).ravel()
 print(f"\n  {basic_draws.shape[0]} equally-weighted draws -> the whole distribution:")
 for q in (5, 25, 50, 75, 95):
     print(f"    p{q:<2d} = {np.percentile(basic_draws, q):8.2f}")
@@ -118,6 +134,8 @@ print("\n" + "=" * 74)
 print("PART 2 -- PartitionedEnsemble: attributing the spread to each source")
 print("=" * 74)
 
+# Model and scenario stay the same
+
 part_ens = PartitionedEnsemble(
     basic_scenario,
     axes=[
@@ -127,7 +145,7 @@ part_ens = PartitionedEnsemble(
     rng=np.random.default_rng(0),
 )
 part_res = Evaluation(basic_scenario).evaluate(ensemble=part_ens)
-grid = np.asarray(part_res[basic_model.outputs.y])
+grid = np.asarray(part_res[basic_model.outputs.y])   # shape (60, 40): a GRID
 
 print(f"\n  ensemble axes : {[a.name for a in part_ens.ensemble_axes]}")
 print(f"  raw result    : shape {grid.shape}  <- a GRID, not a flat sample")
@@ -151,11 +169,12 @@ print("\n" + "=" * 74)
 print("PART 3 -- CrossProductEnsemble: per-branch answers, and a rare branch")
 print("=" * 74)
 
-cat1 = CategoricalIndex("cat1", {"a": 0.99, "b": 0.01})
+cat1 = CategoricalIndex("cat1", {"a": 0.99, "b": 0.01})   # deliberately rare "b"
 cat2 = CategoricalIndex("cat2", {"p": 0.80, "q": 0.20})
 
 
-# The Part 1 model, with the two categoricals added as inputs.
+# The Part 1 model, scaled by the branch. (cat == "b") is 1 in that branch
+# and 0 otherwise, so the categoricals enter the arithmetic directly.
 @define("cat")
 class CatModel(Model):
     @inputs
@@ -170,43 +189,86 @@ class CatModel(Model):
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
-        return CatModel.Outputs(y=Index("y", inputs.x1 * inputs.x2))
+        is_b = inputs.cat1 == "b"
+        is_q = inputs.cat2 == "q"
+        # factor: 1 if cat1=a, 50 if (b, p), 400 if (b, q)
+        factor = 1.0 + (49.0 + 350.0 * is_q) * is_b
+        return CatModel.Outputs(y=Index("y", inputs.x1 * inputs.x2 * factor))
 
 
+# Create model and scenario as usual
 cat_model = CatModel(inputs=CatModel.Inputs(cat1=cat1, cat2=cat2, x1=x1, x2=x2))
 cat_scenario = Scenario(cat_model)
 
+# True values: E[y | branch] = 100 x factor (100, 100, 5000, 40000), and
+# E[y] = 100 x (0.99 x 1 + 0.008 x 50 + 0.002 x 400) = 219.
 
 # --- 3a. Same model, same budget (1000 rows), two ensembles -----------------
-def rows_and_probability(ensemble):
-    """Return {(cat1, cat2): (rows, total weight)} for one ensemble."""
-    res = Evaluation(cat_scenario).evaluate(ensemble=ensemble)
-    (w,) = ensemble.ensemble_weights
-    c1 = np.asarray(res[cat1]).ravel()
-    c2 = np.asarray(res[cat2]).ravel()
-    out = {}
-    for c1_outcome in ("a", "b"):
-        for c2_outcome in ("p", "q"):
-            mask = (c1 == c1_outcome) & (c2 == c2_outcome)
-            out[c1_outcome, c2_outcome] = (int(mask.sum()), float(w[mask].sum()))
-    return out
+# (i) DistributionEnsemble: SAMPLES the categoricals.
+de_ens = DistributionEnsemble(cat_scenario, size=1_000,       # 1000 independent draws for each sampleable quantity
+                              rng=np.random.default_rng(0))
 
+de_res = Evaluation(cat_scenario).evaluate(ensemble=de_ens)   # Evaluate to get result
 
-sampled = rows_and_probability(
-    DistributionEnsemble(cat_scenario, size=1_000, rng=np.random.default_rng(0)))
-enumerated = rows_and_probability(
-    CrossProductEnsemble(cat_scenario, n_samples_per_combo=250,
-                         rng=np.random.default_rng(0)))
+# The result is ONE flat axis of rows. Four arrays line up one-to-one:
+de_y = np.asarray(de_res[cat_model.outputs.y]).ravel()  # y of each row
+(de_w,) = de_ens.ensemble_weights                       # weight of each row
+de_c1 = np.asarray(de_res[cat1]).ravel()                # cat1 label of each row. cat1 is an Index
+de_c2 = np.asarray(de_res[cat2]).ravel()                # cat2 label of each row
 
-print("\n  same model, same budget (1000 rows), two ensembles:")
-print(f"    {'':11s} {'DistributionEnsemble':>21s}   {'CrossProductEnsemble':>21s}")
-print(f"    {'cat1':5s} {'cat2':5s} {'rows':>6s} {'P (estimated)':>14s}   "
-      f"{'rows':>6s} {'P (exact)':>14s}")
-for branch in sampled:
-    s_rows, s_prob = sampled[branch]
-    e_rows, e_prob = enumerated[branch]
-    print(f"    {branch[0]:5s} {branch[1]:5s} {s_rows:6d} {s_prob:14.4f}   "
-          f"{e_rows:6d} {e_prob:14.4f}")
+# A branch is a mask on the labels. Here: the rare cat1=b, cat2=q branch.
+de_bq = (de_c1 == "b") & (de_c2 == "q")         # create mask
+
+de_bq_n = int(de_bq.sum())                      # samples in the branch
+
+de_bq_y = de_y[de_bq]                           # values of 'y' in the branch
+
+de_bq_prob = float(de_w[de_bq].sum())                             # its probability
+de_bq_mean = float(np.average(de_y[de_bq], weights=de_w[de_bq]))  # E[y | branch]
+
+# The same mask, for every branch.
+print(f"\n  DistributionEnsemble: {len(de_w)} rows, "
+      f"E[y] = {float(de_res.expected_value(cat_model.outputs.y)):.2f}   (true 219)")
+print(f"\n    {'cat1':5s} {'cat2':5s} {'rows':>5s} {'P':>7s} {'E[y|branch]':>12s}  True branch mean")
+for c1_outcome, c2_outcome, true_mean in (("a", "p", 100), ("a", "q", 100),
+                                          ("b", "p", 5_000), ("b", "q", 40_000)):
+    mask = (de_c1 == c1_outcome) & (de_c2 == c2_outcome)
+    print(f"    {c1_outcome:5s} {c2_outcome:5s} {mask.sum():5d} "
+          f"{de_w[mask].sum():7.4f} "
+          f"{np.average(de_y[mask], weights=de_w[mask]):12.2f} {true_mean:17d}")
+
+# (ii) CrossProductEnsemble: ENUMERATES the branches, 250 rows each.
+cp_ens = CrossProductEnsemble(cat_scenario, n_samples_per_combo=250,  # 1000 samples divided into the 4 branches = 250
+                              rng=np.random.default_rng(0))
+
+cp_res = Evaluation(cat_scenario).evaluate(ensemble=cp_ens)   # Evaluate to get result
+
+# The result is ONE flat axis of rows. Four arrays line up one-to-one:
+cp_y = np.asarray(cp_res[cat_model.outputs.y]).ravel()  # y of each row
+(cp_w,) = cp_ens.ensemble_weights                       # weight of each row
+cp_c1 = np.asarray(cp_res[cat1]).ravel()                # cat1 label of each row
+cp_c2 = np.asarray(cp_res[cat2]).ravel()                # cat2 label of each row
+
+# A branch is a mask on the labels. Here: the rare cat1=b, cat2=q branch.
+cp_bq = (cp_c1 == "b") & (cp_c2 == "q")         # create mask
+
+cp_bq_n = int(cp_bq.sum())                      # samples in the branch
+
+cp_bq_y = cp_y[cp_bq]                           # values of 'y' in the branch
+
+cp_bq_prob = float(cp_w[cp_bq].sum())                             # its probability
+cp_bq_mean = float(np.average(cp_y[cp_bq], weights=cp_w[cp_bq]))  # E[y | branch]
+
+# The same mask, for every branch.
+print(f"\n  CrossProductEnsemble: {len(cp_w)} rows, "
+      f"E[y] = {float(cp_res.expected_value(cat_model.outputs.y)):.2f}   (true 219)")
+print(f"\n    {'cat1':5s} {'cat2':5s} {'rows':>5s} {'P':>7s} {'E[y|branch]':>12s}  True branch mean")
+for c1_outcome, c2_outcome, true_mean in (("a", "p", 100), ("a", "q", 100),
+                                          ("b", "p", 5_000), ("b", "q", 40_000)):
+    mask = (cp_c1 == c1_outcome) & (cp_c2 == c2_outcome)
+    print(f"    {c1_outcome:5s} {c2_outcome:5s} {mask.sum():5d} "
+          f"{cp_w[mask].sum():7.4f} "
+          f"{np.average(cp_y[mask], weights=cp_w[mask]):12.2f} {true_mean:17d}")
 
 
 # --- 3b. Add xc: a distribution that depends on the branch ------------------
@@ -252,27 +314,44 @@ try:
 except ValueError as err:
     print(f"    ValueError: {err}")
 
-# --- 3c. A deliberately tiny ensemble: 4 branches x 2 samples = 8 scenarios --
+# --- 3c. FullModel per branch: 5000 samples per branch -----------------------
+full_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=5000,
+                                rng=np.random.default_rng(0))
+full_res = Evaluation(full_scenario).evaluate(ensemble=full_ens)
+(full_w,) = full_ens.ensemble_weights
+full_y = np.asarray(full_res[full_model.outputs.y]).ravel()
+full_c1 = np.asarray(full_res[cat1]).ravel()
+full_c2 = np.asarray(full_res[cat2]).ravel()
+
+print(f"\n  FullModel: {len(full_ens)} scenarios (4 branches x 5000), "
+      f"one mask per branch:")
+print(f"    {'cat1':5s} {'cat2':5s} {'P (exact)':>10s} {'E[y|branch]':>13s} "
+      f"{'p99':>11s}")
+for c1_outcome in ("a", "b"):
+    for c2_outcome in ("p", "q"):
+        mask = (full_c1 == c1_outcome) & (full_c2 == c2_outcome)
+        branch_weights = full_w[mask]
+        branch_values = full_y[mask]
+        print(f"    {c1_outcome:5s} {c2_outcome:5s} "
+              f"{branch_weights.sum():10.4f} "
+              f"{np.average(branch_values, weights=branch_weights):13.2f} "
+              f"{np.percentile(branch_values, 99):11.2f}")
+print(f"    E[y] overall = "
+      f"{float(full_res.expected_value(full_model.outputs.y)):.4f}")
+
+# --- 3d. When a mask mixes branches: marginals, on a tiny ensemble ----------
+# 4 branches x 2 samples = 8 scenarios, small enough to print.
 tiny_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=2,
                                 rng=np.random.default_rng(0))
 tiny_res = Evaluation(full_scenario).evaluate(ensemble=tiny_ens)
 
-# FOUR arrays line up one-to-one, ONE ENTRY PER SCENARIO; select with a mask.
 (tiny_w,) = tiny_ens.ensemble_weights                            # weight
 tiny_y = np.asarray(tiny_res[full_model.outputs.y]).ravel()      # output
 tiny_c1 = np.asarray(tiny_res[cat1]).ravel()                     # label 1
 tiny_c2 = np.asarray(tiny_res[cat2]).ravel()                     # label 2
 
-print(f"\n  the whole ensemble, all {len(tiny_ens)} scenarios "
-      f"(4 branches x 2 samples):")
-print(f"    {'i':>2s}  {'cat1':5s} {'cat2':5s} {'weight':>8s} {'y':>10s}")
-for i in range(len(tiny_w)):
-    print(f"    {i:2d}  {tiny_c1[i]:5s} {tiny_c2[i]:5s} "
-          f"{tiny_w[i]:8.5f} {tiny_y[i]:10.3f}")
-print(f"    weights sum to {tiny_w.sum():.4f}  <- over the WHOLE ensemble")
-
-# --- 3d. Weights and renormalisation ----------------------------------------
-#     E[y | branch] = sum(w_i * y_i) / sum(w_i)        over that branch only
+# A mask on cat1 ONLY holds rows of several branches, with different weights.
+#     E[y | cat1=b] = sum(w_i * y_i) / sum(w_i)        over the masked rows
 b_mask = tiny_c1 == "b"
 w_sub = tiny_w[b_mask]
 y_sub = tiny_y[b_mask]
@@ -288,56 +367,23 @@ print(f"    sum(w*y)  [NO division]          = "
       f"{np.sum(w_sub * y_sub):12.4f}  <- WRONG (branch contribution)")
 print(f"    y_sub.mean()  [no weights]       = {y_sub.mean():12.4f}  <- WRONG (counts != probabilities)")
 
-# --- 3e. Joint and marginal views -------------------------------------------
-print("\n  JOINT branches -- one mask per categorical, combined with &:")
-print(f"    {'cat1':5s} {'cat2':5s} {'n':>3s} {'P (exact)':>10s} "
-      f"{'E[y|branch]':>13s}")
+# MARGINAL: the mask constrains ONE categorical; the other varies freely inside
+# it with UNEVEN weights, so np.average's renormalisation matters.
+print("\n  MARGINAL over cat2 -- mask on cat1 ONLY:")
+print(f"    {'cat1':5s} {'n':>3s} {'P (exact)':>10s} {'E[y]':>12s}")
 for c1_outcome in ("a", "b"):
-    for c2_outcome in ("p", "q"):
-        # one mask per categorical, ANDed together
-        mask = (tiny_c1 == c1_outcome) & (tiny_c2 == c2_outcome)
-        branch_weights = tiny_w[mask]
-        branch_values = tiny_y[mask]
-        print(f"    {c1_outcome:5s} {c2_outcome:5s} {mask.sum():3d} "
-              f"{branch_weights.sum():10.4f} "
-              f"{np.average(branch_values, weights=branch_weights):13.3f}")
+    mask = tiny_c1 == c1_outcome          # ONLY cat1 is constrained
+    print(f"    {c1_outcome:5s} {mask.sum():3d} {tiny_w[mask].sum():10.4f} "
+          f"{np.average(tiny_y[mask], weights=tiny_w[mask]):12.3f}")
 
+print("\n  MARGINAL over cat1 -- mask on cat2 ONLY:")
+print(f"    {'cat2':5s} {'n':>3s} {'P (exact)':>10s} {'E[y]':>12s}")
+for c2_outcome in ("p", "q"):
+    mask = tiny_c2 == c2_outcome          # ONLY cat2 is constrained
+    print(f"    {c2_outcome:5s} {mask.sum():3d} {tiny_w[mask].sum():10.4f} "
+          f"{np.average(tiny_y[mask], weights=tiny_w[mask]):12.3f}")
 
-def marginal_report(label_array, outcomes, title, heading, weights, values):
-    """Print E[y | one categorical], averaging over all the others."""
-    print(f"\n  {title}")
-    print(f"    {heading:5s} {'n':>3s} {'P (exact)':>10s} {'E[y]':>12s}")
-    for outcome in outcomes:
-        # ONLY this categorical is constrained; the other varies freely inside
-        # the mask with UNEVEN weights, so np.average's renormalisation matters.
-        mask = label_array == outcome
-        subset_weights = weights[mask]
-        subset_values = values[mask]
-        print(f"    {outcome:5s} {mask.sum():3d} {subset_weights.sum():10.4f} "
-              f"{np.average(subset_values, weights=subset_weights):12.3f}")
-
-
-marginal_report(tiny_c1, ("a", "b"),
-                "MARGINAL over cat2 -- mask on cat1 ONLY:",
-                "cat1", tiny_w, tiny_y)
-marginal_report(tiny_c2, ("p", "q"),
-                "MARGINAL over cat1 -- mask on cat2 ONLY:",
-                "cat2", tiny_w, tiny_y)
-
-# --- 3f. Conditional vs plain distribution index, across the branches -------
-tiny_xc = np.asarray(tiny_res[xc]).ravel()
-tiny_x2 = np.asarray(tiny_res[x2]).ravel()
-print("\n  the two kinds of distribution index behave differently by branch:")
-print(f"    {'cat1':5s} {'cat2':5s} {'xc (conditional)':>20s} "
-      f"{'x2 (plain)':>18s}")
-for c1_outcome in ("a", "b"):
-    for c2_outcome in ("p", "q"):
-        mask = (tiny_c1 == c1_outcome) & (tiny_c2 == c2_outcome)
-        print(f"    {c1_outcome:5s} {c2_outcome:5s} "
-              f"{str(np.round(tiny_xc[mask], 1)):>20s} "
-              f"{str(np.round(tiny_x2[mask], 3)):>18s}")
-
-# --- 3g. Law of total expectation: the branches decompose the mean EXACTLY ---
+# --- 3e. Law of total expectation: the branches decompose the mean EXACTLY ---
 contributions = []
 for c1_outcome in ("a", "b"):
     for c2_outcome in ("p", "q"):
@@ -352,31 +398,6 @@ tiny_overall = float(tiny_res.expected_value(full_model.outputs.y))
 print("\n  check (law of total expectation, on the 8 rows above):")
 print(f"    sum of P(branch) * E[y|branch] = {sum(contributions):.4f}")
 print(f"    expected_value()               = {tiny_overall:.4f}")
-
-# --- 3h. The reportable run: same model, 5000 samples per branch -------------
-full_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=5000,
-                                rng=np.random.default_rng(0))
-full_res = Evaluation(full_scenario).evaluate(ensemble=full_ens)
-(full_w,) = full_ens.ensemble_weights
-full_y = np.asarray(full_res[full_model.outputs.y]).ravel()
-full_c1 = np.asarray(full_res[cat1]).ravel()
-full_c2 = np.asarray(full_res[cat2]).ravel()
-
-print(f"\n  the reportable version: {len(full_ens)} scenarios "
-      f"(4 branches x 5000). Same code, more samples:")
-print(f"    {'cat1':5s} {'cat2':5s} {'P (exact)':>10s} {'E[y|branch]':>13s} "
-      f"{'p99':>11s}")
-for c1_outcome in ("a", "b"):
-    for c2_outcome in ("p", "q"):
-        mask = (full_c1 == c1_outcome) & (full_c2 == c2_outcome)
-        branch_weights = full_w[mask]
-        branch_values = full_y[mask]
-        print(f"    {c1_outcome:5s} {c2_outcome:5s} "
-              f"{branch_weights.sum():10.4f} "
-              f"{np.average(branch_values, weights=branch_weights):13.2f} "
-              f"{np.percentile(branch_values, 99):11.2f}")
-print(f"    E[y] overall = "
-      f"{float(full_res.expected_value(full_model.outputs.y)):.4f}")
 
 
 # =============================================================================

@@ -18,13 +18,27 @@ import numpy as np
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
-    define, inputs, outputs, Index, Model, DistributionIndex,
-    Scenario, DistributionEnsemble, Evaluation, TimeseriesIndex,
     AxesInferenceWarning,
+    DistributionEnsemble,
+    DistributionIndex,
+    Evaluation,
+    Index,
+    Model,
+    Scenario,
+    TimeseriesIndex,
+    define,
+    inputs,
+    outputs,
 )
 from civic_digital_twins.dt_model.axes import (
-    Axis, DOMAIN, DomainAxis, TIME_AXIS,
-    SetType, SequenceType, TimeType, SpaceType,
+    DOMAIN,
+    TIME_AXIS,
+    Axis,
+    DomainAxis,
+    SequenceType,
+    SetType,
+    SpaceType,
+    TimeType,
 )
 
 # row/col index a matrix: ordered positions, not calendar time and not a
@@ -129,9 +143,9 @@ A_VAL = np.array([[1.0, 2.0], [3.0, 4.0]])
 VCOL_VAL = np.array([10.0, 20.0])
 VTIME_VAL = np.array([1.0, 10.0, 100.0])
 
-A = Index("A", A_VAL, axes=(row, col))              # (row,col)
-Vcol = Index("Vcol", VCOL_VAL, axes=(col,))         # (col,)
-Vtime = Index("Vtime", VTIME_VAL, axes=(time_axis,))  # (time,)
+A = Index("A", A_VAL, axes=(row, col))                 # [[1, 2], [3, 4]]
+Vcol = Index("Vcol", VCOL_VAL, axes=(col,))            # [10, 20]
+Vtime = Index("Vtime", VTIME_VAL, axes=(time_axis,))   # [1, 10, 100]
 
 print("\n  the operands:")
 print(f"    A    (row,col) =\n{A_VAL}")
@@ -139,27 +153,36 @@ print(f"    Vcol (col,)    = {VCOL_VAL}      <- one factor per COLUMN")
 print(f"    Vtime(time,)   = {VTIME_VAL}  <- a 3-point series, no axis in common with A")
 
 
-def show(label, build):
-    """Build an Index, reporting its inferred axes and any warning raised."""
+# The warning is raised when the Index is BUILT (that is when its axes are
+# inferred), so catch it around the Index(...) call.
+print("\n=== when multiplying two arrays, which cases warn? ===")
+for label, formula in (
+    ("A(row,col) * A(row,col)", A * A),
+    ("A(row,col) * Vcol(col)", A * Vcol),
+    ("A(row,col) * 2.0", A * 2.0),
+    ("A(row,col) * Vtime(time)", A * Vtime),
+):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        try:
-            out = build()
-        except ValueError as exc:
-            print(f"  {label:32s} REJECTED: {str(exc).splitlines()[0][:60]}...")
-            return
-        axes = tuple(a.name for a in out.node.output_axes)
-        warned = any(issubclass(c.category, AxesInferenceWarning) for c in caught)
-        print(f"  {label:32s} -> {str(axes):26s} {'WARNS' if warned else 'quiet'}")
+        product = Index("product", formula)
+    product_axes = tuple(a.name for a in product.node.output_axes)
+    warned = any(issubclass(c.category, AxesInferenceWarning) for c in caught)
+    print(f"  {label:32s} -> {str(product_axes):26s} {'WARNS' if warned else 'quiet'}")
 
+# Declaring axes= says "I meant this": quiet, and verified against the formula.
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    declared = Index("declared", A * Vtime, axes=(row, col, time_axis))
+print(f"  {'  ...same, axes= declared':32s} -> "
+      f"{str(tuple(a.name for a in declared.node.output_axes)):26s} "
+      f"{'WARNS' if caught else 'quiet'}")
 
-print("\n=== when multiplying two arrays, which cases warn? ===")
-show("A(row,col) * A(row,col)", lambda: Index("m1", A * A))
-show("A(row,col) * Vcol(col)", lambda: Index("m2", A * Vcol))
-show("A(row,col) * 2.0", lambda: Index("m3", A * 2.0))
-show("A(row,col) * Vtime(time)", lambda: Index("m4", A * Vtime))
-show("  ...same, axes= declared", lambda: Index("m5", A * Vtime, axes=(row, col, time_axis)))
-show("  ...declared WRONGLY", lambda: Index("m6", A * Vtime, axes=(row, col)))
+# A WRONG declaration is not an override: it is rejected.
+print("    ...declared WRONGLY:")
+try:
+    Index("wrong", A * Vtime, axes=(row, col))
+except ValueError as exc:
+    print(f"    ValueError: {exc}")
 
 
 # =============================================================================
@@ -195,25 +218,26 @@ presult = Evaluation(pscenario).evaluate(
 )
 
 
-def values_of(name, want):
-    """Evaluated values for an output, transposed by NAME to the order *want*."""
-    lab = presult.labeled(getattr(pmodel.outputs, name))
-    vals = np.squeeze(lab.values)
-    dims = tuple(d for d in lab.dims if d != "_ensemble")
-    perm = [dims.index(n) for n in want]
-    return np.transpose(vals, perm)
+# Results come back in the engine's order (col before row here), so derive
+# the transpose from the names, exactly as in PART 1.
+shared_lab = presult.labeled(pmodel.outputs.shared)
+outer_lab = presult.labeled(pmodel.outputs.outer)
+dotted_lab = presult.labeled(pmodel.outputs.dotted)
 
+shared_vals = np.transpose(shared_lab.values,
+                           [shared_lab.dims.index(n) for n in ("row", "col")])
+outer_vals = np.transpose(outer_lab.values,
+                          [outer_lab.dims.index(n) for n in ("row", "col", "time")])
 
 print("\n=== SHARED axis: A * Vcol -> (row, col) ===")
-print(values_of("shared", ("row", "col")))
+print(shared_vals)
 
 print("\n=== DISJOINT axes: A * Vtime -> (row, col, time) ===")
-vals = values_of("outer", ("row", "col", "time"))
 for k, factor in enumerate(VTIME_VAL):
-    print(f"    time={k} (x{factor:g}):\n{vals[:, :, k]}")
+    print(f"    time={k} (x{factor:g}):\n{outer_vals[:, :, k]}")
 
 print("\n=== DOT product: (A * Vcol) then sum over col -> (row,) ===")
-print(f"  {values_of('dotted', ('row',))}")
+print(f"  {dotted_lab.values}")
 print(f"  numpy cross-check: A @ Vcol = {A_VAL @ VCOL_VAL}")
 
 
@@ -277,7 +301,8 @@ print(f"\n  vec_index carries {tuple(a.name for a in vec_index.node.output_axes)
 try:
     Index("rejected", vec_index, axes=(bcast_row, bcast_col))
 except ValueError as exc:
-    print(f"  axes=(brow, bcol) alone -> REJECTED: {str(exc).splitlines()[0][:52]}...")
+    print("  axes=(brow, bcol) alone ->")
+    print(f"    ValueError: {exc}")
 
 broadcast_ok = Index("broadcast_ok", vec_index.broadcast(bcast_col),
                      axes=(bcast_row, bcast_col))

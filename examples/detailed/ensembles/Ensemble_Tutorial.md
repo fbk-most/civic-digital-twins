@@ -1,5 +1,3 @@
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Choosing an ensemble
 
 An ensemble turns a model's uncertainty into concrete numbers to compute over.
@@ -11,7 +9,7 @@ We will use deliberately abstract names so that the example remains as general a
 | `x1, x2` | `DistributionIndex`            | continuous uncertainties                                           |
 | `cat1`   | `CategoricalIndex`             | discrete probabilistic outcomes`"a"` / `"b"`                  |
 | `cat2`   | `CategoricalIndex`             | discrete probabilistic outcomes`"p"` / `"q"`                  |
-| `xc`     | `ConditionalDistributionIndex` | a distribution whose *parameters* depend on `cat1` and `cat2` |
+| `xc`     | `ConditionalDistributionIndex` | a distribution whose*parameters* depend on `cat1` and `cat2` |
 | `y`      |                                  | the model output                                                   |
 
 The same model is grown to show the purpose of each ensemble:
@@ -21,7 +19,7 @@ The same model is grown to show the purpose of each ensemble:
 | 0    | `y = k1 * k2`, constants    | **none**           | the single value of`y`                                        |                                                                              |
 | 1    | `y = x1 * x2`               | `DistributionEnsemble` | the samples of`y` resulting from sampling `x1` and `x2`   | The distribution of`y` when inputs are uncertain                           |
 | 2    | same`y = x1 * x2`           | `PartitionedEnsemble`  | the value of`y` in a grid made from `x1` and `x2` samples | How do`x1` and `x2` contribute to `y`                                  |
-| 3    | add `cat1`, `cat2`, `xc` | `CrossProductEnsemble` | Samples of`y` **per branch**                            | How the distribution of`y` depends on the categories introduced (branches) |
+| 3    | add`cat1`, `cat2`, `xc` | `CrossProductEnsemble` | Samples of`y` **per branch**                            | How the distribution of`y` depends on the categories introduced (branches) |
 | 4    | `y = f(x2)`, smooth, costly | your own`AxisEnsemble` | exact expectation in 5 evaluations                              |                                                                              |
 | 5    | —                            | any                      | practical traps                                                 |                                                                              |
 
@@ -73,14 +71,11 @@ cert_res = Evaluation(cert_scenario).evaluate()             # no ensemble=
 cert_y = np.asarray(cert_res[cert_model.outputs.y])
 ```
 
-```Python
-print(f"\n  abstract indexes : {list(cert_scenario.abstract_indexes())}")
-print(f"  y                : {float(cert_y)}   (shape {cert_y.shape})")
 ```
-
-```text
-  abstract indexes : []
-  y                : 100.0   (shape ())
+>>> cert_scenario.abstract_indexes()
+[]
+>>> cert_y
+array(100.)
 ```
 
 The scenario has no abstract indexes, and `y` comes back as a plain scalar —
@@ -92,9 +87,7 @@ PARAMETER axes, not an ensemble (see [parameters_vs_scenarios](../parameters_vs_
 
 ## PART 1 — `DistributionEnsemble`: continuous noise only
 
-The simplest version of the model has no categorical structure, nothing to
-enumerate, and no conditional dependence. We want the *shape* of `y`'s
-distribution, so sampling is not a compromise here — it is the right tool.
+The simplest version of the model with uncertainty simply passes the uncertainty of its inputs to the outputs. There are no categories or branches, it simply takes samples from the inputs and it results in an array of outputs based on those samples, all equally weighted.
 
 ```python
 @define("basic")
@@ -117,46 +110,33 @@ x2 = DistributionIndex("x2", stats.norm, {"loc": 1.0, "scale": 0.2})      # Mean
 basic_model = BasicModel(inputs=BasicModel.Inputs(x1=x1, x2=x2))          # Create the model
 basic_scenario = Scenario(basic_model)                                    # Create the scenario
 
-basic_res = Evaluation(basic_scenario).evaluate(
-    ensemble=DistributionEnsemble(basic_scenario, size=50_000,
-                                  rng=np.random.default_rng(0)),          # Evaluate the scenario
-)
-basic_draws = np.asarray(basic_res[basic_model.outputs.y]).ravel()        # Access the "y" values in the evaluation results.
+basic_ens = DistributionEnsemble(basic_scenario, size=50_000,
+                                  rng=np.random.default_rng(0))
+
+basic_res = Evaluation(basic_scenario).evaluate(ensemble=basic_ens)   # Evaluate the scenario
+
+basic_draws = np.asarray(basic_res[basic_model.outputs.y]).ravel()    # Access values through 'y' Index
+
+(basic_w,) = basic_ens.ensemble_weights                               # Access the weights of each sample in ensemble
+
+basic_x1 = np.asarray(basic_res[x1]).ravel()                          # Access values x1 took using directly the 'x1' Index
 ```
 
-First, the mean converges on the true value (100 × 1.0 = 100) as the sample
-grows, at the usual Monte Carlo rate:
+```
+>>> basic_draws
+array([ 97.24151122, 110.24919288, 107.80984825, ..., 122.87875432,
+        90.37481924,  70.87188049], shape=(50000,))
 
-```text
-  convergence of the mean (true value 100 x 1.0 = 100):
-    size=    100 -> E[y] =  101.250
-    size=   1000 -> E[y] =   98.934
-    size=  10000 -> E[y] =  100.147
-    size= 100000 -> E[y] =  100.010
+>>> basic_w
+array([2.e-05, 2.e-05, 2.e-05, ..., 2.e-05, 2.e-05, 2.e-05],
+      shape=(50000,))
+
+>>> basic_x1
+array([103.14325553,  96.69737842, 116.01056626, ..., 122.88568002,
+       115.75979687,  78.66634566], shape=(50000,))
 ```
 
-Every draw carries the **same** weight (`1/size`). That is what makes plain
-`np.percentile` correct here — no weighted-quantile machinery is needed — and
-it means the whole distribution is available, not just the mean:
-
-```python
-for q in (5, 25, 50, 75, 95):
-    print(f"    p{q:<2d} = {np.percentile(basic_draws, q):8.2f}")
-print(f"    P(y > 150) = {float((basic_draws > 150).mean()):.4f}")
-```
-
-```text
-  50000 equally-weighted draws -> the whole distribution:
-    p5  =    50.74
-    p25 =    77.10
-    p50 =    97.57
-    p75 =   120.25
-    p95 =   157.41
-    P(y > 150) = 0.0717
-```
-
-Quantiles, tail probabilities, histograms — anything you would compute on a
-plain array of samples — come straight off `basic_draws`.
+Every draw carries the **same** weight (`1/size`), so `np.percentile` can be used to explore the distribution. Quantiles, tail probabilities, histograms — anything you would compute on a plain array of samples.
 
 **Why this ensemble:** all the uncertainty is continuous, so there is no
 structure to exploit. Use `DistributionEnsemble` when the question is "what does
@@ -174,6 +154,8 @@ A flat sample cannot answer that: every draw welds one `x1` value to one `x2`
 value, and you can never un-mix them. Separate axes keep them distinguishable:
 
 ```python
+# Model and scenario stay the same
+
 part_ens = PartitionedEnsemble(
     basic_scenario,
     axes=[
@@ -182,53 +164,59 @@ part_ens = PartitionedEnsemble(
     ],
     rng=np.random.default_rng(0),
 )
+
+part_res = Evaluation(basic_scenario).evaluate(ensemble=part_ens)
 grid = np.asarray(part_res[basic_model.outputs.y])   # shape (60, 40): a GRID
 ```
 
-```text
-  ensemble axes : ['x1_axis', 'x2_axis']
-  raw result    : shape (60, 40)  <- a GRID, not a flat sample
-  draws used    : 60 + 40 = 100, covering 2400 combinations
-  E[y]          : 103.70   (true 100 x 1.0 = 100)
+```
+>>> part_ens.ensemble_axes
+(Axis('x1_axis', role='ENSEMBLE'), Axis('x2_axis', role='ENSEMBLE'))
+
+>>> grid
+array([[ 94.14018508,  79.01182011, 139.02406861, ...,  91.0645857 ,
+         75.47570199,  74.231784  ],
+       [ 88.25694957,  74.07402287, 130.33584118, ...,  85.37355796,
+         70.75889237,  69.5927123 ],
+       [105.88434623,  88.86868991, 156.36757673, ..., 102.42506017,
+         84.89143456,  83.49233551],
+       ..., shape=(60, 40))
+
+>>> part_res.expected_value(basic_model.outputs.y)
+np.float64(103.70190089717185)
 ```
 
-The raw result is not a flat list of 100 draws but a 60 × 40 grid: every `x1`
-draw is combined with every `x2` draw. Row `i` holds `x1[i]` fixed; column `j`
-holds `x2[j]` fixed.
+Thus we draw a total of 60 + 40 = 100 samples but obtain 2400 combinations: every `x1` draw is combined with every `x2` draw.
 
-Marginalising one axis at a time isolates each source:
+Row `i` holds `x1[i]` fixed; column `j` holds `x2[j]` fixed. Marginalising one axis at a time isolates each source:
 
 ```python
 by_x1 = grid.mean(axis=1)   # average out x2
 by_x2 = grid.mean(axis=0)   # average out x1
 ```
 
-```text
-  marginalising ONE axis at a time isolates each driver:
-    vary x1, average over x2 -> (60,), sd 22.83
-    vary x2, average over x1 -> (40,), sd 21.44
+```
+>>> by_x1
+array([104.93377951,  98.37600466, 118.0244614 , 104.40398686,
+        88.11174911, 110.93276324, 134.90188195, 125.82400573,
+        83.83716371,  69.55124185,  85.88360218, 102.7870429 ,
+        ...])
+   
+>>> by_x1.shape
+(60,)
 ```
 
-`by_x1` shows how much `y` moves when only `x1` varies (with `x2` averaged
-out), and vice versa. The two spreads are close here, so neither dominates —
-measuring either one better would help about equally. That makes sense: `x1`
-has a 25 % relative spread (sd 25 around 100), `x2` has 20 % (sd 0.2 around
-1.0), and `y` is their product. It is an actionable answer a single flat axis
-simply cannot produce.
+`by_x1` shows how much `y` moves when only `x1` varies (with `x2` averaged out), and vice versa.
 
-**Why this ensemble:** the grid shape *is* the answer, and it is cheap — 100
-draws cover 2400 combinations because the axes broadcast. The assumption it
-encodes is **independence**: if the two were correlated, this factorial grid
-would invent combinations that never occur, and a conditional index inside a
-`CrossProductEnsemble` (next part) would be the honest choice instead.
+**Why this ensemble:** the grid shape *is* the answer, and it is cheap — 100 draws cover 2400 combinations because the axes broadcast.
+
+Use only when inputs are **independent**: if the two were correlated, this factorial grid would invent combinations that never occur, and a conditional index inside a `CrossProductEnsemble` (next part) would be the honest choice instead.
 
 ---
 
 ## PART 3 — `CrossProductEnsemble`: per-branch answers and a rare branch
 
-We extend the *same* model from Parts 1–2 with two independent categoricals.
-The cross product pairs every outcome of one with every outcome of the other:
-2 × 2 = 4 branches, one of them deliberately rare.
+Before introducing the `CrossProductEnsemble`,  let's start by expanding the model to include two independent `CategoricalIndex`. They represent branching possibilities for the model. For example, `cat1` can go to option `a` with 99% probability and to option `b` with 1% probability. `cat2` also has 2 possibilities, resulting in a total of  **4** **branches:**  (`cat1,cat2`) $\in$ { (`a,p`), (`b,p`), (`a,q`), (`b,q`) }. The model adapts a factor depending on the values `cat1` and `cat2` take.
 
 ```python
 cat1 = CategoricalIndex("cat1", {"a": 0.99, "b": 0.01})   # deliberately rare "b"
@@ -248,60 +236,257 @@ class CatModel(Model):
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
-        return CatModel.Outputs(y=Index("y", inputs.x1 * inputs.x2))
+        is_b = inputs.cat1 == "b"
+        is_q = inputs.cat2 == "q"
+        # factor: 1 if cat1=a, 50 if (b, p), 400 if (b, q)
+        factor = 1.0 + (49.0 + 350.0 * is_q) * is_b
+        return CatModel.Outputs(y=Index("y", inputs.x1 * inputs.x2 * factor))
 ```
+
+Because `x1 * x2` has mean 100, the true values are easy to state:
+
+| branch                   | P (exact)            | factor | E[`y` \| branch]   | contribution to E[`y`] |
+| ------------------------ | -------------------- | ------ | -------------------- | ------------------------ |
+| `cat1=a`, any `cat2` | 0.99                 | 1      | 100                  | 99                       |
+| `cat1=b, cat2=p`       | 0.01 × 0.80 = 0.008 | 50     | 5 000                | 40                       |
+| `cat1=b, cat2=q`       | 0.01 × 0.20 = 0.002 | 400    | 40 000               | 80                       |
+|                          |                      |        | **E[`y`] =** | **219**            |
+
+The `cat1=b, cat2=q` branch holds 0.2 % of the probability but over a third of E[`y`].
 
 ### 3a. Same model, same budget: `DistributionEnsemble` vs `CrossProductEnsemble`
 
-Both ensembles accept categoricals, so we can run the same scenario through
-each with the same budget of 1000 rows, and count what every branch receives:
+Both ensembles accept categoricals, so we run the same scenario through each
+with the same budget of 1000 rows.
 
 ```python
-sampled = rows_and_probability(
-    DistributionEnsemble(cat_scenario, size=1_000, rng=np.random.default_rng(0)))
-enumerated = rows_and_probability(
-    CrossProductEnsemble(cat_scenario, n_samples_per_combo=250,
-                         rng=np.random.default_rng(0)))
+# Create model and scenario as usual
+cat_model = CatModel(inputs=CatModel.Inputs(cat1=cat1, cat2=cat2, x1=x1, x2=x2))
+cat_scenario = Scenario(cat_model)
 ```
 
-`rows_and_probability` masks the result on each `(cat1, cat2)` pair and
-returns the number of rows in that branch and the sum of their weights:
+**`DistributionEnsemble`** — samples the categoricals along with `x1` and `x2`:
 
 ```python
-mask = (c1 == c1_outcome) & (c2 == c2_outcome)
-out[c1_outcome, c2_outcome] = (int(mask.sum()), float(w[mask].sum()))
+de_ens = DistributionEnsemble(cat_scenario, size=1_000,       # 1000 independent draws for each sampleable quantity
+                              rng=np.random.default_rng(0))
+
+de_res = Evaluation(cat_scenario).evaluate(ensemble=de_ens)   # Evaluate to get result
+```
+The result is a single axis (a 1D array) and so all the information also mirrors that format.
+
+To access the results:
+```python
+de_y = np.asarray(de_res[cat_model.outputs.y]).ravel()  # y of each row
 ```
 
 ```text
-  same model, same budget (1000 rows), two ensembles:
-                 DistributionEnsemble    CrossProductEnsemble
-    cat1  cat2    rows  P (estimated)     rows      P (exact)
-    a     p        791         0.7910      250         0.7920
-    a     q        198         0.1980      250         0.1980
-    b     p          9         0.0090      250         0.0080
-    b     q          2         0.0020      250         0.0020
+>>> de_y
+array([1.32542269e+02, 8.18555097e+01, 1.10510789e+02, 1.04830503e+02,
+       1.50108553e+02, 6.15880901e+01, 1.35344666e+02, 7.76217737e+01,
+       ...])
 ```
 
+The following gives us access to the weights that would be used to compute the mean and percentiles:
+```python
+(de_w,) = de_ens.ensemble_weights                       # weight of each row
+```
+```text
+>>> de_w
+array([0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001,
+       0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001,
+       ...])
+```
+But as we are using a `DistributionEnsemble` they are all the same!
+
+We can access the particular values each category got in the sampling as we would access any other sampled variable in the model:
+```python
+de_c1 = np.asarray(de_res[cat1]).ravel()                # cat1 label of each row. cat1 is an Index
+de_c2 = np.asarray(de_res[cat2]).ravel()                # cat2 label of each row
+```
+```text
+>>> de_c1
+array(['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a',
+       'b', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a',
+       ...])
+```
+
+In order to look at a particular combination of the categories (branch), we need to use a **mask** on the category value arrays:
+
+```python
+de_bq = (de_c1 == "b") & (de_c2 == "q")         # create mask
+
+de_bq_n = int(de_bq.sum())                      # samples in the branch
+
+de_bq_y = de_y[de_bq]                           # values of 'y' in the branch
+```
+```
+>>> de_bq
+array([...
+       False, False, False, False, False, False, False, False, False,
+       False, False,  True, False, False, False, False, False, False,
+       False, False, False, False, False, False, False, False, False,
+       ...])
+
+>>> de_bq_n
+2
+
+>>> de_bq_y
+array([30461.70561002, 61355.36687007])
+```
+
+Using the weights we get the (empirical) probability that a sample landed in the  desired branch:
+
+```python
+de_bq_prob = float(de_w[de_bq].sum())                             # its probability
+de_bq_mean = float(np.average(de_y[de_bq], weights=de_w[de_bq]))  # E[y | branch]
+```
+
+If we do this for each branch, we get the following summary:
+
+```text
+  DistributionEnsemble: 1000 rows, E[y] = 236.38   (true 219)
+    
+    cat1  cat2   rows       P  E[y|branch]  True branch mean
+    a     p       791  0.7910        99.52               100
+    a     q       198  0.1980        99.65               100
+    b     p         9  0.0090      5123.74              5000
+    b     q         2  0.0020     45908.54             40000
+```
+
+Each branch gets rows in proportion to its probability, decided by chance: the
+`cat1=b, cat2=q` branch got **2 rows out of 1000**. Its mean rests on two
+points, the probabilities are only counts (9/1000 is not the true 0.008), and
+the overall E[`y`] lands 8 % too high.
+
+**`CrossProductEnsemble`** — enumerates the branches instead. We go through the
+same steps and see what changes.
+
+```python
+cp_ens = CrossProductEnsemble(cat_scenario, n_samples_per_combo=250,  # 1000 samples divided into the 4 branches = 250
+                              rng=np.random.default_rng(0))
+
+cp_res = Evaluation(cat_scenario).evaluate(ensemble=cp_ens)   # Evaluate to get result
+```
+The result is again a single axis (a 1D array) of 1000 rows. The difference is
+that the rows are no longer in random order: they come **branch by branch**,
+250 rows each — rows 0–249 are `a, p`, 250–499 `a, q`, 500–749 `b, p` and
+750–999 `b, q`.
+
+To access the results:
+```python
+cp_y = np.asarray(cp_res[cat_model.outputs.y]).ravel()  # y of each row
+```
+
+```text
+>>> cp_y
+array([1.27565555e+02, 1.02573230e+02, 1.20466633e+02, 1.08080859e+02,
+       6.29441528e+01, 1.00544504e+02, 1.07235062e+02, 1.28560131e+02,
+       ...])
+```
+
+The weights:
+```python
+(cp_w,) = cp_ens.ensemble_weights                       # weight of each row
+```
+```text
+>>> cp_w
+array([...
+       3.168e-03, 3.168e-03, 3.168e-03, 3.168e-03, 3.168e-03, 3.168e-03,
+       3.168e-03, 3.168e-03, 3.168e-03, 3.168e-03, 7.920e-04, 7.920e-04,
+       7.920e-04, 7.920e-04, 7.920e-04, 7.920e-04, 7.920e-04, 7.920e-04,
+       ...])
+
+>>> cp_w[[0, 250, 500, 750]]        # the first row of each branch
+array([3.168e-03, 7.920e-04, 3.200e-05, 8.000e-06])
+```
+Unlike the `DistributionEnsemble`, the weights are **not** all the same. Each
+branch's *exact* probability is split evenly over its 250 rows:
+
+| branch           | P (exact)            | weight of each row (÷ 250) |
+| ---------------- | -------------------- | -------------------------- |
+| `cat1=a, cat2=p` | 0.99 × 0.80 = 0.792  | 0.003168                   |
+| `cat1=a, cat2=q` | 0.99 × 0.20 = 0.198  | 0.000792                   |
+| `cat1=b, cat2=p` | 0.01 × 0.80 = 0.008  | 0.000032                   |
+| `cat1=b, cat2=q` | 0.01 × 0.20 = 0.002  | 0.000008                   |
+
+Every branch has the same *number* of rows, so the *weights* are what carry
+the probabilities. Inside one branch all rows share the same weight; the
+weights start to matter as soon as a mask holds rows of different weight
+(see 3d), so always pass them (`np.average(..., weights=...)`).
+
+The category values are accessed exactly as before:
+```python
+cp_c1 = np.asarray(cp_res[cat1]).ravel()                # cat1 label of each row
+cp_c2 = np.asarray(cp_res[cat2]).ravel()                # cat2 label of each row
+```
+```text
+>>> cp_c1[495:505]                  # around the switch from cat1=a to cat1=b
+array(['a', 'a', 'a', 'a', 'a', 'b', 'b', 'b', 'b', 'b'], dtype=object)
+```
+
+The mask is built the same way:
+
+```python
+cp_bq = (cp_c1 == "b") & (cp_c2 == "q")         # create mask
+
+cp_bq_n = int(cp_bq.sum())                      # samples in the branch
+
+cp_bq_y = cp_y[cp_bq]                           # values of 'y' in the branch
+```
+```text
+>>> cp_bq[745:755]                  # the branch starts at row 750
+array([False, False, False, False, False,  True,  True,  True,  True,
+        True])
+
+>>> cp_bq_n
+250
+
+>>> cp_bq_y
+array([50068.67093565, 28496.80516136, 58603.45912826, 22970.99267516,
+       ...])
+```
+
+The rare branch now has **250** samples instead of 2. Summing its weights gives
+its *exact* probability (250 × 0.000008 = 0.002), not an estimate:
+
+```python
+cp_bq_prob = float(cp_w[cp_bq].sum())                             # its probability
+cp_bq_mean = float(np.average(cp_y[cp_bq], weights=cp_w[cp_bq]))  # E[y | branch]
+```
+
+If we do this for each branch, we get the following summary:
+
+```text
+  CrossProductEnsemble: 1000 rows, E[y] = 215.53   (true 219)
+
+    cat1  cat2   rows       P  E[y|branch]  True branch mean
+    a     p       250  0.7920       100.01               100
+    a     q       250  0.1980       100.92               100
+    b     p       250  0.0080      4938.31              5000
+    b     q       250  0.0020     38417.67             40000
+```
+
+Every branch gets the same guaranteed number of rows (250), and its weights sum
+to its **exact** probability, however rare. With the same budget, the overall
+E[`y`] is within 2 % of the truth.
+
 Both results have the same shape: one flat axis of rows, each tagged with its
-`cat1`/`cat2` labels, filtered with a mask. What differs is **how the rows are
-spread across the branches**:
+`cat1`/`cat2` labels, read with a mask. What differs is only **how the rows are
+spread across the branches**: by chance (*sampled*) or evenly with exact
+weights (*enumerated*).
 
-- `DistributionEnsemble` *samples* the categoricals. Each branch gets rows in
-  proportion to its probability, decided by chance: the `cat1=b, cat2=q`
-  branch got **2 rows out of 1000**. No conditional mean or quantile can be
-  read off two points, and the probabilities are only counts (9/1000 is not
-  the true 0.008).
-- `CrossProductEnsemble` *enumerates* the branches. Every branch gets the same
-  guaranteed number of rows (250), and its weights sum to its **exact**
-  probability, however rare.
+### 3b. The elegant way: `ConditionalDistributionIndex` with `CrossProductEnsemble`
 
-### 3b. Add `xc`: only `CrossProductEnsemble` can deal with it
+`CatModel` works, but the branch logic is hard-coded into `compute()` as
+arithmetic on 0/1 indicators, and it can only *scale* a distribution that is
+the same in every branch. The natural way to say "this input behaves
+differently in each branch" is to put the dependence on the input itself.
 
-Now let a distribution depend on the branch. `xc` depends on *both*
-categoricals, so it is a **conditional** distribution
-(`ConditionalDistributionIndex`): the factory returns a different distribution
-per branch, and receives the parents as keyword arguments named after them.
-The rarest branch gets the most extreme distribution.
+A `ConditionalDistributionIndex` does exactly that. Instead of one
+distribution, it takes a **factory**: a function that receives the outcome of
+each parent categorical (as keyword arguments named after them) and returns
+the distribution to use in that branch.
 
 ```python
 def xc_dist(cat1: str, cat2: str):
@@ -311,11 +496,56 @@ def xc_dist(cat1: str, cat2: str):
         return stats.lognorm(s=0.8, scale=1000.0)     # rare, moderate
     return stats.lognorm(s=0.8, scale=8000.0)         # rare AND extreme
 
+
 xc = ConditionalDistributionIndex("xc", parents=[cat1, cat2], factory=xc_dist)
 ```
 
-`FullModel` takes `cat1`, `cat2`, `xc` and `x2`, and computes `y = xc * x2`.
-`DistributionEnsemble` refuses it:
+The factory is an ordinary function, so you can call it to see what each
+branch gets:
+
+```text
+>>> xc_dist(cat1="a", cat2="p").median()
+np.float64(20.0)
+>>> xc_dist(cat1="b", cat2="p").median()
+np.float64(1000.0)
+>>> xc_dist(cat1="b", cat2="q").median()
+np.float64(8000.0)
+```
+
+The branch structure mirrors `CatModel` (medians 20, 1000, 8000 are in the
+same 1 : 50 : 400 ratio), but each branch now has its *own* distribution,
+not a scaled copy of one.
+
+The model declares `xc` as an input like any other, and `compute()` needs no
+indicators at all:
+
+```python
+@define("full")
+class FullModel(Model):
+    @inputs
+    class Inputs:
+        cat1: CategoricalIndex
+        cat2: CategoricalIndex
+        xc: ConditionalDistributionIndex
+        x2: DistributionIndex
+
+    @outputs
+    class Outputs:
+        y: Index
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        # x2 is the same PLAIN index from Part 1: it knows nothing about branches.
+        return FullModel.Outputs(y=Index("y", inputs.xc * inputs.x2))
+
+
+full_model = FullModel(inputs=FullModel.Inputs(
+    cat1=cat1, cat2=cat2, xc=xc, x2=x2,
+))
+full_scenario = Scenario(full_model)
+```
+
+The price is that only `CrossProductEnsemble` can evaluate it.
+`DistributionEnsemble` refuses:
 
 ```python
 try:
@@ -332,70 +562,121 @@ except ValueError as err:
 `DistributionEnsemble` draws every input independently from its own fixed
 distribution. `xc` has no fixed distribution: to draw it, you must first know
 which branch the draw is in. `CrossProductEnsemble` works in that order — it
-fixes the branch first, and inside each branch `xc`'s distribution is known —
-so it is the only built-in ensemble that can evaluate this model. From here on,
-everything runs on `FullModel` with `CrossProductEnsemble`.
+fixes the branch first, and inside each branch `xc`'s distribution is known.
+Since 3a already showed it is the better choice for rare branches anyway,
+`ConditionalDistributionIndex` + `CrossProductEnsemble` is the idiomatic pair
+for branch-dependent models. From here on, everything runs on `FullModel`
+with `CrossProductEnsemble`.
 
-### 3c. A deliberately tiny ensemble
+### 3c. `FullModel` per branch
 
-4 branches × 2 samples = 8 scenarios: small enough to print in full, which is
-the only way the weights and the alignment between arrays become concrete.
-Everything pedagogical in this part runs on these 8 rows.
-
-There is no built-in `.by_branch()` helper. Instead **four arrays line up
-one-to-one, one entry per scenario**, and you select with a boolean mask:
+Reading `FullModel` works exactly as in 3a: evaluate, take the four arrays,
+mask each branch. With 5000 samples per branch (20 000 scenarios):
 
 ```python
+full_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=5000,
+                                rng=np.random.default_rng(0))
+full_res = Evaluation(full_scenario).evaluate(ensemble=full_ens)
+(full_w,) = full_ens.ensemble_weights
+full_y = np.asarray(full_res[full_model.outputs.y]).ravel()
+full_c1 = np.asarray(full_res[cat1]).ravel()
+full_c2 = np.asarray(full_res[cat2]).ravel()
+```
+
+```text
+>>> len(full_ens)
+20000
+>>> np.unique(full_w)               # one weight per branch: P(branch) / 5000
+array([4.000e-07, 1.600e-06, 3.960e-05, 1.584e-04])
+```
+
+The same mask per branch as in 3a, now also with the 99th percentile:
+
+```text
+    cat1  cat2   P (exact)   E[y|branch]         p99
+    a     p         0.7920         22.63       65.89
+    a     q         0.1980         22.85       67.42
+    b     p         0.0080       1381.25     6294.73
+    b     q         0.0020      10904.65    52350.07
+    E[y] overall = 55.3057
+```
+
+Inside one branch every row has the same weight, so a plain
+`np.percentile(branch_values, 99)` is correct there. Across branches it would
+not be: the weights differ, as `np.unique(full_w)` shows (see 3d).
+
+Inputs can be read from the result the same way as the output: `full_res[xc]`
+gives the value `xc` took in each row, drawn from that row's branch
+distribution.
+
+**Why this ensemble:** the `cat1=b, cat2=q` branch holds 0.2 % of the
+probability and dominates `y`. Enumeration gives it a *guaranteed* 5000 samples
+and an *exact* weight, so its mean and p99 are solid. A sampler spending the
+same 20 000 evaluations would land roughly 40 there — enough for a rough mean,
+far too few for a 99th percentile — and the branch probabilities would
+themselves be estimates. Shrink the budget and that corner vanishes, at which
+point the conditional answer does not exist at all.
+
+Sampling is also simply unavailable here: `xc` is conditional, and
+`DistributionEnsemble` rejects conditional indexes outright (3b).
+
+### 3d. When a mask mixes branches: marginals
+
+So far every mask fixed *both* categoricals (a **joint** branch), and all the
+rows inside it had the same weight. A **marginal** fixes only *one*
+categorical, e.g. `cat1=b` regardless of `cat2`. The mask then picks up rows
+from several branches, with **different** weights, and this is where the
+weights really matter.
+
+To see it, a deliberately tiny ensemble — 4 branches × 2 samples = 8 rows,
+small enough to print:
+
+```python
+tiny_ens = CrossProductEnsemble(full_scenario, n_samples_per_combo=2,
+                                rng=np.random.default_rng(0))
+tiny_res = Evaluation(full_scenario).evaluate(ensemble=tiny_ens)
+
 (tiny_w,) = tiny_ens.ensemble_weights                            # weight
 tiny_y = np.asarray(tiny_res[full_model.outputs.y]).ravel()      # output
 tiny_c1 = np.asarray(tiny_res[cat1]).ravel()                     # label 1
 tiny_c2 = np.asarray(tiny_res[cat2]).ravel()                     # label 2
 ```
 
-```text
-     i  cat1  cat2    weight          y
-     0  a     p      0.39600     18.300
-     1  a     p      0.39600     13.983
-     2  a     q      0.09900     24.114
-     3  a     q      0.09900     21.251
-     4  b     p      0.00400    348.528
-     5  b     p      0.00400   1277.023
-     6  b     q      0.00100  17048.280
-     7  b     q      0.00100  14566.889
-    weights sum to 1.0000  <- over the WHOLE ensemble
-```
-
-Where each weight comes from: a branch's weight is the **product** of the two
-categorical probabilities, then split across its replicates.
-
-| branch             | product               | per replicate (÷ 2) |
-| ------------------ | --------------------- | -------------------- |
-| `cat1=a, cat2=p` | 0.99 × 0.80 = 0.7920 | 0.39600              |
-| `cat1=a, cat2=q` | 0.99 × 0.20 = 0.1980 | 0.09900              |
-| `cat1=b, cat2=p` | 0.01 × 0.80 = 0.0080 | 0.00400              |
-| `cat1=b, cat2=q` | 0.01 × 0.20 = 0.0020 | 0.00100              |
-
-That product is what "cross product" means, and it is why adding a categorical
-**multiplies** the branch count rather than adding to it.
-
-### 3d. Weights and renormalisation — the part that is easy to get wrong
-
-The weights sum to 1.0 across the **whole** ensemble. Selecting one branch
-therefore gives weights that sum to that branch's *probability*, not to 1. A
-conditional mean must divide by that sum:
-
-$$
-E[y \mid \text{branch}] = \frac{\sum w_i\, y_i}{\sum w_i} \quad \text{over that branch only}
-$$
-
-That division *is* the renormalisation, and `np.average(values, weights=w)` does
-it internally. The script computes `E[y | cat1=b]` five ways:
+Mask on `cat1` only:
 
 ```python
 b_mask = tiny_c1 == "b"
 w_sub = tiny_w[b_mask]
 y_sub = tiny_y[b_mask]
+```
 
+```text
+>>> tiny_c2[b_mask]
+array(['p', 'p', 'q', 'q'], dtype=object)
+>>> w_sub
+array([0.004, 0.004, 0.001, 0.001])
+>>> y_sub
+array([  348.52840863,  1277.02280611, 17048.28011001, 14566.88919037])
+>>> w_sub.sum()
+np.float64(0.010000000000000002)
+```
+
+Two things to notice:
+
+- The mask holds two rows of `cat2=p` and two of `cat2=q`, but `p` is four
+  times more probable — and the weights (0.004 vs 0.001) say so. **Sample
+  counts are not probabilities.**
+- The weights sum to 0.01, the probability of `cat1=b`, not to 1. A
+  conditional mean must divide by that sum:
+
+$$
+E[y \mid \text{cat1=b}] = \frac{\sum w_i\, y_i}{\sum w_i} \quad \text{over the masked rows}
+$$
+
+That division is the renormalisation, and `np.average(values, weights=w)` does
+it internally. Computing `E[y | cat1=b]` five ways:
+
+```python
 np.average(y_sub, weights=w_sub)                 # right
 np.sum(w_sub * y_sub) / np.sum(w_sub)            # right (same thing, spelled out)
 np.sum((w_sub / np.sum(w_sub)) * y_sub)          # right (normalise first)
@@ -412,46 +693,16 @@ y_sub.mean()                                     # WRONG
     y_sub.mean()  [no weights]       =    8310.1801  <- WRONG (counts != probabilities)
 ```
 
-The three correct forms agree exactly. You can verify by hand from rows 4–7 of
-the table above: `(0.004·348.5 + 0.004·1277.0 + 0.001·17048.3 + 0.001·14566.9) / 0.01 = 3811.7`.
-
 - `sum(w*y)` without division is scaled down by `sum(w) = 0.01`. That is the
-  branch's **contribution** to the overall mean, not the branch's mean.
-- `y_sub.mean()` treats `cat2=q` as equally likely as `cat2=p`, because the mask
-  holds the same *number* of rows from each — though `p` is four times more
-  probable. **Sample counts are not probabilities.**
+  branch's **contribution** to the overall mean, not its mean.
+- `y_sub.mean()` gives `cat2=q` the same say as `cat2=p`, more than doubling
+  the answer.
 
-### 3e. Joint and marginal views
-
-A **joint** branch uses one mask per categorical, combined with `&`:
+The same mask on each outcome gives both marginals:
 
 ```python
-mask = (tiny_c1 == c1_outcome) & (tiny_c2 == c2_outcome)
-branch_weights = tiny_w[mask]
-branch_values = tiny_y[mask]
-np.average(branch_values, weights=branch_weights)
-```
-
-```text
-  JOINT branches -- one mask per categorical, combined with &:
-    cat1  cat2    n  P (exact)   E[y|branch]
-    a     p       2     0.7920        16.142
-    a     q       2     0.1980        22.683
-    b     p       2     0.0080       812.776
-    b     q       2     0.0020     15807.585
-```
-
-Each joint branch holds 2 rows; `P (exact)` is the sum of their weights, i.e.
-the product of the two categorical probabilities. The rarest branch has by far
-the largest conditional mean.
-
-A **marginal** constrains only one categorical; the other varies freely inside
-the mask, mixed according to its own weights (see `marginal_report`). Those
-weights are *uneven*, which is where `np.average`'s renormalisation does real
-work.
-
-```python
-mask = label_array == outcome          # ONLY this categorical is constrained
+for c1_outcome in ("a", "b"):
+    mask = tiny_c1 == c1_outcome          # ONLY cat1 is constrained
 ```
 
 ```text
@@ -466,49 +717,37 @@ mask = label_array == outcome          # ONLY this categorical is constrained
     q       4     0.2000      180.532
 ```
 
-Note how `cat1=b`'s marginal (3811.7) is the same number computed in 3d, and
-how the rare `cat1=b` branch, though it is only 1 % of the weight, pulls the
-`cat2=q` marginal up to 180.5 — far above any `cat1=a` value.
+The `cat2=q` marginal shows the effect most strongly: its mask mixes `cat1=a`
+rows (weight 0.099) with `cat1=b` rows (weight 0.001). Weighted, the rare
+`cat1=b` rows pull it up to 180.5; a plain `.mean()` would give about 7900.
 
-Both marginals partition the whole ensemble, so each recomposes to the same
-overall mean. Which one you report is a modelling decision: marginalising over
-the *rare* variable barely moves the rows, while marginalising over the
-*common* one changes them a lot.
+### 3e. The sanity check: law of total expectation
 
-### 3f. Conditional vs plain distribution index
-
-```text
-    cat1  cat2      xc (conditional)         x2 (plain)
-    a     p              [21.3 18.7]      [0.859 0.747]
-    a     q              [27.5 21.1]      [0.875 1.008]
-    b     p          [ 651.5 1335.5]      [0.535 0.956]
-    b     q        [22706.3 17066.3]      [0.751 0.854]
-```
-
-- `xc` is **conditional** — the factory hands each branch its own
-  distribution, so the magnitudes jump by orders of magnitude across rows.
-- `x2` is **plain** — one N(1.0, 0.2), redrawn independently in every branch.
-  With only 2 draws per branch the sample scatter is visible, but no row is
-  systematically higher than another.
-
-Both interact with the categoricals in `compute()` — `y` is their product. The
-difference is *where* the branch dependence lives: in the distribution itself
-(conditional) or only in the arithmetic (plain).
-
-### 3g. The sanity check: law of total expectation
-
-The branches decompose the overall mean **exactly**:
+The joint branches decompose the overall mean **exactly**:
 
 $$
 E[y] = \sum_{\text{branches}} P(\text{branch}) \cdot E[y \mid \text{branch}]
 $$
 
+Each branch contributes its probability times its conditional mean:
+
 ```python
-contributions.append(
-    branch_weights.sum() * np.average(branch_values, weights=branch_weights)
-)
-...
-sum(contributions)  ==  tiny_res.expected_value(full_model.outputs.y)
+contributions = []
+for c1_outcome in ("a", "b"):
+    for c2_outcome in ("p", "q"):
+        mask = (tiny_c1 == c1_outcome) & (tiny_c2 == c2_outcome)
+        branch_weights = tiny_w[mask]
+        branch_values = tiny_y[mask]
+        contributions.append(
+            branch_weights.sum() * np.average(branch_values, weights=branch_weights)
+        )
+
+tiny_overall = float(tiny_res.expected_value(full_model.outputs.y))
+```
+
+```text
+>>> contributions                   # (a, p), (a, q), (b, p), (b, q)
+[np.float64(12.784291416431172), np.float64(4.491188516320415), np.float64(6.502204858984646), np.float64(31.615169300381478)]
 ```
 
 ```text
@@ -517,39 +756,10 @@ sum(contributions)  ==  tiny_res.expected_value(full_model.outputs.y)
     expected_value()               = 55.3929
 ```
 
-Note that the overall mean (55.4) is more than three times the common-case
-value (~16–23): almost all of the gap comes from the `cat1=b` branches that
-carry 1 % of the weight. Run this check whenever you slice a result by branch: if it fails, your masks do
-not partition the ensemble or your weights are mishandled.
-
-### 3h. The reportable run
-
-The same code with `n_samples_per_combo=5000` (20 000 scenarios) produces real
-numbers:
-
-```text
-    cat1  cat2   P (exact)   E[y|branch]         p99
-    a     p         0.7920         22.63       65.89
-    a     q         0.1980         22.85       67.42
-    b     p         0.0080       1381.25     6294.73
-    b     q         0.0020      10904.65    52350.07
-    E[y] overall = 55.3057
-```
-
-`P (exact)` is **identical** to the tiny run — probabilities come from
-enumeration, not from sampling. Only the conditional means and quantiles needed
-the extra draws.
-
-**Why this ensemble:** the `cat1=b, cat2=q` branch holds 0.2 % of the
-probability and dominates `y`. Enumeration gives it a *guaranteed* 5000 samples
-and an *exact* weight, so its mean and p99 are solid. A sampler spending the
-same 20 000 evaluations would land roughly 40 there — enough for a rough mean,
-far too few for a 99th percentile — and the branch probabilities would
-themselves be estimates. Shrink the budget and that corner vanishes, at which
-point the conditional answer does not exist at all.
-
-Sampling is also simply unavailable here: `xc` is conditional, and
-`DistributionEnsemble` rejects conditional indexes outright (3b).
+The `cat1=b, cat2=q` branch, with 0.2 % of the weight, contributes 31.6 of the
+55.4 — more than the two `cat1=a` branches together (12.8 + 4.5). Run this
+check whenever you slice a result by branch: if it fails, your masks do not
+partition the ensemble or your weights are mishandled.
 
 ---
 

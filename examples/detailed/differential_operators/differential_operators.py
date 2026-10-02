@@ -16,12 +16,23 @@ Deliberately abstract naming throughout: f is the field, x/y/depth are axes.
 import numpy as np
 
 from civic_digital_twins.dt_model import (
-    define, inputs, outputs, Index, Model,
-    Scenario, DistributionEnsemble, Evaluation,
+    DistributionEnsemble,
+    Evaluation,
+    Index,
+    Model,
+    Scenario,
+    define,
+    inputs,
+    outputs,
 )
 from civic_digital_twins.dt_model.axes import (
-    DomainAxis, SpaceType,
-    Constant, Neumann, Nearest, Wrap, Linear,
+    Constant,
+    DomainAxis,
+    Linear,
+    Nearest,
+    Neumann,
+    SpaceType,
+    Wrap,
 )
 
 # =============================================================================
@@ -58,8 +69,8 @@ for spacing in (1.0, 2.0):
     gres = Evaluation(gscenario).evaluate(
         ensemble=DistributionEnsemble(gscenario, size=1),
     )
-    slope = np.squeeze(gres.labeled(gmodel.outputs.slope).values)
-    step = np.squeeze(gres.labeled(gmodel.outputs.step).values)
+    slope = gres.labeled(gmodel.outputs.slope).values   # dims ('depth',)
+    step = gres.labeled(gmodel.outputs.step).values
     print(f"\n  spacing={spacing:g} m")
     print(f"    .gradient -> {slope}   (degrees per METRE)")
     print(f"    .diff     -> {step}   (degrees per SAMPLE, spacing ignored)")
@@ -105,13 +116,10 @@ fresult = Evaluation(fscenario).evaluate(
     ensemble=DistributionEnsemble(fscenario, size=1),
 )
 
-
-def field(name):
-    """An output as a (y, x) array, transposed by NAME rather than by luck."""
-    lab = fresult.labeled(getattr(fmodel.outputs, name))
-    vals = np.squeeze(lab.values)
-    dims = tuple(d for d in lab.dims if d != "_ensemble")
-    return np.transpose(vals, [dims.index(n) for n in ("y", "x")])
+# Results come back with dims ('x', 'y'): check .dims, never assume the order.
+df_dx = fresult.labeled(fmodel.outputs.df_dx)
+df_dy = fresult.labeled(fmodel.outputs.df_dy)
+lap = fresult.labeled(fmodel.outputs.lap)
 
 
 print("\n=== PART 2 -- a 2-D field: f(x, y) = x^2, constant along y ===")
@@ -119,13 +127,13 @@ print(f"  f (rows are y, columns are x = {XS}):")
 print(FIELD)
 
 print("\n  .gradient(axis=x)  ->  df/dx, exact answer 2x = [0, 2, 4, 6]")
-print(field("df_dx"))
+print(df_dx.values.T)        # .T: rows are y, as in FIELD
 
 print("\n  .gradient(axis=y)  ->  df/dy, exact answer 0 everywhere")
-print(field("df_dy"))
+print(df_dy.values.T)
 
 print("\n  .laplacian(axes=(y, x))  ->  d2f/dx2 + d2f/dy2, exact answer 2")
-print(field("lap"))
+print(lap.values.T)
 
 
 # =============================================================================
@@ -176,8 +184,8 @@ for bc, label in (
     edge_res = Evaluation(edge_scenario).evaluate(
         ensemble=DistributionEnsemble(edge_scenario, size=1),
     )
-    g = np.squeeze(edge_res.labeled(edge_model.outputs.grad).values)
-    lp = np.squeeze(edge_res.labeled(edge_model.outputs.lap).values)
+    g = edge_res.labeled(edge_model.outputs.grad).values
+    lp = edge_res.labeled(edge_model.outputs.lap).values
     print(f"  {label:20s} {str(g):26s} {str(lp):26s}")
 
 

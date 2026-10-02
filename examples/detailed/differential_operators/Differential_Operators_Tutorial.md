@@ -48,14 +48,54 @@ nothing is dropped, and nothing uses a different formula.
 The data is a temperature profile down a borehole, deliberately non-linear (a
 straight line would make every output identical and hide the mechanism):
 
+The spacing is part of the axis, so the model is built once per spacing. The
+temperature `T` is injected as a fixed array on that axis; the model returns
+both the gradient and, for contrast, the raw difference `.diff()`:
+
 ```python
 DEPTH_VALS = np.array([0.0, 10.0, 20.0, 50.0])   # note the jump at the end
 
-grid = DomainAxis("depth", type=SpaceType(spacing=spacing))
-...
-slope=Index("slope", inputs.T.gradient(axis=grid), axes=(grid,)),
-step=Index("step", inputs.T.diff(axis=grid), axes=(grid,)),
+for spacing in (1.0, 2.0):
+    grid = DomainAxis("depth", type=SpaceType(spacing=spacing))
+
+    @define(f"grad_{spacing}")
+    class Grad(Model):
+        @inputs
+        class Inputs:
+            T: Index
+
+        @outputs
+        class Outputs:
+            slope: Index   # d(temperature) / d(depth)
+            step: Index    # raw difference, for contrast
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            return Grad.Outputs(
+                slope=Index("slope", inputs.T.gradient(axis=grid), axes=(grid,)),
+                step=Index("step", inputs.T.diff(axis=grid), axes=(grid,)),
+            )
+
+    gmodel = Grad(inputs=Grad.Inputs(T=Index("T", DEPTH_VALS, axes=(grid,))))
+    gscenario = Scenario(gmodel)
+    gres = Evaluation(gscenario).evaluate(
+        ensemble=DistributionEnsemble(gscenario, size=1),
+    )
+    slope = gres.labeled(gmodel.outputs.slope).values   # dims ('depth',)
+    step = gres.labeled(gmodel.outputs.step).values
 ```
+
+Nothing here is uncertain, so the ensemble has a single member
+(`size=1`). `labeled()` returns the output by axis name, and drops that
+one-member ensemble axis:
+
+```text
+>>> gres.labeled(gmodel.outputs.slope)              # after the spacing=2 run
+LabeledArray(dims=('depth',), shape=(4,))
+>>> gres.labeled(gmodel.outputs.slope).values
+array([ 0.,  5., 10.,  0.])
+```
+
+For each spacing the script prints both operators:
 
 ```text
   spacing=1 m
@@ -108,11 +148,37 @@ y_axis = DomainAxis("y", type=SpaceType(spacing=1.0))
 x_axis = DomainAxis("x", type=SpaceType(spacing=1.0))
 
 XS = np.arange(4.0)                                   # x = 0,1,2,3
-FIELD = (XS**2)[None, :] * np.ones((3, 1))            # shape (3, 4)
+FIELD = (XS**2)[None, :] * np.ones((3, 1))            # f = x^2, 3 rows of y
+#        ^ shape (3, 4): rows indexed by y, columns by x -> axes=(y_axis, x_axis)
 
-df_dx=Index("df_dx", inputs.F.gradient(axis=x_axis), axes=(y_axis, x_axis)),
-df_dy=Index("df_dy", inputs.F.gradient(axis=y_axis), axes=(y_axis, x_axis)),
-lap=Index("lap", inputs.F.laplacian(axes=(y_axis, x_axis)), axes=(y_axis, x_axis)),
+
+@define("field2d")
+class Field2D(Model):
+    @inputs
+    class Inputs:
+        F: Index
+
+    @outputs
+    class Outputs:
+        df_dx: Index   # one component of the gradient
+        df_dy: Index   # the other component
+        lap: Index     # both second derivatives, summed
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        return Field2D.Outputs(
+            df_dx=Index("df_dx", inputs.F.gradient(axis=x_axis), axes=(y_axis, x_axis)),
+            df_dy=Index("df_dy", inputs.F.gradient(axis=y_axis), axes=(y_axis, x_axis)),
+            # axes=(y,x) -- BOTH axes, summed into a single field.
+            lap=Index("lap", inputs.F.laplacian(axes=(y_axis, x_axis)),
+                      axes=(y_axis, x_axis)),
+        )
+
+
+fmodel = Field2D(inputs=Field2D.Inputs(F=Index("F", FIELD, axes=(y_axis, x_axis))))
+fscenario = Scenario(fmodel)
+fresult = Evaluation(fscenario).evaluate(
+    ensemble=DistributionEnsemble(fscenario, size=1),
+)
 ```
 
 Why `y` **before** `x`: when you attach `axes=` to an injected array, the axes
@@ -120,6 +186,30 @@ are zipped **positionally** against that array's shape. `FIELD` has shape
 `(3, 4)` — 3 rows, 4 columns — so `axes=(y_axis, x_axis)` declares "first
 dimension is `y` with 3 points, second is `x` with 4". The order follows the
 array, not taste. Getting it wrong is silent — see PART 4.
+
+Reading the outputs back, the dimensions do **not** necessarily come back in
+the order you declared them:
+
+```python
+df_dx = fresult.labeled(fmodel.outputs.df_dx)
+df_dy = fresult.labeled(fmodel.outputs.df_dy)
+lap = fresult.labeled(fmodel.outputs.lap)
+```
+
+```text
+>>> fmodel.inputs.F.sizes                  # as declared on input
+{'y': 3, 'x': 4}
+>>> df_dx                                  # as returned
+LabeledArray(dims=('x', 'y'), shape=(4, 3))
+>>> df_dx.values
+array([[0., 0., 0.],
+       [2., 2., 2.],
+       [4., 4., 4.],
+       [0., 0., 0.]])
+```
+
+Always check `.dims` before reading `.values`. Here they are `('x', 'y')`, so
+the script prints `df_dx.values.T` to show rows as `y`, like the input.
 
 The input field (rows are `y`, columns are `x = 0, 1, 2, 3`):
 
@@ -195,11 +285,51 @@ The value-carrying rules let you state an actual physical edge condition (a wall
 held at 20 degrees, a known flux) rather than only picking an extrapolation
 shape. The script attaches each rule to the axis and runs both operators:
 
+The boundary is part of the axis, so, as in PART 1, the model is built once
+per rule:
+
 ```python
-edge_axis = DomainAxis("edge", type=SpaceType(spacing=1.0, boundary=bc))
-...
-grad=Index("grad", inputs.T.gradient(axis=edge_axis), axes=(edge_axis,)),
-lap=Index("lap", inputs.T.laplacian(axes=(edge_axis,)), axes=(edge_axis,)),
+EDGE_ROW = np.array([0.0, 10.0, 20.0, 50.0])
+
+for bc, label in (
+    (Neumann(0.0), "Neumann(0)  default"),
+    (Neumann(5.0), "Neumann(5)"),
+    (Constant(0.0), "Constant(0)"),
+    (Constant(100.0), "Constant(100)"),
+    (Nearest(), "Nearest()"),
+    (Wrap(), "Wrap()"),
+    (Linear(), "Linear()"),
+):
+    edge_axis = DomainAxis("edge", type=SpaceType(spacing=1.0, boundary=bc))
+
+    @define(f"edge_{label}")
+    class EdgeModel(Model):
+        @inputs
+        class Inputs:
+            T: Index
+
+        @outputs
+        class Outputs:
+            grad: Index
+            lap: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            return EdgeModel.Outputs(
+                grad=Index("grad", inputs.T.gradient(axis=edge_axis),
+                           axes=(edge_axis,)),
+                lap=Index("lap", inputs.T.laplacian(axes=(edge_axis,)),
+                          axes=(edge_axis,)),
+            )
+
+    edge_model = EdgeModel(inputs=EdgeModel.Inputs(
+        T=Index("T", EDGE_ROW, axes=(edge_axis,)),
+    ))
+    edge_scenario = Scenario(edge_model)
+    edge_res = Evaluation(edge_scenario).evaluate(
+        ensemble=DistributionEnsemble(edge_scenario, size=1),
+    )
+    g = edge_res.labeled(edge_model.outputs.grad).values
+    lp = edge_res.labeled(edge_model.outputs.lap).values
 ```
 
 With `f = [0, 10, 20, 50]` and `h = 1`:
@@ -257,5 +387,5 @@ since `f` is constant along `y` that returns all zeros rather than `2x`. A wrong
 answer with no warning.
 
 Axis order is load-bearing **on input**: `axes=` must follow the array's shape.
-Only afterwards is it safe to ignore order and select by name (as `labeled()`
-does — see the `field()` helper in the script).
+On output, the order is not guaranteed either (PART 2 got `('x', 'y')` back):
+read `.dims` and select by name rather than assuming a position.

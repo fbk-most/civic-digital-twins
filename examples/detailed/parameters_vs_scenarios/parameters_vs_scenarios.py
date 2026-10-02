@@ -19,8 +19,16 @@ import numpy as np
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
-    define, inputs, outputs, Index, Model, CategoricalIndex, DistributionIndex,
-    Scenario, CrossProductEnsemble, Evaluation,
+    CategoricalIndex,
+    CrossProductEnsemble,
+    DistributionIndex,
+    Evaluation,
+    Index,
+    Model,
+    Scenario,
+    define,
+    inputs,
+    outputs,
 )
 
 # -----------------------------------------------------------------------------
@@ -97,7 +105,7 @@ grid_res = Evaluation(base_scenario).evaluate(
     parameters={p1: np.array([1.0, 2.0, 3.0]), p2: np.array([10.0, 20.0])},
 )
 
-labelled = grid_res.labeled(model.outputs.y)
+labelled = grid_res.labeled(model.outputs.y)      # dims ('p1', 'p2')
 print(f"\n  expected_value shape : {grid_res.expected_value(model.outputs.y).shape}"
       f"   dims {labelled.dims}")
 print(f"  p1 values : {grid_res.parameter_values_for(p1)}")
