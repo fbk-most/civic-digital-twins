@@ -10,7 +10,7 @@
 #
 # Authentication uses PyPI's Trusted Publisher mechanism (OIDC), so no
 # long-lived API token is stored in GitHub secrets.  One-time setup on
-# PyPI is required — see the "Releasing" section of README.md.
+# PyPI is required — see docs/repository-setup.md.
 
 name: Publish to PyPI
 
