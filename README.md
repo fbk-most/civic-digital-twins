@@ -237,9 +237,27 @@ feature/* ──PR─▶ dev ──PR─▶ main ──tag─▶ PyPI
 - **`dev`** is the integration branch. It always carries a `+dev` version
   marker (e.g. `0.11.0+dev`).
 - **`main`** contains only released commits. Merging `dev` into `main` is
-  always immediately followed by a version tag and a PyPI release.
+  always immediately followed by a version tag and a PyPI release. Only
+  repository admins can update `main` and create release tags.
 
 ## Releasing
+
+Steps 2–4 must be performed by a repository admin: they push directly to the
+protected `dev` branch, merge into `main`, and push a release tag — all of
+which only admins can do (see
+[docs/repository-setup.md](docs/repository-setup.md)).
+
+Every PR into `main` — the `dev → main` release PR, a hotfix PR, or a fix
+merged straight into `main` before tagging — must end its description with
+the line:
+```
+Release-PR: true
+```
+GitHub uses the PR description as the merge commit message, so the commit
+that lands on `main` carries the trailer. `main`'s commits later become part
+of `dev`, where the trailer tells `CI (dev)` that their version legitimately
+has no `+dev` marker. `CI (dev)` also skips that check for any commit already
+contained in `main`, as a second safeguard.
 
 ### Step 1 — Merging a feature PR into `dev`
 
@@ -331,7 +349,8 @@ Perform the following steps on the `dev` branch before opening the
    git push origin dev
    ```
 
-Open the PR from `dev` to `main`. The `CI (release)` workflow runs the full
+Open the PR from `dev` to `main`, ending its description with
+`Release-PR: true` (see above). The `CI (release)` workflow runs the full
 verification suite automatically (all Python versions, doc examples, domain
 examples, SPDX headers, dependency audit, build smoke test). Merge once it
 is green, using **"Create a merge commit"** (the only method `main`'s
@@ -341,34 +360,34 @@ commits.
 
 ### Step 3 — Tagging and publishing
 
-After the `dev → main` PR is merged, GitHub may have auto-deleted `dev`
-(if `delete_branch_on_merge` is enabled). Restore it from the merge
-commit before continuing — either click **"Restore branch"** on the merged
-PR page, or recreate it locally:
+Tag and push the release:
 ```bash
 git checkout main && git pull
-git push origin main:refs/heads/dev
+git tag v<version> && git push origin v<version>
 ```
 
-Then tag and push the release:
-```bash
-git tag v<version> && git push origin main v<version>
-```
-
-Go to the repository's **Releases** page, review the auto-created draft, write
-release notes, and click **Publish release**. This triggers the
-[`publish.yml`](.github/workflows/publish.yml) workflow, which builds the
-sdist + wheel, runs `twine check`, and publishes to PyPI via OIDC — no manual
-build or upload step is needed.
+Go to the repository's **Releases** page, create (or review) the draft
+release for the tag, write the release notes, and click **Publish release**.
+This triggers the [`publish.yml`](.github/workflows/publish.yml) workflow,
+which builds the sdist + wheel, runs `twine check`, and — once the run is
+approved in the `publish` environment — publishes to PyPI via OIDC. No
+manual build or upload step is needed. Check that the release notes list
+every PR merged since the previous release: the generated list can omit some.
 
 ### Step 4 — Post-release: bump `dev` back to development
 
-After the release is published, switch back to `dev` and prepare it for the
-next development cycle:
+After the release is published, bring `dev` up to `main`'s tip, which now
+also contains the release merge commit:
 
 ```bash
 git checkout dev && git pull
+git merge --ff-only origin/main
 ```
+
+Do not push `dev` yet: the next commit restores the `+dev` marker, and `dev`
+is pushed once, with it on top. Don't merge feature PRs into `dev` between
+the release merge and this push: `--ff-only` then fails, and `dev` has to
+absorb `main` with a real merge (`git merge origin/main`) instead.
 
 Edit `pyproject.toml` to bump to the next planned version with the `+dev`
 marker:
@@ -407,7 +426,9 @@ Two situations don't fit the normal `dev → main` flow above:
 Both use a dedicated `hotfix/vX.Y.Z` or `backport/vX.Y.Z` branch as a
 short-lived staging branch: individual pieces of work are PR'd and merged
 into it (never committed to directly), then it is either merged onward
-(hotfix) or tagged and released directly (backport).
+(hotfix) or tagged and released directly (backport). Any contributor can
+work on these branches; merging into `main` and tagging require a
+repository admin, as for regular releases.
 
 #### Hotfix procedure
 
@@ -419,7 +440,8 @@ into it (never committed to directly), then it is either merged onward
 3. Once `hotfix/v<version>` contains everything for the release, open a PR
    from it into `main` — this is the actual release PR (version bump,
    changelog, etc. is typically already in place from step 2) and triggers
-   `CI (release)` normally, exactly like a `dev → main` PR.
+   `CI (release)` normally, exactly like a `dev → main` PR. End its
+   description with `Release-PR: true`, like every PR into `main`.
 4. Tag and publish from `main`'s new tip, exactly as in Step 3 above.
 5. Forward-port the same fix into `dev` as its own small PR, so the next
    regular release doesn't reintroduce it. Don't touch `dev`'s in-progress
@@ -458,21 +480,6 @@ even if the target branch doesn't have the trigger yet):
 gh workflow run <workflow-file> --ref <branch-name>
 ```
 
-### One-time setup
-
-> **PyPI Trusted Publisher:** must be configured before the first release.
-> See the [PyPI Trusted Publishers documentation](https://docs.pypi.org/trusted-publishers/).
-
-> **Branch protection:** configure GitHub Rulesets (Settings → Rules →
-> Rulesets) to require `CI (dev)` to pass before merging into `dev`, and all
-> `CI (release)` jobs to pass before merging into `main`. Direct pushes to
-> `main` should be blocked; maintainers should be allowed to bypass `dev`
-> protection for post-release bump commits. `main`'s ruleset must allow only
-> the `merge` method (no squash/rebase) and must not require linear history —
-> squashing or rebasing the `dev → main` PR mints new commit SHAs unrelated
-> to `dev`'s own commits, which detaches `dev` from `main`'s history and
-> makes every subsequent `dev → main` diff re-show already-released commits.
-
 ## Documentation
 
 | Document | Description |
@@ -482,6 +489,7 @@ gh workflow run <workflow-file> --ref <branch-name>
 | [dd-cdt-model.md](docs/design/dd-cdt-model.md) | Model layer reference — index types, `@define`/`compute()`, `Model`, `Evaluation`, `EvaluationResult`, and the domain modeling pattern. |
 | [dd-cdt-modularity.md](docs/design/dd-cdt-modularity.md) | Model modularity concept guide — `@define`/`compute()`, `ModelVariant`, decomposition patterns, and Bologna worked example. |
 | [dd-cdt-simulation.md](docs/design/dd-cdt-simulation.md) | Simulation guide — `Scenario`, `CrossProductEnsemble`, `EvaluationHandle`, incremental evaluation, `ModelEvaluator`. |
+| [repository-setup.md](docs/repository-setup.md) | Repository configuration for admins — branch rulesets and bypass, CI workflows, PyPI publishing, Codecov, Dependabot. |
 
 ## License
 

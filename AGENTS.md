@@ -46,8 +46,9 @@ feature/* ──PR──▶ dev ──PR──▶ main ──tag──▶ PyPI
 - `dev` always carries a `+dev` version marker (e.g. `0.11.0+dev`).
 - `main` contains only released commits; every merge to `main` is immediately
   tagged and published to PyPI.
-- Post-release, `dev` is bumped to `<next>+dev` with a direct push by a
-  maintainer (bypassing the branch protection PR requirement).
+- Release steps (README "Releasing", Steps 2–4) push directly to `dev`,
+  merge into `main` and push a release tag; only a repository admin can do
+  this, via the ruleset bypass described in `docs/repository-setup.md`.
 
 ## Dev PR checklist
 
