@@ -23,6 +23,7 @@ from civic_digital_twins.dt_model.axes import (
     domain_axis_position,
     filter_by_role,
     union_axes,
+    validate_axis_extent,
 )
 
 
@@ -126,6 +127,18 @@ class TestDomainAxis:
         assert rebuilt.type.spacing == 5.0
         assert isinstance(rebuilt.type.boundary, Wrap)
 
+    def test_sequence_derived_types_allow_optional_length(self):
+        """TimeType/SpaceType can be used with and without declared length."""
+        t_free = DomainAxis("t_free", type=TimeType())
+        t_len = DomainAxis("t_len", type=TimeType(length=24))
+        x_free = DomainAxis("x_free", type=SpaceType())
+        x_len = DomainAxis("x_len", type=SpaceType(length=128))
+
+        assert isinstance(t_free.type, TimeType) and t_free.type.length is None
+        assert isinstance(t_len.type, TimeType) and t_len.type.length == 24
+        assert isinstance(x_free.type, SpaceType) and x_free.type.length is None
+        assert isinstance(x_len.type, SpaceType) and x_len.type.length == 128
+
 
 class TestTimeAxisTyped:
     """TIME_AXIS is now a typed DomainAxis but keeps full backward compatibility."""
@@ -148,27 +161,60 @@ class TestDomainTypeLattice:
         """SetType is a parameterless marker."""
         assert repr(SetType()) == "SetType()"
 
-    def test_sequence_type_is_a_marker(self):
-        """SequenceType carries no fields: shift vs. roll is always an explicit call-site choice."""
-        assert repr(SequenceType()) == "SequenceType()"
+    def test_sequence_type_defaults_to_undefined_length(self):
+        """SequenceType supports optional declared length and defaults to None."""
+        s = SequenceType()
+        assert s.length is None
+        assert repr(s) == "SequenceType()"
+
+    def test_sequence_type_supports_declared_length(self):
+        """SequenceType(length=...) is round-tripped in repr."""
+        s = SequenceType(length=12)
+        assert s.length == 12
+        assert repr(s) == "SequenceType(length=12)"
+
+    def test_sequence_type_rejects_non_positive_length(self):
+        """Declared lengths must be positive when provided."""
+        import pytest
+
+        with pytest.raises(ValueError, match="must be positive"):
+            SequenceType(length=0)
+
+    def test_sequence_type_validates_extent(self):
+        """SequenceType validates concrete extents via its declared length."""
+        import pytest
+
+        axis = DomainAxis("t", type=SequenceType(length=3))
+        validate_axis_extent(axis, 3)
+        validate_axis_extent(axis, 1)
+        with pytest.raises(ValueError, match="declares length=3"):
+            validate_axis_extent(axis, 2)
+
+    def test_untyped_axis_has_no_extent_validation(self):
+        """Untyped axes impose no static extent constraints."""
+        validate_axis_extent(DomainAxis("u"), 17)
 
     def test_time_type_is_a_sequence_type(self):
         """TimeType extends SequenceType (lattice: SequenceType subset of TimeType)."""
-        t = TimeType()
+        t = TimeType(length=24)
         assert isinstance(t, SequenceType)
-        assert repr(t) == "TimeType()"
+        assert t.length == 24
+        assert repr(t) == "TimeType(length=24)"
 
     def test_space_type_is_a_sequence_type(self):
-        """SpaceType extends SequenceType and carries a metric + boundary."""
-        s = SpaceType(spacing=2.5, boundary=Constant(1.0))
+        """SpaceType extends SequenceType and carries metric + boundary + optional length."""
+        s = SpaceType(spacing=2.5, boundary=Constant(1.0), length=7)
         assert isinstance(s, SequenceType)
+        assert s.length == 7
         assert s.spacing == 2.5
         assert isinstance(s.boundary, Constant)
         assert s.boundary.value == 1.0
+        assert repr(s) == "SpaceType(spacing=2.5, boundary=Constant(value=1.0), length=7)"
 
     def test_space_type_defaults(self):
-        """SpaceType defaults to unit spacing and the Reflect (zero-flux) boundary."""
+        """SpaceType defaults to unit spacing, Reflect boundary, and undefined length."""
         s = SpaceType()
+        assert s.length is None
         assert s.spacing == 1.0
         assert s.boundary is Reflect
 

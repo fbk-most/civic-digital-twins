@@ -25,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from ...axes import DOMAIN, Axis, domain_axis_position
+from ...axes import DOMAIN, Axis, domain_axis_position, validate_axis_extent
 from .. import compileflags
 from ..frontend import graph
 from . import kernels, numpy_ast
@@ -629,6 +629,8 @@ def align_to_domain_block(
         base = arr.ndim - n
         arr = np.moveaxis(arr, [base + own.index(ax) for ax in ordered], [base + i for i in range(n)])
     present = arr.shape[arr.ndim - n :] if n else ()
+    for i, ax in enumerate(ordered):
+        validate_axis_extent(ax, present[i])
     target: list[int] = []
     consumed = 0
     for ax in domain_axes:

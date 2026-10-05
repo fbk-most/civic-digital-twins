@@ -111,6 +111,9 @@ GenericIndex  (ABC)
     methods reading no axis metadata, matching xarray's own `shift`/`roll`
     split), `.diff(periods=1, *, axis=..., fill_value=0.0)`
     (`self - self.shift(...)`), and `.cumulative(*, axis=...)` (running sum).
+    `SequenceType` (and derived `TimeType`/`SpaceType`) may also declare an
+    optional static `length`; when present, evaluator alignment checks arrays
+    carrying that axis use extent `length` or broadcast singleton `1`.
   - A `SpaceType` DOMAIN axis additionally supports `.gradient(*, axis=...)`
     (first derivative, central differences) and `.laplacian(*, axes=...)`
     (sum of second derivatives over one or more `SpaceType` axes — the
