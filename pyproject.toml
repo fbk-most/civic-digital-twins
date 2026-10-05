@@ -134,6 +134,10 @@ indent-width = 4
 # Ruff Formatting Rules
 [tool.ruff.format]
 
+# Detailed examples are teaching scripts whose hand-aligned code and comments
+# would be destroyed by the formatter. They are still linted.
+exclude = ["examples/detailed/**"]
+
 # Use double quotes for strings
 quote-style = "double"
 

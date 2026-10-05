@@ -20,8 +20,7 @@ The same model is grown to show the purpose of each ensemble:
 | 1    | `y = x1 * x2`               | `DistributionEnsemble` | the samples of`y` resulting from sampling `x1` and `x2`   | The distribution of`y` when inputs are uncertain                           |
 | 2    | same`y = x1 * x2`           | `PartitionedEnsemble`  | the value of`y` in a grid made from `x1` and `x2` samples | How do`x1` and `x2` contribute to `y`                                  |
 | 3    | add`cat1`, `cat2`, `xc` | `CrossProductEnsemble` | Samples of`y` **per branch**                            | How the distribution of`y` depends on the categories introduced (branches) |
-| 4    | `y = f(x2)`, smooth, costly | your own`AxisEnsemble` | exact expectation in 5 evaluations                              |                                                                              |
-| 5    | —                            | any                      | practical traps                                                 |                                                                              |
+| 4    | —                            | any                      | practical traps                                                 |                                                                              |
 
 An ensemble is picked based on *what we want to read from the results*. Some ensembles may be equivalent in the expected value we obtain but do not allow for easy access to useful information.
 
@@ -498,28 +497,7 @@ def xc_dist(cat1: str, cat2: str):
 
 
 xc = ConditionalDistributionIndex("xc", parents=[cat1, cat2], factory=xc_dist)
-```
 
-The factory is an ordinary function, so you can call it to see what each
-branch gets:
-
-```text
->>> xc_dist(cat1="a", cat2="p").median()
-np.float64(20.0)
->>> xc_dist(cat1="b", cat2="p").median()
-np.float64(1000.0)
->>> xc_dist(cat1="b", cat2="q").median()
-np.float64(8000.0)
-```
-
-The branch structure mirrors `CatModel` (medians 20, 1000, 8000 are in the
-same 1 : 50 : 400 ratio), but each branch now has its *own* distribution,
-not a scaled copy of one.
-
-The model declares `xc` as an input like any other, and `compute()` needs no
-indicators at all:
-
-```python
 @define("full")
 class FullModel(Model):
     @inputs
@@ -544,29 +522,7 @@ full_model = FullModel(inputs=FullModel.Inputs(
 full_scenario = Scenario(full_model)
 ```
 
-The price is that only `CrossProductEnsemble` can evaluate it.
-`DistributionEnsemble` refuses:
-
-```python
-try:
-    DistributionEnsemble(full_scenario, size=1_000, rng=np.random.default_rng(0))
-except ValueError as err:
-    print(f"    ValueError: {err}")
-```
-
-```text
-  DistributionEnsemble on the FULL model (xc is conditional):
-    ValueError: DistributionEnsemble requires all abstract indexes to be Distribution-backed or CategoricalIndex; unsupported indexes: xc
-```
-
-`DistributionEnsemble` draws every input independently from its own fixed
-distribution. `xc` has no fixed distribution: to draw it, you must first know
-which branch the draw is in. `CrossProductEnsemble` works in that order — it
-fixes the branch first, and inside each branch `xc`'s distribution is known.
-Since 3a already showed it is the better choice for rare branches anyway,
-`ConditionalDistributionIndex` + `CrossProductEnsemble` is the idiomatic pair
-for branch-dependent models. From here on, everything runs on `FullModel`
-with `CrossProductEnsemble`.
+The price is that **only `CrossProductEnsemble` can evaluate it**. `DistributionEnsemble` draws every input independently from its own fixed distribution. `xc` has no fixed distribution: to draw it, you must first know which branch the draw is in. `CrossProductEnsemble` works in that order — it fixes the branch first, and inside each branch `xc`'s distribution is known.
 
 ### 3c. `FullModel` per branch
 
@@ -763,74 +719,9 @@ partition the ensemble or your weights are mishandled.
 
 ---
 
-## PART 4 — your own `AxisEnsemble`: exact integration of a smooth function
+## PART 4 — traps that apply whichever ensemble you chose
 
-`y` is now a smooth function of `x2` alone, and each evaluation is expensive.
-We want the expectation in as few evaluations as possible.
-
-Monte Carlo converges at 1/√n. For a smooth function of a normal, Gaussian
-quadrature is exact with a handful of nodes. The library ships no quadrature
-ensemble, so we write one. `AxisEnsemble` is a structural `Protocol`: three
-members, no inheritance, nothing to register.
-
-```python
-class QuadratureEnsemble:
-    def __init__(self, index, mu: float, sigma: float, n: int = 5):
-        nodes, weights = np.polynomial.hermite_e.hermegauss(n)
-        self._index = index
-        self._values = mu + sigma * nodes
-        self._weights = weights / weights.sum()     # MUST sum to 1.0
-        self._axis = Axis("quadrature", ENSEMBLE)   # MUST be role ENSEMBLE
-
-    @property
-    def ensemble_axes(self):
-        return (self._axis,)
-
-    @property
-    def ensemble_weights(self):
-        return (self._weights,)
-
-    def assignments(self):
-        return {self._index: self._values}
-```
-
-No inheritance is needed — the class satisfies the protocol structurally:
-
-```text
-  isinstance(quad, AxisEnsemble) -> True  (runtime_checkable Protocol)
-```
-
-With `y = 1000 · x2²`, the true value is `1000 · (1.0² + 0.2²) = 1040`:
-
-```text
-    quadrature,     5 evaluations -> 1040.000000  EXACT
-    Monte Carlo,    500 evaluations -> 1030.368315  (error -9.631685)
-    Monte Carlo,   5000 evaluations -> 1037.820332  (error -2.179668)
-    Monte Carlo,  50000 evaluations -> 1040.451679  (error +0.451679)
-```
-
-**Why write your own:** 5 model evaluations against 50 000, and the 5 are exact.
-When evaluations are expensive and the response is smooth, that is decisive —
-and unreachable with the built-in ensembles.
-
-**The contract**, if you write one:
-
-- **Weights must sum to 1.0.** `expected_value()` is a weighted average and
-  silently mis-scales otherwise.
-- **Every array from `assignments()` must carry all ensemble dims, in order**,
-  size 1 where the index does not vary along an axis. A wrong length surfaces
-  as a raw numpy broadcast error at `evaluate()` time, not as a helpful message
-  about the protocol.
-- **Axes must have role `ENSEMBLE`** — that is what marks them for integration.
-
-Latin hypercube, historical records replayed as scenarios, or a fixed list of
-hand-picked cases all drop in the same way.
-
----
-
-## PART 5 — traps that apply whichever ensemble you chose
-
-### 5a. `max_categorical_size` silently abandons exactness above 20
+### 4a. `max_categorical_size` silently abandons exactness above 20
 
 The model uses a categorical `cat_big` with 25 outcomes `L0`…`L24`, where
 outcome `Li` has weight proportional to `i + 1` and contributes the value `i`
@@ -843,7 +734,7 @@ CrossProductEnsemble(many_scenario, max_categorical_size=mx,
 ```
 
 ```text
-  5a. max_categorical_size (support 25, true mean 16)
+  4a. max_categorical_size (support 25, true mean 16)
       max_categorical_size= 20 -> size=20 SAMPLED (noisy)     [15.7  15.55 15.4  15.65]
       max_categorical_size= 25 -> size=25 enumerated (exact)  [16. 16. 16. 16.]
 ```
@@ -855,7 +746,7 @@ the answer is exactly 16 regardless of seed. Nothing warns you about the
 switch; set `max_categorical_size` above your largest support when you need
 exactness.
 
-### 5b. Support-only categoricals cannot be enumerated
+### 4b. Support-only categoricals cannot be enumerated
 
 ```python
 cat_bare = CategoricalIndex("cat_bare", ["p", "q"])   # no weights
@@ -863,14 +754,14 @@ CrossProductEnsemble(Scenario(...))                    # -> ValueError
 ```
 
 ```text
-  5b. a categorical built from a bare list has no weights
+  4b. a categorical built from a bare list has no weights
       raises: CategoricalIndex 'cat_bare' was constructed without weights (support-only); '.outcomes' ...
 ```
 
 Enumeration needs a probability per outcome, and a bare list provides none.
 Give weights at construction, or via a `Scenario` dict override.
 
-### 5c. Reproducibility needs a *fresh* generator each time
+### 4c. Reproducibility needs a *fresh* generator each time
 
 The helper `basic_mean(generator)` runs the Part 1 model with 400 draws and
 returns `E[y]`. Each line calls it twice:
@@ -883,7 +774,7 @@ basic_mean(shared), basic_mean(shared)
 ```
 
 ```text
-  5c. reproducibility needs a FRESH generator each time
+  4c. reproducibility needs a FRESH generator each time
       no rng           :  99.6176  101.2565   <- global state, differs
       fresh default_rng:  99.2009   99.2009   <- reproducible
       ONE rng reused   :  99.2009  100.0243   <- state advances, differs
@@ -894,12 +785,12 @@ basic_mean(shared), basic_mean(shared)
 second does not, because the generator's state advanced. To reproduce a
 result, construct a new `default_rng(seed)` for each ensemble.
 
-### 5d. An ensemble is a recipe; the two kinds differ on reuse
+### 4d. An ensemble is a recipe; the two kinds differ on reuse
 
 Evaluating **one** ensemble object twice and comparing the draws:
 
 ```text
-  5d. reusing ONE ensemble object across two evaluate() calls
+  4d. reusing ONE ensemble object across two evaluate() calls
       DistributionEnsemble draws identical? False  <- RE-SAMPLES
       CrossProductEnsemble draws identical? True  <- STABLE
 ```
@@ -910,14 +801,14 @@ Evaluating **one** ensemble object twice and comparing the draws:
 So a shared `DistributionEnsemble` does *not* pin two scenarios to the same
 noise — the draws move underneath you.
 
-### 5e. `n_samples_per_combo` is per branch, and the weight is split
+### 4e. `n_samples_per_combo` is per branch, and the weight is split
 
 ```python
 CrossProductEnsemble(full_scenario, n_samples_per_combo=n, rng=np.random.default_rng(0))
 ```
 
 ```text
-  5e. n_samples_per_combo is PER BRANCH, and the weight is split
+  4e. n_samples_per_combo is PER BRANCH, and the weight is split
       n=1: size= 4  weights=[0.792 0.198 0.008 0.002]
       n=3: size=12  weights=[0.264  0.264  0.264  0.066  0.066  0.066  0.0027 0.0027 0.0027 0.0007
  0.0007 0.0007]
@@ -929,7 +820,7 @@ scenarios, and its probability is split three ways (`0.792 / 3 = 0.264`). That
 equal allocation is what protects the rare `cat1=b` branch in Part 3. Cost =
 branches × n × shape.
 
-### 5f. `sample_across`, for plotting a weighted ensemble
+### 4f. `sample_across`, for plotting a weighted ensemble
 
 A weighted ensemble cannot be histogrammed directly — rows have different
 weights. `sample_across` resamples it into equally-weighted draws:
@@ -943,7 +834,7 @@ The script measures what fraction of the resampled values come from the
 0.01:
 
 ```text
-  5f. sample_across turns a WEIGHTED ensemble into plottable samples
+  4f. sample_across turns a WEIGHTED ensemble into plottable samples
       8 scenarios      ->  2000 samples, fraction from the cat1=b branch = 0.0090
       20000 scenarios  -> 20000 samples, fraction from the cat1=b branch = 0.4518
       (true cat1=b weight is 0.01)
@@ -967,7 +858,6 @@ count.
 | `DistributionEnsemble` | continuous noise, one marginal answer, and you want equal-weight draws for quantiles and tails. |
 | `CrossProductEnsemble` | per-branch answers, rare branches, exact probabilities, or**any** conditional index.      |
 | `PartitionedEnsemble`  | independent sources varied one at a time; the result is a grid reducible along either axis.     |
-| your own                 | a better integration rule for your structure; three members, no inheritance.                    |
 
 Decide by what you must *read off* the result. That, not speed, is what actually
 separates them.

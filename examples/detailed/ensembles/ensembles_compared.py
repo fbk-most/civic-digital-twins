@@ -16,7 +16,6 @@ import numpy as np
 from scipy import stats
 
 from civic_digital_twins.dt_model import (
-    AxisEnsemble,
     CategoricalIndex,
     ConditionalDistributionIndex,
     CrossProductEnsemble,
@@ -33,7 +32,6 @@ from civic_digital_twins.dt_model import (
     outputs,
     sample_across,
 )
-from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
 
 # =============================================================================
 # PART 0 -- no uncertainty: no ensemble at all
@@ -45,16 +43,23 @@ print("=" * 74)
 
 @define("fixed")
 class CertainModel(Model):
+    """y = k1 * k2, with fixed constant inputs."""
+
     @inputs
     class Inputs:
+        """Model inputs."""
+
         k1: Index
         k2: Index
 
     @outputs
     class Outputs:
+        """Model outputs."""
+
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
+        """Compute y = k1 * k2."""
         return CertainModel.Outputs(y=Index("y", inputs.k1 * inputs.k2))
 
 
@@ -81,16 +86,23 @@ print("=" * 74)
 
 @define("basic")
 class BasicModel(Model):
+    """y = x1 * x2, with two continuous uncertain inputs."""
+
     @inputs
     class Inputs:
+        """Model inputs."""
+
         x1: DistributionIndex
         x2: DistributionIndex
 
     @outputs
     class Outputs:
+        """Model outputs."""
+
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
+        """Compute y = x1 * x2."""
         return BasicModel.Outputs(y=Index("y", inputs.x1 * inputs.x2))
 
 
@@ -109,7 +121,7 @@ basic_draws = np.asarray(basic_res[basic_model.outputs.y]).ravel()    # Access v
 
 (basic_w,) = basic_ens.ensemble_weights                               # Access the weights of each sample in ensemble
 
-basic_x1 = np.asarray(basic_res[x1]).ravel()                          # Access values x1 took using directly the 'x1' Index
+basic_x1 = np.asarray(basic_res[x1]).ravel()                          # Access values x1 took via the 'x1' Index
 
 print("\n  convergence of the mean (true value 100 x 1.0 = 100):")
 for size in (100, 1_000, 10_000, 100_000):
@@ -177,8 +189,12 @@ cat2 = CategoricalIndex("cat2", {"p": 0.80, "q": 0.20})
 # and 0 otherwise, so the categoricals enter the arithmetic directly.
 @define("cat")
 class CatModel(Model):
+    """y = x1 * x2, scaled by a factor that depends on the (cat1, cat2) branch."""
+
     @inputs
     class Inputs:
+        """Model inputs."""
+
         cat1: CategoricalIndex
         cat2: CategoricalIndex
         x1: DistributionIndex
@@ -186,9 +202,12 @@ class CatModel(Model):
 
     @outputs
     class Outputs:
+        """Model outputs."""
+
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
+        """Compute y = x1 * x2 * factor(cat1, cat2)."""
         is_b = inputs.cat1 == "b"
         is_q = inputs.cat2 == "q"
         # factor: 1 if cat1=a, 50 if (b, p), 400 if (b, q)
@@ -275,6 +294,7 @@ for c1_outcome, c2_outcome, true_mean in (("a", "p", 100), ("a", "q", 100),
 # xc depends on BOTH categoricals: a CONDITIONAL distribution. The factory
 # receives parents as keyword arguments named after them.
 def xc_dist(cat1: str, cat2: str):
+    """Return the distribution of xc in the (cat1, cat2) branch."""
     if cat1 == "a":
         return stats.lognorm(s=0.5, scale=20.0)       # the common case
     if cat2 == "p":
@@ -287,8 +307,12 @@ xc = ConditionalDistributionIndex("xc", parents=[cat1, cat2], factory=xc_dist)
 
 @define("full")
 class FullModel(Model):
+    """y = xc * x2, where xc's distribution depends on the branch."""
+
     @inputs
     class Inputs:
+        """Model inputs."""
+
         cat1: CategoricalIndex
         cat2: CategoricalIndex
         xc: ConditionalDistributionIndex
@@ -296,9 +320,12 @@ class FullModel(Model):
 
     @outputs
     class Outputs:
+        """Model outputs."""
+
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
+        """Compute y = xc * x2."""
         # x2 is the same PLAIN index from Part 1: it knows nothing about branches.
         return FullModel.Outputs(y=Index("y", inputs.xc * inputs.x2))
 
@@ -401,84 +428,13 @@ print(f"    expected_value()               = {tiny_overall:.4f}")
 
 
 # =============================================================================
-# PART 4 -- your own AxisEnsemble: exact integration of a smooth function
+# PART 4 -- traps that apply whichever ensemble you chose
 # =============================================================================
 print("\n" + "=" * 74)
-print("PART 4 -- a custom AxisEnsemble: exact where sampling only approximates")
+print("PART 4 -- practical traps, independent of which ensemble you picked")
 print("=" * 74)
 
-
-class QuadratureEnsemble:
-    """Integrate a normal uncertainty exactly, with n quadrature nodes."""
-
-    def __init__(self, index, mu: float, sigma: float, n: int = 5):
-        # Probabilists' Hermite nodes integrate against a standard normal;
-        # shift and scale them onto N(mu, sigma).
-        nodes, weights = np.polynomial.hermite_e.hermegauss(n)
-        self._index = index
-        self._values = mu + sigma * nodes
-        self._weights = weights / weights.sum()     # MUST sum to 1.0
-        self._axis = Axis("quadrature", ENSEMBLE)   # MUST be role ENSEMBLE
-
-    @property
-    def ensemble_axes(self):
-        return (self._axis,)
-
-    @property
-    def ensemble_weights(self):
-        return (self._weights,)
-
-    def assignments(self):
-        # One axis, one index varying along it -> shape (n,).
-        return {self._index: self._values}
-
-
-@define("smooth")
-class SmoothModel(Model):
-    @inputs
-    class Inputs:
-        x2: DistributionIndex
-
-    @outputs
-    class Outputs:
-        y: Index
-
-    def compute(self, inputs: Inputs) -> Outputs:
-        # E[y] = 1000 * E[x2^2] = 1000 * (1.0^2 + 0.2^2) = 1040
-        return SmoothModel.Outputs(
-            y=Index("y", inputs.x2 * inputs.x2 * 1000.0)
-        )
-
-
-smooth_model = SmoothModel(inputs=SmoothModel.Inputs(x2=x2))
-smooth_scenario = Scenario(smooth_model)
-
-quad = QuadratureEnsemble(x2, mu=1.0, sigma=0.2, n=5)
-print(f"\n  isinstance(quad, AxisEnsemble) -> {isinstance(quad, AxisEnsemble)}"
-      f"  (runtime_checkable Protocol)")
-
-quad_res = Evaluation(smooth_scenario).evaluate(ensemble=quad)
-print("\n  E[y], true value 1000 * (1.0^2 + 0.2^2) = 1040")
-print(f"    quadrature,     5 evaluations -> "
-      f"{float(quad_res.expected_value(smooth_model.outputs.y)):11.6f}  EXACT")
-for size in (500, 5_000, 50_000):
-    mc_res = Evaluation(smooth_scenario).evaluate(
-        ensemble=DistributionEnsemble(smooth_scenario, size=size,
-                                      rng=np.random.default_rng(0)),
-    )
-    got = float(mc_res.expected_value(smooth_model.outputs.y))
-    print(f"    Monte Carlo, {size:6d} evaluations -> {got:11.6f}  "
-          f"(error {got - 1040.0:+.6f})")
-
-
-# =============================================================================
-# PART 5 -- traps that apply whichever ensemble you chose
-# =============================================================================
-print("\n" + "=" * 74)
-print("PART 5 -- practical traps, independent of which ensemble you picked")
-print("=" * 74)
-
-# --- 5a. max_categorical_size silently abandons exactness above 20 ----------
+# --- 4a. max_categorical_size silently abandons exactness above 20 ----------
 levels = {f"L{i}": (i + 1) for i in range(25)}
 _total = sum(levels.values())
 levels = {k: v / _total for k, v in levels.items()}
@@ -488,15 +444,22 @@ cat_big = CategoricalIndex("cat_big", levels)
 
 @define("manylevels")
 class ManyLevels(Model):
+    """y = i when cat_big takes the outcome L<i>."""
+
     @inputs
     class Inputs:
+        """Model inputs."""
+
         cat_big: CategoricalIndex
 
     @outputs
     class Outputs:
+        """Model outputs."""
+
         y: Index
 
     def compute(self, inputs: Inputs) -> Outputs:
+        """Compute y = the numeric suffix of cat_big's outcome."""
         acc = 0.0
         for key in levels:
             acc = acc + float(key[1:]) * (inputs.cat_big == key)
@@ -505,7 +468,7 @@ class ManyLevels(Model):
 
 many_model = ManyLevels(inputs=ManyLevels.Inputs(cat_big=cat_big))
 many_scenario = Scenario(many_model)
-print(f"\n  5a. max_categorical_size (support 25, true mean {TRUE_LEVEL:g})")
+print(f"\n  4a. max_categorical_size (support 25, true mean {TRUE_LEVEL:g})")
 for mx in (20, 25):
     vals = [
         float(Evaluation(many_scenario).evaluate(
@@ -519,33 +482,41 @@ for mx in (20, 25):
     print(f"      max_categorical_size={mx:3d} -> size={size:2d} {tag:19s} "
           f"{np.round(vals, 2)}")
 
-# --- 5b. support-only categoricals cannot be enumerated ---------------------
-print("\n  5b. a categorical built from a bare list has no weights")
+# --- 4b. support-only categoricals cannot be enumerated ---------------------
+print("\n  4b. a categorical built from a bare list has no weights")
 try:
     cat_bare = CategoricalIndex("cat_bare", ["p", "q"])
 
     @define("bare")
     class BareModel(Model):
+        """y = 1 when cat_bare is p, 0 otherwise."""
+
         @inputs
         class Inputs:
+            """Model inputs."""
+
             cat_bare: CategoricalIndex
 
         @outputs
         class Outputs:
+            """Model outputs."""
+
             y: Index
 
         def compute(self, inputs: Inputs) -> Outputs:
+            """Compute y = indicator of cat_bare == p."""
             return BareModel.Outputs(y=Index("y", 1.0 * (inputs.cat_bare == "p")))
 
     CrossProductEnsemble(Scenario(BareModel(inputs=BareModel.Inputs(cat_bare=cat_bare))))
 except ValueError as exc:
     print(f"      raises: {str(exc)[:88]}...")
 
-# --- 5c. rng semantics ------------------------------------------------------
-print("\n  5c. reproducibility needs a FRESH generator each time")
+# --- 4c. rng semantics ------------------------------------------------------
+print("\n  4c. reproducibility needs a FRESH generator each time")
 
 
 def basic_mean(generator):
+    """Return E[y] of the Part 1 model from 400 draws made with `generator`."""
     return float(Evaluation(basic_scenario).evaluate(
         ensemble=DistributionEnsemble(basic_scenario, size=400, rng=generator),
     ).expected_value(basic_model.outputs.y))
@@ -559,8 +530,8 @@ shared = np.random.default_rng(0)
 print(f"      ONE rng reused   : {basic_mean(shared):8.4f}  {basic_mean(shared):8.4f}"
       f"   <- state advances, differs")
 
-# --- 5d. an ensemble is a recipe; the two kinds differ on reuse -------------
-print("\n  5d. reusing ONE ensemble object across two evaluate() calls")
+# --- 4d. an ensemble is a recipe; the two kinds differ on reuse -------------
+print("\n  4d. reusing ONE ensemble object across two evaluate() calls")
 reuse_de = DistributionEnsemble(basic_scenario, size=800,
                                 rng=np.random.default_rng(0))
 reuse_r1 = Evaluation(basic_scenario).evaluate(ensemble=reuse_de)
@@ -574,17 +545,17 @@ print(f"      CrossProductEnsemble draws identical? "
       f"{np.allclose(np.ravel(reuse_x1[xc]), np.ravel(reuse_x2[xc]))}"
       f"  <- STABLE")
 
-# --- 5e. sampling budget and cost ------------------------------------------
-print("\n  5e. n_samples_per_combo is PER BRANCH, and the weight is split")
+# --- 4e. sampling budget and cost ------------------------------------------
+print("\n  4e. n_samples_per_combo is PER BRANCH, and the weight is split")
 for n in (1, 3):
     be = CrossProductEnsemble(full_scenario, n_samples_per_combo=n,
                               rng=np.random.default_rng(0))
     (bwt,) = be.ensemble_weights
     print(f"      n={n}: size={len(be):2d}  weights={np.round(bwt, 4)}")
 
-# --- 5f. sample_across, for plotting a weighted ensemble --------------------
+# --- 4f. sample_across, for plotting a weighted ensemble --------------------
 # Each scenario contributes max(1, round(w_i x total)) samples.
-print("\n  5f. sample_across turns a WEIGHTED ensemble into plottable samples")
+print("\n  4f. sample_across turns a WEIGHTED ensemble into plottable samples")
 for label, ensemble in ((f"{len(tiny_ens)} scenarios", tiny_ens),
                         (f"{len(full_ens)} scenarios", full_ens)):
     drawn = sample_across(ensemble, [xc], total=2000,
