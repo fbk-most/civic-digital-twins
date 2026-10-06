@@ -15,7 +15,7 @@ from civic_digital_twins.dt_model import (
     inputs,
     outputs,
 )
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SpaceType
 from civic_digital_twins.dt_model.engine.numpybackend.executor import align_to_domain_block
 
 X = Axis("x", DOMAIN)
@@ -194,6 +194,27 @@ class TestAlignToDomainBlock:
 
         with pytest.raises(UnsupportedOperation, match="not among"):
             align_to_domain_block(np.zeros((2,)), (Y,), (X,))
+
+    def test_declared_sequence_length_is_enforced(self):
+        """A SequenceType axis with length enforces dimension size (or singleton broadcast)."""
+        t = DomainAxis("t", type=SequenceType(length=4))
+
+        assert align_to_domain_block(np.zeros((4,)), (t,), (t,)).shape == (4,)
+        assert align_to_domain_block(np.zeros((1,)), (t,), (t,)).shape == (1,)
+        with pytest.raises(ValueError, match="declares length=4"):
+            align_to_domain_block(np.zeros((3,)), (t,), (t,))
+
+    def test_declared_space_length_is_enforced(self):
+        """SpaceType inherits the same length check as SequenceType."""
+        x_len = DomainAxis("x_len", type=SpaceType(spacing=1.0, length=2))
+
+        with pytest.raises(ValueError, match="declares length=2"):
+            align_to_domain_block(np.zeros((3,)), (x_len,), (x_len,))
+
+    def test_undefined_sequence_length_stays_unconstrained(self):
+        """No declared length means shape is unconstrained beyond normal axis placement rules."""
+        t = DomainAxis("t", type=SequenceType())
+        assert align_to_domain_block(np.zeros((7,)), (t,), (t,)).shape == (7,)
 
 
 def test_array_placeholder_without_a_value_names_its_axes():

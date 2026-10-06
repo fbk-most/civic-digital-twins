@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SequenceType`, `TimeType`, and `SpaceType` now accept an optional static
+  `length` metadata field. When declared, evaluation enforces consistency:
+  arrays carrying that axis must use either the declared length or `1`
+  (broadcast singleton) along that dimension.
+
 ## [0.12.0] - 2026-09-23
 
 ### Added

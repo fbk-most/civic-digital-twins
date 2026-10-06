@@ -33,6 +33,7 @@ __all__ = [
     "Wrap",
     "Linear",
     "TIME_AXIS",
+    "validate_axis_extent",
     "domain_axis_position",
     "filter_by_role",
     "union_axes",
@@ -100,9 +101,11 @@ class DomainAxis(Axis):
     :class:`Axis`: a :class:`DomainType` describing what operator vocabulary
     the axis supports (unordered set, ordered sequence, time, space, ...).
     Like ``role``, ``type`` is immutable and functionally determined by the
-    axis ``name`` — it is not runtime/execution state. In particular ``size``
-    deliberately stays off the axis: an axis identifies a dimension, while its
-    extent is a per-result concern that lives in the execution layout.
+    axis ``name`` — it is not runtime/execution state. In particular concrete
+    runtime ``size`` stays off the axis: an axis identifies a dimension, while
+    its evaluated extent is a per-result concern that lives in the execution
+    layout. Sequence-like types may still carry an optional declared ``length``
+    as a static modeling constraint.
 
     Identity is load-bearing and inherited unchanged from :class:`Axis`:
     equality and hashing stay on ``(name, role)`` only. ``type`` is
@@ -163,28 +166,65 @@ class SetType:
 class SequenceType:
     """Ordered, 1-D domain: gates ``shift``/``roll``/``diff``/``cumulative``.
 
-    A plain marker, carrying no fields.
+    Parameters
+    ----------
+    length:
+        Optional declared axis length. ``None`` leaves the extent unconstrained.
+        When set, evaluators may validate that arrays carrying this axis have
+        either this length or ``1`` (broadcast singleton) along it.
     """
 
-    __slots__ = ()
+    __slots__ = ("length",)
+
+    def __init__(self, length: int | None = None) -> None:
+        if length is not None and length <= 0:
+            raise ValueError(f"SequenceType length must be positive; got {length!r}.")
+        self.length = length
+
+    def validate_extent(self, *, size: int, axis_name: str) -> None:
+        """Validate that *size* is compatible with this axis type.
+
+        Sequence-like axes accept either their declared length or singleton 1
+        for broadcasting.
+        """
+        if self.length is None or size in {1, self.length}:
+            return
+        raise ValueError(
+            f"executor: axis {axis_name!r} declares length={self.length}, "
+            f"but got dimension size {size}; expected 1 or {self.length}."
+        )
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
-        return "SequenceType()"
+        if self.length is None:
+            return "SequenceType()"
+        return f"SequenceType(length={self.length!r})"
 
 
 class TimeType(SequenceType):
     """:class:`SequenceType` specialized for calendar time.
 
-    Currently a plain marker, like :class:`SequenceType`: no calendar-specific
-    metadata (e.g. a sampling interval) is represented yet.
+    Parameters
+    ----------
+    length:
+        Optional declared time-axis length.
+
+    Notes
+    -----
+    Calendar-specific metadata (e.g. a sampling interval) is not represented
+    yet.
     """
 
     __slots__ = ()
 
+    def __init__(self, length: int | None = None) -> None:
+        super().__init__(length=length)
+
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
-        return "TimeType()"
+        if self.length is None:
+            return "TimeType()"
+        return f"TimeType(length={self.length!r})"
 
 
 class Constant:
@@ -312,6 +352,8 @@ class SpaceType(SequenceType):
         Boundary-condition policy for neighbourhood operators — a
         :data:`BoundaryCondition` instance. Defaults to :data:`Reflect`
         (``Neumann(0.0)``, zero-flux / "reflecting").
+    length:
+        Optional declared axis length.
     """
 
     __slots__ = ("spacing", "boundary")
@@ -320,13 +362,30 @@ class SpaceType(SequenceType):
         self,
         spacing: float = 1.0,
         boundary: BoundaryCondition = Reflect,
+        *,
+        length: int | None = None,
     ) -> None:
+        super().__init__(length=length)
         self.spacing = spacing
         self.boundary = boundary
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
-        return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r})"
+        if self.length is None:
+            return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r})"
+        return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r}, length={self.length!r})"
+
+
+def validate_axis_extent(axis: Axis, size: int) -> None:
+    """Validate a concrete dimension *size* against *axis* static constraints.
+
+    This dispatches to the axis type object (when it exposes a
+    ``validate_extent(size=..., axis_name=...)`` method), keeping executor
+    checks centralized in the axis vocabulary.
+    """
+    validator = getattr(getattr(axis, "type", None), "validate_extent", None)
+    if callable(validator):
+        validator(size=size, axis_name=axis.name)
 
 
 TIME_AXIS: DomainAxis = DomainAxis("time", type=TimeType())
