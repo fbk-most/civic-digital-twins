@@ -2,7 +2,7 @@
 
 """Choosing an ensemble: ONE model, four questions, four right answers.
 
-Narrative and explanations: see Ensemble_Tutorial.md in this directory.
+Narrative and explanations: see Ensembles_Tutorial.md in this directory.
 Each "PART N" banner below matches a section of the same name there.
 
     x1, x2    continuous uncertainties (DistributionIndex)

@@ -80,7 +80,7 @@ array(100.)
 The scenario has no abstract indexes, and `y` comes back as a plain scalar —
 no ENSEMBLE axis, no weights, no `expected_value` needed. Sweeping inputs you
 *control* (`parameters=` / `parameter_axes=`) is still deterministic: it adds
-PARAMETER axes, not an ensemble (see [parameters_vs_scenarios](../parameters_vs_scenarios/Parameters_vs_Scenarios_Tutorial.md)).
+PARAMETER axes, not an ensemble (see [parameters_vs_scenarios_tutorial](../parameters_vs_scenarios_tutorial/Parameters_vs_Scenarios_Tutorial.md)).
 
 ---
 
@@ -862,5 +862,5 @@ count.
 Decide by what you must *read off* the result. That, not speed, is what actually
 separates them.
 
-See also: [parameters_vs_scenarios](../parameters_vs_scenarios/Parameters_vs_Scenarios_Tutorial.md)
+See also: [parameters_vs_scenarios_tutorial](../parameters_vs_scenarios_tutorial/Parameters_vs_Scenarios_Tutorial.md)
 for the things you control from *outside* the model.

@@ -2,11 +2,11 @@
 
 # Parameter axes and Scenarios: the two things you control from outside
 
-> Script: [`parameters_vs_scenarios.py`](parameters_vs_scenarios.py). Run it with
-> `uv run python examples/detailed/parameters_vs_scenarios/parameters_vs_scenarios.py`.
+> Script: [`parameters_vs_scenarios_tutorial.py`](parameters_vs_scenarios_tutorial.py). Run it with
+> `uv run python examples/detailed/parameters_vs_scenarios_tutorial/parameters_vs_scenarios_tutorial.py`.
 > Each section below matches a `PART N` banner in the script.
 
-Uncertainty *inside* a model is declared as indexes and integrated away by an ensemble. That is covered in [ensembles](../ensembles/Ensemble_Tutorial.md). This example covers the other half: the things you, the analyst, set on purpose and compare.
+Uncertainty *inside* a model is declared as indexes and integrated away by an ensemble. That is covered in [ensembles_tutorial](../ensembles_tutorial/Ensembles_Tutorial.md). This example covers the other half: the things you, the analyst, set on purpose and compare.
 
 There are two such mechanisms, and they are not interchangeable:
 
@@ -114,7 +114,7 @@ The parameters come first, and the ensemble is last.
 
 The parameters appear in the order of the keys in the `parameters=` dict you
 pass to `evaluate()`. That order does **not** come from the `parameter_axes=`
-list, and it is not alphabetical. Here both happen to say `p1, p2`, but section
+list, and, unlike DOMAIN axes, it is not alphabetical. Here both happen to say `p1, p2`, but section
 2b shows how easily that changes. That is why this tutorial reads results **by
 name** (1c) rather than by position.
 
@@ -907,6 +907,6 @@ dict (2b).
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | **parameter axis** | a value you sweep. One ensemble, one run, one new result dimension per parameter (or one per named axis). No probability.     |
 | **Scenario**       | an assumption you override. A different ensemble, a separate run, compared side by side after reducing.                       |
-| **uncertainty**    | neither: declared in the model, integrated away by the ensemble (see [ensembles](../ensembles/Ensemble_Tutorial.md)).          |
+| **uncertainty**    | neither: declared in the model, integrated away by the ensemble (see [ensembles_tutorial](../ensembles_tutorial/Ensembles_Tutorial.md)).          |
 
 Ask which of the three a quantity is, and the API follows.

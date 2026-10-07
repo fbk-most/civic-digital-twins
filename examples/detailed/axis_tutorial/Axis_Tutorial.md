@@ -1,0 +1,935 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Combining axes: a timeseries and a matrix, and how axes are tracked
+
+> Script: [`axis_tutorial.py`](axis_tutorial.py) — run it with
+> `uv run python examples/detailed/axis_tutorial/axis_tutorial.py`.
+> Each section below matches a `PART N` banner in the script.
+
+This example starts with defining axes and making sure your results keep
+them. It then covers how the engine tracks axes when indexes with different
+shapes are combined:
+
+| Part | Topic                                                                                     |
+|------|-------------------------------------------------------------------------------------------|
+| 1    | Defining axes: ready-made vs custom, typed properties, keeping them on results, reading them back |
+| 2    | The three axis roles together, `result.layout` vs `layout_of()`, and name-based access    |
+| 3    | Multiplying two arrays: which cases make an axis *emerge*, and why that warns             |
+| 4    | The same products evaluated: shared axis, outer product, dot product                      |
+| 5    | `.broadcast()`: giving an index an axis its own formula never references                  |
+
+---
+
+## PART 1 — defining axes: ready-made vs custom, properties, reading them back
+
+An **axis** names one dimension of a value. It has two parts that make up its
+identity, a `name` and a `role`. A `DomainAxis` can also carry a **type** that
+describes what kind of dimension it is. This part covers where axes come from,
+how to give them properties, how to make sure those properties reach your
+outputs, and how to read them back from a result.
+
+### What comes ready-made
+
+There are three built-in **roles**. You only ever build `DOMAIN` axes
+yourself; the library creates the other two from your scenario:
+
+| role        | who creates the axis                                       | name                                |
+|-------------|------------------------------------------------------------|-------------------------------------|
+| `DOMAIN`    | you (or a convenience class such as `TimeseriesIndex`)     | yours, e.g. `x`, `row`, `time`      |
+| `PARAMETER` | `Scenario(..., parameter_axes=[k])`, one per swept index   | the index's name, e.g. `k`          |
+| `ENSEMBLE`  | the ensemble, e.g. `DistributionEnsemble`                  | `_ensemble` (a leading `_` means the framework made it) |
+
+There is one ready-made `DOMAIN` axis, `TIME_AXIS`, and `TimeseriesIndex` puts
+it on every value it builds:
+
+```python
+print(f"  roles     : {DOMAIN!r}, {PARAMETER!r}, {ENSEMBLE!r}")
+print(f"  TIME_AXIS : {TIME_AXIS!r}")
+ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+```
+
+```text
+  roles     : 'DOMAIN', 'PARAMETER', 'ENSEMBLE'
+  TIME_AXIS : DomainAxis('time', type=TimeType())
+  TimeseriesIndex('ts', ...).node.output_axes = (DomainAxis('time', type=TimeType()),)
+```
+
+### A custom axis, with properties
+
+You build any other dimension yourself, and it should be a `DomainAxis` with a
+type. The type is where the axis's **properties** live. For a physical grid
+that means `SpaceType(spacing, boundary)`: how far apart neighbouring samples
+are, and what the field does just past each end.
+
+```python
+x = DomainAxis("x", type=SpaceType(spacing=0.5, boundary=Wrap()))
+
+row = DomainAxis("row", type=SequenceType())
+col = DomainAxis("col", type=SequenceType())
+```
+
+`x` is a 1-D grid with samples 0.5 apart that is **periodic** (`Wrap()`: the
+right end connects back to the left). `row`/`col` index a matrix. They are
+ordered positions, not calendar time and not a physical grid, so
+`SequenceType` is the honest description; PART 2 onwards uses them.
+
+```text
+  x   = DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap()))
+  row = DomainAxis('row', type=SequenceType())
+  x.role = 'DOMAIN'   (a DomainAxis is always DOMAIN)
+```
+
+The available boundaries are `Reflect` (the default, an alias of
+`Neumann(0.0)`), `Neumann(value)`, `Constant(value)` (alias `Dirichlet`),
+`Nearest()`, `Wrap()` and `Linear()`. What each one does to the numbers is
+covered in
+[differential_operators_tutorial](../differential_operators_tutorial/Differential_Operators_Tutorial.md), PART 3.
+
+### The type decides which operators an axis supports
+
+The type is not decoration: operators dispatch on it. Each level of the
+lattice adds operators to the level before it:
+
+| type           | meaning                                              | adds                                     |
+|----------------|------------------------------------------------------|------------------------------------------|
+| `SetType`      | unordered labels (regions, categories)               | reductions and selection only            |
+| `SequenceType` | ordered 1-D positions                                | `shift` / `roll` / `diff` / `cumulative` |
+| `TimeType`     | `SequenceType` specialised for calendar time         | —                                        |
+| `SpaceType`    | `SequenceType` plus a **metric**: spacing + boundary | `gradient` / `laplacian`                 |
+
+An untyped axis (a plain `Axis`, or a `DomainAxis` with no type) is treated as
+`SequenceType`. The script tests each declaration against six operators:
+
+```python
+probe_axes = {
+    "Axis(name, DOMAIN)":       Axis("p1", DOMAIN),
+    "DomainAxis (untyped)":     DomainAxis("p2"),
+    "DomainAxis SetType":       DomainAxis("p3", type=SetType()),
+    "DomainAxis SequenceType":  DomainAxis("p4", type=SequenceType()),
+    "DomainAxis TimeType":      DomainAxis("p5", type=TimeType()),
+    "DomainAxis SpaceType":     DomainAxis("p6", type=SpaceType(spacing=2.0)),
+}
+OPS = ("sum", "diff", "cumulative", "shift", "gradient", "laplacian")
+
+for label, ax in probe_axes.items():
+    probe = Index("probe", np.array([1.0, 2.0, 4.0, 8.0]), axes=(ax,))
+    cells = ""
+    for op in OPS:
+        try:
+            # laplacian takes axes=(...), the others take axis=...
+            if op == "laplacian":
+                getattr(probe, op)(axes=(ax,))
+            else:
+                getattr(probe, op)(axis=ax)
+            cells += f"{'ok':11s}"
+        except ValueError:
+            cells += f"{'--':11s}"
+```
+
+```text
+  axis declaration          sum        diff       cumulative shift      gradient   laplacian
+  Axis(name, DOMAIN)        ok         ok         ok         ok         --         --
+  DomainAxis (untyped)      ok         ok         ok         ok         --         --
+  DomainAxis SetType        ok         ok         ok         ok         --         --
+  DomainAxis SequenceType   ok         ok         ok         ok         --         --
+  DomainAxis TimeType       ok         ok         ok         ok         --         --
+  DomainAxis SpaceType      ok         ok         ok         ok         ok         ok
+```
+
+Only `gradient`/`laplacian` are enforced today. They need a **metric** (how far
+apart two points are), and only `SpaceType` has one. The ordered-domain
+operators are not yet blocked on a `SetType` axis, so treat the type as
+documentation the engine will rely on more and more, not as a full guarantee.
+
+### Identity is `(name, role)`: the type is not part of it
+
+```python
+plain = Axis("time", DOMAIN)
+x_coarse = DomainAxis("x", type=SpaceType(spacing=10.0))
+```
+
+```text
+  Axis('time', DOMAIN) == TIME_AXIS : True
+  same hash                         : True
+  x == DomainAxis('x', spacing=10)  : True  <- conflicting copy, still 'equal'
+```
+
+Leaving the type out of equality is deliberate. It makes typing an axis
+**additive**: existing lookups, unions and saved results keep matching, so you
+can add types to a model without changing anything else. The cost is the last
+line: two axes with the same name and *different* properties compare equal,
+and the library does not complain. **Define each axis once, at module level,
+and import that one object everywhere.** `TIME_AXIS` is the pattern to copy.
+
+### Attaching axes to an index
+
+An index carries exactly the axes you give it, and nothing is inferred from
+the array's shape:
+
+```python
+U_VAL = np.array([0.0, 1.0, 4.0, 9.0])
+u_on_x = Index("u_on_x", U_VAL, axes=(x,))
+u_bare = Index("u_bare", U_VAL)
+```
+
+```text
+  Index('u_on_x', array, axes=(x,)) -> (DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())),)
+  Index('u_bare', array)            -> ()  <- none at all
+```
+
+`u_bare` is a 4-element array with **no** axes. Nothing complains when you
+build it; it fails only at evaluation, with an engine-internal
+`AssertionError` (`unexpected ndim`). So pass `axes=` on every array you
+inject. For an array, `axes=` is matched to the shape **by position**, so the
+order matters there (unlike for a formula; see PART 3).
+
+If one shape keeps coming back, give it a class, as `TimeseriesIndex` does for
+`time`. Subclass `Index`, set `FIXED_AXES`, and pass it to `axes=`:
+
+```python
+class LineIndex(Index):
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (x,)
+
+    def __init__(self, name: str, value: np.ndarray | graph.Node | None = None) -> None:
+        super().__init__(name, value, axes=self.FIXED_AXES)
+```
+
+```text
+  LineIndex('u', array)             -> (DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())),)
+  LineIndex('total', u.sum(axis=x)) -> ValueError: the formula no longer carries x
+```
+
+With an array, `LineIndex` **attaches** `x`. With a formula, it **checks**
+that the formula really carries `x`; summing `x` away is caught right where
+the index is built. Used as a field type in `Inputs`/`Outputs`, the class also
+documents the shape in the model's signature. (`named_shape("Line", (x,))`
+generates the same class together with its `Const`/`Distribution` siblings.
+The hand-written form is used here because pyright accepts it as a type
+annotation.)
+
+### Making sure results keep the axes
+
+Axes are carried through formulas, and so is the type, because the result
+holds the **same axis object** as its operands. Reductions remove the axis
+they reduce:
+
+```python
+for label, formula in (
+    ("u * 2 + 1", u_on_x * 2 + 1),
+    ("u.diff(axis=x)", u_on_x.diff(axis=x)),
+    ("u.gradient(axis=x)", u_on_x.gradient(axis=x)),
+    ("u.sum(axis=x)", u_on_x.sum(axis=x)),
+):
+    print(f"  {label:20s} -> {Index('out', formula).node.output_axes}")
+```
+
+```text
+  u * 2 + 1            -> (DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())),)
+  u.diff(axis=x)       -> (DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())),)
+  u.gradient(axis=x)   -> (DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())),)
+  u.sum(axis=x)        -> ()
+```
+
+**The trap.** When two operands carry *equal* axes, the result keeps only one
+copy, the first one it meets. If one copy is a typed `x` and the other is an
+untyped `Axis("x", DOMAIN)`, operand order decides whether the result keeps
+the `SpaceType`:
+
+```python
+x_untyped = Axis("x", DOMAIN)
+ones = Index("ones", np.ones(4), axes=(x_untyped,))
+for label, formula in (("u * ones", u_on_x * ones), ("ones * u", ones * u_on_x)):
+    prod = Index("prod", formula)
+    try:
+        prod.gradient()  # default: the sole DOMAIN axis the result carries
+```
+
+```text
+  u * ones  carries DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())) gradient() ok
+  ones * u  carries Axis('x', role='DOMAIN')                                     gradient() -> ValueError: no SpaceType
+```
+
+Declaring `axes=(x,)` on `ones * u` does **not** fix this. `axes=` checks the
+axes by equality, and equality ignores the type, so the check passes and the
+untyped copy stays. Passing the axis explicitly, `prod.gradient(axis=x)`, does
+work for that one call: the spacing and boundary come from the axis you pass.
+The result still carries the untyped copy, though. The real fix is the rule
+above: one definition of `x`, imported everywhere, so no untyped copy exists.
+When an operator needs the metric (`gradient`, `laplacian`), pass the axis
+explicitly instead of relying on the default.
+
+### Carrying the axes into an evaluated model
+
+`Rod` uses `LineIndex` for its input and its two field outputs, so the `x` axis
+is checked at the model boundary. Its other input, `k`, is swept as a
+parameter:
+
+```python
+@define("rod")
+class Rod(Model):
+    @inputs
+    class Inputs:
+        u: LineIndex   # DOMAIN (x,) -- checked against LineIndex.FIXED_AXES
+        k: Index       # PARAMETER: a conductivity, swept externally
+
+    @outputs
+    class Outputs:
+        flux: LineIndex        # (x,)  -k du/dx
+        diffusion: LineIndex   # (x,)   k d2u/dx2
+        net: Index             # ()     flux summed over the whole rod
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        flux = LineIndex("flux", -inputs.k * inputs.u.gradient(axis=x))
+        diffusion = LineIndex("diffusion", inputs.k * inputs.u.laplacian(axes=(x,)))
+        net = Index("net", flux.sum(axis=x), axes=())
+        return Rod.Outputs(flux=flux, diffusion=diffusion, net=net)
+
+
+k = Index("k")
+rod = Rod(inputs=Rod.Inputs(u=LineIndex("u", U_VAL), k=k))
+rod_scenario = Scenario(rod, parameter_axes=[k])
+rod_result = Evaluation(rod_scenario).evaluate(
+    ensemble=DistributionEnsemble(rod_scenario, size=1),
+    parameters={k: np.array([1.0, 2.0])},
+)
+```
+
+### Reading the axes back from the results
+
+Before evaluation, an index's axes are on `.node.output_axes`, as above. After
+evaluation, the result tells you three things:
+
+| call                          | gives                                                                  |
+|-------------------------------|------------------------------------------------------------------------|
+| `result.layout`               | every axis in the evaluation, with sizes (the union over all outputs)  |
+| `result.layout_of(index)`     | the axes of that output's `expected_value()`, with sizes               |
+| `result.labeled(index)`       | the values plus that layout: `.dims`, `.sel(name=i)`, `.layout.axes`   |
+
+An `AxisLayout` can be queried with `.axes`, `.entries`, `.find_axis(name)`,
+`.size_of(axis)` and `.axes_by_role(role)`:
+
+```python
+flux_layout = rod_result.layout_of(rod.outputs.flux)
+found = flux_layout.find_axis("x")
+# find_axis returns a plain Axis | None; narrow it to read the type's fields.
+assert isinstance(found, DomainAxis) and isinstance(found.type, SpaceType)
+```
+
+```text
+  rod_result.layout -- k and _ensemble were added by the library:
+    Axis('k', role='PARAMETER')                                    size=2
+    Axis('_ensemble', role='ENSEMBLE')                             size=1
+    DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap()))  size=4
+  layout_of(flux).axes : (Axis('k', role='PARAMETER'), DomainAxis('x', type=SpaceType(spacing=0.5, boundary=Wrap())))
+  by role              : DOMAIN=['x'] PARAMETER=['k']
+  find_axis('x') is x  : True
+    size=4  spacing=0.5  boundary=Wrap()
+```
+
+The axis that comes back is **the very object you defined** (`is x`), with its
+spacing and boundary intact. The `PARAMETER` axis `k` and the `ENSEMBLE` axis
+`_ensemble` are the ready-made ones from the first table. You never declared
+them; the scenario and the ensemble added them. (Size 1 for `_ensemble`
+because nothing here is random. `layout_of` drops it, since
+`expected_value()` averages over it.)
+
+The numbers were also computed with those properties. Because `x` wraps,
+`gradient` takes `(u[i+1] - u[i-1]) / (2 · 0.5)` at **every** point, the ends
+included. With `u = [0, 1, 4, 9]` that is `[1-9, 4-0, 9-1, 0-4] = [-8, 4, 8, -4]`,
+and `flux = -k · gradient`:
+
+```text
+  flux      k=1  dims=('k', 'x')   [ 8. -4. -8.  4.]
+  flux      k=2  dims=('k', 'x')   [ 16.  -8. -16.   8.]
+  diffusion k=1  dims=('k', 'x')   [ 40.   8.   8. -56.]
+  diffusion k=2  dims=('k', 'x')   [  80.   16.   16. -112.]
+  net       k=1  dims=('k',)       0.0
+  net       k=2  dims=('k',)       0.0
+```
+
+`net` is exactly 0, as it should be: on a periodic rod nothing flows in or out
+of the ends, so the total flux is zero. Change the boundary to `Reflect` and
+the end values change. That is the point of storing the properties on the
+axis: every operator that touches `x` uses the same spacing and boundary, and
+you can read both back from the result.
+
+---
+
+## PART 2 — axis roles together, and how axes are tracked across outputs
+
+PART 1 used one axis of each role. Here four inputs cover all three roles at
+once, and the outputs combine them in different ways:
+
+| input   | role        | what it is                                     |
+|---------|-------------|------------------------------------------------|
+| `x`     | `ENSEMBLE`  | stochastic noise, drawn 5000 times             |
+| `param` | `PARAMETER` | not random but swept externally, over `[1, 2]` |
+| `M`     | `DOMAIN`    | a fixed `(row, col)` matrix                    |
+| `T`     | `DOMAIN`    | a fixed `(time,)` timeseries of 3 points       |
+
+The matrix uses the `row`/`col` axes defined in PART 1.
+
+The model computes five outputs that combine the inputs in different ways:
+
+```python
+@define("extended")
+class ExtendedModel(Model):
+    @inputs
+    class Inputs:
+        x: DistributionIndex   # ENSEMBLE: stochastic noise
+        param: Index           # PARAMETER: swept externally
+        M: Index               # DOMAIN (row, col)
+        T: TimeseriesIndex     # DOMAIN (time,)
+
+    @outputs
+    class Outputs:
+        matrix: Index      # (row, col)
+        series: Index      # (time,)
+        mixed: Index       # (row, col, time) -- outer product of both
+        row_total: Index   # (col,) after summing over row
+        scalar: Index      # () -- fully reduced
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        matrix = Index("matrix", inputs.x * inputs.M * inputs.param, axes=(row, col))
+        series = Index("series", inputs.x * inputs.T)
+        # axes= is required here: an outer product of disjoint operands is
+        # flagged as probably-accidental unless stated explicitly (PART 3).
+        mixed = Index("mixed", matrix * series, axes=(row, col, TIME_AXIS))
+        row_total = Index("row_total", matrix.sum(axis=row), axes=(col,))
+        scalar = Index("scalar", row_total.sum(axis=col), axes=())
+        return ExtendedModel.Outputs(
+            matrix=matrix, series=series, mixed=mixed,
+            row_total=row_total, scalar=scalar,
+        )
+```
+
+The four inputs, one per row of the table above, and the evaluation: `param` is
+swept over `[1, 2]`, and `x` is sampled 5000 times.
+
+```python
+param = Index("param")
+model = ExtendedModel(inputs=ExtendedModel.Inputs(
+    x=DistributionIndex("x", stats.norm, {"loc": 1.0, "scale": 0.5}),
+    param=param,
+    M=Index("M", np.array([[1.0, 2.0], [3.0, 4.0]]), axes=(row, col)),
+    T=TimeseriesIndex("T", np.array([1.0, 10.0, 100.0])),
+))
+
+scenario = Scenario(model, parameter_axes=[param])
+ensemble = DistributionEnsemble(scenario, size=5000, rng=np.random.default_rng(0))
+result = Evaluation(scenario).evaluate(
+    ensemble=ensemble,
+    parameters={param: np.array([1.0, 2.0])},
+)
+```
+
+Two details in `mixed`:
+
+- Declaring `axes=` is **required** there. An outer product of disjoint operands
+  is flagged as probably-accidental unless stated explicitly (PART 3 explains
+  the rule).
+- `TIME_AXIS` is the same object `TimeseriesIndex` attaches (PART 1), so the
+  declaration matches `series`'s `time` axis exactly.
+
+### `result.layout` is the union; `layout_of()` is the truth per output
+
+No output carries every axis. `result.layout` reports the **union** over the
+whole evaluation:
+
+```text
+  param      PARAMETER  size=2
+  _ensemble  ENSEMBLE   size=5000
+  col        DOMAIN     size=2
+  row        DOMAIN     size=2
+  time       DOMAIN     size=3
+  full_shape: (2, 5000, 2, 2, 3) <- no single output has this shape
+```
+
+`layout_of(output)` reports what each output really has:
+
+```python
+lo = result.layout_of(idx)
+arr = result.expected_value(idx)
+```
+
+```text
+>>> result.layout_of(model.outputs.series)
+AxisLayout(Axis('param', role='PARAMETER'): 2, DomainAxis('time', type=TimeType()): 3)
+```
+
+For every output (`dims` and `shape` are of `expected_value()`, so the ensemble
+axis is gone; `roles` are `P`arameter / `D`omain):
+
+```text
+  matrix     dims=['param', 'col', 'row']      shape=(2, 2, 2)    roles=['param:P', 'col:D', 'row:D']
+  series     dims=['param', 'time']            shape=(1, 3)       roles=['param:P', 'time:D']
+  mixed      dims=['param', 'col', 'row', 'time'] shape=(2, 2, 2, 3) roles=['param:P', 'col:D', 'row:D', 'time:D']
+  row_total  dims=['param', 'col']             shape=(2, 2)       roles=['param:P', 'col:D']
+  scalar     dims=['param']                    shape=(2,)         roles=['param:P']
+```
+
+Note `series`: it never touches `param`, so its `param` axis has **size 1**
+rather than 2. The library keeps the axis but does not broadcast the work.
+
+### Name-based access, immune to axis order
+
+The engine returned `matrix` as `(param, col, row)` even though we declared
+`(row, col)`. The next section explains why. `labeled()` lets you select by
+name, so the order doesn't matter:
+
+```python
+lab = result.labeled(model.outputs.matrix)
+```
+
+```text
+>>> lab
+LabeledArray(dims=('param', 'col', 'row'), shape=(2, 2, 2))
+>>> lab.sel(param=0, row=0).values
+array([0.99773388, 1.99546775])
+>>> lab.sel(param=1, row=1, col=0).values
+np.float64(5.986403257135033)
+```
+
+The script prints these, plus the same for `mixed`:
+
+```text
+  matrix dims: ('param', 'col', 'row')  (declared order was row, col)
+  param=0, row=0: [0.99773388 1.99546775]
+  param=1, row=1, col=0: 5.986403257135033
+
+  mixed dims: ('param', 'col', 'row', 'time')
+  mixed at param=0, time=2:
+ [[124.31754449 372.95263348]
+ [248.63508899 497.27017797]]
+```
+
+These are expected values, so the noise `x` (mean 1.0) has been averaged out
+and the numbers sit close to the deterministic ones. `matrix = x · M · param`:
+
+- `param=0` (value 1), `row=0` → the first row of `M`, `[1, 2]` → `≈ [1.0, 2.0]`.
+- `param=1` (value 2), `row=1, col=0` → `2 · M[1,0] = 2 · 3` → `≈ 6.0`.
+
+Note that `sel()` takes **positions** along each axis (`param=0` is the first
+parameter value), but by **name**, so it works whatever order the axes come
+back in. In the `mixed` slice the rows printed are `col` and the columns are
+`row` — exactly the trap that selecting by name avoids. (The values there are
+around `x² · M · 100`, not `M · 100`, because `x` appears in both `matrix` and
+`series`, and `E[x²] = 1 + 0.5² = 1.25`.)
+
+### Why this order: DOMAIN axes are sorted by name
+
+The order is not random. The layout of every result is
+
+```text
+(*PARAMETER axes, *ENSEMBLE axes, *DOMAIN axes sorted alphabetically by name)
+```
+
+- **PARAMETER** axes come in the order of the keys of the `parameters=` dict
+  you pass to `evaluate()`
+  ([parameters_vs_scenarios_tutorial](../parameters_vs_scenarios_tutorial/Parameters_vs_Scenarios_Tutorial.md), 2b).
+- **DOMAIN** axes are sorted **by name**. The order you declare in `axes=`
+  plays no part, nor does the order of the operands in the formula. That is
+  deliberate: if the order came from the formula, writing `b * a` instead of
+  `a * b` would reshuffle the result's dimensions.
+
+So `(row, col)` comes back as `(col, row)`, and `mixed`, declared
+`(row, col, time)`, comes back as `(col, row, time)`:
+
+```python
+mixed_layout = result.layout_of(model.outputs.mixed)
+mixed_domain = [ax.name for ax, _ in mixed_layout.axes_by_role(DOMAIN)]
+```
+
+```text
+  mixed declared (row, col, time), DOMAIN axes returned as ['col', 'row', 'time']
+  alphabetical? True
+```
+
+This is the most common source of silently wrong numbers in CDT. Two
+consequences:
+
+- **Grids look transposed.** Declare a `(rows, cols)` array as
+  `axes=(y, x)`. The label is correct: rows are `y`, columns are `x`. But the
+  result comes back as `(x, y)`, so printing `.values` shows the grid on its
+  side.
+- **Positional indexing lands on the wrong axis.** With axes `x`, `y` and
+  `time`, the result is `(..., time, x, y)`, and `arr[t]` happens to select a
+  time step. Rename the axes to force `y` before `x` (say `"1y"`, `"2x"`) and the
+  result becomes `(..., 1y, 2x, time)`. Now `time` is last, and the same
+  `arr[t]` silently takes a row of `y`. Renaming only moves the problem.
+
+The same trap with `mixed`, assuming `time` is the second dimension:
+
+```python
+mixed_ev = result.expected_value(model.outputs.mixed)
+```
+
+```text
+  mixed_ev.shape = (2, 2, 2, 3); mixed_ev[0, 1] is col=1, shape (2, 3) -- NOT time=1
+```
+
+**The fix: never rely on position.** Select by name with `labeled()`/`.sel()`
+(above). When an API needs a position (`np.moveaxis`, `axis=`, a plotting
+call), look it up from the layout of the array you are holding:
+
+```python
+time_pos = mixed_layout.position_of(TIME_AXIS)
+by_time = np.moveaxis(mixed_ev, time_pos, 1)       # (param, time, col, row)
+```
+
+```text
+  time is at position 3: np.moveaxis(mixed_ev, 3, 1).shape = (2, 3, 2, 2)
+  by_time[0, 1] == lab_mixed.sel(param=0, time=1)? True
+```
+
+Use the layout that matches the array. `result.layout` describes the raw
+`result[idx]` (ensemble axis included, and every axis of the evaluation).
+`result.layout_of(idx)` describes `result.expected_value(idx)` and
+`result.labeled(idx)` (no ensemble axis, only the axes `idx` carries).
+`LabeledArray.to_xarray()` also works, e.g.
+`.to_xarray().transpose("time", "y", "x")`, but needs the optional `xarray`
+package installed.
+
+When you need your own convention, **derive** the transpose from the names
+rather than assuming an order:
+
+```python
+want = ("param", "row", "col")
+perm = [lab.dims.index(n) for n in want]
+print(np.transpose(lab.values, perm))
+```
+
+```text
+  ('param', 'col', 'row') -> ('param', 'row', 'col') via transpose(0, 2, 1)
+[[[0.99773388 1.99546775]
+  [2.99320163 3.9909355 ]]
+
+ [[1.99546775 3.9909355 ]
+  [5.98640326 7.98187101]]]
+```
+
+Now each `param` slice reads like `M` as declared (`[[1, 2], [3, 4]]`), scaled
+by 1 and by 2 respectively.
+
+---
+
+## PART 3 — multiplying two arrays: when does an axis emerge?
+
+First, the thing to unlearn: the engine **never** picks between "outer product"
+and "dot product". `*` is *always* elementwise multiplication with broadcasting
+over the union of the operands' axes — exactly like NumPy, except that axes are
+matched by **identity** (the `Axis` object) rather than by position.
+
+So the result axes are always `union(left, right)`. The only question is whether
+that union is bigger than either operand started with:
+
+| expression                      | result           | union vs operands          |
+|---------------------------------|------------------|----------------------------|
+| `A:(row,col) * B:(row,col)`     | `(row,col)`      | equals both operands       |
+| `A:(row,col) * B:(col,)`        | `(row,col)`      | equals left operand        |
+| `A:(row,col) * 2.0`             | `(row,col)`      | equals left operand        |
+| `A:(row,col) * B:(time,)`       | `(row,col,time)` | **larger than BOTH** ⚠     |
+
+Only the last case invents an axis that neither operand had. That is an
+**emergent outer product**, and it is the one the library warns about, because
+it is far more often a modelling slip (multiplying two things that were never
+meant to meet) than a deliberate outer product. The rule is exactly: *warn if
+the result axes equal no operand's own axes.*
+
+The warning is **advisory**, not a refusal: the value is computed either way.
+Passing `axes=` silences it by saying "yes, I meant this" — and is then
+**verified** against the formula, so it cannot be used to fake a shape.
+
+The operands are chosen so every result is checkable by eye:
+
+```python
+time_axis = TIME_AXIS
+
+A_VAL = np.array([[1.0, 2.0], [3.0, 4.0]])
+VCOL_VAL = np.array([10.0, 20.0])
+VTIME_VAL = np.array([1.0, 10.0, 100.0])
+
+A = Index("A", A_VAL, axes=(row, col))                 # [[1, 2], [3, 4]]
+Vcol = Index("Vcol", VCOL_VAL, axes=(col,))            # [10, 20]
+Vtime = Index("Vtime", VTIME_VAL, axes=(time_axis,))   # [1, 10, 100]
+```
+
+The warning is raised when the `Index` is **built**, which is when its axes
+are inferred, so it is caught around the `Index(...)` call. The inferred axes
+are on `.node.output_axes`:
+
+```python
+for label, formula in (
+    ("A(row,col) * A(row,col)", A * A),
+    ("A(row,col) * Vcol(col)", A * Vcol),
+    ("A(row,col) * 2.0", A * 2.0),
+    ("A(row,col) * Vtime(time)", A * Vtime),
+):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        product = Index("product", formula)
+    product_axes = tuple(a.name for a in product.node.output_axes)
+    warned = any(issubclass(c.category, AxesInferenceWarning) for c in caught)
+```
+
+Then the same disjoint product with `axes=` declared, correctly and wrongly:
+
+```python
+    declared = Index("declared", A * Vtime, axes=(row, col, time_axis))
+```
+
+```python
+try:
+    Index("wrong", A * Vtime, axes=(row, col))
+except ValueError as exc:
+    print(f"    ValueError: {exc}")
+```
+
+```text
+  A(row,col) * A(row,col)          -> ('row', 'col')             quiet
+  A(row,col) * Vcol(col)           -> ('row', 'col')             quiet
+  A(row,col) * 2.0                 -> ('row', 'col')             quiet
+  A(row,col) * Vtime(time)         -> ('row', 'col', 'time')     WARNS
+    ...same, axes= declared        -> ('row', 'col', 'time')     quiet
+    ...declared WRONGLY:
+    ValueError: Index 'wrong': declared axes (DomainAxis('row', type=SequenceType()), DomainAxis('col', type=SequenceType())) do not match the actual output_axes (DomainAxis('row', type=SequenceType()), DomainAxis('col', type=SequenceType()), DomainAxis('time', type=TimeType())) (compared as sets, order is not significant). Declaring axes verifies the shape, it cannot relabel it — fix whichever of the two is wrong.
+```
+
+Only the disjoint case warns, because only there is the result broader than
+both operands. Note the last row: declaring `axes=` is **not an override**. It
+is verified, so a wrong declaration is a hard `ValueError`. You cannot use it to
+force a dot-product shape out of an outer product.
+
+---
+
+## PART 4 — the same products, evaluated
+
+Building an `Index` only records a formula; to get values we evaluate a model.
+The `Products` model computes all three at once:
+
+```python
+@define("products")
+class Products(Model):
+    @inputs
+    class Inputs:
+        A: Index
+        Vcol: Index
+        Vtime: Index
+
+    @outputs
+    class Outputs:
+        shared: Index   # (row,col)      -- broadcast along the SHARED col axis
+        outer: Index    # (row,col,time) -- DISJOINT axes, so time emerges
+        dotted: Index   # (row,)         -- broadcast, then contract col away
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        shared = Index("shared", inputs.A * inputs.Vcol)
+        outer = Index("outer", inputs.A * inputs.Vtime,
+                      axes=(row, col, time_axis))
+        # A dot product is the shared-axis product followed by summing it away.
+        dotted = Index("dotted", shared.sum(axis=col), axes=(row,))
+        return Products.Outputs(shared=shared, outer=outer, dotted=dotted)
+
+
+pmodel = Products(inputs=Products.Inputs(A=A, Vcol=Vcol, Vtime=Vtime))
+pscenario = Scenario(pmodel)
+presult = Evaluation(pscenario).evaluate(
+    ensemble=DistributionEnsemble(pscenario, size=1),
+)
+```
+
+As in PART 2, the DOMAIN axes come back sorted by name, so `col` comes before
+`row`:
+
+```python
+shared_lab = presult.labeled(pmodel.outputs.shared)
+outer_lab = presult.labeled(pmodel.outputs.outer)
+dotted_lab = presult.labeled(pmodel.outputs.dotted)
+```
+
+```text
+>>> shared_lab
+LabeledArray(dims=('col', 'row'), shape=(2, 2))
+>>> shared_lab.values                    # rows are col here, not row
+array([[10., 30.],
+       [40., 80.]])
+>>> outer_lab
+LabeledArray(dims=('col', 'row', 'time'), shape=(2, 2, 3))
+```
+
+So, as in PART 2, the transpose is derived from the names, otherwise the
+printed matrices would silently come out transposed:
+
+```python
+shared_vals = np.transpose(shared_lab.values,
+                           [shared_lab.dims.index(n) for n in ("row", "col")])
+outer_vals = np.transpose(outer_lab.values,
+                          [outer_lab.dims.index(n) for n in ("row", "col", "time")])
+```
+
+**Shared axis** — `A * Vcol -> (row, col)`. Nothing new appears; each *column*
+of `A` is scaled by its own factor (col0 ×10, col1 ×20):
+
+```text
+[[10. 40.]
+ [30. 80.]]
+```
+
+**Disjoint axes** — `A * Vtime -> (row, col, time)`. `time` emerged (the case
+that warns): the whole matrix `A` is reproduced once per time point (×1, ×10,
+×100):
+
+```text
+    time=0 (x1):
+[[1. 2.]
+ [3. 4.]]
+    time=1 (x10):
+[[10. 20.]
+ [30. 40.]]
+    time=2 (x100):
+[[100. 200.]
+ [300. 400.]]
+```
+
+Nothing was summed — every combination of `(row, col)` and `time` is
+kept, which is why the array grew from 2×2 to 2×2×3.
+
+**Dot product** — `(A * Vcol)` then `.sum(axis=col) -> (row,)`. A dot product
+is not a separate operator: it is the shared-axis product followed by summing
+that axis away, with the contracted axis named explicitly:
+
+```text
+  [ 50. 110.]
+  numpy cross-check: A @ Vcol = [ 50. 110.]
+```
+
+By hand: row0 = 1·10 + 2·20 = 50; row1 = 3·10 + 4·20 = 110.
+
+| product       | operands share an axis? | what happens                                                          |
+|---------------|-------------------------|-----------------------------------------------------------------------|
+| outer product | no                      | axes accumulate, result grows (2×2 and 3 → 2×2×3). Nothing is added.  |
+| dot product   | yes                     | multiply along it, then sum it away; result shrinks (2×2 and 2 → 2).  |
+
+Both start from the same `*`. What differs is whether the axes overlap, and
+whether you follow the product with a reduction.
+
+---
+
+## PART 5 — `.broadcast()`: adding an axis nothing else provides
+
+`axes=` only **verifies** a formula's inferred axes — it cannot declare or
+relabel them. That leaves a gap: how do you get an index that carries `(brow,)`
+to also carry `(bcol,)`, when nothing in the formula supplies `bcol`?
+
+Not by declaration — the node genuinely does not reference `bcol`:
+
+```python
+bcast_row = DomainAxis("brow", type=SequenceType())
+bcast_col = DomainAxis("bcol", type=SequenceType())
+VEC = np.array([1.0, 2.0, 3.0])          # (brow,)
+MAT = np.zeros((3, 4))                   # (brow, bcol)
+
+vec_index = Index("vec_index", VEC, axes=(bcast_row,))
+```
+
+```python
+try:
+    Index("rejected", vec_index, axes=(bcast_row, bcast_col))
+```
+
+```text
+  axes=(brow, bcol) alone ->
+    ValueError: Index 'rejected': declared axes (DomainAxis('brow', type=SequenceType()), DomainAxis('bcol', type=SequenceType())) do not match the actual output_axes (DomainAxis('brow', type=SequenceType()),) (compared as sets, order is not significant). Declaring axes verifies the shape, it cannot relabel it — fix whichever of the two is wrong.
+```
+
+`.broadcast(bcol)` fixes that by making the node itself reference the axis,
+with an implicit size-1 extent:
+
+```python
+broadcast_ok = Index("broadcast_ok", vec_index.broadcast(bcast_col),
+                     axes=(bcast_row, bcast_col))
+```
+
+```text
+  vec_index.broadcast(bcol) -> axes ('brow', 'bcol')
+```
+
+What this is **not** for: combining with an operand that *already* carries the
+axis needs no broadcast at all, because a formula's axes are the union of its
+operands' — `ind_x + ind_xy` infers `(x, y)` on its own.
+
+The `Broadcasting` model shows both situations:
+
+```python
+@define("broadcasting")
+class Broadcasting(Model):
+    @inputs
+    class Inputs:
+        vec: Index          # (brow,)
+        mat: Index          # (brow, bcol)
+
+    @outputs
+    class Outputs:
+        spread: Index       # (brow, bcol) -- but size 1 along bcol
+        combined: Index     # (brow, bcol) -- bcol gets its real extent here
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        # broadcast alone declares the axis with an IMPLICIT size-1 extent.
+        spread = Index("spread", inputs.vec.broadcast(bcast_col),
+                       axes=(bcast_row, bcast_col))
+        # An operand with a real extent along bcol expands the size-1 dimension.
+        combined = Index("combined", inputs.vec.broadcast(bcast_col) + inputs.mat,
+                         axes=(bcast_row, bcast_col))
+        return Broadcasting.Outputs(spread=spread, combined=combined)
+
+
+bcast_model = Broadcasting(inputs=Broadcasting.Inputs(
+    vec=Index("vec", VEC, axes=(bcast_row,)),
+    mat=Index("mat", MAT, axes=(bcast_row, bcast_col)),
+))
+bcast_scenario = Scenario(bcast_model)
+bcast_res = Evaluation(bcast_scenario).evaluate(
+    ensemble=DistributionEnsemble(bcast_scenario, size=1),
+)
+```
+
+The raw arrays carry a leading size-1 ensemble axis (nothing is uncertain):
+
+```text
+>>> np.asarray(bcast_res[bcast_model.outputs.spread]).shape       # (ensemble, bcol, brow)
+(1, 1, 3)
+>>> np.asarray(bcast_res[bcast_model.outputs.combined]).shape
+(1, 4, 3)
+>>> bcast_res.labeled(bcast_model.outputs.combined)
+LabeledArray(dims=('bcol', 'brow'), shape=(4, 3))
+```
+
+```text
+  spread   raw shape (1, 1, 3)  -> values [1. 2. 3.]
+  combined raw shape (1, 4, 3)
+[[1. 2. 3.]
+ [1. 2. 3.]
+ [1. 2. 3.]
+ [1. 2. 3.]]
+```
+
+- `spread`: `bcol` is **declared** but still size 1. Broadcast promises the
+  axis; it does not materialise data along it.
+- `combined`: adding `mat` supplies the real extent, so the size-1 `bcol`
+  dimension expands and `vec` repeats across all 4 columns. (The raw array comes
+  back as `(bcol, brow)` — another reason to select by name.)
+
+**When you need it:**
+
+- an index must satisfy a declared output shape that includes an axis its own
+  formula never touches (a contract, or an outer-product result where one
+  operand is genuinely constant along the new axis);
+- you want a `(time,)` series to line up against a `(region, time)` field
+  without writing a dummy multiplication by ones.
+
+**When you do not:** any formula where another operand already carries the axis
+— the union rule handles it, and an extra broadcast is noise.
+
+**The mental model:** broadcast is a *declaration about axes*, not a reshape. It
+makes a node reference an axis at size 1; real extent still has to come from
+somewhere, exactly as with NumPy broadcasting.

@@ -2,17 +2,18 @@
 
 """A timeseries and a matrix combined, and how axes are tracked across outputs.
 
-Narrative and explanations: see Combine_Axis_Tutorial.md in this directory.
+Narrative and explanations: see Axis_Tutorial.md in this directory.
 Each "PART N" banner below matches a section of the same name there.
 
-  PART 1  Axis roles, result.layout vs layout_of(), name-based access.
-  PART 2  Multiplying two arrays: which cases make an axis EMERGE (and warn).
-  PART 3  The same products evaluated: shared axis, outer product, dot product.
-  PART 4  DomainAxis: typing an axis decides which operators it supports.
+  PART 1  Defining axes: ready-made vs custom, typed properties, reading back.
+  PART 2  Axis roles together, result.layout vs layout_of(), name-based access.
+  PART 3  Multiplying two arrays: which cases make an axis EMERGE (and warn).
+  PART 4  The same products evaluated: shared axis, outer product, dot product.
   PART 5  .broadcast(): adding an axis nothing else in the formula provides.
 """
 
 import warnings
+from typing import ClassVar
 
 import numpy as np
 from scipy import stats
@@ -27,11 +28,14 @@ from civic_digital_twins.dt_model import (
     Scenario,
     TimeseriesIndex,
     define,
+    graph,
     inputs,
     outputs,
 )
 from civic_digital_twins.dt_model.axes import (
     DOMAIN,
+    ENSEMBLE,
+    PARAMETER,
     TIME_AXIS,
     Axis,
     DomainAxis,
@@ -39,17 +43,186 @@ from civic_digital_twins.dt_model.axes import (
     SetType,
     SpaceType,
     TimeType,
+    Wrap,
 )
 
+# =============================================================================
+# PART 1 -- defining axes: ready-made vs custom, properties, reading them back
+# =============================================================================
+print("=" * 77)
+print(" PART 1 -- defining axes: ready-made vs custom, properties, reading back")
+print("=" * 77)
+
+# --- what comes ready-made --------------------------------------------------
+print("\n=== ready-made: the three roles, and TIME_AXIS ===")
+print(f"  roles     : {DOMAIN!r}, {PARAMETER!r}, {ENSEMBLE!r}")
+print(f"  TIME_AXIS : {TIME_AXIS!r}")
+ts = TimeseriesIndex("ts", np.array([1.0, 2.0, 3.0]))
+print(f"  TimeseriesIndex('ts', ...).node.output_axes = {ts.node.output_axes}")
+
+# --- a custom axis with properties ------------------------------------------
+# A physical 1-D grid: neighbours 0.5 apart, and periodic (the right end wraps
+# round to the left). Both facts are stored ON the axis, so every operator
+# that touches x reads the same spacing and boundary.
+x = DomainAxis("x", type=SpaceType(spacing=0.5, boundary=Wrap()))
+
 # row/col index a matrix: ordered positions, not calendar time and not a
-# physical grid, so SequenceType is the honest description (see PART 4).
+# physical grid, so SequenceType is the honest description (used from PART 2).
 row = DomainAxis("row", type=SequenceType())
 col = DomainAxis("col", type=SequenceType())
 
+print("\n=== custom axes ===")
+print(f"  x   = {x!r}")
+print(f"  row = {row!r}")
+print(f"  x.role = {x.role!r}   (a DomainAxis is always DOMAIN)")
+
+# --- the type decides which operators an axis supports ----------------------
+probe_axes = {
+    "Axis(name, DOMAIN)":       Axis("p1", DOMAIN),
+    "DomainAxis (untyped)":     DomainAxis("p2"),
+    "DomainAxis SetType":       DomainAxis("p3", type=SetType()),
+    "DomainAxis SequenceType":  DomainAxis("p4", type=SequenceType()),
+    "DomainAxis TimeType":      DomainAxis("p5", type=TimeType()),
+    "DomainAxis SpaceType":     DomainAxis("p6", type=SpaceType(spacing=2.0)),
+}
+OPS = ("sum", "diff", "cumulative", "shift", "gradient", "laplacian")
+
+print(f"\n  {'axis declaration':26s}" + "".join(f"{o:11s}" for o in OPS))
+for label, ax in probe_axes.items():
+    probe = Index("probe", np.array([1.0, 2.0, 4.0, 8.0]), axes=(ax,))
+    cells = ""
+    for op in OPS:
+        try:
+            # laplacian takes axes=(...), the others take axis=...
+            if op == "laplacian":
+                getattr(probe, op)(axes=(ax,))
+            else:
+                getattr(probe, op)(axis=ax)
+            cells += f"{'ok':11s}"
+        except ValueError:
+            cells += f"{'--':11s}"
+    print(f"  {label:26s}{cells}")
+
+# --- typing never breaks matching -------------------------------------------
+plain = Axis("time", DOMAIN)
+print("\n=== identity is (name, role): the type is not part of it ===")
+print(f"  Axis('time', DOMAIN) == TIME_AXIS : {plain == TIME_AXIS}")
+print(f"  same hash                         : {hash(plain) == hash(TIME_AXIS)}")
+x_coarse = DomainAxis("x", type=SpaceType(spacing=10.0))
+print(f"  x == DomainAxis('x', spacing=10)  : {x == x_coarse}  <- conflicting copy, still 'equal'")
+
+# --- attaching axes to an index ---------------------------------------------
+U_VAL = np.array([0.0, 1.0, 4.0, 9.0])
+u_on_x = Index("u_on_x", U_VAL, axes=(x,))
+u_bare = Index("u_bare", U_VAL)
+print("\n=== an index carries exactly the axes you attach ===")
+print(f"  Index('u_on_x', array, axes=(x,)) -> {u_on_x.node.output_axes}")
+print(f"  Index('u_bare', array)            -> {u_bare.node.output_axes}  <- none at all")
+
+
+# A reusable named shape, built the same way TimeseriesIndex is: subclass,
+# set FIXED_AXES, pass it to axes=. Every LineIndex lives on x -- and, as a
+# formula, is VERIFIED to live on x.
+class LineIndex(Index):
+    FIXED_AXES: ClassVar[tuple[Axis, ...]] = (x,)
+
+    def __init__(self, name: str, value: np.ndarray | graph.Node | None = None) -> None:
+        super().__init__(name, value, axes=self.FIXED_AXES)
+
+
+print(f"  LineIndex('u', array)             -> {LineIndex('u', U_VAL).node.output_axes}")
+try:
+    LineIndex("total", u_on_x.sum(axis=x))
+except ValueError:
+    print("  LineIndex('total', u.sum(axis=x)) -> ValueError: the formula no longer carries x")
+
+# --- the type travels with the axis through formulas ------------------------
+print("\n=== the axis (and its type) travels through formulas ===")
+for label, formula in (
+    ("u * 2 + 1", u_on_x * 2 + 1),
+    ("u.diff(axis=x)", u_on_x.diff(axis=x)),
+    ("u.gradient(axis=x)", u_on_x.gradient(axis=x)),
+    ("u.sum(axis=x)", u_on_x.sum(axis=x)),
+):
+    print(f"  {label:20s} -> {Index('out', formula).node.output_axes}")
+
+# --- trap: a same-name UNTYPED axis can shadow the type ---------------------
+# x_untyped == x, so the two operands share ONE axis -- but the result keeps
+# whichever copy it met first, and only one of them carries the SpaceType.
+x_untyped = Axis("x", DOMAIN)
+ones = Index("ones", np.ones(4), axes=(x_untyped,))
+print("\n=== trap: a same-name untyped axis can shadow the type ===")
+for label, formula in (("u * ones", u_on_x * ones), ("ones * u", ones * u_on_x)):
+    prod = Index("prod", formula)
+    try:
+        prod.gradient()  # default: the sole DOMAIN axis the result carries
+        verdict = "gradient() ok"
+    except ValueError:
+        verdict = "gradient() -> ValueError: no SpaceType"
+    print(f"  {label:9s} carries {prod.node.output_axes[0]!r:60s} {verdict}")
+
+
+# --- carrying the axes into an evaluated model ------------------------------
+@define("rod")
+class Rod(Model):
+    @inputs
+    class Inputs:
+        u: LineIndex   # DOMAIN (x,) -- checked against LineIndex.FIXED_AXES
+        k: Index       # PARAMETER: a conductivity, swept externally
+
+    @outputs
+    class Outputs:
+        flux: LineIndex        # (x,)  -k du/dx
+        diffusion: LineIndex   # (x,)   k d2u/dx2
+        net: Index             # ()     flux summed over the whole rod
+
+    def compute(self, inputs: Inputs) -> Outputs:
+        flux = LineIndex("flux", -inputs.k * inputs.u.gradient(axis=x))
+        diffusion = LineIndex("diffusion", inputs.k * inputs.u.laplacian(axes=(x,)))
+        net = Index("net", flux.sum(axis=x), axes=())
+        return Rod.Outputs(flux=flux, diffusion=diffusion, net=net)
+
+
+k = Index("k")
+rod = Rod(inputs=Rod.Inputs(u=LineIndex("u", U_VAL), k=k))
+rod_scenario = Scenario(rod, parameter_axes=[k])
+rod_result = Evaluation(rod_scenario).evaluate(
+    ensemble=DistributionEnsemble(rod_scenario, size=1),
+    parameters={k: np.array([1.0, 2.0])},
+)
+
+print("\n=== reading the axes back off the answers ===")
+print("  rod_result.layout -- k and _ensemble were added by the library:")
+for rod_ax, rod_size in rod_result.layout.entries:
+    print(f"    {rod_ax!r:62s} size={rod_size}")
+
+flux_layout = rod_result.layout_of(rod.outputs.flux)
+print(f"  layout_of(flux).axes : {flux_layout.axes}")
+print(f"  by role              : DOMAIN={[a.name for a, _ in flux_layout.axes_by_role(DOMAIN)]} "
+      f"PARAMETER={[a.name for a, _ in flux_layout.axes_by_role(PARAMETER)]}")
+
+found = flux_layout.find_axis("x")
+# find_axis returns a plain Axis | None; narrow it to read the type's fields.
+assert isinstance(found, DomainAxis) and isinstance(found.type, SpaceType)
+print(f"  find_axis('x') is x  : {found is x}")
+print(f"    size={flux_layout.size_of(found)}  spacing={found.type.spacing}  "
+      f"boundary={found.type.boundary!r}")
+
+print("\n=== and the numbers were computed with those properties ===")
+for out_name in ("flux", "diffusion", "net"):
+    out_lab = rod_result.labeled(getattr(rod.outputs, out_name))
+    for i, k_val in enumerate((1.0, 2.0)):
+        print(f"  {out_name:9s} k={k_val:g}  dims={str(out_lab.dims):12s} {out_lab.sel(k=i).values}")
+
 
 # =============================================================================
-# PART 1 -- axis roles, and how axes are tracked across outputs
+# PART 2 -- axis roles together, and how axes are tracked across outputs
 # =============================================================================
+print("\n" + "=" * 77)
+print(" PART 2 -- axis roles together, and how axes are tracked across outputs")
+print("=" * 77)
+
+
 @define("extended")
 class ExtendedModel(Model):
     @inputs
@@ -71,7 +244,7 @@ class ExtendedModel(Model):
         matrix = Index("matrix", inputs.x * inputs.M * inputs.param, axes=(row, col))
         series = Index("series", inputs.x * inputs.T)
         # axes= is required here: an outer product of disjoint operands is
-        # flagged as probably-accidental unless stated explicitly (PART 2).
+        # flagged as probably-accidental unless stated explicitly (PART 3).
         mixed = Index("mixed", matrix * series, axes=(row, col, TIME_AXIS))
         row_total = Index("row_total", matrix.sum(axis=row), axes=(col,))
         scalar = Index("scalar", row_total.sum(axis=col), axes=())
@@ -96,7 +269,7 @@ result = Evaluation(scenario).evaluate(
     parameters={param: np.array([1.0, 2.0])},
 )
 
-print("=== result.layout — UNION over the whole evaluation ===")
+print("\n=== result.layout — UNION over the whole evaluation ===")
 for ax, size in result.layout.entries:
     print(f"  {ax.name:10s} {ax.role:10s} size={size}")
 print("  full_shape:", result.layout.full_shape, "<- no single output has this shape")
@@ -122,6 +295,24 @@ lab_mixed = result.labeled(model.outputs.mixed)
 print("\n  mixed dims:", lab_mixed.dims)
 print("  mixed at param=0, time=2:\n", lab_mixed.sel(param=0, time=2).values)
 
+print("\n=== why this order: DOMAIN axes are sorted by NAME ===")
+mixed_layout = result.layout_of(model.outputs.mixed)
+mixed_domain = [ax.name for ax, _ in mixed_layout.axes_by_role(DOMAIN)]
+print(f"  mixed declared (row, col, time), DOMAIN axes returned as {mixed_domain}")
+print(f"  alphabetical? {mixed_domain == sorted(mixed_domain)}")
+
+# The trap: reading "the second dimension is time" off a habit, not the layout.
+mixed_ev = result.expected_value(model.outputs.mixed)
+print(f"  mixed_ev.shape = {mixed_ev.shape}; mixed_ev[0, 1] is col=1, "
+      f"shape {mixed_ev[0, 1].shape} -- NOT time=1")
+
+# When an API needs positions, look the position up instead of assuming it.
+time_pos = mixed_layout.position_of(TIME_AXIS)
+by_time = np.moveaxis(mixed_ev, time_pos, 1)       # (param, time, col, row)
+print(f"  time is at position {time_pos}: np.moveaxis(mixed_ev, {time_pos}, 1).shape = {by_time.shape}")
+print(f"  by_time[0, 1] == lab_mixed.sel(param=0, time=1)? "
+      f"{np.allclose(by_time[0, 1], lab_mixed.sel(param=0, time=1).values)}")
+
 print("\n=== reorder to your own convention, derived not assumed ===")
 want = ("param", "row", "col")
 perm = [lab.dims.index(n) for n in want]
@@ -130,10 +321,10 @@ print(np.transpose(lab.values, perm))
 
 
 # =============================================================================
-# PART 2 -- multiplying two arrays: when does an axis EMERGE?
+# PART 3 -- multiplying two arrays: when does an axis EMERGE?
 # =============================================================================
 print("\n" + "=" * 77)
-print(" PART 2 -- multiplying two arrays: when does an axis EMERGE?")
+print(" PART 3 -- multiplying two arrays: when does an axis EMERGE?")
 print("=" * 77)
 
 time_axis = TIME_AXIS
@@ -186,8 +377,13 @@ except ValueError as exc:
 
 
 # =============================================================================
-# PART 3 -- the same products, EVALUATED: shared, outer, dot
+# PART 4 -- the same products, EVALUATED: shared, outer, dot
 # =============================================================================
+print("\n" + "=" * 77)
+print(" PART 4 -- the same products, EVALUATED: shared, outer, dot")
+print("=" * 77)
+
+
 @define("products")
 class Products(Model):
     @inputs
@@ -218,8 +414,8 @@ presult = Evaluation(pscenario).evaluate(
 )
 
 
-# Results come back in the engine's order (col before row here), so derive
-# the transpose from the names, exactly as in PART 1.
+# DOMAIN axes come back sorted by name (col before row), so derive
+# the transpose from the names, exactly as in PART 2.
 shared_lab = presult.labeled(pmodel.outputs.shared)
 outer_lab = presult.labeled(pmodel.outputs.outer)
 dotted_lab = presult.labeled(pmodel.outputs.dotted)
@@ -239,47 +435,6 @@ for k, factor in enumerate(VTIME_VAL):
 print("\n=== DOT product: (A * Vcol) then sum over col -> (row,) ===")
 print(f"  {dotted_lab.values}")
 print(f"  numpy cross-check: A @ Vcol = {A_VAL @ VCOL_VAL}")
-
-
-# =============================================================================
-# PART 4 -- DomainAxis: typing an axis decides which operators it supports
-# =============================================================================
-print("\n" + "=" * 77)
-print(" PART 4 -- DomainAxis: typing an axis decides which operators it supports")
-print("=" * 77)
-
-probe_axes = {
-    "Axis(name, DOMAIN)":       Axis("p1", DOMAIN),
-    "DomainAxis (untyped)":     DomainAxis("p2"),
-    "DomainAxis SetType":       DomainAxis("p3", type=SetType()),
-    "DomainAxis SequenceType":  DomainAxis("p4", type=SequenceType()),
-    "DomainAxis TimeType":      DomainAxis("p5", type=TimeType()),
-    "DomainAxis SpaceType":     DomainAxis("p6", type=SpaceType(spacing=2.0)),
-}
-OPS = ("sum", "diff", "cumulative", "shift", "gradient", "laplacian")
-
-print(f"\n  {'axis declaration':26s}" + "".join(f"{o:11s}" for o in OPS))
-for label, ax in probe_axes.items():
-    probe = Index("probe", np.array([1.0, 2.0, 4.0, 8.0]), axes=(ax,))
-    cells = ""
-    for op in OPS:
-        try:
-            # laplacian takes axes=(...), the others take axis=...
-            if op == "laplacian":
-                getattr(probe, op)(axes=(ax,))
-            else:
-                getattr(probe, op)(axis=ax)
-            cells += f"{'ok':11s}"
-        except ValueError:
-            cells += f"{'--':11s}"
-    print(f"  {label:26s}{cells}")
-
-# --- typing never breaks matching -------------------------------------------
-plain = Axis("time", DOMAIN)
-print("\n=== adding a type is backward compatible ===")
-print(f"  Axis('time', DOMAIN) == TIME_AXIS : {plain == TIME_AXIS}")
-print(f"  same hash                         : {hash(plain) == hash(TIME_AXIS)}")
-print(f"  TIME_AXIS is really               : {TIME_AXIS!r}")
 
 
 # =============================================================================

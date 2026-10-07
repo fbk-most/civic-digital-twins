@@ -2,8 +2,8 @@
 
 # Differential operators on a `SpaceType` axis: gradient, laplacian, boundaries
 
-> Script: [`differential_operators.py`](differential_operators.py) — run it with
-> `uv run python examples/detailed/differential_operators/differential_operators.py`.
+> Script: [`differential_operators_tutorial.py`](differential_operators_tutorial.py) — run it with
+> `uv run python examples/detailed/differential_operators_tutorial/differential_operators_tutorial.py`.
 > Each section below matches a `PART N` banner in the script.
 
 An axis declared with `SpaceType` carries two pieces of physical metadata that
@@ -16,8 +16,8 @@ nothing else in the library provides:
 
 Those two unlock `.gradient()` and `.laplacian()`, and they decide the numbers
 those operators return. (For where `SpaceType` sits among the other domain
-types, see PART 4 of
-[combine_axis](../combine_axis/Combine_Axis_Tutorial.md).)
+types, see PART 1 of
+[axis_tutorial](../axis_tutorial/Axis_Tutorial.md).)
 
 | Part | Topic                                                                                 |
 |------|---------------------------------------------------------------------------------------|
@@ -387,5 +387,7 @@ since `f` is constant along `y` that returns all zeros rather than `2x`. A wrong
 answer with no warning.
 
 Axis order is load-bearing **on input**: `axes=` must follow the array's shape.
-On output, the order is not guaranteed either (PART 2 got `('x', 'y')` back):
-read `.dims` and select by name rather than assuming a position.
+On output, DOMAIN axes come back **sorted by name** (PART 2 got `('x', 'y')`
+back), whatever order you declared; see PART 2 of
+[axis_tutorial](../axis_tutorial/Axis_Tutorial.md). Read `.dims` and select by
+name rather than assuming a position.
