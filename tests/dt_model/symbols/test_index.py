@@ -15,7 +15,7 @@ from civic_digital_twins.dt_model import (
     TimeseriesIndex,
     inputs,
 )
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SetType, TimeType
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import (
@@ -1282,3 +1282,97 @@ def test_named_shape_time_conformance_arithmetic():
     generated_sum = TimeIndex("t", arr) + 1.0
     handwritten_sum = TimeseriesIndex("t", arr) + 1.0
     assert generated_sum.output_axes == handwritten_sum.output_axes
+
+
+# ---------------------------------------------------------------------------
+# Construction-time shape checks: rank against axes=, sizes against declared lengths
+# ---------------------------------------------------------------------------
+
+_ZONE = DomainAxis("zone", type=SetType())
+_HOUR = DomainAxis("hour", type=TimeType(length=24))
+
+
+@pytest.mark.parametrize("cls", [Index, ConstIndex])
+def test_array_without_axes_is_rejected_at_construction(cls):
+    """An array without axes= is not taken for a scalar: it fails at the constructor, naming the shape."""
+    with pytest.raises(
+        ValueError,
+        match=rf"^{cls.__name__} 'u': the value is a 1-D array of shape \(4,\) but no axes= were given",
+    ):
+        cls("u", np.arange(4.0))
+
+
+@pytest.mark.parametrize("cls", [Index, ConstIndex])
+def test_array_with_empty_axes_is_rejected_at_construction(cls):
+    """axes=() declares a scalar, so an array with dimensions is rejected too."""
+    with pytest.raises(ValueError, match=r"2-D array of shape \(2, 3\) but no axes= were given"):
+        cls("u", np.zeros((2, 3)), axes=())
+
+
+@pytest.mark.parametrize("cls", [Index, ConstIndex])
+def test_scalar_values_without_axes_are_accepted(cls):
+    """Python scalars and 0-d arrays remain valid scalar values."""
+    assert cls("a", 3.0).output_axes == ()
+    assert cls("b", np.float64(3.0)).output_axes == ()
+    assert cls("c", np.array(3.0)).output_axes == ()
+
+
+@pytest.mark.parametrize("cls", [Index, ConstIndex])
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        pytest.param(
+            np.zeros((2, 3)), r"axes=\(zone,\) declares 1 dimension but the value has shape \(2, 3\)", id="too-many"
+        ),
+        pytest.param(3.0, r"axes=\(zone,\) declares 1 dimension but the value has shape \(\)", id="scalar"),
+    ],
+)
+def test_rank_mismatch_with_axes_is_rejected_at_construction(cls, value, message):
+    """The array's rank must equal len(axes); the error names the index, the axes and the shape."""
+    with pytest.raises(ValueError, match=rf"^{cls.__name__} 'v': " + message):
+        cls("v", value, axes=(_ZONE,))
+
+
+@pytest.mark.parametrize("cls", [Index, ConstIndex])
+def test_transposed_array_is_rejected_against_a_declared_length(cls):
+    """A (24, 3) array declared over (zone, hour) with hour of length 24 fails at the constructor."""
+    with pytest.raises(
+        ValueError,
+        match=rf"^{cls.__name__} 'inflow': axis 'hour' declares length=24, but the value has size 3 along it",
+    ):
+        cls("inflow", np.zeros((24, 3)), axes=(_ZONE, _HOUR))
+
+
+@pytest.mark.parametrize("cls", [Index, ConstIndex])
+def test_size_one_and_declared_length_are_accepted(cls):
+    """Each dimension may be 1 (constant along the axis) or the declared length."""
+    assert cls("full", np.zeros((3, 24)), axes=(_ZONE, _HOUR)).sizes == {"zone": 3, "hour": 24}
+    assert cls("flat", np.zeros((3, 1)), axes=(_ZONE, _HOUR)).sizes == {"zone": 3, "hour": 1}
+
+
+def test_timeseries_index_checks_its_fixed_axis():
+    """TimeseriesIndex fixes axes=(time,), so a 2-D array is a rank mismatch."""
+    with pytest.raises(ValueError, match=r"^TimeseriesIndex 'ts': axes=\(time,\) declares 1 dimension"):
+        TimeseriesIndex("ts", np.zeros((2, 2)))
+
+
+def test_named_shape_index_checks_its_fixed_axes():
+    """A named_shape class checks values against its fixed axes, lengths included."""
+    ZoneHourIndex, ConstZoneHourIndex, _ = named_shape("ZoneHour", (_ZONE, _HOUR))
+    with pytest.raises(ValueError, match=r"^ZoneHourIndex 'x': axis 'hour' declares length=24"):
+        ZoneHourIndex("x", np.zeros((3, 5)))
+    with pytest.raises(ValueError, match=r"^ConstZoneHourIndex 'y': axes=\(zone, hour\) declares 2 dimensions"):
+        ConstZoneHourIndex("y", np.zeros(3))
+
+
+def test_shaped_distribution_index_checks_shape_against_axes():
+    """shape= gets the same checks as a concrete array: rank and declared lengths."""
+    with pytest.raises(
+        ValueError,
+        match=r"^DistributionIndex 'd': axes=\(zone,\) declares 1 dimension but the value has shape \(2, 3\)",
+    ):
+        DistributionIndex("d", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(_ZONE,), shape=(2, 3))
+    with pytest.raises(
+        ValueError, match=r"^DistributionIndex 'e': axis 'hour' declares length=24, but the value has size 12"
+    ):
+        DistributionIndex("e", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(_HOUR,), shape=(12,))

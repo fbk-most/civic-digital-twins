@@ -286,6 +286,34 @@ def test_override_rank_must_match_declared_axes(bad):
         Scenario(m, overrides={field: bad})
 
 
+def test_override_size_must_match_declared_length():
+    """An override is checked against the declared lengths of its axes, like a constructor value."""
+    zone = DomainAxis("zone")
+    hour = DomainAxis("hour", type=SequenceType(length=24))
+
+    @define("Hourly")
+    class Hourly(Model):
+        @inputs
+        class Inputs:
+            inflow: Index
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inputs):
+            return Hourly.Outputs(out=Index("out", inputs.inflow * 1.0))
+
+    inflow = Index("inflow", np.zeros((3, 24)), axes=(zone, hour))
+    m = Hourly(inputs=Hourly.Inputs(inflow=inflow))
+    Scenario(m, overrides={inflow: np.ones((3, 1))})  # size 1: constant along hour
+    with pytest.raises(
+        ValueError,
+        match=r"^Override for Index 'inflow': axis 'hour' declares length=24, but the value has size 3",
+    ):
+        Scenario(m, overrides={inflow: np.ones((24, 3))})
+
+
 def test_timeseries_override_message_still_describes_the_time_axis():
     """The generalized gate keeps naming the axis a TimeseriesIndex declares."""
 

@@ -2,6 +2,8 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from civic_digital_twins.dt_model.axes import (
     DOMAIN,
     ENSEMBLE,
@@ -20,10 +22,12 @@ from civic_digital_twins.dt_model.axes import (
     SpaceType,
     TimeType,
     Wrap,
+    declared_length,
     domain_axis_position,
     filter_by_role,
     union_axes,
     validate_axis_extent,
+    validate_value_shape,
 )
 
 
@@ -306,3 +310,73 @@ class TestDomainAxisPosition:
 
         with pytest.raises(ValueError, match="not one of the DOMAIN axes"):
             domain_axis_position((), TIME_AXIS)
+
+
+class TestDeclaredLength:
+    """declared_length reads the length an axis declares through its type."""
+
+    def test_plain_axis_declares_none(self):
+        """A plain Axis has no type, hence no length."""
+        assert declared_length(Axis("x", DOMAIN)) is None
+
+    def test_untyped_and_length_less_axes_declare_none(self):
+        """An untyped DomainAxis and a type without length declare none."""
+        assert declared_length(DomainAxis("x")) is None
+        assert declared_length(DomainAxis("x", type=SetType())) is None
+        assert declared_length(DomainAxis("x", type=SequenceType())) is None
+
+    def test_sequence_like_types_declare_their_length(self):
+        """SequenceType, TimeType and SpaceType return their declared length."""
+        assert declared_length(DomainAxis("x", type=SequenceType(length=4))) == 4
+        assert declared_length(DomainAxis("t", type=TimeType(length=24))) == 24
+        assert declared_length(DomainAxis("s", type=SpaceType(length=7))) == 7
+
+
+class TestValidateValueShape:
+    """validate_value_shape checks a concrete value's shape against its declared axes."""
+
+    ZONE = DomainAxis("zone", type=SetType())
+    HOUR = DomainAxis("hour", type=TimeType(length=24))
+
+    def test_matching_shape_passes(self):
+        """One dimension per axis, sizes free or equal to the declared length."""
+        validate_value_shape("Index 'v'", (self.ZONE, self.HOUR), (3, 24))
+
+    def test_size_one_passes_against_a_declared_length(self):
+        """A value that does not vary along an axis has size 1 there."""
+        validate_value_shape("Index 'v'", (self.ZONE, self.HOUR), (3, 1))
+
+    def test_empty_axes_and_scalar_shape_pass(self):
+        """No axes and a scalar shape agree."""
+        validate_value_shape("Index 'v'", (), ())
+
+    @pytest.mark.parametrize(
+        ("axes", "shape", "message"),
+        [
+            pytest.param(
+                (ZONE,), (2, 3), r"axes=\(zone,\) declares 1 dimension but the value has shape \(2, 3\)", id="too-many"
+            ),
+            pytest.param(
+                (ZONE, HOUR),
+                (3,),
+                r"axes=\(zone, hour\) declares 2 dimensions but the value has shape \(3,\)",
+                id="too-few",
+            ),
+            pytest.param((ZONE,), (), r"axes=\(zone,\) declares 1 dimension but the value has shape \(\)", id="scalar"),
+        ],
+    )
+    def test_rank_mismatch_raises(self, axes, shape, message):
+        """The rank must equal the number of axes; the error names owner, axes and shape."""
+        with pytest.raises(ValueError, match=r"^Index 'v': " + message):
+            validate_value_shape("Index 'v'", axes, shape)
+
+    def test_size_other_than_one_or_declared_length_raises(self):
+        """A transposed table is caught when the swapped axes have different lengths."""
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"^Index 'inflow': axis 'hour' declares length=24, but the value has size 3 along it "
+                r"\(axes=\(zone, hour\) matched to value shape \(24, 3\)\)\.$"
+            ),
+        ):
+            validate_value_shape("Index 'inflow'", (self.ZONE, self.HOUR), (24, 3))

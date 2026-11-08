@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
+from ..axes import validate_value_shape
 from ..engine.frontend import graph
 from ..model.index import (
     CategoricalIndex,
@@ -175,8 +176,9 @@ class Scenario:
             # Domain-carrying Index (including TimeseriesIndex, whose declared
             # axes are (time,)): the override must be an ndarray whose rank
             # matches the declared axes, since each dimension is zipped against
-            # one axis.  Distribution/categorical indexes declare no axes and
-            # fall through to their own checks below.
+            # one axis, and whose sizes match the axes' declared lengths.
+            # Distribution/categorical indexes declare no axes and fall
+            # through to their own checks below.
             if isinstance(idx, Index) and idx.axes:
                 expected = len(idx.axes)
                 if not isinstance(val, np.ndarray) or val.ndim != expected:
@@ -187,6 +189,7 @@ class Scenario:
                         f"{expected}-D ndarray over axes ({axis_names}); "
                         f"got {type(val).__name__!r}{shape_info}."
                     )
+                validate_value_shape(f"Override for {type(idx).__name__} {idx.name!r}", idx.axes, val.shape)
                 continue
 
             # DistributionIndex: only Distribution override allowed.

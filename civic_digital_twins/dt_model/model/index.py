@@ -14,7 +14,7 @@ from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
 
-from ..axes import DOMAIN, TIME_AXIS, Axis, SpaceType, filter_by_role
+from ..axes import DOMAIN, TIME_AXIS, Axis, SpaceType, filter_by_role, validate_value_shape
 from ..engine.frontend import graph
 
 
@@ -100,6 +100,37 @@ def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[
             f"Declaring axes verifies the shape, it cannot relabel it — fix whichever "
             f"of the two is wrong."
         )
+
+
+def _check_concrete_value(
+    owner: str, value: "graph.Scalar | np.ndarray", axes: tuple[Axis, ...] | None
+) -> np.ndarray | None:
+    """Check a concrete value against its declared *axes* and return it as an array.
+
+    With *axes* declared, the value is converted to an array and validated by
+    :func:`~..axes.validate_value_shape` (one dimension per axis, each 1 or the
+    axis's declared length), and the array is returned. Without *axes* (``None``
+    or ``()``), the value must be a scalar: an array with dimensions would be
+    taken for a scalar placeholder and fail only at evaluation, so it is
+    rejected here; ``None`` is returned.
+
+    Raises
+    ------
+    ValueError
+        If the value's shape does not match *axes*, or a non-scalar value is
+        given without *axes*.
+    """
+    if axes:
+        arr = np.asarray(value)
+        validate_value_shape(owner, axes, arr.shape)
+        return arr
+    ndim = np.ndim(value)
+    if ndim > 0:
+        raise ValueError(
+            f"{owner}: the value is a {ndim}-D array of shape {np.shape(value)} but no axes= were given; "
+            f"pass axes= with one axis per dimension."
+        )
+    return None
 
 
 def _warn_if_axes_surprising(owner: str, node: graph.Node) -> None:
@@ -660,8 +691,10 @@ class Index(GenericIndex):
       ``graph.placeholder``) or ``Index("field", arr, axes=(x, y))`` (node is
       an ``array_placeholder``, per-axis sizes deduced by zipping *axes*
       against the array's shape in declaration order, so the array's rank must
-      match the number of axes). The value is a default, injected by Scenario
-      at evaluation time.
+      match the number of axes, and each size must be 1 or the length the axis
+      declares, if any; both are checked here, and an array without ``axes=``
+      is rejected). The value is a default, injected by Scenario at evaluation
+      time.
     * **Placeholder** — ``Index("cost")`` / ``Index("field", axes=(x, y))``:
       no default; value must be supplied via Scenario or ``parameters=``
       before evaluation.
@@ -734,8 +767,8 @@ class Index(GenericIndex):
 
         # Concrete value: placeholder injected by Scenario at evaluation time.
         elif value is not None:
-            if axes:
-                arr = np.asarray(value)
+            arr = _check_concrete_value(f"{type(self).__name__} {name!r}", value, axes)
+            if arr is not None and axes:
                 self._value = arr
                 self._node = self._make_placeholder_node(name, axes)
                 self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
@@ -829,7 +862,8 @@ class ConstIndex(Index):
 
     Like :class:`Index`, it is scalar by default and domain-carrying when
     ``axes=`` is declared (``ConstIndex("field", arr, axes=(x, y))``, whose
-    array rank must match the number of axes). Immutable after construction.
+    array is checked like :class:`Index`'s: rank equal to the number of axes,
+    each size 1 or the axis's declared length). Immutable after construction.
     """
 
     def __init__(
@@ -842,8 +876,8 @@ class ConstIndex(Index):
         # Bypass Index.__init__: it would create a placeholder node first.
         self._name = name
         self._axes = axes
-        if axes:
-            arr = np.asarray(value)
+        arr = _check_concrete_value(f"{type(self).__name__} {name!r}", value, axes)
+        if arr is not None and axes:
             self._value = arr
             self._node = self._make_constant_node(arr, axes, name)
             self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
@@ -1038,6 +1072,8 @@ class DistributionIndex(Index):
     ) -> None:
         if (axes is None) != (shape is None):
             raise ValueError(f"DistributionIndex {name!r}: axes and shape must be given together.")
+        if axes is not None and shape is not None:
+            validate_value_shape(f"{type(self).__name__} {name!r}", axes, tuple(shape))
         self._distribution = distribution
         self._params = dict(params)
         self._frozen: Distribution = cast(Distribution, distribution(**params))

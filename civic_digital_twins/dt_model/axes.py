@@ -33,7 +33,9 @@ __all__ = [
     "Wrap",
     "Linear",
     "TIME_AXIS",
+    "declared_length",
     "validate_axis_extent",
+    "validate_value_shape",
     "domain_axis_position",
     "filter_by_role",
     "union_axes",
@@ -374,6 +376,59 @@ class SpaceType(SequenceType):
         if self.length is None:
             return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r})"
         return f"SpaceType(spacing={self.spacing!r}, boundary={self.boundary!r}, length={self.length!r})"
+
+
+def declared_length(axis: Axis) -> int | None:
+    """Return the length *axis* declares through its type, or ``None``.
+
+    Only typed axes whose type carries a ``length`` (e.g.
+    ``SequenceType(length=24)``) declare one; plain :class:`Axis` objects and
+    untyped or length-less :class:`DomainAxis` objects return ``None``.
+    """
+    return getattr(getattr(axis, "type", None), "length", None)
+
+
+def validate_value_shape(owner: str, axes: Sequence[Axis], shape: tuple[int, ...]) -> None:
+    """Validate a concrete value's *shape* against the *axes* it is declared over.
+
+    The axes are matched to the dimensions by position, so the value must have
+    one dimension per axis, and each dimension must be ``1`` (a value that does
+    not vary along the axis) or the axis's declared length, when it declares
+    one.
+
+    Parameters
+    ----------
+    owner:
+        How the value is named in error messages, e.g. ``"Index 'inflow'"``.
+    axes:
+        The declared axes, in dimension order.
+    shape:
+        The value's shape.
+
+    Raises
+    ------
+    ValueError
+        If the rank differs from the number of axes, or a dimension is
+        neither 1 nor the declared length of its axis.
+    """
+    if len(shape) != len(axes):
+        n = len(axes)
+        raise ValueError(
+            f"{owner}: axes={_axes_repr(axes)} declares {n} dimension{'s' if n != 1 else ''} "
+            f"but the value has shape {shape}."
+        )
+    for ax, size in zip(axes, shape):
+        length = declared_length(ax)
+        if length is not None and size not in {1, length}:
+            raise ValueError(
+                f"{owner}: axis {ax.name!r} declares length={length}, but the value has size {size} "
+                f"along it (axes={_axes_repr(axes)} matched to value shape {shape})."
+            )
+
+
+def _axes_repr(axes: Sequence[Axis]) -> str:
+    """Format *axes* by name as a tuple, e.g. ``(zone, hour)`` or ``(zone,)``, for error messages."""
+    return "(" + ", ".join(ax.name for ax in axes) + ("," if len(axes) == 1 else "") + ")"
 
 
 def validate_axis_extent(axis: Axis, size: int) -> None:
