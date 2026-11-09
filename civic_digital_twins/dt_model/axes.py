@@ -183,13 +183,14 @@ class SetType:
         Optional member names, one per position along the axis (e.g.
         ``("centre", "north", "south")``). They declare the length
         (``len(labels)``) and allow results to be selected by label
-        (``sel(zone="centre")``). Must be distinct strings.
+        (``sel(zone="centre")``). Must be distinct strings. An empty
+        sequence declares an axis of length 0 (e.g. no entities).
 
     Raises
     ------
     ValueError
-        If *length* is not positive, *labels* is empty or has duplicates, or
-        both are given and ``len(labels) != length``.
+        If *length* is negative, *labels* has duplicates, or both are given
+        and ``len(labels) != length``.
     TypeError
         If a label is not a string.
 
@@ -205,8 +206,6 @@ class SetType:
     def __init__(self, length: int | None = None, labels: Sequence[str] | None = None) -> None:
         if labels is not None:
             labels = tuple(labels)
-            if not labels:
-                raise ValueError("SetType labels must not be empty.")
             non_str = [label for label in labels if not isinstance(label, str)]
             if non_str:
                 raise TypeError(f"SetType labels must be strings; got {non_str!r}.")
@@ -216,8 +215,8 @@ class SetType:
             if length is not None and length != len(labels):
                 raise ValueError(f"SetType length={length!r} does not match the {len(labels)} labels given.")
             length = len(labels)
-        if length is not None and length <= 0:
-            raise ValueError(f"SetType length must be positive; got {length!r}.")
+        if length is not None and length < 0:
+            raise ValueError(f"SetType length must not be negative; got {length!r}.")
         self.length: int | None = length
         self.labels: tuple[str, ...] | None = labels
 
@@ -251,16 +250,17 @@ class SequenceType:
     Parameters
     ----------
     length:
-        Optional declared axis length. ``None`` leaves the extent unconstrained.
-        When set, evaluators may validate that arrays carrying this axis have
-        either this length or ``1`` (broadcast singleton) along it.
+        Optional declared axis length, 0 or more (0 declares an empty axis).
+        ``None`` leaves the extent unconstrained. When set, evaluators may
+        validate that arrays carrying this axis have either this length or
+        ``1`` (broadcast singleton) along it.
     """
 
     __slots__ = ("length",)
 
     def __init__(self, length: int | None = None) -> None:
-        if length is not None and length <= 0:
-            raise ValueError(f"SequenceType length must be positive; got {length!r}.")
+        if length is not None and length < 0:
+            raise ValueError(f"SequenceType length must not be negative; got {length!r}.")
         self.length = length
 
     def validate_extent(self, *, size: int, axis_name: str) -> None:

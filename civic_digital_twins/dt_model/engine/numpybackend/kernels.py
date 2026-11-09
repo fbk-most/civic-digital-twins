@@ -180,8 +180,11 @@ def gradient(x: np.ndarray, axis: int, spacing: float, boundary: BoundaryConditi
         Array of the same shape as *x*: the discrete first derivative
         ``(x[i+1] - x[i-1]) / (2 * spacing)`` along *axis*, including at the
         two boundary positions (unlike ``np.gradient``, which falls back to
-        a one-sided formula there instead of honoring *boundary*).
+        a one-sided formula there instead of honoring *boundary*). An empty
+        *x* (e.g. along an axis of length 0) gives an empty result.
     """
+    if x.size == 0:
+        return np.zeros(x.shape, dtype=float)
     padded = _ghost_pad(x, axis, spacing, boundary)
     n = x.shape[axis]
     left = np.take(padded, range(0, n), axis=axis)
@@ -202,8 +205,11 @@ def _laplacian_1axis(x: np.ndarray, axis: int, spacing: float, boundary: Boundar
     Returns
     -------
         Array of the same shape as *x*: the discrete second derivative
-        ``(x[i-1] - 2*x[i] + x[i+1]) / spacing**2`` along *axis*.
+        ``(x[i-1] - 2*x[i] + x[i+1]) / spacing**2`` along *axis*. An empty
+        *x* (e.g. along an axis of length 0) gives an empty result.
     """
+    if x.size == 0:
+        return np.zeros(x.shape, dtype=float)
     padded = _ghost_pad(x, axis, spacing, boundary)
     n = x.shape[axis]
     left = np.take(padded, range(0, n), axis=axis)

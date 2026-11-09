@@ -50,10 +50,23 @@ class TestConstruction:
         with pytest.raises(ValueError, match="canonical order"):
             AxisLayout([(TIME_AXIS, 5), (E1, 3)])
 
-    def test_nonpositive_size_rejected(self):
-        """Sizes must be positive integers."""
-        with pytest.raises(ValueError, match="positive"):
-            AxisLayout([(P1, 0)])
+    def test_negative_size_rejected(self):
+        """Sizes must not be negative."""
+        with pytest.raises(ValueError, match=r"sizes must not be negative; got \[-1\]"):
+            AxisLayout([(TIME_AXIS, -1)])
+
+    @pytest.mark.parametrize("axis", [P1, E1])
+    def test_size_0_rejected_on_parameter_and_ensemble_axes(self, axis):
+        """Only DOMAIN axes may be empty."""
+        with pytest.raises(ValueError, match=rf"positive size; got 0 for \['{axis.name}'\]"):
+            AxisLayout([(axis, 0)])
+
+    def test_domain_axis_of_size_0(self):
+        """A DOMAIN axis may have size 0; the full shape has a 0 there."""
+        layout = AxisLayout([(P1, 2), (E1, 3), (TIME_AXIS, 0)])
+        assert layout.full_shape == (2, 3, 0)
+        assert layout.compatible_with((2, 3, 0))
+        assert layout.compatible_with((2, 1, 1))
 
     def test_build_groups(self):
         """build() concatenates the role groups in canonical order."""

@@ -55,8 +55,9 @@ class AxisLayout:
         If two axes share a name (names are globally unique within a
         layout, across roles), if an axis has a role other than PARAMETER,
         ENSEMBLE, or DOMAIN, if the roles are not grouped in canonical
-        order (PARAMETER, then ENSEMBLE, then DOMAIN), or if a size is not
-        a positive integer.
+        order (PARAMETER, then ENSEMBLE, then DOMAIN), or if a size is
+        negative, or 0 on a PARAMETER or ENSEMBLE axis (a DOMAIN axis may
+        have length 0, e.g. an entity axis with no entities).
     """
 
     __slots__ = ("_axes", "_sizes", "_positions")
@@ -84,8 +85,11 @@ class AxisLayout:
                 "AxisLayout: axes must be grouped by role in canonical order "
                 f"(PARAMETER, ENSEMBLE, DOMAIN); got {[ax.role for ax in axes]}."
             )
-        if any(size <= 0 for size in sizes):
-            raise ValueError(f"AxisLayout: sizes must be positive; got {sizes}.")
+        if any(size < 0 for size in sizes):
+            raise ValueError(f"AxisLayout: sizes must not be negative; got {sizes}.")
+        empty = [ax.name for ax, size in zip(axes, sizes, strict=True) if size == 0 and ax.role != DOMAIN]
+        if empty:
+            raise ValueError(f"AxisLayout: PARAMETER and ENSEMBLE axes must have a positive size; got 0 for {empty}.")
         self._axes = tuple(axes)
         self._sizes = tuple(sizes)
         self._positions = {ax: i for i, ax in enumerate(axes)}

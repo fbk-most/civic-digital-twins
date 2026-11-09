@@ -350,8 +350,7 @@ class TestDomainTypeLattice:
     @pytest.mark.parametrize(
         ("kwargs", "error", "message"),
         [
-            pytest.param({"length": 0}, ValueError, r"length must be positive; got 0", id="zero-length"),
-            pytest.param({"labels": []}, ValueError, r"labels must not be empty", id="empty-labels"),
+            pytest.param({"length": -1}, ValueError, r"length must not be negative; got -1", id="negative-length"),
             pytest.param({"labels": ["a", 1]}, TypeError, r"labels must be strings; got \[1\]", id="non-str"),
             pytest.param({"labels": ["a", "b", "a"]}, ValueError, r"distinct; duplicated: \['a'\]", id="duplicates"),
             pytest.param(
@@ -363,6 +362,11 @@ class TestDomainTypeLattice:
         """Invalid lengths and labels are rejected when the type is built."""
         with pytest.raises(error, match=message):
             SetType(**kwargs)
+
+    @pytest.mark.parametrize("kwargs", [{"length": 0}, {"labels": []}, {"length": 0, "labels": ()}])
+    def test_set_type_accepts_length_0(self, kwargs):
+        """A set axis may be empty (e.g. no entities), by length or by an empty list of labels."""
+        assert SetType(**kwargs).length == 0
 
     def test_set_type_validate_extent(self):
         """A set axis with a declared length accepts that size or 1, like a sequence axis."""
@@ -385,12 +389,18 @@ class TestDomainTypeLattice:
         assert s.length == 12
         assert repr(s) == "SequenceType(length=12)"
 
-    def test_sequence_type_rejects_non_positive_length(self):
-        """Declared lengths must be positive when provided."""
-        import pytest
+    def test_sequence_type_rejects_negative_length(self):
+        """Declared lengths must not be negative when provided."""
+        with pytest.raises(ValueError, match="must not be negative; got -1"):
+            SequenceType(length=-1)
 
-        with pytest.raises(ValueError, match="must be positive"):
-            SequenceType(length=0)
+    def test_sequence_type_accepts_length_0(self):
+        """A sequence axis may be empty; a value of size 1 along it is still accepted."""
+        axis = DomainAxis("t", type=SequenceType(length=0))
+        validate_axis_extent(axis, 0)
+        validate_axis_extent(axis, 1)
+        with pytest.raises(ValueError, match=r"declares length=0, but got dimension size 2"):
+            validate_axis_extent(axis, 2)
 
     def test_sequence_type_validates_extent(self):
         """SequenceType validates concrete extents via its declared length."""

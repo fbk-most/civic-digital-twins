@@ -53,7 +53,8 @@ def _resolve_domain_extents(
 
     1. the length its type declares (``length=``, or the number of
        ``labels=``); the leaves have already been checked against it;
-    2. otherwise the common size other than 1 among the leaves carrying it;
+    2. otherwise the common size other than 1 among the leaves carrying it
+       (0 included: an axis may be empty);
     3. otherwise 1, if some leaf carries it.
 
     Raises

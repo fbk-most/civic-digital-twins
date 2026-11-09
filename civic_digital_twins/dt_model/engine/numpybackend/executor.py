@@ -275,6 +275,21 @@ dimension is resolved per node from the op's *named* axis (see
 Add entries to this table to support more projection operations."""
 
 
+_UNDEFINED_ON_EMPTY_NAMES: dict[type[graph.Node], str] = {
+    graph.project_using_min: "the minimum",
+    graph.project_using_max: "the maximum",
+    graph.project_using_quantile: "a quantile",
+}
+"""Reductions with no value over an axis of length 0, which have no identity to return.
+
+The other reductions follow NumPy over an empty axis: ``sum``,
+``count_nonzero`` give 0, ``prod`` 1, ``any`` False, ``all`` True (their
+identities); ``mean``, ``std``, ``var``, ``median`` give NaN, with NumPy's
+warning."""
+
+_UNDEFINED_ON_EMPTY = tuple(_UNDEFINED_ON_EMPTY_NAMES)
+
+
 def _print_graph_node(
     node: graph.Node, domain_axes: tuple[Axis, ...] = (), domain_extents: tuple[int, ...] = ()
 ) -> None:
@@ -760,7 +775,9 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
     evaluation declares (:attr:`State.domain_axes`).  Reducing an axis the
     evaluation does not carry raises rather than silently reducing the wrong
     dimension.  An operand stored at size 1 along the axis is reduced over
-    the axis's full extent (:func:`_expand_to_extent`).
+    the axis's full extent (:func:`_expand_to_extent`). Over an axis of
+    length 0, a reduction with no identity (:data:`_UNDEFINED_ON_EMPTY_NAMES`)
+    raises; the others follow NumPy.
     """
     node = cast(graph.ProjectionOp, node)
     try:
@@ -771,6 +788,11 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
     operand = _expand_to_extent(state, node, state.get_node_value(node.node), (position,))
+    if operand.shape[position] == 0 and isinstance(node, _UNDEFINED_ON_EMPTY):
+        raise ValueError(
+            f"executor: {type(node).__name__} {node.name!r}: axis {node.axis.name!r} has length 0, and "
+            f"{_UNDEFINED_ON_EMPTY_NAMES[type(node)]} of no values is undefined."
+        )
     if isinstance(node, graph.project_using_quantile):
         return _reduce_quantile(operand, position, node.q)
     try:
