@@ -400,9 +400,17 @@ class GenericIndex(ABC):
             standalone = Index("standalone", ind_x, axes=(x, y))  # ValueError
 
         ``ind_x.broadcast(y)`` fixes this by making the node itself
-        reference ``y``, with implicit size-1 extent there::
+        reference ``y``, its value constant along it::
 
             standalone = Index("standalone", ind_x.broadcast(y), axes=(x, y))
+
+        The result ranges over the full length of ``y``: the length ``y``
+        declares (``length=`` or ``labels=``), or else the size of the other
+        values carrying ``y`` in the evaluation. Reductions and other
+        axis-aware operators along ``y`` see every position, so
+        ``ind_x.broadcast(y).sum(axis=y)`` is ``ind_x`` times that length. An
+        axis with neither a declared length nor a value carrying it cannot be
+        evaluated.
 
         This is *not* needed just to combine ``ind_x`` with an operand
         that already carries ``y`` — ``ind_x + ind_xy`` already infers

@@ -595,3 +595,32 @@ def test_size_disagreement_names_unnamed_values_by_node_id():
     anonymous = graph.array_constant(np.zeros(4), axes=(x,))
     with pytest.raises(ValueError, match=rf"'a' has 3, 'n{anonymous.id}' has 4"):
         _evaluate_output(lambda: Index("out", ConstIndex("a", np.zeros(3), axes=(x,)) + anonymous))
+
+
+def test_reduction_over_a_broadcast_axis_uses_the_declared_length():
+    """Summing a constant broadcast over an axis declaring length=4 counts four positions (#296)."""
+    hour = DomainAxis("hour", type=SequenceType(length=4))
+    m, result = _evaluate_output(lambda: Index("out", ConstIndex("c", 10.0).node.broadcast(hour).sum(hour)))
+    assert float(np.squeeze(result[m.outputs.out])) == 40.0
+
+
+def test_reduction_over_a_broadcast_axis_uses_the_inferred_length():
+    """Without a declaration, the length comes from another value carrying the axis (#296)."""
+    hour = DomainAxis("hour")
+
+    def build():
+        constant = ConstIndex("c", 10.0).node.broadcast(hour).sum(hour)
+        hourly = ConstIndex("h", np.zeros(3), axes=(hour,)).node.sum(hour)
+        return Index("out", constant + hourly)
+
+    m, result = _evaluate_output(build)
+    assert float(np.squeeze(result[m.outputs.out])) == 30.0
+
+
+def test_shift_of_a_compressed_value_fills_only_the_exposed_position():
+    """A value constant along an axis, shifted by one, keeps its value everywhere but the first position."""
+    hour = DomainAxis("hour", type=SequenceType(length=4))
+    m, result = _evaluate_output(
+        lambda: Index("out", ConstIndex("c", np.array([10.0]), axes=(hour,)).shift(1, axis=hour))
+    )
+    np.testing.assert_array_equal(result[m.outputs.out], [0.0, 10.0, 10.0, 10.0])

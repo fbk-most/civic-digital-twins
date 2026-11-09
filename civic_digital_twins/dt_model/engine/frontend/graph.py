@@ -517,7 +517,7 @@ class Node[T]:
         return self - self.shift(axis, periods, fill_value)
 
     def broadcast(self, *axes: Axis) -> Node[T]:
-        """Return a node whose output_axes additionally include *axes*, implicit size-1 there.
+        """Return a node whose output_axes additionally include *axes*, its value constant along them.
 
         A structural declaration, not a value transformation: the result
         represents the same values as this node, just considered to
@@ -1579,12 +1579,14 @@ class laplacian[T](Node[T]):
 class broadcast_to[T](Node[T]):
     """Declares that a node's output additionally spans some axes it doesn't itself carry.
 
-    Widens ``output_axes`` to include *axes*, with implicit size-1 extent
+    Widens ``output_axes`` to include *axes*, the value being constant
     along whichever of them *node* doesn't already carry — the same
     broadcast semantics a ``BinaryOp`` already implies when one operand
     carries an axis the other doesn't. This is a structural declaration,
     not a value transformation: the node represents the same values as
-    *node*, just considered to additionally range over *axes*.
+    *node*, just considered to additionally range over *axes*, each over
+    its full length (the length the evaluation resolves for it), so an
+    operator along one of them sees every position.
 
     What this buys, regardless of backend: it changes which axes this node
     is considered to carry for downstream purposes — ``axes=`` verification

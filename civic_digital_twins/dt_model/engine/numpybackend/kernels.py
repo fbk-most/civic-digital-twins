@@ -13,6 +13,10 @@ reach without duplicating it — two independent copies would drift the first
 time either one got a bugfix or optimization the other didn't. This module is
 that one place.
 
+``expand_to_extent`` is shared for the same reason: the executor applies
+it to the operand of every axis-aware operator, and the debug codegen must
+render that call for the printed code to reproduce the evaluation.
+
 ``executor.py`` already imports ``numpy_ast`` (for trace printing), so
 ``numpy_ast`` importing back from ``executor`` would cycle; both instead
 import from here.
@@ -23,6 +27,52 @@ import from here.
 import numpy as np
 
 from ...axes import BoundaryCondition, Constant, Linear, Nearest, Neumann, Wrap
+
+
+def expand_to_extent(x: np.ndarray, axes: tuple[int, ...], domain_extents: tuple[int, ...]) -> np.ndarray:
+    """Return *x* at full extent along the DOMAIN dimensions *axes*.
+
+    A value stores size 1 along an axis it does not vary on. An operator that
+    works along an axis (a reduction, ``shift``, ``cumulative``, ``gradient``,
+    ...) needs every position of it, so such a dimension is broadcast to the
+    axis's extent first, as a read-only view.
+
+    Args:
+        x: The operand. A 0-d value (a scalar constant) is constant along
+            every DOMAIN axis, so it is given size 1 along each first. Any
+            other value must carry the whole DOMAIN block as its trailing
+            dimensions.
+        axes: The dimensions to expand, as negative offsets from the end
+            (as returned by :func:`~...axes.domain_axis_position`).
+        domain_extents: The extent of every DOMAIN axis, in DOMAIN order.
+
+    Returns
+    -------
+        *x* itself if already at full extent along *axes*, else a read-only
+        broadcast view of it.
+
+    Raises
+    ------
+    ValueError
+        If *x* has some DOMAIN dimensions but not all: its dimensions cannot
+        be matched to axes.
+    """
+    n_domain = len(domain_extents)
+    arr = np.asarray(x)
+    if arr.ndim == 0:
+        arr = arr.reshape((1,) * n_domain)
+    elif arr.ndim < n_domain:
+        raise ValueError(
+            f"the operand has shape {arr.shape}, fewer dimensions than the {n_domain} DOMAIN axes, "
+            f"so its dimensions cannot be matched to axes"
+        )
+    shape = list(arr.shape)
+    for axis in axes:
+        if shape[axis] == 1:
+            shape[axis] = domain_extents[axis]
+    if tuple(shape) == arr.shape:
+        return arr
+    return np.broadcast_to(arr, tuple(shape))
 
 
 def shift(x: np.ndarray, periods: int, *, axis: int, fill_value: float) -> np.ndarray:

@@ -145,12 +145,12 @@ def test_no_arguments_handling_for_node():
 
 
 def test_project_using_quantile_numpy_ast():
-    """project_using_quantile generates quantile call with q first, axis, and keepdims."""
+    """project_using_quantile generates a quantile call with the operand, q, axis, and keepdims."""
     k = graph.constant(10)
     time_axis = Axis("time", DOMAIN)
     node = graph.project_using_quantile(k, axis=time_axis, q=0.95)
     code = numpy_ast.graph_node_to_numpy_code(node, domain_axes=(time_axis,))
-    assert code == f"n{node.id} = np.quantile(0.95, n{k.id}, axis=(-1,), keepdims=True)"
+    assert code == f"n{node.id} = np.quantile(n{k.id}, 0.95, axis=(-1,), keepdims=True)"
 
 
 def test_axis_as_tuple_unsupported_axis_raises():
@@ -198,3 +198,24 @@ def test_generic_array_placeholder_generates_code():
     node = graph.array_placeholder("field", (x,))
     code = numpy_ast.graph_node_to_numpy_code(node, np.array([1.0, 2.0]))
     assert code == f"n{node.id} = np.asarray([1.0, 2.0])"
+
+
+def test_generated_code_expands_the_operand_with_domain_extents():
+    """With extents, the operand of an axis-aware operator is rendered through ``_expand_to_extent``."""
+    x = Axis("x", DOMAIN)
+    y = Axis("y", DOMAIN)
+    k = graph.constant(1.0)
+    proj = graph.project_using_sum(k, axis=x)
+    code = numpy_ast.graph_node_to_numpy_code(proj, domain_axes=(x, y), domain_extents=(4, 3))
+    assert code == (
+        f"n{proj.id} = np.sum(_expand_to_extent(n{k.id}, axes=(-2,), domain_extents=(4, 3)), axis=(-2,), keepdims=True)"
+    )
+
+
+def test_generated_code_does_not_expand_element_wise_operands():
+    """Element-wise operators broadcast by themselves: their operands are rendered as is."""
+    x = Axis("x", DOMAIN)
+    k = graph.constant(1.0)
+    node = graph.add(k, k)
+    code = numpy_ast.graph_node_to_numpy_code(node, domain_axes=(x,), domain_extents=(4,))
+    assert code == f"n{node.id} = np.add(n{k.id}, n{k.id})"
