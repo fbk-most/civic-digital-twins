@@ -22,6 +22,7 @@ from civic_digital_twins.dt_model.axes import (
     SpaceType,
     TimeType,
     Wrap,
+    declared_labels,
     declared_length,
     domain_axis_position,
     filter_by_role,
@@ -162,8 +163,55 @@ class TestDomainTypeLattice:
     """DomainType concrete marker classes are metadata-only carriers."""
 
     def test_set_type_repr_roundtrip(self):
-        """SetType is a parameterless marker."""
+        """SetType's repr shows labels, else length, else nothing."""
         assert repr(SetType()) == "SetType()"
+        assert repr(SetType(length=3)) == "SetType(length=3)"
+        assert repr(SetType(labels=["a", "b"])) == "SetType(labels=('a', 'b'))"
+        assert repr(SetType(length=2, labels=("a", "b"))) == "SetType(labels=('a', 'b'))"
+
+    def test_set_type_defaults_to_no_length_and_no_labels(self):
+        """A bare SetType leaves the extent unconstrained."""
+        s = SetType()
+        assert s.length is None
+        assert s.labels is None
+
+    def test_set_type_length(self):
+        """SetType(length=n) declares a length without labels."""
+        s = SetType(length=3)
+        assert s.length == 3
+        assert s.labels is None
+
+    def test_set_type_labels_declare_the_length(self):
+        """Labels are stored as a tuple and their number is the length."""
+        s = SetType(labels=["centre", "north", "south"])
+        assert s.labels == ("centre", "north", "south")
+        assert s.length == 3
+
+    @pytest.mark.parametrize(
+        ("kwargs", "error", "message"),
+        [
+            pytest.param({"length": 0}, ValueError, r"length must be positive; got 0", id="zero-length"),
+            pytest.param({"labels": []}, ValueError, r"labels must not be empty", id="empty-labels"),
+            pytest.param({"labels": ["a", 1]}, TypeError, r"labels must be strings; got \[1\]", id="non-str"),
+            pytest.param({"labels": ["a", "b", "a"]}, ValueError, r"distinct; duplicated: \['a'\]", id="duplicates"),
+            pytest.param(
+                {"length": 3, "labels": ["a", "b"]}, ValueError, r"length=3 does not match the 2 labels", id="mismatch"
+            ),
+        ],
+    )
+    def test_set_type_rejects_invalid_declarations(self, kwargs, error, message):
+        """Invalid lengths and labels are rejected when the type is built."""
+        with pytest.raises(error, match=message):
+            SetType(**kwargs)
+
+    def test_set_type_validate_extent(self):
+        """A set axis with a declared length accepts that size or 1, like a sequence axis."""
+        s = SetType(labels=("a", "b", "c"))
+        s.validate_extent(size=3, axis_name="zone")
+        s.validate_extent(size=1, axis_name="zone")
+        SetType().validate_extent(size=7, axis_name="zone")
+        with pytest.raises(ValueError, match=r"axis 'zone' declares length=3, but got dimension size 2"):
+            s.validate_extent(size=2, axis_name="zone")
 
     def test_sequence_type_defaults_to_undefined_length(self):
         """SequenceType supports optional declared length and defaults to None."""
@@ -332,6 +380,23 @@ class TestDeclaredLength:
         assert declared_length(DomainAxis("s", type=SpaceType(length=7))) == 7
 
 
+class TestDeclaredLabels:
+    """declared_labels reads the labels an axis declares through its type."""
+
+    def test_only_labelled_set_axes_declare_labels(self):
+        """Plain, untyped, length-only and sequence axes declare none."""
+        assert declared_labels(Axis("x", DOMAIN)) is None
+        assert declared_labels(DomainAxis("x")) is None
+        assert declared_labels(DomainAxis("x", type=SetType(length=2))) is None
+        assert declared_labels(DomainAxis("x", type=SequenceType(length=2))) is None
+        assert declared_labels(DomainAxis("x", type=SetType(labels=("a", "b")))) == ("a", "b")
+
+    def test_set_axis_declares_its_length(self):
+        """declared_length covers set axes too, through length= or labels=."""
+        assert declared_length(DomainAxis("x", type=SetType(length=4))) == 4
+        assert declared_length(DomainAxis("x", type=SetType(labels=("a", "b")))) == 2
+
+
 class TestValidateValueShape:
     """validate_value_shape checks a concrete value's shape against its declared axes."""
 
@@ -380,3 +445,10 @@ class TestValidateValueShape:
             ),
         ):
             validate_value_shape("Index 'inflow'", (self.ZONE, self.HOUR), (24, 3))
+
+    def test_set_axis_length_is_checked(self):
+        """A set axis with labels gets the same check as a sequence axis with a length."""
+        zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+        validate_value_shape("Index 'v'", (zone,), (3,))
+        with pytest.raises(ValueError, match=r"axis 'zone' declares length=3, but the value has size 4"):
+            validate_value_shape("Index 'v'", (zone,), (4,))

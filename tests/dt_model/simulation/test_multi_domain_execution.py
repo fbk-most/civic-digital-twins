@@ -15,7 +15,7 @@ from civic_digital_twins.dt_model import (
     inputs,
     outputs,
 )
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SpaceType
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SetType, SpaceType
 from civic_digital_twins.dt_model.engine.numpybackend.executor import align_to_domain_block
 
 X = Axis("x", DOMAIN)
@@ -386,3 +386,26 @@ def test_dropped_domain_carrying_index_is_reported_at_construction():
 
     with pytest.raises(ValueError, match="not declared|not de"):
         DroppedModel(inputs=DroppedModel.Inputs())
+
+
+def test_labelled_set_axis_results_can_be_read_by_label():
+    """A result over a SetType(labels=...) axis is selected by label, and the layout keeps the labels."""
+    zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+
+    @define("Zones")
+    class Zones(Model):
+        @inputs
+        class Inputs:
+            capacity: Index
+
+        @outputs
+        class Outputs:
+            load: Index
+
+        def compute(self, inputs):
+            return Zones.Outputs(load=Index("load", 500.0 / inputs.capacity, axes=(zone,)))
+
+    m = Zones(inputs=Zones.Inputs(capacity=Index("capacity", np.array([1000.0, 800.0, 500.0]), axes=(zone,))))
+    load = Evaluation(Scenario(m)).evaluate().labeled(m.outputs.load)
+    assert load.labels == {"zone": ("centre", "north", "south")}
+    assert float(load.sel(zone="north").values) == pytest.approx(0.625)

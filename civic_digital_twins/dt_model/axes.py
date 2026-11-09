@@ -33,6 +33,7 @@ __all__ = [
     "Wrap",
     "Linear",
     "TIME_AXIS",
+    "declared_labels",
     "declared_length",
     "validate_axis_extent",
     "validate_value_shape",
@@ -106,8 +107,9 @@ class DomainAxis(Axis):
     axis ``name`` — it is not runtime/execution state. In particular concrete
     runtime ``size`` stays off the axis: an axis identifies a dimension, while
     its evaluated extent is a per-result concern that lives in the execution
-    layout. Sequence-like types may still carry an optional declared ``length``
-    as a static modeling constraint.
+    layout. Set and sequence-like types may still carry an optional declared
+    ``length`` as a static modeling constraint, and set types may name their
+    members with ``labels``.
 
     Identity is load-bearing and inherited unchanged from :class:`Axis`:
     equality and hashing stay on ``(name, role)`` only. ``type`` is
@@ -155,13 +157,74 @@ class DomainType(Protocol):
     """
 
 
-class SetType:
-    """Unordered domain: reductions and selection only."""
+def _validate_declared_extent(length: int | None, *, size: int, axis_name: str) -> None:
+    """Raise unless *size* is ``1`` or the declared *length* (anything goes when ``None``)."""
+    if length is None or size in {1, length}:
+        return
+    raise ValueError(
+        f"executor: axis {axis_name!r} declares length={length}, but got dimension size {size}; expected 1 or {length}."
+    )
 
-    __slots__ = ()
+
+class SetType:
+    """Unordered domain: reductions and selection only.
+
+    Parameters
+    ----------
+    length:
+        Optional declared axis length. ``None`` leaves the extent unconstrained.
+    labels:
+        Optional member names, one per position along the axis (e.g.
+        ``("centre", "north", "south")``). They declare the length
+        (``len(labels)``) and allow results to be selected by label
+        (``sel(zone="centre")``). Must be distinct strings.
+
+    Raises
+    ------
+    ValueError
+        If *length* is not positive, *labels* is empty or has duplicates, or
+        both are given and ``len(labels) != length``.
+    TypeError
+        If a label is not a string.
+
+    Notes
+    -----
+    When a length is declared (directly or through *labels*), arrays carrying
+    the axis must have that size or ``1`` (a value that does not vary along
+    the axis) along it.
+    """
+
+    __slots__ = ("length", "labels")
+
+    def __init__(self, length: int | None = None, labels: Sequence[str] | None = None) -> None:
+        if labels is not None:
+            labels = tuple(labels)
+            if not labels:
+                raise ValueError("SetType labels must not be empty.")
+            non_str = [label for label in labels if not isinstance(label, str)]
+            if non_str:
+                raise TypeError(f"SetType labels must be strings; got {non_str!r}.")
+            duplicates = sorted({label for label in labels if labels.count(label) > 1})
+            if duplicates:
+                raise ValueError(f"SetType labels must be distinct; duplicated: {duplicates!r}.")
+            if length is not None and length != len(labels):
+                raise ValueError(f"SetType length={length!r} does not match the {len(labels)} labels given.")
+            length = len(labels)
+        if length is not None and length <= 0:
+            raise ValueError(f"SetType length must be positive; got {length!r}.")
+        self.length: int | None = length
+        self.labels: tuple[str, ...] | None = labels
+
+    def validate_extent(self, *, size: int, axis_name: str) -> None:
+        """Validate that *size* is ``1`` or the declared length (when there is one)."""
+        _validate_declared_extent(self.length, size=size, axis_name=axis_name)
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
+        if self.labels is not None:
+            return f"SetType(labels={self.labels!r})"
+        if self.length is not None:
+            return f"SetType(length={self.length!r})"
         return "SetType()"
 
 
@@ -189,12 +252,7 @@ class SequenceType:
         Sequence-like axes accept either their declared length or singleton 1
         for broadcasting.
         """
-        if self.length is None or size in {1, self.length}:
-            return
-        raise ValueError(
-            f"executor: axis {axis_name!r} declares length={self.length}, "
-            f"but got dimension size {size}; expected 1 or {self.length}."
-        )
+        _validate_declared_extent(self.length, size=size, axis_name=axis_name)
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
@@ -382,10 +440,18 @@ def declared_length(axis: Axis) -> int | None:
     """Return the length *axis* declares through its type, or ``None``.
 
     Only typed axes whose type carries a ``length`` (e.g.
-    ``SequenceType(length=24)``) declare one; plain :class:`Axis` objects and
+    ``SequenceType(length=24)``, ``SetType(labels=("a", "b"))``) declare one; plain :class:`Axis` objects and
     untyped or length-less :class:`DomainAxis` objects return ``None``.
     """
     return getattr(getattr(axis, "type", None), "length", None)
+
+
+def declared_labels(axis: Axis) -> tuple[str, ...] | None:
+    """Return the member labels *axis* declares through its type, or ``None``.
+
+    Only axes typed ``SetType(labels=...)`` declare labels.
+    """
+    return getattr(getattr(axis, "type", None), "labels", None)
 
 
 def validate_value_shape(owner: str, axes: Sequence[Axis], shape: tuple[int, ...]) -> None:
