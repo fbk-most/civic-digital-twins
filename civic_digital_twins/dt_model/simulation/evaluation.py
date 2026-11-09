@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from ..axes import DOMAIN, PARAMETER, Axis
+from ..axes import DOMAIN, PARAMETER, Axis, union_axes
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..model.index import GenericIndex
@@ -23,8 +23,12 @@ from .scenario import Scenario
 __all__ = ["EvaluationResult", "Evaluation"]
 
 
-def _canonical_domain_order(axes: set[Axis] | frozenset[Axis]) -> tuple[Axis, ...]:
+def _canonical_domain_order(axes: Iterable[Axis]) -> tuple[Axis, ...]:
     """Order DOMAIN axes canonically for the evaluation layout: by axis name.
+
+    Same-name axes are merged with :func:`~..axes.refine_axis` first, so the
+    layout carries every compatible type declaration (length, labels)
+    whichever node declared it, and conflicting declarations raise.
 
     The order has to come from somewhere stable, because callers read result
     dimensions through this layout.  Deriving it from graph traversal would tie
@@ -32,12 +36,12 @@ def _canonical_domain_order(axes: set[Axis] | frozenset[Axis]) -> tuple[Axis, ..
     multiplication would silently reshuffle a result's dimensions.  Axis names
     are stable identifiers the model author chose, so they order the layout.
     """
-    return tuple(sorted(axes, key=lambda ax: ax.name))
+    return tuple(sorted(union_axes(tuple(axes)), key=lambda ax: ax.name))
 
 
 def _domain_axes_of(nodes: Iterable[graph.Node]) -> tuple[Axis, ...]:
     """Return the canonical DOMAIN axes carried by any of *nodes*."""
-    return _canonical_domain_order({ax for n in nodes for ax in n.output_axes if ax.role == DOMAIN})
+    return _canonical_domain_order(ax for n in nodes for ax in n.output_axes if ax.role == DOMAIN)
 
 
 class EvaluationResult:
@@ -546,7 +550,7 @@ class Evaluation:
             for node, val in _raw_scenario_subs.items()
             if not (isinstance(val, np.ndarray) and val.ndim == 0 and val.dtype.kind == "O")
         }
-        domain_axes = _canonical_domain_order({ax for r in plan.regions for ax in r.domain_axes})
+        domain_axes = _canonical_domain_order(ax for r in plan.regions for ax in r.domain_axes)
         n_domain = len(domain_axes)
 
         # Injected values arrive shaped by the index's *declared* axis order, which

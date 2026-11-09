@@ -15,7 +15,7 @@ from civic_digital_twins.dt_model import (
     TimeseriesIndex,
     inputs,
 )
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SetType, TimeType
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SetType, TimeType
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import (
@@ -1376,3 +1376,66 @@ def test_shaped_distribution_index_checks_shape_against_axes():
         ValueError, match=r"^DistributionIndex 'e': axis 'hour' declares length=24, but the value has size 12"
     ):
         DistributionIndex("e", stats.norm, {"loc": 0.0, "scale": 1.0}, axes=(_HOUR,), shape=(12,))
+
+
+def test_formula_axes_must_have_types_compatible_with_the_formula():
+    """A formula's declared axes= with a conflicting same-name type is rejected, not just compared by name."""
+    hourly = Index("hourly", np.zeros(24), axes=(_HOUR,))
+    with pytest.raises(ValueError, match=r"axis 'hour' is declared with conflicting types"):
+        Index("scaled", hourly * 2.0, axes=(DomainAxis("hour", type=TimeType(length=12)),))
+    compatible = Index("scaled", hourly * 2.0, axes=(DomainAxis("hour", type=TimeType()),))
+    assert compatible.output_axes == (_HOUR,)
+
+
+def test_formula_combining_conflicting_same_name_axes_raises():
+    """Combining values whose same-name axes have conflicting types fails where the formula is built."""
+    a = Index("a", np.zeros(24), axes=(_HOUR,))
+    b = Index("b", np.zeros(24), axes=(DomainAxis("hour", type=SequenceType(length=24)),))
+    with pytest.raises(ValueError, match=r"axis 'hour' is declared with conflicting types .*different kinds of axis"):
+        Index("c", a + b)
+
+
+_LABELLED_ZONE = DomainAxis("zone", type=SetType(labels=("n", "s")))
+
+
+def test_formula_axes_equal_to_the_formula_keep_the_formula_node():
+    """Declaring exactly the formula's axes reuses the formula node."""
+    a = Index("a", np.zeros(2), axes=(_LABELLED_ZONE,))
+    formula = a.node * 2.0
+    assert Index("scaled", formula, axes=(_LABELLED_ZONE,)).node is formula
+
+
+def test_formula_axes_less_specific_than_the_formula_keep_the_formula_node():
+    """A generic declaration on a more specific formula adds nothing: the node and its types are the formula's."""
+    a = Index("a", np.zeros(2), axes=(_LABELLED_ZONE,))
+    formula = a.node * 2.0
+    idx = Index("scaled", formula, axes=(DomainAxis("zone"),))
+    assert idx.node is formula
+    assert idx.output_axes[0] is _LABELLED_ZONE
+
+
+def test_formula_axes_more_specific_than_the_formula_are_attached():
+    """A more specific declaration wraps the formula, so the index carries the declared type."""
+    a = Index("a", np.zeros(2), axes=(DomainAxis("zone"),))
+    formula = a.node * 2.0
+    idx = Index("scaled", formula, axes=(_LABELLED_ZONE,))
+    assert isinstance(idx.node, graph.broadcast_to)
+    assert idx.node.node is formula
+    assert idx.node.name == "scaled"
+    assert idx.output_axes[0] is _LABELLED_ZONE
+
+
+def test_conflicting_declarations_on_one_formula_are_detected_when_combined():
+    """Two indexes declaring conflicting labels over one untyped formula cannot be combined."""
+    a = Index("a", np.zeros(2), axes=(DomainAxis("zone"),))
+    y1 = Index("y1", a * 2.0, axes=(_LABELLED_ZONE,))
+    y2 = Index("y2", a * 3.0, axes=(DomainAxis("zone", type=SetType(labels=("s", "n"))),))
+    with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types .*different labels"):
+        Index("total", y1 + y2)
+
+
+def test_timeseries_formula_over_an_untyped_time_axis_carries_time_axis():
+    """A TimeseriesIndex formula over a plain time axis carries TIME_AXIS's TimeType."""
+    plain = Index("plain", np.zeros(3), axes=(Axis("time", DOMAIN),))
+    ts = TimeseriesIndex("ts", plain * 2.0)
+    assert ts.output_axes[0] is TIME_AXIS

@@ -187,7 +187,7 @@ from typing import Protocol, runtime_checkable
 
 from numpy.typing import ArrayLike
 
-from ...axes import Axis, BoundaryCondition, Reflect, union_axes
+from ...axes import Axis, BoundaryCondition, Reflect, refine_axis, union_axes
 from .. import atomic, compileflags
 
 Scalar = bool | float | int | str
@@ -522,8 +522,14 @@ class Node[T]:
         A structural declaration, not a value transformation: the result
         represents the same values as this node, just considered to
         additionally range over *axes* — see broadcast_to.
+
+        An axis this node already carries is skipped, unless it adds a type
+        declaration the carried one lacks (e.g. labels), so that the result
+        carries the merged type (:func:`~...axes.refine_axis`). Conflicting
+        types raise ``ValueError``.
         """
-        new_axes = tuple(axis for axis in axes if axis not in self.output_axes)
+        carried = {ax: ax for ax in self.output_axes}
+        new_axes = tuple(axis for axis in axes if axis not in carried or _refines(carried[axis], axis))
         return broadcast_to(self, new_axes) if new_axes else self
 
 
@@ -1150,6 +1156,20 @@ def _piecewise_to_node[T](
     return multi_clause_where(node_clauses, default_node)  # type: ignore[arg-type]
 
 
+def _refines(carried: Axis, axis: Axis) -> bool:
+    """Whether *axis* adds a type declaration to the same-name *carried* axis (raises on conflict)."""
+    return getattr(refine_axis(carried, axis), "type", None) != getattr(carried, "type", None)
+
+
+def _check_axis_arguments(node: Node, axes: tuple[Axis, ...]) -> None:
+    """Raise if an operator's *axes* conflict in type with same-name axes *node* carries.
+
+    The operator and its operand name one axis; :func:`~...axes.union_axes`
+    merges the two declarations and raises when they conflict.
+    """
+    union_axes(node.output_axes, axes)
+
+
 class ProjectionOp[T](Node[T]):
     """Base class for semantic-axis reduction operations.
 
@@ -1165,6 +1185,7 @@ class ProjectionOp[T](Node[T]):
 
     def __init__(self, node: Node[T], axis: Axis, name: str = "") -> None:
         super().__init__(name)
+        _check_axis_arguments(node, (axis,))
         self.node = node
         self.axis = axis
 
@@ -1397,6 +1418,7 @@ class AxisOp[T](Node[T]):
 
     def __init__(self, node: Node[T], axis: Axis, name: str = "") -> None:
         super().__init__(name)
+        _check_axis_arguments(node, (axis,))
         self.node = node
         self.axis = axis
 
@@ -1535,6 +1557,7 @@ class laplacian[T](Node[T]):
         name: str = "",
     ) -> None:
         super().__init__(name)
+        _check_axis_arguments(node, axes)
         self.node = node
         self.axes = axes
         self.spacings = spacings

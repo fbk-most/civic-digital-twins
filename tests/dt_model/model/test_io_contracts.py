@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 from civic_digital_twins.dt_model import config, define, expose, inputs, outputs
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
-from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SetType, TimeType
+from civic_digital_twins.dt_model.model.index import Index, TimeseriesIndex, named_shape
 from civic_digital_twins.dt_model.model.model import Model
 
 # ---------------------------------------------------------------------------
@@ -1075,3 +1075,80 @@ def test_unresolvable_annotation_falls_back_to_no_check():
     val = Index("field", np.array([1.0, 2.0]), axes=(x,))
     inst = Inputs(field=val)  # must not raise despite the unresolvable annotation
     assert inst.field is val
+
+
+def test_field_requires_the_declared_axis_type():
+    """A value whose axis is less specific than the field's FIXED_AXES type is rejected."""
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    untyped = Index("untyped", np.array([1.0, 2.0]), axes=(Axis("time", DOMAIN),))
+    with pytest.raises(
+        ValueError,
+        match=r"Inputs\.field: requires axis 'time' typed TimeType\(\), but the value's axis is untyped\. "
+        r"Declare the axis type on the value",
+    ):
+        Inputs(field=untyped)  # type: ignore[arg-type]
+
+
+def test_field_requires_the_declared_labels():
+    """A labelled contract axis rejects a value over a set axis without those labels."""
+    zone = DomainAxis("zone", type=SetType(labels=("n", "s")))
+    ZoneIndex, _, _ = named_shape("Zone", (zone,))
+
+    @inputs
+    class Inputs:
+        field: ZoneIndex  # type: ignore[valid-type]
+
+    sized = Index("sized", np.array([1.0, 2.0]), axes=(DomainAxis("zone", type=SetType(length=2)),))
+    with pytest.raises(
+        ValueError,
+        match=r"requires axis 'zone' typed SetType\(labels=\('n', 's'\)\), "
+        r"but the value's axis is typed SetType\(length=2\)",
+    ):
+        Inputs(field=sized)  # type: ignore[arg-type]
+
+
+def test_field_accepts_a_more_specific_axis_type():
+    """A generic contract axis accepts a value whose axis carries more (e.g. a length)."""
+    generic = DomainAxis("hour", type=TimeType())
+    HourIndex, _, _ = named_shape("Hour", (generic,))
+
+    @inputs
+    class Inputs:
+        field: HourIndex  # type: ignore[valid-type]
+
+    specific = Index("specific", np.zeros(24), axes=(DomainAxis("hour", type=TimeType(length=24)),))
+    assert Inputs(field=specific).field is specific  # type: ignore[arg-type]
+
+
+def test_field_with_conflicting_axis_type_is_rejected():
+    """A value whose axis type conflicts with the field's is rejected."""
+
+    @inputs
+    class Inputs:
+        field: TimeseriesIndex
+
+    other = Index("other", np.array([1.0, 2.0]), axes=(DomainAxis("time", type=SequenceType()),))
+    with pytest.raises(ValueError, match=r"axis 'time' is declared with conflicting types"):
+        Inputs(field=other)  # type: ignore[arg-type]
+
+
+def test_list_and_dict_fields_check_each_element_type():
+    """Element-wise contract checks include the axis type."""
+
+    @inputs
+    class ListInputs:
+        fields: list[TimeseriesIndex]
+
+    @inputs
+    class DictInputs:
+        fields: dict[str, TimeseriesIndex]
+
+    untyped = Index("untyped", np.array([1.0, 2.0]), axes=(Axis("time", DOMAIN),))
+    with pytest.raises(ValueError, match=r"fields\[0\]: requires axis 'time' typed TimeType\(\)"):
+        ListInputs(fields=[untyped])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"fields\['a'\]: requires axis 'time' typed TimeType\(\)"):
+        DictInputs(fields={"a": untyped})  # type: ignore[arg-type]

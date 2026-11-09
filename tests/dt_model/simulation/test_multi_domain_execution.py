@@ -409,3 +409,106 @@ def test_labelled_set_axis_results_can_be_read_by_label():
     load = Evaluation(Scenario(m)).evaluate().labeled(m.outputs.load)
     assert load.labels == {"zone": ("centre", "north", "south")}
     assert float(load.sel(zone="north").values) == pytest.approx(0.625)
+
+
+@pytest.mark.parametrize("labelled_first", [True, False])
+def test_same_name_axes_are_merged_across_unrelated_outputs(labelled_first):
+    """Two outputs over the same axis, one labelled and one untyped, both read labels, in either order."""
+    labelled = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+    untyped = DomainAxis("zone")
+    first, second = (labelled, untyped) if labelled_first else (untyped, labelled)
+
+    @define("Zones")
+    class Zones(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            a: Index
+            b: Index
+
+        def compute(self, inputs):
+            return Zones.Outputs(
+                a=Index("a", np.array([1.0, 2.0, 3.0]), axes=(first,)),
+                b=Index("b", np.array([10.0, 20.0, 30.0]), axes=(second,)),
+            )
+
+    m = Zones(inputs=Zones.Inputs())
+    result = _evaluate(m)
+    assert result.layout.axes[0] is labelled
+    assert float(result.labeled(m.outputs.b).sel(zone="south").values) == 30.0
+
+
+def test_conflicting_same_name_axes_across_unrelated_outputs_raise():
+    """Unrelated outputs over same-name axes of conflicting types fail at evaluation."""
+
+    @define("Clash")
+    class Clash(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            a: Index
+            b: Index
+
+        def compute(self, inputs):
+            return Clash.Outputs(
+                a=Index("a", np.zeros(24), axes=(DomainAxis("t", type=SequenceType(length=24)),)),
+                b=Index("b", np.zeros(4), axes=(DomainAxis("t", type=SequenceType(length=4)),)),
+            )
+
+    with pytest.raises(ValueError, match=r"axis 't' is declared with conflicting types"):
+        _evaluate(Clash(inputs=Clash.Inputs()))
+
+
+def test_labels_declared_on_a_formula_reach_the_result():
+    """A formula over an untyped axis, declared over a labelled one, is read by label."""
+    labelled = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+
+    @define("Declared")
+    class Declared(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            load: Index
+
+        def compute(self, inputs):
+            raw = ConstIndex("raw", np.array([1.0, 2.0, 3.0]), axes=(DomainAxis("zone"),))
+            return Declared.Outputs(load=Index("load", raw * 10.0, axes=(labelled,)))
+
+    m = Declared(inputs=Declared.Inputs())
+    load = _evaluate(m).labeled(m.outputs.load)
+    assert load.labels == {"zone": ("centre", "north", "south")}
+    assert float(load.sel(zone="south").values) == 30.0
+
+
+def test_conflicting_declarations_on_one_formula_fail_at_evaluation():
+    """Two outputs declaring conflicting labels over one untyped formula fail when evaluated together."""
+
+    @define("TwoViews")
+    class TwoViews(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            ns: Index
+            sn: Index
+
+        def compute(self, inputs):
+            raw = ConstIndex("raw", np.array([1.0, 2.0]), axes=(DomainAxis("zone"),))
+            return TwoViews.Outputs(
+                ns=Index("ns", raw * 1.0, axes=(DomainAxis("zone", type=SetType(labels=("n", "s"))),)),
+                sn=Index("sn", raw * 1.0, axes=(DomainAxis("zone", type=SetType(labels=("s", "n"))),)),
+            )
+
+    with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types .*different labels"):
+        _evaluate(TwoViews(inputs=TwoViews.Inputs()))

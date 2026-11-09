@@ -9,7 +9,7 @@ Overview" for the module-role convention behind this layout.)
 
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "validate_value_shape",
     "domain_axis_position",
     "filter_by_role",
+    "refine_axis",
     "union_axes",
 ]
 
@@ -118,6 +119,11 @@ class DomainAxis(Axis):
     for ``AxisLayout`` lookups, ``union_axes`` dedup, and cross-version
     serialization round-trips (a snapshot saved with an untyped axis must
     still match the live typed singleton).
+
+    Where same-name axes meet (``union_axes``, the axes an evaluation
+    collects, the axis passed to an operator), their types are merged by
+    :func:`refine_axis`: compatible declarations combine, conflicting ones
+    raise.
 
     Parameters
     ----------
@@ -219,6 +225,17 @@ class SetType:
         """Validate that *size* is ``1`` or the declared length (when there is one)."""
         _validate_declared_extent(self.length, size=size, axis_name=axis_name)
 
+    def __eq__(self, other: object) -> bool:
+        """Return True for a ``SetType`` with the same length and labels."""
+        if type(other) is not type(self):
+            return NotImplemented
+        assert isinstance(other, SetType)
+        return self.length == other.length and self.labels == other.labels
+
+    def __hash__(self) -> int:
+        """Hash based on length and labels."""
+        return hash((type(self), self.length, self.labels))
+
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
         if self.labels is not None:
@@ -253,6 +270,17 @@ class SequenceType:
         for broadcasting.
         """
         _validate_declared_extent(self.length, size=size, axis_name=axis_name)
+
+    def __eq__(self, other: object) -> bool:
+        """Return True for an object of the same class with the same length."""
+        if type(other) is not type(self):
+            return NotImplemented
+        assert isinstance(other, SequenceType)
+        return self.length == other.length
+
+    def __hash__(self) -> int:
+        """Hash based on class and length."""
+        return hash((type(self), self.length))
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
@@ -306,6 +334,17 @@ class Constant:
     def __init__(self, value: float = 0.0) -> None:
         self.value = value
 
+    def __eq__(self, other: object) -> bool:
+        """Return True for a ``Constant`` with the same value."""
+        if type(other) is not type(self):
+            return NotImplemented
+        assert isinstance(other, Constant)
+        return self.value == other.value
+
+    def __hash__(self) -> int:
+        """Hash based on class and value."""
+        return hash((type(self), self.value))
+
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
         return f"Constant(value={self.value!r})"
@@ -343,6 +382,17 @@ class Neumann:
     def __init__(self, value: float = 0.0) -> None:
         self.value = value
 
+    def __eq__(self, other: object) -> bool:
+        """Return True for a ``Neumann`` with the same value."""
+        if type(other) is not type(self):
+            return NotImplemented
+        assert isinstance(other, Neumann)
+        return self.value == other.value
+
+    def __hash__(self) -> int:
+        """Hash based on class and value."""
+        return hash((type(self), self.value))
+
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
         return f"Neumann(value={self.value!r})"
@@ -360,6 +410,16 @@ class Nearest:
 
     __slots__ = ()
 
+    def __eq__(self, other: object) -> bool:
+        """Return True for any ``Nearest`` (it has no parameters)."""
+        if type(other) is not type(self):
+            return NotImplemented
+        return True
+
+    def __hash__(self) -> int:
+        """Hash based on class."""
+        return hash(type(self))
+
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
         return "Nearest()"
@@ -373,6 +433,16 @@ class Wrap:
 
     __slots__ = ()
 
+    def __eq__(self, other: object) -> bool:
+        """Return True for any ``Wrap`` (it has no parameters)."""
+        if type(other) is not type(self):
+            return NotImplemented
+        return True
+
+    def __hash__(self) -> int:
+        """Hash based on class."""
+        return hash(type(self))
+
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
         return "Wrap()"
@@ -385,6 +455,16 @@ class Linear:
     """
 
     __slots__ = ()
+
+    def __eq__(self, other: object) -> bool:
+        """Return True for any ``Linear`` (it has no parameters)."""
+        if type(other) is not type(self):
+            return NotImplemented
+        return True
+
+    def __hash__(self) -> int:
+        """Hash based on class."""
+        return hash(type(self))
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
@@ -428,6 +508,17 @@ class SpaceType(SequenceType):
         super().__init__(length=length)
         self.spacing = spacing
         self.boundary = boundary
+
+    def __eq__(self, other: object) -> bool:
+        """Return True for a ``SpaceType`` with the same spacing, boundary and length."""
+        if type(other) is not type(self):
+            return NotImplemented
+        assert isinstance(other, SpaceType)
+        return (self.spacing, self.boundary, self.length) == (other.spacing, other.boundary, other.length)
+
+    def __hash__(self) -> int:
+        """Hash based on spacing, boundary and length."""
+        return hash((type(self), self.spacing, self.boundary, self.length))
 
     def __repr__(self) -> str:
         """Return a round-trippable string representation."""
@@ -558,15 +649,103 @@ def domain_axis_position(domain_axes: Sequence[Axis], axis: Axis) -> int:
     return position - len(domain_axes)
 
 
-def union_axes(*seqs: tuple[Axis, ...]) -> tuple[Axis, ...]:
-    """Merge axis tuples, preserving first-seen order and deduplicating."""
-    seen: set[Axis] = set()
+def refine_axis(first: Axis, second: Axis) -> Axis:
+    """Merge two equal axes (same name and role) into the one carrying both declarations.
+
+    An axis without a type (a plain :class:`Axis`, or a :class:`DomainAxis`
+    with ``type=None``) is compatible with any type, which then applies.
+    Two typed axes must have types of the same class whose specified fields
+    agree: ``length`` and ``labels`` may be given on one side only, and the
+    merged type carries both (``SequenceType()`` and
+    ``SequenceType(length=24)`` give ``SequenceType(length=24)``; a
+    ``SetType(length=3)`` and a ``SetType`` with three labels give the
+    labelled type). Every other field (e.g. ``SpaceType``'s ``spacing`` and
+    ``boundary``) must be equal. The result does not depend on argument
+    order.
+
+    Returns whichever of *first* and *second* carries the merged declaration
+    (the refinable fields, ``length`` and ``labels``, are each carried whole
+    by one side, and labels imply the length).
+
+    Raises
+    ------
+    ValueError
+        If the axes are not equal, or their types conflict.
+    """
+    if first is second:
+        return first
+    if first != second:
+        raise ValueError(f"refine_axis: {first!r} and {second!r} are different axes.")
+    first_type = getattr(first, "type", None)
+    second_type = getattr(second, "type", None)
+    if second_type is None:
+        return second if first_type is None and isinstance(second, DomainAxis) else first
+    if first_type is None:
+        return second
+    merged = _refine_types(first.name, first_type, second_type)
+    if merged == first_type:
+        return first
+    assert merged == second_type
+    return second
+
+
+def _refine_types(name: str, first: "DomainType", second: "DomainType") -> "DomainType":
+    """Merge two domain types declared for axis *name* (see :func:`refine_axis`)."""
+    if first == second:
+        return first
+
+    def conflict(reason: str) -> ValueError:
+        return ValueError(
+            f"axis {name!r} is declared with conflicting types {first!r} and {second!r}: {reason}. "
+            f"Axes with the same name are one axis; declare compatible types, or use different names."
+        )
+
+    if type(first) is not type(second):
+        raise conflict("different kinds of axis")
+    if isinstance(first, SetType):
+        assert isinstance(second, SetType)
+        if first.labels is not None and second.labels is not None:
+            raise conflict("different labels")
+        labels = first.labels if first.labels is not None else second.labels
+        # Labels set the length, so a length/labels mismatch is a length conflict.
+        length = _refine_length(first.length, second.length, conflict)
+        return SetType(length=length, labels=labels)
+    if isinstance(first, SpaceType):
+        assert isinstance(second, SpaceType)
+        if (first.spacing, first.boundary) != (second.spacing, second.boundary):
+            raise conflict("different spacing or boundary")
+        length = _refine_length(first.length, second.length, conflict)
+        return SpaceType(first.spacing, first.boundary, length=length)
+    if isinstance(first, SequenceType):
+        assert isinstance(second, SequenceType)
+        length = _refine_length(first.length, second.length, conflict)
+        return type(first)(length=length)
+    raise conflict("different declarations")
+
+
+def _refine_length(first: int | None, second: int | None, conflict: "Callable[[str], ValueError]") -> int | None:
+    if first is not None and second is not None and first != second:
+        raise conflict(f"length {first} against length {second}")
+    return first if first is not None else second
+
+
+def union_axes(*seqs: Sequence[Axis]) -> tuple[Axis, ...]:
+    """Merge axis sequences, preserving first-seen order and deduplicating.
+
+    Repeated axes are merged with :func:`refine_axis`, so the result carries
+    every compatible type declaration whatever the order of the inputs, and
+    conflicting declarations raise ``ValueError``.
+    """
+    position: dict[Axis, int] = {}
     result: list[Axis] = []
     for seq in seqs:
         for ax in seq:
-            if ax not in seen:
-                seen.add(ax)
+            i = position.get(ax)
+            if i is None:
+                position[ax] = len(result)
                 result.append(ax)
+            else:
+                result[i] = refine_axis(result[i], ax)
     return tuple(result)
 
 

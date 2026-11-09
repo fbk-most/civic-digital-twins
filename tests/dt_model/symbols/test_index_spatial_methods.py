@@ -9,7 +9,7 @@ SpaceType-gated spatial operators.
 import numpy as np
 import pytest
 
-from civic_digital_twins.dt_model.axes import TIME_AXIS, DomainAxis, Reflect, SpaceType, Wrap
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, Reflect, SetType, SpaceType, Wrap
 from civic_digital_twins.dt_model.engine.frontend import graph, linearize
 from civic_digital_twins.dt_model.engine.numpybackend import executor
 from civic_digital_twins.dt_model.model.index import Index
@@ -61,6 +61,33 @@ class TestIndexGradientCreation:
         assert result.axis == _Y_AXIS
         assert result.spacing == 2.0
 
+    def test_gradient_reads_the_space_type_from_the_operator_axis(self):
+        """An untyped operand axis takes the SpaceType of the axis passed to gradient()."""
+        idx = Index("field", graph.array_placeholder("field", axes=(DomainAxis("x"),)))
+        result = idx.gradient(axis=DomainAxis("x", type=SpaceType(spacing=4.0)))
+        assert isinstance(result, graph.gradient)
+        assert result.spacing == 4.0
+
+    def test_gradient_reads_the_space_type_from_the_operand(self):
+        """An untyped axis passed to gradient() names the operand's SpaceType axis."""
+        idx = Index("field", graph.array_placeholder("field", axes=(_Y_AXIS, _X_AXIS)))
+        result = idx.gradient(axis=Axis("y", DOMAIN))
+        assert isinstance(result, graph.gradient)
+        assert result.spacing == 2.0
+
+    def test_gradient_over_an_axis_the_operand_does_not_carry_reads_that_axis(self):
+        """An axis the index does not carry is used as given."""
+        idx = Index("field", graph.array_placeholder("field", axes=(_X_AXIS,)))
+        result = idx.gradient(axis=_Y_AXIS)
+        assert isinstance(result, graph.gradient)
+        assert result.spacing == 2.0
+
+    def test_gradient_axis_conflicting_with_the_operand_raises(self):
+        """A SpaceType axis passed to gradient() cannot name the operand's same-name SetType axis."""
+        idx = Index("field", graph.array_placeholder("field", axes=(DomainAxis("x", type=SetType()),)))
+        with pytest.raises(ValueError, match=r"axis 'x' is declared with conflicting types SetType\(\)"):
+            idx.gradient(axis=DomainAxis("x", type=SpaceType(spacing=10.0)))
+
 
 class TestIndexLaplacianCreation:
     """Test that laplacian() returns correctly configured graph.laplacian nodes."""
@@ -98,6 +125,13 @@ class TestIndexLaplacianCreation:
         idx = Index("field", placeholder)
         with pytest.raises(ValueError, match="require a SpaceType axis"):
             idx.laplacian(axes=(_X_AXIS, TIME_AXIS))
+
+    def test_laplacian_explicit_axes_take_the_operand_types(self):
+        """Untyped axes passed to laplacian() name the operand's SpaceType axes."""
+        idx = Index("field", graph.array_placeholder("field", axes=(_X_AXIS, _Y_AXIS)))
+        result = idx.laplacian(axes=(Axis("x", DOMAIN), Axis("y", DOMAIN)))
+        assert isinstance(result, graph.laplacian)
+        assert result.spacings == (1.0, 2.0)
 
 
 class TestIndexSpatialMethodExecution:
