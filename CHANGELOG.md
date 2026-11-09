@@ -11,10 +11,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `SequenceType`, `TimeType`, and `SpaceType` now accept an optional static
-  `length` metadata field. When declared, evaluation enforces consistency:
-  arrays carrying that axis must use either the declared length or `1`
-  (broadcast singleton) along that dimension.
+**Axis lengths**
+
+- Every domain type declares an optional static `length`:
+  `SequenceType(length=)`, `TimeType(length=)`,
+  `SpaceType(spacing, boundary, length=)`, and `SetType(length=, labels=)`.
+  `labels` names the members of a set axis, one per position (distinct
+  strings), and sets its length; results can be selected by label on such
+  an axis (see *Result readers*). Arrays carrying an axis with a declared
+  length must have that size or 1 along it.
+- **One length per axis per evaluation**, resolved before the evaluation
+  runs: the axis's declared length, otherwise the common size of the values
+  carrying it (other than 1), otherwise 1. `executor.State.domain_extents`
+  holds the lengths, in the order of `State.domain_axes`.
+- **DOMAIN axes of length 0** — an entity axis with no entities:
+  `SequenceType(length=0)`, `SetType(labels=())`, or values of size 0.
+  `AxisLayout` accepts size 0 for DOMAIN axes (PARAMETER and ENSEMBLE axes
+  keep a positive size). Over an empty axis, `sum` and `count_nonzero` give
+  0, `prod` 1, `any` `False`, `all` `True`; `mean`, `std`, `var` and `median`
+  give NaN with NumPy's warning; `min`, `max` and `quantile` raise
+  `ValueError` naming the node and the axis; shape-preserving operators give
+  an empty result.
+
+**Moving a value between axes**
+
+- `replace_axis(old, new)` and `replace_axes({old: new, ...})` on
+  `GenericIndex` and `graph.Node` — the same value carried by other DOMAIN
+  axes, so that code written over different axes for one dimension (a
+  model's `local_time`, a library's `time`) can exchange values. The axis on
+  the result is the target refined with what the source declares
+  (`axes.replaced_axis`); all pairs apply at once, so `{a: b, b: a}` swaps
+  two axes. The value must carry every source, and no target that is not
+  also a source; types must merge by refinement. A source and its target
+  have one length in an evaluation: either takes the other's when it has
+  none. The graph node is `graph.replace_axes`; the NumPy backend evaluates
+  it as a transposed view (`kernels.replace_axes`).
+
+**Result readers**
+
+- `EvaluationResult.expected(index, axes=None)` — the expected value over
+  the ensemble, as a `LabeledArray` over the PARAMETER axes and the DOMAIN
+  axes `index` carries. `EvaluationResult.samples(index, axes=None)` — the
+  ensemble's samples, as a `LabeledArray` that also keeps the ENSEMBLE axes;
+  their weights are `factorized_weights`. Both return every axis at the
+  evaluation's full size (a value constant along an axis is repeated along
+  it, a deterministic index along the ENSEMBLE axes), as a read-only view.
+  `axes=` gives the result's axes in the order wanted, by object or by name.
+- `LabeledArray`: `.axes` (the `Axis` objects) and `.sizes`; `.isel()`
+  selects by position (Python or NumPy integers, slices); `.sel()` selects by
+  label or by a list of labels (kept in the given order; lists on several
+  axes cross); `.transpose(*axes)` changes the order of the axes, across
+  roles; `.labels` gives the labels of the labelled axes, which `.to_xarray()`
+  passes as coordinates. The constructor accepts an `AxisLayout` or any
+  `(axis, size)` pairs; `.layout` is available while the axes are grouped by
+  role.
+
+**Other additions**
+
+- `axes.refine_axis(first, second)` — merges two same-name axes into the one
+  carrying both type declarations (see *Same-name axes* under Changed).
+  Domain types and boundary conditions compare and hash by value.
+- `numpy_ast.graph_node_to_numpy_code(..., domain_extents=)` — with the
+  evaluation's lengths, the generated code expands operands as the executor
+  does (`kernels.expand_to_extent`), so `DTMODEL_ENGINE_FLAGS=trace` output
+  replays to the printed values.
+
+### Changed
+
+**Axis lengths**
+
+- **Breaking:** reductions (`sum`, `mean`, … `quantile`) and per-axis
+  operators (`shift`, `roll`, `cumulative`, `diff`, `gradient`, `laplacian`)
+  range over the axis's full length, including where a value is stored with
+  size 1 along it — a constant, or a value added to the axis with
+  `.broadcast()`. The sum of a constant 10 over an axis of length 4 is 40,
+  where 0.12.0 gave 10; its cumulative sum is `[10, 20, 30, 40]`. Results of
+  `sum`, `prod`, `count_nonzero`, `cumulative`, `shift`, `diff`, `gradient`
+  and `laplacian` on such values change without an error; `mean`, `min`, `max`
+  and the other order statistics of a constant are unchanged.
+- **Breaking:** an axis with no length — reached only through `.broadcast()`
+  or a function's declared output axes, with no declared length — raises
+  `ValueError` at evaluation, suggesting `length=` or `labels=`; 0.12.0
+  evaluated it at size 1. Values carrying one axis with different sizes
+  (other than 1) raise `ValueError` naming the values and their sizes.
+- **Breaking:** an array value (`Index`, `ConstIndex`, shaped
+  `DistributionIndex`, `Scenario` overrides) needs `axes=` with one axis per
+  dimension, and its size along each axis must be 1 or the axis's declared
+  length. `ValueError` otherwise, naming the index, the axes and the shape;
+  0.12.0 accepted an array without `axes=` as a scalar-shaped value, and
+  reported a rank mismatch as an unrelated `zip()` error.
+
+**Same-name axes**
+
+- **Breaking:** axes with the same name and role, declared with different
+  types, merge by refinement wherever they meet (operands of a formula, an
+  operator's axis argument, `.broadcast()`, the axes of an evaluation): an
+  untyped axis takes the other's type; two types must be of the same class
+  and agree on every field both declare, `length` and `labels` declared on
+  one side applying to both. Conflicting types raise `ValueError` naming the
+  axis and both types. The merge does not depend on operand order; in 0.12.0
+  one of the types was kept, depending on the order of the operands.
+- **Breaking:** an `Inputs`/`Outputs`/`Expose` field whose `FIXED_AXES` is
+  more specifically typed than the value's axes rejects the value: for
+  example, a value over a plain `Axis("time", DOMAIN)` in a
+  `TimeseriesIndex` field. A value more specific than the contract is
+  accepted.
+- A formula's `axes=` more specific than the formula (e.g. labels on an axis
+  the formula carries untyped) is attached to the formula through
+  `broadcast_to`, so its value carries the declared type.
+
+**Result readers**
+
+- `EvaluationResult.layout_of(index)` describes the `LabeledArray` returned
+  by `expected(index)`, each axis at the evaluation's full size.
+- `LabeledArray`'s `repr` shows the axis names as `axes=`.
+
+### Deprecated
+
+- `EvaluationResult.expected_value(index)` — use `expected(index).values`
+  instead.  `expected_value()` returns the array at the size it is stored, so
+  `expected(index).values` can be larger along the axes a value is constant
+  on (e.g. `(24, 3)` instead of `(1, 3)`).  `expected_value()` now emits
+  `DeprecationWarning` and will be removed in a future milestone.
+- `EvaluationResult.labeled(index)` — use `expected(index)` instead.  Emits
+  `DeprecationWarning` and will be removed in a future milestone.
+- `LabeledArray.dims` — use `LabeledArray.axes` instead (`[ax.name for ax in
+  la.axes]` for the names).  Emits `DeprecationWarning` and will be removed
+  in a future milestone.
+- Selecting by position through `LabeledArray.sel()` (an integer or a slice)
+  — use `LabeledArray.isel()` instead.  Emits `DeprecationWarning`; once
+  removed, in a future milestone, `sel()` selects by label only.
+
+### Fixed
+
+- `EvaluationResult.labeled()` (deprecated for `expected()`) on an output
+  whose axis comes only from `.broadcast()` returned a value whose shape
+  disagreed with `layout_of()`, and raised; `expected()` reads it at the
+  axis's full length.
+- Selecting a `LabeledArray` with a NumPy integer (e.g. the result of
+  `np.argmax`) failed with an unrelated `zip()` error; `isel()` (and the
+  deprecated positional `sel()`) accept NumPy integers.
+- `numpy_ast` rendered `project_using_quantile` as `np.quantile(q, x, ...)`,
+  computing the quantile of the scalar `q`; it renders `np.quantile(x, q, ...)`.
 
 ## [0.12.0] - 2026-09-23
 

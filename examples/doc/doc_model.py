@@ -605,6 +605,99 @@ def _demo_18_19_overtourism() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — Axes: Moving a value between axes
+# ---------------------------------------------------------------------------
+
+
+def _demo_replace_axis() -> None:
+    """Block: replace_axis round trip through a library axis."""
+    import numpy as np
+
+    from civic_digital_twins.dt_model import Evaluation, Index, Scenario, define, inputs, outputs
+    from civic_digital_twins.dt_model.axes import DomainAxis, TimeType
+
+    local_time = DomainAxis("local_time", type=TimeType(length=4))
+    lib_time = DomainAxis("time", type=TimeType())
+
+    @define("Running")
+    class Running(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            running_load: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            load = ConstIndex("load", np.array([1.0, 2.0, 3.0, 4.0]), axes=(local_time,))
+            running = load.replace_axis(local_time, lib_time).cumulative(axis=lib_time)
+            running_load = Index("running load", running.replace_axis(lib_time, local_time), axes=(local_time,))
+            return Running.Outputs(running_load=running_load)
+
+    model = Running(inputs=Running.Inputs())
+    result = Evaluation(Scenario(model)).evaluate()
+    np.testing.assert_array_equal(result.expected(model.outputs.running_load).values, [1.0, 3.0, 6.0, 10.0])
+
+
+# ---------------------------------------------------------------------------
+# Block: dd-cdt-model.md — Evaluation: Reading results
+# ---------------------------------------------------------------------------
+
+
+def _demo_reading_results() -> None:
+    """Block: expected() and samples() as LabeledArray, with axes=, sel/isel/transpose."""
+    import numpy as np
+    from scipy import stats
+
+    from civic_digital_twins.dt_model import (
+        DistributionEnsemble,
+        DistributionIndex,
+        Evaluation,
+        Index,
+        Scenario,
+        define,
+        inputs,
+        outputs,
+    )
+    from civic_digital_twins.dt_model.axes import TIME_AXIS, DomainAxis, SetType
+
+    zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+
+    @define("Load")
+    class LoadModel(Model):
+        @inputs
+        class Inputs:
+            scale: DistributionIndex
+
+        @outputs
+        class Outputs:
+            load: Index
+
+        def compute(self, inputs: Inputs) -> Outputs:
+            profile = ConstIndex("profile", np.arange(12.0).reshape(3, 4), axes=(zone, TIME_AXIS))
+            return LoadModel.Outputs(load=Index("load", profile * inputs.scale, axes=(zone, TIME_AXIS)))
+
+    scale = DistributionIndex("scale", stats.norm, {"loc": 1.0, "scale": 0.1})
+    model = LoadModel(inputs=LoadModel.Inputs(scale=scale))
+    scenario = Scenario(model)
+    result = Evaluation(scenario).evaluate(ensemble=DistributionEnsemble(scenario, size=5))
+
+    load = result.expected(model.outputs.load, axes=("zone", "time"))
+    print(load.sizes)  # (3, 4)
+    print(load.sel(zone="north").values)  # the north zone, over time
+    print(load.isel(time=0).values)  # every zone, at the first hour
+    print(load.transpose("time", "zone").sizes)  # (4, 3)
+
+    samples = result.samples(model.outputs.load)
+    print([ax.name for ax in samples.axes])  # ['_ensemble', 'time', 'zone']
+
+    assert load.sizes == (3, 4)
+    assert load.transpose("time", "zone").sizes == (4, 3)
+    assert [ax.name for ax in samples.axes] == ["_ensemble", "time", "zone"]
+
+
+# ---------------------------------------------------------------------------
 # Run all demos
 # ---------------------------------------------------------------------------
 
@@ -616,6 +709,7 @@ _demo_04_conditional_distribution_index()
 _demo_02_timeseries_index()
 _demo_named_shape_manual_subclass()
 _demo_named_shape()
+_demo_replace_axis()
 _demo_05_recommended_api()
 _demo_config_routing()
 _demo_06_scenario_overrides()
@@ -623,6 +717,7 @@ _demo_08_contract_warnings()
 _demo_contract_violations_bad_good_model()
 _demo_12_distribution_ensemble()
 _demo_14_15_end_to_end()
+_demo_reading_results()
 _demo_17_constraint()
 _demo_18_19_overtourism()
 
