@@ -111,10 +111,11 @@ def _resolve_domain_extents(
                     f"{name!r} has {size} along {domain_axes[i].name!r}" if linked else f"{name!r} has {size}"
                 )
         declared = {length: ax.name for ax in axes if (length := declared_length(ax)) is not None}
-        # A link refines its target with the source's declaration, and same-name
-        # axes are merged before this point, so the axes of a group cannot
-        # declare different lengths.
-        assert len(declared) <= 1, declared
+        if len(declared) > 1:
+            # A link refines its target with the source as the operand carries
+            # it, so another value may declare a different length for the source.
+            listed = ", ".join(f"{name!r} declares length {length}" for length, name in declared.items())
+            raise ValueError(f"{subject}: {listed}. Declare one length for all of them.")
         if declared:
             ((extent, declarer),) = declared.items()
             disagreeing = [entry for size, entries in found.items() if size != extent for entry in entries]

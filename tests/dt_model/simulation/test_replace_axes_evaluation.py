@@ -117,6 +117,21 @@ def test_linked_axes_with_different_sizes_raise():
         _evaluate(build)
 
 
+def test_linked_axes_declaring_different_lengths_raise():
+    """A source declared with one length elsewhere in the model cannot be linked to a target with another."""
+    source = DomainAxis("a", type=SequenceType(length=4))
+    target = DomainAxis("b", type=SequenceType(length=5))
+
+    def build():
+        other = ConstIndex("other", np.zeros(4), axes=(source,))
+        moved = ConstIndex("v", np.zeros(1), axes=(DomainAxis("a"),)).replace_axis(DomainAxis("a"), target)
+        return Index("moved", moved + other.sum(source), axes=(target,))
+
+    match = r"\['a', 'b'\] \(linked by replace_axes.*'a' declares length 4, 'b' declares length 5"
+    with pytest.raises(ValueError, match=match):
+        _evaluate(build)
+
+
 def test_unlinked_axis_without_length_still_raises():
     """An axis reached only through broadcast still needs a length."""
 

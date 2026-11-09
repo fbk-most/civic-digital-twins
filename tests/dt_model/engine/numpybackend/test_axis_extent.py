@@ -106,10 +106,21 @@ def test_without_extents_operands_are_not_expanded():
     np.testing.assert_array_equal(result, COMPRESSED)
 
 
-def test_operand_with_some_domain_dimensions_only_is_rejected():
-    """A value with fewer dimensions than the DOMAIN block cannot be matched to axes, so it is not guessed."""
-    with pytest.raises(executor.UnsupportedOperation, match=r"the operand has shape \(3,\), fewer dimensions"):
-        _evaluate(lambda f: graph.project_using_sum(f, X), np.zeros(3))
+def test_operand_with_fewer_dimensions_is_matched_to_the_trailing_axes():
+    """As in NumPy broadcasting, a value over the last DOMAIN axes only does not vary along the others."""
+    value = np.arange(3.0)  # over y only
+    np.testing.assert_array_equal(_evaluate(lambda f: graph.project_using_sum(f, Y), value), [[3.0]])
+    np.testing.assert_array_equal(_evaluate(lambda f: graph.project_using_sum(f, X), value), [4 * value])
+
+
+def test_function_output_over_the_last_axis_reduces_along_it():
+    """A registered function returning an array over the last DOMAIN axis only can be reduced along it."""
+    call = graph.function_call("f")
+    functor = executor.NumpyBackend.adapt(lambda: np.array([1.0, 2.0, 3.0]))
+    total = graph.project_using_sum(call, Y)
+    state = executor.State({}, functions={"f": functor}, domain_axes=(X, Y), domain_extents=EXTENTS)
+    executor.evaluate_nodes(state, *linearize.forest(total))
+    np.testing.assert_array_equal(state.values[total], [[6.0]])
 
 
 @pytest.mark.parametrize("build", OPERATORS)
@@ -136,7 +147,8 @@ def test_trace_prints_the_expansion(capsys):
     assert f"_expand_to_extent(n{f.id}, axes=(-2,), domain_extents=(4, 3))" in out
 
 
-def test_expand_kernel_rejects_partial_domain_rank():
-    """The kernel itself refuses to guess which axes a partial-rank value carries."""
-    with pytest.raises(ValueError, match="fewer dimensions than the 2 DOMAIN axes"):
-        kernels.expand_to_extent(np.zeros(3), (-1,), EXTENTS)
+def test_expand_kernel_matches_fewer_dimensions_to_the_trailing_axes():
+    """The kernel gives a value over the last DOMAIN axes size 1 along the others, then expands it."""
+    out = kernels.expand_to_extent(np.arange(3.0), (-2,), EXTENTS)
+    assert out.shape == EXTENTS
+    np.testing.assert_array_equal(out[2], np.arange(3.0))

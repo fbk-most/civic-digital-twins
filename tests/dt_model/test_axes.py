@@ -174,6 +174,13 @@ class TestRefineAxis:
         assert refine_axis(specific, generic) is specific
         assert refine_axis(specific, specific) is specific
 
+    def test_labels_are_not_copied_on_merge(self):
+        """Merging with a labelled type keeps its labels object rather than validating them again."""
+        labelled = SetType(labels=("c", "n"))
+        a, b = DomainAxis("z", type=SetType(length=2)), DomainAxis("z", type=labelled)
+        assert _type(refine_axis(a, b)) is labelled
+        assert _type(refine_axis(b, a)) is labelled
+
     def test_labels_carry_a_declared_length(self):
         """A length on one side and matching labels on the other merge into the labelled axis."""
         sized = DomainAxis("zone", type=SetType(length=2))
@@ -353,6 +360,7 @@ class TestDomainTypeLattice:
             pytest.param({"length": -1}, ValueError, r"length must not be negative; got -1", id="negative-length"),
             pytest.param({"labels": ["a", 1]}, TypeError, r"labels must be strings; got \[1\]", id="non-str"),
             pytest.param({"labels": ["a", "b", "a"]}, ValueError, r"distinct; duplicated: \['a'\]", id="duplicates"),
+            pytest.param({"labels": ["", "a"]}, ValueError, r"labels must be non-empty strings", id="empty-label"),
             pytest.param(
                 {"length": 3, "labels": ["a", "b"]}, ValueError, r"length=3 does not match the 2 labels", id="mismatch"
             ),

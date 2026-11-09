@@ -748,23 +748,16 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
     return np.select(conditions, values, default=default)
 
 
-def _expand_to_extent(state: State, node: graph.Node, operand: np.ndarray, positions: Sequence[int]) -> np.ndarray:
+def _expand_to_extent(state: State, operand: np.ndarray, positions: Sequence[int]) -> np.ndarray:
     """Return *operand* at full extent along the DOMAIN dimensions at *positions*.
 
-    Applies :func:`kernels.expand_to_extent` with :attr:`State.domain_extents`,
-    naming *node* if the operand cannot be matched to the DOMAIN axes.
+    Applies :func:`kernels.expand_to_extent` with :attr:`State.domain_extents`.
     Without extents (a caller that resolves none) the operand is returned
     unchanged.
     """
     if not state.domain_extents:
         return operand
-    try:
-        return kernels.expand_to_extent(operand, tuple(positions), state.domain_extents)
-    except ValueError as exc:
-        raise UnsupportedOperation(
-            f"executor: {type(node).__name__} {node.name!r}: {exc}; "
-            f"DOMAIN axes are {[ax.name for ax in state.domain_axes]}."
-        ) from None
+    return kernels.expand_to_extent(operand, tuple(positions), state.domain_extents)
 
 
 def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
@@ -787,7 +780,7 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
             f"executor: numpybackend only supports projection along this evaluation's DOMAIN axes "
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
-    operand = _expand_to_extent(state, node, state.get_node_value(node.node), (position,))
+    operand = _expand_to_extent(state, state.get_node_value(node.node), (position,))
     if operand.shape[position] == 0 and isinstance(node, _UNDEFINED_ON_EMPTY):
         raise ValueError(
             f"executor: {type(node).__name__} {node.name!r}: axis {node.axis.name!r} has length 0, and "
@@ -816,7 +809,7 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
             f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
-    operand = _expand_to_extent(state, node, state.get_node_value(node.node), (position,))
+    operand = _expand_to_extent(state, state.get_node_value(node.node), (position,))
     if isinstance(node, graph.shift):
         return kernels.shift(operand, node.periods, axis=position, fill_value=node.fill_value)
     if isinstance(node, graph.roll):
@@ -840,7 +833,7 @@ def _eval_gradient(state: State, node: graph.Node) -> np.ndarray:
             f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
-    operand = _expand_to_extent(state, node, state.get_node_value(node.node), (position,))
+    operand = _expand_to_extent(state, state.get_node_value(node.node), (position,))
     return kernels.gradient(operand, position, node.spacing, node.boundary)
 
 
@@ -861,7 +854,7 @@ def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
                 f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
                 f"{[ax.name for ax in state.domain_axes]}; got {axis!r}"
             ) from None
-    operand = _expand_to_extent(state, node, state.get_node_value(node.node), positions)
+    operand = _expand_to_extent(state, state.get_node_value(node.node), positions)
     return kernels.laplacian(operand, tuple(positions), node.spacings, node.boundaries)
 
 
@@ -875,14 +868,7 @@ def _eval_replace_axes(state: State, node: graph.Node) -> np.ndarray:
     node = cast(graph.replace_axes, node)
     sources = tuple(domain_axis_position(state.domain_axes, src) for src, _ in node.mapping)
     targets = tuple(domain_axis_position(state.domain_axes, tgt) for _, tgt in node.mapping)
-    operand = state.get_node_value(node.node)
-    try:
-        return kernels.replace_axes(operand, sources, targets, len(state.domain_axes))
-    except ValueError as exc:
-        raise UnsupportedOperation(
-            f"executor: {type(node).__name__} {node.name!r}: {exc}; "
-            f"DOMAIN axes are {[ax.name for ax in state.domain_axes]}."
-        ) from None
+    return kernels.replace_axes(state.get_node_value(node.node), sources, targets, len(state.domain_axes))
 
 
 def _eval_broadcast_to(state: State, node: graph.Node) -> np.ndarray:

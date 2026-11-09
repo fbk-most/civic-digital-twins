@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every domain type declares an optional static `length`:
   `SequenceType(length=)`, `TimeType(length=)`,
   `SpaceType(spacing, boundary, length=)`, and `SetType(length=, labels=)`.
-  `labels` names the members of a set axis, one per position (distinct
-  strings), and sets its length; results can be selected by label on such
-  an axis (see *Result readers*). Arrays carrying an axis with a declared
-  length must have that size or 1 along it.
+  `labels` names the members of a set axis, one per position (distinct,
+  non-empty strings), and sets its length; results can be selected by
+  label on such an axis (see *Result readers*). Arrays carrying an axis
+  with a declared length must have that size or 1 along it.
 - **One length per axis per evaluation**, resolved before the evaluation
   runs: the axis's declared length, otherwise the common size of the values
   carrying it (other than 1), otherwise 1. `executor.State.domain_extents`
@@ -87,8 +87,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.broadcast()`. The sum of a constant 10 over an axis of length 4 is 40,
   where 0.12.0 gave 10; its cumulative sum is `[10, 20, 30, 40]`. Results of
   `sum`, `prod`, `count_nonzero`, `cumulative`, `shift`, `diff`, `gradient`
-  and `laplacian` on such values change without an error; `mean`, `min`, `max`
-  and the other order statistics of a constant are unchanged.
+  and `laplacian` on such values change without an error; `mean`, `std`,
+  `var`, `median`, `min`, `max` and `quantile` of a constant, and its `roll`,
+  are unchanged.
 - **Breaking:** an axis with no length — reached only through `.broadcast()`
   or a function's declared output axes, with no declared length — raises
   `ValueError` at evaluation, suggesting `length=` or `labels=`; 0.12.0

@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
-import pytest
 
 from civic_digital_twins.dt_model import axes
 from civic_digital_twins.dt_model.axes import DOMAIN, Axis
@@ -53,10 +52,10 @@ class TestKernel:
         """A 0-d value does not vary along any axis."""
         assert kernels.replace_axes(np.asarray(5.0), (-3,), (-1,), 3).shape == ()
 
-    def test_partial_rank_raises(self):
-        """A value with some DOMAIN dimensions only cannot be matched to axes."""
-        with pytest.raises(ValueError, match=r"fewer dimensions than the 3 DOMAIN axes"):
-            kernels.replace_axes(np.zeros(3), (-3,), (-1,), 3)
+    def test_fewer_dimensions_are_matched_to_the_trailing_axes(self):
+        """A value over the last DOMAIN axes only does not vary along the others, as in NumPy broadcasting."""
+        out = kernels.replace_axes(np.arange(3.0), (-1,), (-3,), 3)
+        assert out.shape == (3, 1, 1)
 
 
 def _evaluate(node, value):
@@ -74,11 +73,6 @@ class TestExecutor:
         """An operator along the target sees the source's data."""
         _, result, state = _evaluate(lambda v: v.replace_axis(A, C).sum(C), VALUE)
         np.testing.assert_array_equal(state.values[result][0, :, 0], VALUE.sum(axis=0)[:, 0])
-
-    def test_partial_rank_raises_naming_the_node(self):
-        """The executor reports a malformed operand with the node and the DOMAIN axes."""
-        with pytest.raises(executor.UnsupportedOperation, match=r"replace_axes .*fewer dimensions.*DOMAIN axes are"):
-            _evaluate(lambda v: v.replace_axis(A, C), np.zeros(3))
 
     def test_generated_code_reproduces_the_evaluation(self):
         """The printed code calls the same kernel and gives the executor's result."""

@@ -9,6 +9,7 @@ Overview" for the module-role convention behind this layout.)
 
 # SPDX-License-Identifier: Apache-2.0
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
@@ -169,7 +170,7 @@ def _validate_declared_extent(length: int | None, *, size: int, axis_name: str) 
     if length is None or size in {1, length}:
         return
     raise ValueError(
-        f"executor: axis {axis_name!r} declares length={length}, but got dimension size {size}; expected 1 or {length}."
+        f"axis {axis_name!r} declares length={length}, but got dimension size {size}; expected 1 or {length}."
     )
 
 
@@ -184,14 +185,14 @@ class SetType:
         Optional member names, one per position along the axis (e.g.
         ``("centre", "north", "south")``). They declare the length
         (``len(labels)``) and allow results to be selected by label
-        (``sel(zone="centre")``). Must be distinct strings. An empty
+        (``sel(zone="centre")``). Must be distinct, non-empty strings. An empty
         sequence declares an axis of length 0 (e.g. no entities).
 
     Raises
     ------
     ValueError
-        If *length* is negative, *labels* has duplicates, or both are given
-        and ``len(labels) != length``.
+        If *length* is negative, *labels* has duplicates or an empty string,
+        or both are given and ``len(labels) != length``.
     TypeError
         If a label is not a string.
 
@@ -210,7 +211,9 @@ class SetType:
             non_str = [label for label in labels if not isinstance(label, str)]
             if non_str:
                 raise TypeError(f"SetType labels must be strings; got {non_str!r}.")
-            duplicates = sorted({label for label in labels if labels.count(label) > 1})
+            if "" in labels:
+                raise ValueError("SetType labels must be non-empty strings; got ''.")
+            duplicates = sorted(label for label, count in Counter(labels).items() if count > 1)
             if duplicates:
                 raise ValueError(f"SetType labels must be distinct; duplicated: {duplicates!r}.")
             if length is not None and length != len(labels):
@@ -736,7 +739,7 @@ def replaced_axis(source: Axis, target: Axis) -> Axis:
 
 def _refine_types(first: "DomainType", second: "DomainType", conflict: "Callable[[str], ValueError]") -> "DomainType":
     """Merge two domain types (see :func:`refine_axis`), raising ``conflict(reason)`` if they conflict."""
-    if first == second:
+    if first is second or first == second:
         return first
     if type(first) is not type(second):
         raise conflict("different kinds of axis")
@@ -744,10 +747,13 @@ def _refine_types(first: "DomainType", second: "DomainType", conflict: "Callable
         assert isinstance(second, SetType)
         if first.labels is not None and second.labels is not None:
             raise conflict("different labels")
-        labels = first.labels if first.labels is not None else second.labels
         # Labels set the length, so a length/labels mismatch is a length conflict.
         length = _refine_length(first.length, second.length, conflict)
-        return SetType(length=length, labels=labels)
+        if first.labels is not None:
+            return first
+        if second.labels is not None:
+            return second
+        return SetType(length=length)
     if isinstance(first, SpaceType):
         assert isinstance(second, SpaceType)
         if (first.spacing, first.boundary) != (second.spacing, second.boundary):

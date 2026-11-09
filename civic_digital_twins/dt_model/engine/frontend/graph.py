@@ -1654,7 +1654,8 @@ class replace_axes[T](Node[T]):
     ValueError
         If *mapping* is empty, maps an axis to itself, or repeats a target;
         if *node* does not carry a source, or already carries a target that
-        is not also a source; or if a pair is not two compatible DOMAIN axes.
+        is not also a source; if a source conflicts in type with the axis of
+        that name *node* carries; or if a pair is not two compatible DOMAIN axes.
     """
 
     def __init__(
@@ -1688,8 +1689,10 @@ class replace_axes[T](Node[T]):
                     f"replace_axes: the value already carries axis {tgt.name!r}, so {src.name!r} cannot be "
                     f"replaced by it."
                 )
-        # The carried source has the merged declaration, so it decides what the target gains.
-        by_source = {src: replaced_axis(carried[carried.index(src)], tgt) for src, tgt in pairs}
+        # A source argument and the carried source name one axis: their merged
+        # declaration (which raises on a conflict) decides what the target gains.
+        merged = union_axes(carried, tuple(sources))
+        by_source = {src: replaced_axis(merged[merged.index(src)], tgt) for src, tgt in pairs}
         self.node = node
         self.mapping = pairs
         self._output_axes = tuple(by_source.get(ax, ax) for ax in carried)

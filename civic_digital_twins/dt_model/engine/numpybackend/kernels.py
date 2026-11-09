@@ -30,6 +30,13 @@ import numpy as np
 from ...axes import BoundaryCondition, Constant, Linear, Nearest, Neumann, Wrap
 
 
+def _align_to_domain(arr: np.ndarray, n_domain: int) -> np.ndarray:
+    """Return *arr* with size-1 dimensions prepended up to *n_domain* dimensions, as a view."""
+    if arr.ndim >= n_domain:
+        return arr
+    return arr.reshape((1,) * (n_domain - arr.ndim) + arr.shape)
+
+
 def expand_to_extent(x: np.ndarray, axes: tuple[int, ...], domain_extents: tuple[int, ...]) -> np.ndarray:
     """Return *x* at full extent along the DOMAIN dimensions *axes*.
 
@@ -39,34 +46,22 @@ def expand_to_extent(x: np.ndarray, axes: tuple[int, ...], domain_extents: tuple
     axis's extent first, as a read-only view.
 
     Args:
-        x: The operand. A 0-d value (a scalar constant) is constant along
-            every DOMAIN axis, so it is given size 1 along each first. Any
-            other value must carry the whole DOMAIN block as its trailing
-            dimensions.
+        x: The operand. Its trailing dimensions are matched to the trailing
+            DOMAIN axes, as in NumPy broadcasting: a value with fewer
+            dimensions than the DOMAIN block (a 0-d constant, or a function
+            output over the last axes only) is given size 1 along the axes
+            it lacks first.
         axes: The dimensions to expand, as negative offsets from the end
             (as returned by :func:`~...axes.domain_axis_position`).
         domain_extents: The extent of every DOMAIN axis, in DOMAIN order.
 
     Returns
     -------
-        *x* itself if already at full extent along *axes*, else a read-only
-        broadcast view of it.
-
-    Raises
-    ------
-    ValueError
-        If *x* has some DOMAIN dimensions but not all: its dimensions cannot
-        be matched to axes.
+        *x* itself if already at full extent along *axes* and of full DOMAIN
+        rank, else a read-only view of it.
     """
     n_domain = len(domain_extents)
-    arr = np.asarray(x)
-    if arr.ndim == 0:
-        arr = arr.reshape((1,) * n_domain)
-    elif arr.ndim < n_domain:
-        raise ValueError(
-            f"the operand has shape {arr.shape}, fewer dimensions than the {n_domain} DOMAIN axes, "
-            f"so its dimensions cannot be matched to axes"
-        )
+    arr = _align_to_domain(np.asarray(x), n_domain)
     shape = list(arr.shape)
     for axis in axes:
         if shape[axis] == 1:
@@ -86,26 +81,18 @@ def replace_axes(x: np.ndarray, sources: tuple[int, ...], targets: tuple[int, ..
     vary along such an axis, so that dimension has size 1.
 
     Args:
-        x: The operand. A 0-d value is returned unchanged; any other value
-            must carry the whole DOMAIN block as its trailing dimensions.
+        x: The operand. A 0-d value is returned unchanged; a value with
+            fewer dimensions than the DOMAIN block is matched to the
+            trailing DOMAIN axes, as in NumPy broadcasting.
         sources: The DOMAIN dimensions to move from, as negative offsets
             from the end (as returned by :func:`~...axes.domain_axis_position`).
         targets: The DOMAIN dimensions to move to, in the same order.
         n_domain: The number of DOMAIN dimensions.
-
-    Raises
-    ------
-    ValueError
-        If *x* has some DOMAIN dimensions but not all.
     """
     arr = np.asarray(x)
     if arr.ndim == 0:
         return arr
-    if arr.ndim < n_domain:
-        raise ValueError(
-            f"the operand has shape {arr.shape}, fewer dimensions than the {n_domain} DOMAIN axes, "
-            f"so its dimensions cannot be matched to axes"
-        )
+    arr = _align_to_domain(arr, n_domain)
     src = [n_domain + p for p in sources]
     tgt = [n_domain + p for p in targets]
     order = list(range(n_domain))

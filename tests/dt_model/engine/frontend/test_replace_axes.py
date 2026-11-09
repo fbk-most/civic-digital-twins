@@ -133,3 +133,15 @@ class TestReplaceAxesNode:
         """The types of a pair must merge."""
         with pytest.raises(ValueError, match=r"cannot be replaced by axis 'n'.*different kinds of axis"):
             _over(LOCAL_TIME).replace_axis(LOCAL_TIME, DomainAxis("n", type=SequenceType()))
+
+    def test_source_conflicting_with_the_carried_axis_raises(self):
+        """The source argument and the axis the value carries name one axis, so their types must merge."""
+        zone = DomainAxis("zone", type=SetType(labels=("a", "b", "c")))
+        match = r"axis 'zone' is declared with conflicting types.*length 3 against length 7"
+        with pytest.raises(ValueError, match=match):
+            _over(zone).replace_axis(DomainAxis("zone", type=SetType(length=7)), X)
+
+    def test_source_argument_declaration_is_used(self):
+        """What the source argument declares beyond the carried axis also goes to the target."""
+        node = _over(Axis("local_time", DOMAIN)).replace_axis(LOCAL_TIME, TIME)
+        assert node.output_axes[0].type == TimeType(length=24)  # type: ignore[attr-defined]

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import operator
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import numpy as np
@@ -49,7 +49,7 @@ class LabeledArray:
     keep a dimension keep its matching labels.
     """
 
-    __slots__ = ("values", "_axes", "_sizes", "_labels")
+    __slots__ = ("values", "_axes", "_sizes", "_labels", "_label_index")
 
     def __init__(self, values: np.ndarray, layout: AxisLayout | Iterable[tuple[Axis, int]]) -> None:
         entries = layout.entries if isinstance(layout, AxisLayout) else tuple(layout)
@@ -62,6 +62,8 @@ class LabeledArray:
             raise ValueError(f"LabeledArray: values.shape {values.shape} does not match the axis sizes {self._sizes}.")
         self.values = values
         self._labels: dict[str, tuple[str, ...]] = {}
+        # Per axis name: the labels tuple it was built from, and label -> position.
+        self._label_index: dict[str, tuple[tuple[str, ...], dict[str, int]]] = {}
         for ax, size in entries:
             labels = declared_labels(ax)
             if labels is not None and len(labels) == size:
@@ -303,7 +305,7 @@ class LabeledArray:
                 raise KeyError(f"LabeledArray.{caller}: no axis named {name!r}; have {names}.")
             axis = self._axes[names.index(name)]
             if isinstance(value, (list, tuple)):
-                picks[axis] = [self._label_position(name, label) for label in self._check_label_list(name, value)]
+                picks[axis] = self._label_positions(name, self._check_label_list(name, value))
                 new_labels[name] = tuple(value)
                 continue
             if isinstance(value, slice):
@@ -325,12 +327,21 @@ class LabeledArray:
         return result
 
     def _label_position(self, name: str, label: str) -> int:
+        return self._label_positions(name, (label,))[0]
+
+    def _label_positions(self, name: str, selected: Sequence[str]) -> list[int]:
         labels = self._labels.get(name)
         if labels is None:
             raise KeyError(f"LabeledArray.sel: axis {name!r} has no labels; select it by position with isel().")
-        if label not in labels:
-            raise KeyError(f"LabeledArray.sel: {label!r} is not a label of axis {name!r}; labels are {labels}.")
-        return labels.index(label)
+        cached = self._label_index.get(name)
+        if cached is None or cached[0] is not labels:
+            cached = (labels, {label: i for i, label in enumerate(labels)})
+            self._label_index[name] = cached
+        position = cached[1]
+        missing = [label for label in selected if label not in position]
+        if missing:
+            raise KeyError(f"LabeledArray.sel: {missing[0]!r} is not a label of axis {name!r}; labels are {labels}.")
+        return [position[label] for label in selected]
 
     @staticmethod
     def _check_label_list(name: str, labels: list[str] | tuple[str, ...]) -> list[str] | tuple[str, ...]:

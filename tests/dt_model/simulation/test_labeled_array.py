@@ -373,3 +373,22 @@ class TestToXarray:
         assert list(da.coords["zone"].values) == ["centre", "north", "south"]
         assert "x" not in da.coords
         assert float(da.sel(zone="north", x=0)) == 2.0
+
+
+class TestLabelIndex:
+    """Label lookups use a label-to-position index built once per labelled axis."""
+
+    def test_index_is_built_once_and_reused(self):
+        """Selecting one label at a time does not rebuild the index."""
+        arr = LabeledArray(np.arange(3.0), [(ZONE, 3)])
+        assert float(arr.sel(zone="north").values) == 1.0
+        index = arr._label_index["zone"][1]
+        assert float(arr.sel(zone="south").values) == 2.0
+        assert arr._label_index["zone"][1] is index
+
+    def test_index_follows_the_labels(self):
+        """An index built for other labels is not used."""
+        arr = LabeledArray(np.arange(3.0), [(ZONE, 3)])
+        arr.sel(zone="north")
+        arr._labels["zone"] = ("south", "north", "centre")
+        assert float(arr.sel(zone="south").values) == 0.0
