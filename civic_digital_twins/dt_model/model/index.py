@@ -9,7 +9,7 @@ be a constant, a distribution, or a symbolic expression.
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
@@ -422,6 +422,36 @@ class GenericIndex(ABC):
         evaluating it is a backend concern rather than a frontend one.
         """
         return self.node.broadcast(*axes)
+
+    def replace_axis(self, old: Axis, new: Axis) -> graph.Node:
+        """Return a graph node with this index's value, carried by axis *new* in place of axis *old*.
+
+        The data along *old* becomes the data along *new*; nothing is
+        copied. This connects code written over different axes for the same
+        dimension: a function library over its own ``time`` axis, used by a
+        model over its ``local_time``::
+
+            on_library_time = load.replace_axis(LOCAL_TIME, lib.TIME)
+            smoothed = lib.smooth(on_library_time)            # over lib.TIME
+            back = Index("smoothed", smoothed.replace_axis(lib.TIME, LOCAL_TIME), axes=(LOCAL_TIME,))
+
+        The two axes must be DOMAIN axes with compatible types; the axis on
+        the result is *new*, refined with what *old* declares (e.g. its
+        length). They have the same length in an evaluation: if one of them
+        declares no length and no value carries it, it takes the other's.
+        The index must carry *old*, and must not already carry *new*.
+
+        See :class:`~..engine.frontend.graph.replace_axes`.
+        """
+        return self.node.replace_axis(old, new)
+
+    def replace_axes(self, mapping: Mapping[Axis, Axis]) -> graph.Node:
+        """Return a graph node with this index's value, each axis in *mapping* replaced by the axis it maps to.
+
+        All pairs apply at once, so ``{A: B, B: A}`` swaps two axes. See
+        :meth:`replace_axis`.
+        """
+        return self.node.replace_axes(mapping)
 
     # ------------------------------------------------------------------
     # Reduction and per-axis operators

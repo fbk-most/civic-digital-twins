@@ -40,6 +40,7 @@ __all__ = [
     "domain_axis_position",
     "filter_by_role",
     "refine_axis",
+    "replaced_axis",
     "union_axes",
 ]
 
@@ -682,24 +683,61 @@ def refine_axis(first: Axis, second: Axis) -> Axis:
         return second if first_type is None and isinstance(second, DomainAxis) else first
     if first_type is None:
         return second
-    merged = _refine_types(first.name, first_type, second_type)
+
+    def conflict(reason: str) -> ValueError:
+        return ValueError(
+            f"axis {first.name!r} is declared with conflicting types {first_type!r} and {second_type!r}: {reason}. "
+            f"Axes with the same name are one axis; declare compatible types, or use different names."
+        )
+
+    merged = _refine_types(first_type, second_type, conflict)
     if merged == first_type:
         return first
     assert merged == second_type
     return second
 
 
-def _refine_types(name: str, first: "DomainType", second: "DomainType") -> "DomainType":
-    """Merge two domain types declared for axis *name* (see :func:`refine_axis`)."""
-    if first == second:
-        return first
+def replaced_axis(source: Axis, target: Axis) -> Axis:
+    """Return the axis a value carries after its axis *source* is replaced by *target*.
+
+    The data along *source* becomes the data along *target*, so the two must
+    be DOMAIN axes with compatible types, merged as :func:`refine_axis` merges
+    same-name axes: the result is *target* carrying, in addition, what
+    *source* declares and *target* does not (its type, ``length``,
+    ``labels``). For example, replacing ``DomainAxis("local_time",
+    type=TimeType(length=24))`` by ``DomainAxis("time", type=TimeType())``
+    gives ``DomainAxis("time", type=TimeType(length=24))``.
+
+    Raises
+    ------
+    ValueError
+        If an axis is not a DOMAIN axis, or the types conflict.
+    """
+    for ax in (source, target):
+        if ax.role != DOMAIN:
+            raise ValueError(f"replace_axes: only DOMAIN axes can be replaced; {ax!r} is a {ax.role} axis.")
+    source_type = getattr(source, "type", None)
+    target_type = getattr(target, "type", None)
+    if source_type is None:
+        return target
+    if target_type is None:
+        return DomainAxis(target.name, type=source_type)
 
     def conflict(reason: str) -> ValueError:
         return ValueError(
-            f"axis {name!r} is declared with conflicting types {first!r} and {second!r}: {reason}. "
-            f"Axes with the same name are one axis; declare compatible types, or use different names."
+            f"replace_axes: axis {source.name!r} cannot be replaced by axis {target.name!r}: their types "
+            f"{source_type!r} and {target_type!r} conflict ({reason}). The data along one becomes the data "
+            f"along the other, so the types must be compatible."
         )
 
+    merged = _refine_types(source_type, target_type, conflict)
+    return target if merged == target_type else DomainAxis(target.name, type=merged)
+
+
+def _refine_types(first: "DomainType", second: "DomainType", conflict: "Callable[[str], ValueError]") -> "DomainType":
+    """Merge two domain types (see :func:`refine_axis`), raising ``conflict(reason)`` if they conflict."""
+    if first == second:
+        return first
     if type(first) is not type(second):
         raise conflict("different kinds of axis")
     if isinstance(first, SetType):

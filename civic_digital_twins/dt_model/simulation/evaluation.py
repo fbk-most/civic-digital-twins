@@ -41,30 +41,49 @@ def _canonical_domain_order(axes: Iterable[Axis]) -> tuple[Axis, ...]:
 
 
 def _resolve_domain_extents(
-    domain_axes: tuple[Axis, ...], leaves: Iterable[tuple[graph.Node, np.ndarray]]
+    domain_axes: tuple[Axis, ...],
+    leaves: Iterable[tuple[graph.Node, np.ndarray]],
+    links: Iterable[tuple[Axis, Axis]] = (),
 ) -> tuple[int, ...]:
     """Return the length of each DOMAIN axis for one evaluation, before any node runs.
 
     *leaves* are the array leaves of the evaluation (``array_constant`` and
     ``array_placeholder`` nodes) with their values, aligned so that their
-    trailing dimensions follow *domain_axes*. A value has size 1 along an
-    axis it does not vary on, so the extent of each axis is, in order of
-    precedence:
+    trailing dimensions follow *domain_axes*. *links* are the axis pairs of
+    the evaluation's ``replace_axes`` nodes: the data along one axis of a
+    pair becomes the data along the other, so they have one length. Linked
+    axes form groups (links chain), each resolved as one axis. A value has
+    size 1 along an axis it does not vary on, so the extent of each group
+    is, in order of precedence:
 
-    1. the length its type declares (``length=``, or the number of
-       ``labels=``); the leaves have already been checked against it;
-    2. otherwise the common size other than 1 among the leaves carrying it
-       (0 included: an axis may be empty);
-    3. otherwise 1, if some leaf carries it.
+    1. the length its axes declare (``length=``, or the number of
+       ``labels=``); every leaf must agree with it;
+    2. otherwise the common size other than 1 among the leaves carrying one
+       of its axes (0 included: an axis may be empty);
+    3. otherwise 1, if some leaf carries one of its axes.
 
     Raises
     ------
     ValueError
-        If leaves carrying an axis disagree on its size, or an axis has no
-        extent: no declared length and no leaf carrying it (it is reached only
-        through ``.broadcast()`` or a function's declared output axes).
+        If the leaves of a group disagree on its size or with its declared length,
+        or a group has no extent: no declared length and no leaf carrying it
+        (it is reached only through ``.broadcast()`` or a function's declared
+        output axes).
     """
     n_domain = len(domain_axes)
+    group = list(range(n_domain))
+
+    def root(i: int) -> int:
+        while group[i] != i:
+            i = group[i]
+        return i
+
+    for src, tgt in links:
+        group[root(domain_axes.index(src))] = root(domain_axes.index(tgt))
+    members: dict[int, list[int]] = {}
+    for i in range(n_domain):
+        members.setdefault(root(i), []).append(i)
+
     sizes: list[dict[int, str]] = [{} for _ in domain_axes]
     carried = [False] * n_domain
     for node, value in leaves:
@@ -75,28 +94,52 @@ def _resolve_domain_extents(
                 carried[i] = True
             if size != 1:
                 sizes[i].setdefault(size, node.name or f"n{node.id}")
-    extents: list[int] = []
-    for i, ax in enumerate(domain_axes):
-        declared = declared_length(ax)
-        if declared is not None:
-            extents.append(declared)
-        elif len(sizes[i]) > 1:
-            found = ", ".join(f"{name!r} has {size}" for size, name in sizes[i].items())
+
+    extents = [0] * n_domain
+    for indices in members.values():
+        axes = [domain_axes[i] for i in indices]
+        linked = len(axes) > 1
+        subject = (
+            f"DOMAIN axes {[ax.name for ax in axes]} (linked by replace_axes, so they have one length)"
+            if linked
+            else f"DOMAIN axis {axes[0].name!r}"
+        )
+        found: dict[int, list[str]] = {}
+        for i in indices:
+            for size, name in sizes[i].items():
+                found.setdefault(size, []).append(
+                    f"{name!r} has {size} along {domain_axes[i].name!r}" if linked else f"{name!r} has {size}"
+                )
+        declared = {length: ax.name for ax in axes if (length := declared_length(ax)) is not None}
+        # A link refines its target with the source's declaration, and same-name
+        # axes are merged before this point, so the axes of a group cannot
+        # declare different lengths.
+        assert len(declared) <= 1, declared
+        if declared:
+            ((extent, declarer),) = declared.items()
+            disagreeing = [entry for size, entries in found.items() if size != extent for entry in entries]
+            if disagreeing:
+                raise ValueError(f"{subject}: {declarer!r} declares length {extent}, but {', '.join(disagreeing)}.")
+        elif len(found) > 1:
+            listed = ", ".join(entry for entries in found.values() for entry in entries)
             raise ValueError(
-                f"DOMAIN axis {ax.name!r} has different sizes in different values ({found}). "
+                f"{subject} has different sizes in different values ({listed}). "
                 f"An axis has one length per evaluation; fix the values, or use different axes."
             )
-        elif sizes[i]:
-            extents.append(next(iter(sizes[i])))
-        elif carried[i]:
-            extents.append(1)
+        elif found:
+            extent = next(iter(found))
+        elif any(carried[i] for i in indices):
+            extent = 1
         else:
+            name = axes[0].name
             raise ValueError(
-                f"DOMAIN axis {ax.name!r} has no length: no value carries it (it is reached only "
+                f"{subject} has no length: no value carries it (it is reached only "
                 f"through .broadcast() or a function's declared output axes) and its type declares "
-                f"none. Declare one on the axis (e.g. DomainAxis({ax.name!r}, type=SequenceType(length=...)) "
+                f"none. Declare one on the axis (e.g. DomainAxis({name!r}, type=SequenceType(length=...)) "
                 f"or SetType(labels=...)), or provide a value that carries it."
             )
+        for i in indices:
+            extents[i] = extent
     return tuple(extents)
 
 
@@ -923,7 +966,13 @@ class Evaluation:
                     )
                 elif isinstance(node, graph.array_placeholder) and node in initial_values:
                     leaves.append((node, np.asarray(initial_values[node])))
-            domain_extents = _resolve_domain_extents(domain_axes, leaves)
+            links = [
+                pair
+                for node in dict.fromkeys(n for r in plan.regions for n in r.nodes)
+                if isinstance(node, graph.replace_axes)
+                for pair in node.mapping
+            ]
+            domain_extents = _resolve_domain_extents(domain_axes, leaves, links)
 
         state = executor.State(
             initial_values,

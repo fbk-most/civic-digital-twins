@@ -182,12 +182,12 @@ This behavior impacts code that needs to find nodes in collections like lists:
 from __future__ import annotations
 
 import functools
-from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Protocol, cast, runtime_checkable
 
 from numpy.typing import ArrayLike
 
-from ...axes import Axis, BoundaryCondition, Reflect, refine_axis, union_axes
+from ...axes import Axis, BoundaryCondition, Reflect, refine_axis, replaced_axis, union_axes
 from .. import atomic, compileflags
 
 Scalar = bool | float | int | str
@@ -531,6 +531,20 @@ class Node[T]:
         carried = {ax: ax for ax in self.output_axes}
         new_axes = tuple(axis for axis in axes if axis not in carried or _refines(carried[axis], axis))
         return broadcast_to(self, new_axes) if new_axes else self
+
+    def replace_axis(self, old: Axis, new: Axis) -> Node[T]:
+        """Return a node with this node's value, carried by axis *new* in place of axis *old*.
+
+        See :class:`replace_axes`.
+        """
+        return replace_axes(self, {old: new})
+
+    def replace_axes(self, mapping: Mapping[Axis, Axis]) -> Node[T]:
+        """Return a node with this node's value, each axis in *mapping* replaced by the axis it maps to.
+
+        See :class:`replace_axes`.
+        """
+        return replace_axes(self, mapping)
 
 
 @runtime_checkable
@@ -1613,6 +1627,82 @@ class broadcast_to[T](Node[T]):
     def __repr__(self) -> str:
         """Return a round-trippable SSA representation of the node."""
         return f"n{self.id} = graph.broadcast_to(node=n{self.node.id}, axes={self.axes!r}, name='{self.name}')"
+
+
+class replace_axes[T](Node[T]):
+    """Carries a node's value by other axes: each source axis is replaced by its target axis.
+
+    The value is unchanged; only the axes it is carried by change. Data along
+    a source axis becomes data along its target, which takes the source's
+    place in ``output_axes``. For example, a value over a model's
+    ``local_time`` can be passed to a library operator over the library's
+    ``time``, and its result brought back by the reverse replacement.
+
+    All pairs apply at once, so ``{a: b, b: a}`` swaps two axes. Each pair
+    must be two DOMAIN axes with compatible types; the axis on the result is
+    the target refined with what the source declares
+    (:func:`~...axes.replaced_axis`). A source and its target have the same
+    length in an evaluation.
+
+    Args:
+        node: Input tensor.
+        mapping: Source axis to target axis, as a mapping or as pairs.
+        name: Optional node name for debugging.
+
+    Raises
+    ------
+    ValueError
+        If *mapping* is empty, maps an axis to itself, or repeats a target;
+        if *node* does not carry a source, or already carries a target that
+        is not also a source; or if a pair is not two compatible DOMAIN axes.
+    """
+
+    def __init__(
+        self, node: Node[T], mapping: Mapping[Axis, Axis] | Iterable[tuple[Axis, Axis]], name: str = ""
+    ) -> None:
+        super().__init__(name)
+        pairs: tuple[tuple[Axis, Axis], ...] = (
+            tuple(cast(Mapping[Axis, Axis], mapping).items())
+            if isinstance(mapping, Mapping)
+            else tuple(cast(Iterable[tuple[Axis, Axis]], mapping))
+        )
+        if not pairs:
+            raise ValueError("replace_axes: no axes to replace.")
+        sources = [src for src, _ in pairs]
+        targets = [tgt for _, tgt in pairs]
+        for label, axes in (("source", sources), ("target", targets)):
+            repeated = sorted({ax.name for ax in axes if axes.count(ax) > 1})
+            if repeated:
+                raise ValueError(f"replace_axes: {label} axes {repeated} appear more than once.")
+        carried = node.output_axes
+        for src, tgt in pairs:
+            if src == tgt:
+                raise ValueError(f"replace_axes: axis {src.name!r} is replaced by itself.")
+            if src not in carried:
+                raise ValueError(
+                    f"replace_axes: the value does not carry axis {src.name!r} (it carries "
+                    f"{[ax.name for ax in carried]}); to make it constant along {tgt.name!r}, use broadcast."
+                )
+            if tgt in carried and tgt not in sources:
+                raise ValueError(
+                    f"replace_axes: the value already carries axis {tgt.name!r}, so {src.name!r} cannot be "
+                    f"replaced by it."
+                )
+        # The carried source has the merged declaration, so it decides what the target gains.
+        by_source = {src: replaced_axis(carried[carried.index(src)], tgt) for src, tgt in pairs}
+        self.node = node
+        self.mapping = pairs
+        self._output_axes = tuple(by_source.get(ax, ax) for ax in carried)
+
+    @functools.cached_property
+    def output_axes(self) -> tuple[Axis, ...]:
+        """Return the operand's axes, each source replaced by its target."""
+        return self._output_axes
+
+    def __repr__(self) -> str:
+        """Return a round-trippable SSA representation of the node."""
+        mapping = "{" + ", ".join(f"{src!r}: {tgt!r}" for src, tgt in self.mapping) + "}"
+        return f"n{self.id} = graph.replace_axes(node=n{self.node.id}, mapping={mapping}, name='{self.name}')"
 
 
 # User-defined functions

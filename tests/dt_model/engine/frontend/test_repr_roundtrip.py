@@ -245,6 +245,21 @@ def test_broadcast_to() -> None:
 
 
 # ---------------------------------------------------------------------------
+# replace_axes
+# ---------------------------------------------------------------------------
+
+
+def test_replace_axes() -> None:
+    """Round-trip test for replace_axes, with typed axes and several pairs."""
+    local_time = DomainAxis("local_time", type=TimeType(length=24))
+    x_ax, y_ax = Axis("x", DOMAIN), Axis("y", DOMAIN)
+    a = graph.constant(7, name="a").broadcast(local_time, x_ax)
+    deps = _ctx(a)
+    _assert_roundtrip(graph.replace_axes(a, {local_time: DomainAxis("time", type=TimeType())}), deps)
+    _assert_roundtrip(graph.replace_axes(a, {x_ax: y_ax, local_time: x_ax}, name="moved"), deps)
+
+
+# ---------------------------------------------------------------------------
 # function_call
 # ---------------------------------------------------------------------------
 
@@ -324,6 +339,7 @@ _TESTED_TYPES: frozenset[type] = frozenset(
         graph.gradient,
         graph.laplacian,
         graph.broadcast_to,
+        graph.replace_axes,
         graph.function_call,
     }
 )

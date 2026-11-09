@@ -865,6 +865,26 @@ def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
     return kernels.laplacian(operand, tuple(positions), node.spacings, node.boundaries)
 
 
+def _eval_replace_axes(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a replace_axes node: move the value's data from each source axis to its target.
+
+    A transposed view of the operand (:func:`kernels.replace_axes`): both
+    axes of each pair are among this evaluation's DOMAIN axes, and have the
+    same extent.
+    """
+    node = cast(graph.replace_axes, node)
+    sources = tuple(domain_axis_position(state.domain_axes, src) for src, _ in node.mapping)
+    targets = tuple(domain_axis_position(state.domain_axes, tgt) for _, tgt in node.mapping)
+    operand = state.get_node_value(node.node)
+    try:
+        return kernels.replace_axes(operand, sources, targets, len(state.domain_axes))
+    except ValueError as exc:
+        raise UnsupportedOperation(
+            f"executor: {type(node).__name__} {node.name!r}: {exc}; "
+            f"DOMAIN axes are {[ax.name for ax in state.domain_axes]}."
+        ) from None
+
+
 def _eval_broadcast_to(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a broadcast_to node as a pure passthrough.
 
@@ -935,6 +955,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.AxisOp, _eval_axis_op),
     (graph.laplacian, _eval_laplacian),
     (graph.broadcast_to, _eval_broadcast_to),
+    (graph.replace_axes, _eval_replace_axes),
     (graph.function_call, _eval_function),
 )
 

@@ -23,6 +23,7 @@ from .kernels import (
 )
 from .kernels import gradient as _gradient  # noqa: F401 (re-exported: generated code calls it by this name)
 from .kernels import laplacian as _laplacian  # noqa: F401 (re-exported: generated code calls it by this name)
+from .kernels import replace_axes as _replace_axes  # noqa: F401 (re-exported: generated code calls it by this name)
 from .kernels import shift as _shift  # noqa: F401 (re-exported: generated code calls it by this name)
 
 
@@ -99,19 +100,27 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.laplacian: "laplacian",
     # broadcast (structural passthrough)
     graph.broadcast_to: "asarray",
+    graph.replace_axes: "replace_axes",
     # internal
     _InternalTestingNode: "_internal_testing",
 }
 
-_BARE_NAME_OPERATIONS: tuple[type[graph.Node], ...] = (graph.shift, graph.gradient, graph.laplacian)
+_BARE_NAME_OPERATIONS: tuple[type[graph.Node], ...] = (
+    graph.shift,
+    graph.gradient,
+    graph.laplacian,
+    graph.replace_axes,
+)
 """Node types whose generated call targets a bare, underscore-prefixed name
 (``_<name>``) rather than ``np.<name>``.
 
-``shift`` (fill-padded, unlike the circular ``roll``), ``gradient``, and
-``laplacian`` (finite-difference stencils honoring a boundary condition)
-have no single-call NumPy equivalent, so they render as calls to
-:func:`kernels.shift`/:func:`kernels.gradient`/:func:`kernels.laplacian`
-(imported above as ``_shift``/``_gradient``/``_laplacian``) instead —
+``shift`` (fill-padded, unlike the circular ``roll``), ``gradient``,
+``laplacian`` (finite-difference stencils honoring a boundary condition) and
+``replace_axes`` (a transposition computed from the axis pairs) have no
+single-call NumPy equivalent, so they render as calls to
+:func:`kernels.shift`/:func:`kernels.gradient`/:func:`kernels.laplacian`/
+:func:`kernels.replace_axes` (imported above as ``_shift``/``_gradient``/
+``_laplacian``/``_replace_axes``) instead —
 mirroring how :func:`_graph_function_to_ast_expr` already renders
 user-defined functions as bare-name calls. The leading underscore is added
 at the call site (see "create function call expr" below), not stored in
@@ -349,15 +358,24 @@ def _simple_graph_node_to_ast_expr(
         kwargs.append(ast.keyword("spacings", ast.Tuple(elts=[ast.Constant(value=s) for s in node.spacings])))
         kwargs.append(ast.keyword("boundaries", ast.Tuple(elts=[_boundary_to_ast_expr(b) for b in node.boundaries])))
 
-    # 14. evaluate broadcast_to (structural passthrough, no reshape)
+    # 14. evaluate replace_axes (moves data between DOMAIN dimensions)
+    elif isinstance(node, graph.replace_axes):
+        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
+        sources = tuple(_axis_as_tuple(src, domain_axes)[0] for src, _ in node.mapping)
+        targets = tuple(_axis_as_tuple(tgt, domain_axes)[0] for _, tgt in node.mapping)
+        kwargs.append(ast.keyword("sources", ast.Tuple(elts=[ast.Constant(value=p) for p in sources])))
+        kwargs.append(ast.keyword("targets", ast.Tuple(elts=[ast.Constant(value=p) for p in targets])))
+        kwargs.append(ast.keyword("n_domain", ast.Constant(value=len(domain_axes))))
+
+    # 15. evaluate broadcast_to (structural passthrough, no reshape)
     elif isinstance(node, graph.broadcast_to):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
 
-    # 15. catch all for not implemented operations
+    # 16. catch all for not implemented operations
     else:
         raise UnsupportedNodeArguments(f"numpy_ast: unsupported node type: {type(node)}")
 
-    # 16. create function call expr
+    # 17. create function call expr
     is_bare_name = type(node) in _BARE_NAME_OPERATIONS
     func = ast.Name(id=f"_{opname}", ctx=ast.Load()) if is_bare_name else _np_attr_name(opname)
     return ast.Call(func=func, args=posargs, keywords=kwargs)

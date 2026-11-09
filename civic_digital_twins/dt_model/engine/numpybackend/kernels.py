@@ -13,9 +13,10 @@ reach without duplicating it — two independent copies would drift the first
 time either one got a bugfix or optimization the other didn't. This module is
 that one place.
 
-``expand_to_extent`` is shared for the same reason: the executor applies
-it to the operand of every axis-aware operator, and the debug codegen must
-render that call for the printed code to reproduce the evaluation.
+``expand_to_extent`` and ``replace_axes`` are shared for the same reason: the
+executor applies them (the first to the operand of every axis-aware
+operator), and the debug codegen must render those calls for the printed
+code to reproduce the evaluation.
 
 ``executor.py`` already imports ``numpy_ast`` (for trace printing), so
 ``numpy_ast`` importing back from ``executor`` would cycle; both instead
@@ -73,6 +74,49 @@ def expand_to_extent(x: np.ndarray, axes: tuple[int, ...], domain_extents: tuple
     if tuple(shape) == arr.shape:
         return arr
     return np.broadcast_to(arr, tuple(shape))
+
+
+def replace_axes(x: np.ndarray, sources: tuple[int, ...], targets: tuple[int, ...], n_domain: int) -> np.ndarray:
+    """Move the data of *x* from the DOMAIN dimensions *sources* to *targets*, as a view.
+
+    The dimension at ``targets[i]`` of the result is the dimension at
+    ``sources[i]`` of *x*; all pairs apply at once, so a target may also be
+    a source (a swap). A source that is not also a target receives a
+    dimension of *x* at a target that is not also a source: *x* does not
+    vary along such an axis, so that dimension has size 1.
+
+    Args:
+        x: The operand. A 0-d value is returned unchanged; any other value
+            must carry the whole DOMAIN block as its trailing dimensions.
+        sources: The DOMAIN dimensions to move from, as negative offsets
+            from the end (as returned by :func:`~...axes.domain_axis_position`).
+        targets: The DOMAIN dimensions to move to, in the same order.
+        n_domain: The number of DOMAIN dimensions.
+
+    Raises
+    ------
+    ValueError
+        If *x* has some DOMAIN dimensions but not all.
+    """
+    arr = np.asarray(x)
+    if arr.ndim == 0:
+        return arr
+    if arr.ndim < n_domain:
+        raise ValueError(
+            f"the operand has shape {arr.shape}, fewer dimensions than the {n_domain} DOMAIN axes, "
+            f"so its dimensions cannot be matched to axes"
+        )
+    src = [n_domain + p for p in sources]
+    tgt = [n_domain + p for p in targets]
+    order = list(range(n_domain))
+    for s, t in zip(src, tgt, strict=True):
+        order[t] = s
+    vacated = [s for s in src if s not in tgt]
+    unused = [t for t in tgt if t not in src]
+    for s, t in zip(vacated, unused, strict=True):
+        order[s] = t
+    lead = arr.ndim - n_domain
+    return np.transpose(arr, [*range(lead), *(lead + d for d in order)])
 
 
 def shift(x: np.ndarray, periods: int, *, axis: int, fill_value: float) -> np.ndarray:
