@@ -16,6 +16,7 @@ from civic_digital_twins.dt_model import (
     outputs,
 )
 from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SetType, SpaceType
+from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import align_to_domain_block
 
 X = Axis("x", DOMAIN)
@@ -512,3 +513,85 @@ def test_conflicting_declarations_on_one_formula_fail_at_evaluation():
 
     with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types .*different labels"):
         _evaluate(TwoViews(inputs=TwoViews.Inputs()))
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN extents, resolved before execution
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_output(build):
+    """Evaluate a one-output model whose output *build()* returns; return (model, result)."""
+
+    @define("Probe")
+    class Probe(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inputs):
+            return Probe.Outputs(out=build())
+
+    m = Probe(inputs=Probe.Inputs())
+    return m, _evaluate(m)
+
+
+def test_extent_comes_from_the_declared_length_when_no_value_varies():
+    """An axis declaring length=4, carried by size-1 values only, has extent 4."""
+    hour = DomainAxis("hour", type=SequenceType(length=4))
+    _, result = _evaluate_output(lambda: Index("out", ConstIndex("c", 10.0).node.broadcast(hour), axes=(hour,)))
+    assert result.layout.entries == ((hour, 4),)
+    assert result._state.domain_extents == (4,)
+
+
+def test_extent_comes_from_the_labels():
+    """A labelled set axis has as many positions as labels."""
+    zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+    _, result = _evaluate_output(lambda: Index("out", ConstIndex("c", np.array([1.0]), axes=(zone,)) * 2.0))
+    assert result.layout.entries == ((zone, 3),)
+
+
+def test_extent_is_inferred_from_the_values_carrying_the_axis():
+    """Without a declaration, the extent is the common size other than 1 among the values."""
+    x = DomainAxis("x")
+    _, result = _evaluate_output(
+        lambda: Index("out", ConstIndex("a", np.array([1.0]), axes=(x,)) + ConstIndex("b", np.arange(5.0), axes=(x,)))
+    )
+    assert result.layout.entries == ((x, 5),)
+
+
+def test_extent_is_one_when_every_value_has_size_one():
+    """Without a declaration, an axis carried only at size 1 has extent 1."""
+    x = DomainAxis("x")
+    _, result = _evaluate_output(lambda: Index("out", ConstIndex("a", np.array([7.0]), axes=(x,)) * 1.0))
+    assert result.layout.entries == ((x, 1),)
+
+
+def test_axis_without_extent_raises():
+    """An axis reached only through .broadcast(), declaring no length, cannot be evaluated."""
+    hour = DomainAxis("hour")
+    with pytest.raises(ValueError, match=r"DOMAIN axis 'hour' has no length: no value carries it"):
+        _evaluate_output(lambda: Index("out", ConstIndex("c", 10.0).node.broadcast(hour), axes=(hour,)))
+
+
+def test_values_disagreeing_on_an_axis_size_raise():
+    """Two values carrying one axis at different sizes (other than 1) are rejected before execution."""
+    x = DomainAxis("x")
+    with pytest.raises(
+        ValueError, match=r"DOMAIN axis 'x' has different sizes in different values \('a' has 3, 'b' has 4\)"
+    ):
+        _evaluate_output(
+            lambda: Index("out", ConstIndex("a", np.zeros(3), axes=(x,)) + ConstIndex("b", np.zeros(4), axes=(x,)))
+        )
+
+
+def test_size_disagreement_names_unnamed_values_by_node_id():
+    """A value without a name is identified by its node id."""
+    x = DomainAxis("x")
+    anonymous = graph.array_constant(np.zeros(4), axes=(x,))
+    with pytest.raises(ValueError, match=rf"'a' has 3, 'n{anonymous.id}' has 4"):
+        _evaluate_output(lambda: Index("out", ConstIndex("a", np.zeros(3), axes=(x,)) + anonymous))

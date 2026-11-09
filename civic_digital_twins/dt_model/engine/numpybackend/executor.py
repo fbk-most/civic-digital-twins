@@ -25,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from ...axes import DOMAIN, Axis, domain_axis_position, validate_axis_extent
+from ...axes import DOMAIN, Axis, domain_axis_position, filter_by_role, validate_axis_extent
 from .. import compileflags
 from ..frontend import graph
 from . import kernels, numpy_ast
@@ -429,9 +429,9 @@ class State:
     Make sure to provide values for placeholder nodes ahead of the evaluation
     by initializing the `values` dictionary accordingly.
 
-    Note that, if compileflags.TRACE is set, the State will print the
-    nodes provided to the constructor in its __post_init__ method using
-    the `=== begin/end placeholder ===' markers.
+    Note that, if compileflags.TRACE is set, the State prints the nodes
+    provided to the constructor in its __post_init__ method, each as a
+    ``# <node>`` comment followed by its value as NumPy code.
 
     Attributes
     ----------
@@ -449,6 +449,10 @@ class State:
             (layout) order.  They occupy the trailing numpy dimensions, and
             projections resolve their named axis against this tuple.  Defaults
             to empty (no DOMAIN axes); a time-only model passes ``(TIME_AXIS,)``.
+        domain_extents: the length of each of *domain_axes*, positionally,
+            resolved by the caller before execution (a value may store size 1
+            along an axis it does not vary on; the extent is the axis's full
+            length). Empty when the caller resolves none.
 
     Notes
     -----
@@ -467,9 +471,25 @@ class State:
     functions: dict[str, Functor] = field(default_factory=dict)
     node_functions: dict[graph.Node, Functor] = field(default_factory=dict)
     domain_axes: tuple[Axis, ...] = ()
+    domain_extents: tuple[int, ...] = ()
 
     def __post_init__(self):
-        """Print the placeholder values provided to the constructor."""
+        """Validate the extents and, when tracing, print the initial values.
+
+        Two independent steps. First, ``domain_extents`` is paired with
+        ``domain_axes`` by position, so it must be empty or have one entry
+        per axis; otherwise ``ValueError`` is raised. Second, if the
+        ``compileflags.TRACE`` flag is set, every value provided to the
+        constructor (the placeholder inputs) is printed, in node-id order,
+        as a ``# <node>`` comment followed by its value as NumPy code.
+        """
+        # Extents are positional: a missing entry would shift every later axis.
+        if self.domain_extents and len(self.domain_extents) != len(self.domain_axes):
+            raise ValueError(
+                f"executor: {len(self.domain_extents)} domain_extents given for "
+                f"{len(self.domain_axes)} domain_axes {[ax.name for ax in self.domain_axes]}."
+            )
+        # Debug tracing of the initial values.
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
@@ -613,7 +633,7 @@ def align_to_domain_block(
     *arr* reshaped so its trailing ``len(domain_axes)`` dimensions correspond
     to *domain_axes* positionally.
     """
-    own = [ax for ax in node_axes if ax.role == DOMAIN]
+    own = list(filter_by_role(node_axes, DOMAIN))
     unknown = [ax for ax in own if ax not in domain_axes]
     if unknown:
         raise UnsupportedOperation(

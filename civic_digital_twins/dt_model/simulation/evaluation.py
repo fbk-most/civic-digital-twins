@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from ..axes import DOMAIN, PARAMETER, Axis, union_axes
+from ..axes import DOMAIN, PARAMETER, Axis, declared_length, filter_by_role, union_axes
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..model.index import GenericIndex
@@ -39,9 +39,68 @@ def _canonical_domain_order(axes: Iterable[Axis]) -> tuple[Axis, ...]:
     return tuple(sorted(union_axes(tuple(axes)), key=lambda ax: ax.name))
 
 
+def _resolve_domain_extents(
+    domain_axes: tuple[Axis, ...], leaves: Iterable[tuple[graph.Node, np.ndarray]]
+) -> tuple[int, ...]:
+    """Return the length of each DOMAIN axis for one evaluation, before any node runs.
+
+    *leaves* are the array leaves of the evaluation (``array_constant`` and
+    ``array_placeholder`` nodes) with their values, aligned so that their
+    trailing dimensions follow *domain_axes*. A value has size 1 along an
+    axis it does not vary on, so the extent of each axis is, in order of
+    precedence:
+
+    1. the length its type declares (``length=``, or the number of
+       ``labels=``); the leaves have already been checked against it;
+    2. otherwise the common size other than 1 among the leaves carrying it;
+    3. otherwise 1, if some leaf carries it.
+
+    Raises
+    ------
+    ValueError
+        If leaves carrying an axis disagree on its size, or an axis has no
+        extent: no declared length and no leaf carrying it (it is reached only
+        through ``.broadcast()`` or a function's declared output axes).
+    """
+    n_domain = len(domain_axes)
+    sizes: list[dict[int, str]] = [{} for _ in domain_axes]
+    carried = [False] * n_domain
+    for node, value in leaves:
+        own = set(node.output_axes)
+        block = value.shape[value.ndim - n_domain :]
+        for i, (ax, size) in enumerate(zip(domain_axes, block, strict=True)):
+            if ax in own:
+                carried[i] = True
+            if size != 1:
+                sizes[i].setdefault(size, node.name or f"n{node.id}")
+    extents: list[int] = []
+    for i, ax in enumerate(domain_axes):
+        declared = declared_length(ax)
+        if declared is not None:
+            extents.append(declared)
+        elif len(sizes[i]) > 1:
+            found = ", ".join(f"{name!r} has {size}" for size, name in sizes[i].items())
+            raise ValueError(
+                f"DOMAIN axis {ax.name!r} has different sizes in different values ({found}). "
+                f"An axis has one length per evaluation; fix the values, or use different axes."
+            )
+        elif sizes[i]:
+            extents.append(next(iter(sizes[i])))
+        elif carried[i]:
+            extents.append(1)
+        else:
+            raise ValueError(
+                f"DOMAIN axis {ax.name!r} has no length: no value carries it (it is reached only "
+                f"through .broadcast() or a function's declared output axes) and its type declares "
+                f"none. Declare one on the axis (e.g. DomainAxis({ax.name!r}, type=SequenceType(length=...)) "
+                f"or SetType(labels=...)), or provide a value that carries it."
+            )
+    return tuple(extents)
+
+
 def _domain_axes_of(nodes: Iterable[graph.Node]) -> tuple[Axis, ...]:
     """Return the canonical DOMAIN axes carried by any of *nodes*."""
-    return _canonical_domain_order(ax for n in nodes for ax in n.output_axes if ax.role == DOMAIN)
+    return _canonical_domain_order(ax for n in nodes for ax in filter_by_role(n.output_axes, DOMAIN))
 
 
 class EvaluationResult:
@@ -763,11 +822,28 @@ class Evaluation:
             names_str = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in overlapping)
             raise ValueError(f"The following indexes appear in both parameters= and Scenario.overrides: {names_str}")
 
+        # DOMAIN extents: resolved from the leaves before any node runs, so
+        # that axis-aware operators can use the full length of an axis even
+        # where an operand stores size 1 along it.
+        initial_values = {**scenario_subs, **c_subs}
+        domain_extents: tuple[int, ...] = ()
+        if n_domain:
+            leaves: list[tuple[graph.Node, np.ndarray]] = []
+            for node in dict.fromkeys(n for r in plan.regions for n in r.nodes):
+                if isinstance(node, graph.array_constant):
+                    leaves.append(
+                        (node, executor.align_to_domain_block(np.asarray(node.values), node.output_axes, domain_axes))
+                    )
+                elif isinstance(node, graph.array_placeholder) and node in initial_values:
+                    leaves.append((node, np.asarray(initial_values[node])))
+            domain_extents = _resolve_domain_extents(domain_axes, leaves)
+
         state = executor.State(
-            {**scenario_subs, **c_subs},
+            initial_values,
             functions=functions or {},
             node_functions=getattr(plan.model, "_node_functions", {}),
             domain_axes=domain_axes,
+            domain_extents=domain_extents,
         )
 
         # Execute regions in topological order.
@@ -810,6 +886,7 @@ class Evaluation:
                     functions=functions or {},
                     node_functions=getattr(plan.model, "_node_functions", {}),
                     domain_axes=domain_axes,
+                    domain_extents=domain_extents,
                 )
                 executor.evaluate_nodes(branch_state, *region.nodes)
 
@@ -861,36 +938,11 @@ class Evaluation:
                 n_inject = n_total - arr.ndim
                 state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
 
-        # DOMAIN axis tracking: append each DOMAIN axis to the layout so that
-        # every result dimension is named.  Sizes are read post-execution
-        # because abstract domain-carrying nodes are filled at evaluate time.
-        # Assumption (unchanged, now per axis): a domain axis has one size
-        # across all PARAMETER configurations — it is a structural property of
-        # the model, not a function of parameter values.
+        # DOMAIN axes complete the layout, at the extents resolved before
+        # execution, so that every result dimension is named.
         result_layout = leading_layout
-        if n_domain:
-            domain_nodes = [
-                n
-                for r in plan.regions
-                for n in r.nodes
-                if isinstance(n, (graph.array_constant, graph.array_placeholder)) and n in state.values
-            ]
-            axis_sizes: dict[Axis, int] = {}
-            for dom_node in domain_nodes:
-                arr = np.asarray(state.values[dom_node])
-                block = arr.shape[arr.ndim - n_domain :]
-                for ax, size in zip(domain_axes, block, strict=True):
-                    if size == 1:
-                        continue  # a broadcast placeholder dimension carries no size
-                    previous = axis_sizes.setdefault(ax, size)
-                    assert previous == size, (
-                        f"Non-uniform size for DOMAIN axis {ax.name!r}: node "
-                        f"{getattr(dom_node, 'name', repr(dom_node))!r} has {size}, "
-                        f"expected {previous}. A domain axis must have one size across "
-                        f"all PARAMETER configurations (it is a structural model property)."
-                    )
-            for ax in domain_axes:
-                result_layout = result_layout.with_axis_appended(ax, axis_sizes.get(ax, 1))
+        for ax, extent in zip(domain_axes, domain_extents, strict=True):
+            result_layout = result_layout.with_axis_appended(ax, extent)
         if __debug__:
             for node in actual_nodes:
                 assert node in state.values, (
