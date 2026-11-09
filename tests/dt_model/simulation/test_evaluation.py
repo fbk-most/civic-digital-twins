@@ -136,7 +136,7 @@ def test_axes_single_axis_formula_values():
 
     result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs})
     # shape (3, 1); marginalize: tensordot(..., [1.0], axes=([-1],[0])) → (3,)
-    marginalised = result.expected_value(I_result)
+    marginalised = result.expected(I_result).values
     assert np.allclose(marginalised, [3.0, 6.0, 12.0])
 
 
@@ -150,7 +150,7 @@ def test_axes_two_axes_additive_formula():
     ys = np.array([10.0, 20.0, 30.0])
 
     result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={I_x: xs, I_y: ys})
-    marginalised = result.expected_value(I_result)
+    marginalised = result.expected(I_result).values
     # result[i, j] = xs[i] + ys[j]
     expected = xs[:, None] + ys[None, :]
     assert np.allclose(marginalised, expected)
@@ -173,7 +173,7 @@ def test_axes_non_axis_factor_marginalised_correctly():
     axis = Axis("_ensemble", ENSEMBLE)
     ensemble = FrozenEnsemble((axis,), (np.array([0.5, 0.5]),), {I_factor: np.array([1.0, 3.0])})
     result = Evaluation(scenario).evaluate(ensemble=ensemble, parameters={I_x: xs})
-    marginalised = result.expected_value(I_result)
+    marginalised = result.expected(I_result).values
     # result[i] = xs[i] * mean_factor = xs[i] * 2
     assert np.allclose(marginalised, [2.0, 4.0, 6.0])
 
@@ -238,7 +238,7 @@ def test_value_constant_index():
     I_c = Index("c", 42.0)
     model = _make_model(I_c)
     result = Evaluation(Scenario(model)).evaluate(ensemble=None)
-    marginalised = result.expected_value(I_c)
+    marginalised = result.expected(I_c).values
     assert float(marginalised) == pytest.approx(42.0)
 
 
@@ -256,7 +256,7 @@ def test_value_1d_squeeze_scalar():
 
     ensemble = DistributionEnsemble(scenario, size=50)
     result = Evaluation(scenario).evaluate(ensemble=ensemble)
-    marginalised = result.expected_value(I_result)
+    marginalised = result.expected(I_result).values
     # ENSEMBLE axis contracted, DOMAIN placeholder squeezed → 0-d scalar.
     assert np.ndim(marginalised) == 0
 
@@ -446,8 +446,8 @@ def test_parameter_axes_single_named_axis_one_callable():
         parameters={cost: lambda base: base * 3.0},
     )
     # cost = base*3 → [3,6,9]; result = cost*2 → [6,12,18]
-    assert res.expected_value(result).shape == (3,)
-    np.testing.assert_allclose(res.expected_value(result), [6.0, 12.0, 18.0])
+    assert res.expected(result).values.shape == (3,)
+    np.testing.assert_allclose(res.expected(result).values, [6.0, 12.0, 18.0])
 
 
 def test_parameter_axes_two_named_axes_multiple_callables():
@@ -466,12 +466,12 @@ def test_parameter_axes_two_named_axes_multiple_callables():
         parameter_axes={"base": base_arr, "gradient": grad_arr},
         parameters={cost_e[e]: (lambda base, gradient, e=e: base - gradient * e) for e in range(E)},
     )
-    assert res.expected_value(total).shape == (5, 4)
+    assert res.expected(total).values.shape == (5, 4)
 
     # Brute-force: cost_e[e] = base[:,None] - gradient[None,:] * e → (5,4)
     # total = sum_e cost_e[e] * numbers[e] → (5,4)
     expected = sum((base_arr[:, None] - grad_arr[None, :] * e) * numbers[e] for e in range(E))
-    np.testing.assert_allclose(res.expected_value(total), expected)
+    np.testing.assert_allclose(res.expected(total).values, expected)
 
 
 def test_parameter_axes_model1_model2_equivalence():
@@ -508,8 +508,8 @@ def test_parameter_axes_model1_model2_equivalence():
         parameters={cost2_e[e]: (lambda base, gradient, e=e: base - gradient * e) for e in range(E)},
     )
 
-    ev1 = res1.expected_value(total1)
-    ev2 = res2.expected_value(total2)
+    ev1 = res1.expected(total1).values
+    ev2 = res2.expected(total2).values
     assert ev1.shape == ev2.shape
     np.testing.assert_allclose(ev1, ev2)
 
@@ -534,10 +534,10 @@ def test_parameter_axes_mix_named_and_anonymous():
         },
     )
     # Named axes first (positions 0,1), anonymous axis last (position 2).
-    assert res.expected_value(result).shape == (3, 2, 4)
+    assert res.expected(result).values.shape == (3, 2, 4)
     expected_cost = base_arr[:, None] - grad_arr[None, :]  # (3, 2)
     expected = expected_cost[:, :, None] * scale_arr[None, None, :]  # (3, 2, 4)
-    np.testing.assert_allclose(res.expected_value(result), expected)
+    np.testing.assert_allclose(res.expected(result).values, expected)
 
 
 def test_parameter_axes_named_axis_values_accessor():
@@ -609,7 +609,7 @@ def test_parameter_axes_closure_e_equals_e_idiom():
         parameter_axes={"base": base_arr},
         parameters={cost_e[e]: (lambda base, e=e: base * e) for e in range(E)},
     )
-    np.testing.assert_allclose(res.expected_value(total), [30.0])
+    np.testing.assert_allclose(res.expected(total).values, [30.0])
 
 
 def test_parameter_axes_callable_with_var_keyword_receives_all_axes():
@@ -624,9 +624,9 @@ def test_parameter_axes_callable_with_var_keyword_receives_all_axes():
         parameter_axes={"base": base_arr, "gradient": grad_arr},
         parameters={cost: lambda **axes: axes["base"] - axes["gradient"]},
     )
-    assert res.expected_value(cost).shape == (2, 3)
+    assert res.expected(cost).values.shape == (2, 3)
     expected = base_arr[:, None] - grad_arr[None, :]
-    np.testing.assert_allclose(res.expected_value(cost), expected)
+    np.testing.assert_allclose(res.expected(cost).values, expected)
 
 
 def test_parameter_axes_callable_with_var_positional_raises():

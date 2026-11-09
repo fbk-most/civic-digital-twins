@@ -74,7 +74,7 @@ class Axis:
     This allows ``Axis("time", DOMAIN)`` constructed at graph-build time to
     match the one in ``axis_layout`` constructed at evaluation time, which is
     required for ``output_axes`` comparisons in
-    :meth:`~civic_digital_twins.dt_model.simulation.evaluation.EvaluationResult.expected_value`.
+    :meth:`~civic_digital_twins.dt_model.simulation.evaluation.EvaluationResult.expected`.
     """
 
     __slots__ = ("name", "role")

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import inspect
-from collections.abc import Callable, Iterable
+import warnings
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import numpy as np
@@ -219,38 +220,119 @@ class EvaluationResult:
         arr = np.asarray(self._state.values[index.node])
         return self._layout.contract_ensemble(arr, self._factorized_weights)
 
-    def expected_value(self, index: GenericIndex) -> np.ndarray:
-        """Return the typed result for *index* after contracting ENSEMBLE axes.
+    def expected(self, index: GenericIndex, *, axes: Sequence[Axis | str] | None = None) -> LabeledArray:
+        """Return the expected value of *index* over the ensemble, as a :class:`LabeledArray`.
 
-        Contracts all ENSEMBLE axes (weighted average or singleton squeeze),
-        then drops size-1 DOMAIN dimensions that *index* does not carry in its
-        :attr:`~model.index.GenericIndex.output_axes`:
+        ENSEMBLE axes are contracted (weighted average over the ensemble's
+        samples). The result has the PARAMETER axes and the DOMAIN axes
+        *index* carries in its :attr:`~model.index.GenericIndex.output_axes`
+        (:meth:`layout_of`), each at the full size of the result's layout:
+        a value constant along an axis is repeated along it. ``.values`` is
+        the array, a read-only view.
 
-        - A :class:`~dt_model.model.index.TimeseriesIndex` carries
-          ``Axis("time", DOMAIN)``; result shape is ``(*PARAMETER, T)``.
-        - A plain :class:`~dt_model.model.index.Index` formula carries no
-          DOMAIN axes; size-1 DOMAIN dims are squeezed away; result shape is
-          ``(*PARAMETER,)``.
+        Parameters
+        ----------
+        index:
+            The index to read.
+        axes:
+            The axes of the result, in the order wanted (axis objects or
+            names); all of them, each once. Without it, the layout order.
 
-        This is the primary result-extraction method for user code and
-        vertical applications.  Use :meth:`_contract_ensemble` directly if
-        you need the full ``(*PARAMETER, *DOMAIN)`` shape.
+        Raises
+        ------
+        ValueError
+            If *axes* misses, repeats or adds an axis; or if the value varies
+            along a DOMAIN axis *index* does not carry.
         """
+        arr = self._layout.drop_stray_domain(self._contract_ensemble(index), index.output_axes)
+        layout = self.layout_of(index)
+        return self._labeled(layout, arr, axes, "expected")
+
+    def samples(self, index: GenericIndex, *, axes: Sequence[Axis | str] | None = None) -> LabeledArray:
+        """Return the samples of *index* across the ensemble, as a :class:`LabeledArray`.
+
+        The result has the PARAMETER axes, the ENSEMBLE axes and the DOMAIN
+        axes *index* carries in its :attr:`~model.index.GenericIndex.output_axes`,
+        each at the full size of the result's layout: a deterministic index
+        is repeated along the ENSEMBLE axes, and a value constant along an
+        axis is repeated along it. ``.values`` is the array, a read-only view.
+
+        The samples of a weighted ensemble are not interchangeable: their
+        weights are :attr:`factorized_weights` (one vector per ENSEMBLE
+        axis). These are the samples this evaluation computed;
+        :func:`~simulation.ensemble.sample_across` draws new samples from
+        conditional distributions instead, in proportion to the weights.
+
+        Parameters
+        ----------
+        index:
+            The index to read.
+        axes:
+            The axes of the result, in the order wanted (axis objects or
+            names); all of them, each once. Without it, the layout order.
+
+        Raises
+        ------
+        ValueError
+            If *axes* misses, repeats or adds an axis; or if the value varies
+            along a DOMAIN axis *index* does not carry.
+        """
+        arr = np.asarray(self._state.values[index.node])
+        if not self._layout.compatible_with(arr.shape):
+            raise ValueError(
+                f"EvaluationResult.samples: shape {arr.shape} is incompatible with layout {self._layout!r}."
+            )
+        stray: list[int] = []
+        entries: list[tuple[Axis, int]] = []
+        for pos, (ax, size) in enumerate(self._layout.entries):
+            if ax.role == DOMAIN and ax not in index.output_axes:
+                if arr.shape[pos] != 1:
+                    raise ValueError(
+                        f"EvaluationResult.samples: DOMAIN axis {ax.name!r} is not carried by the node's "
+                        f"output_axes, but the value varies along it (size {arr.shape[pos]}); declared and "
+                        f"actual axes disagree."
+                    )
+                stray.append(pos)
+            else:
+                entries.append((ax, size))
+        arr = np.squeeze(arr, axis=tuple(stray)) if stray else arr
+        return self._labeled(AxisLayout(entries), arr, axes, "samples")
+
+    def _labeled(
+        self, layout: AxisLayout, arr: np.ndarray, axes: Sequence[Axis | str] | None, reader: str
+    ) -> LabeledArray:
+        """Expand *arr* to *layout*'s full shape (read-only view) and order it by *axes*."""
+        result = LabeledArray(np.broadcast_to(arr, layout.full_shape), layout)
+        if axes is None:
+            return result
+        try:
+            return result._reorder(list(axes))
+        except ValueError as exc:
+            raise ValueError(f"EvaluationResult.{reader}: axes=: {exc}") from None
+
+    def expected_value(self, index: GenericIndex) -> np.ndarray:
+        """Return the expected value of *index* as a plain array, at the size it is stored.
+
+        Deprecated, and staged for removal in a future milestone: use
+        ``expected(index).values`` instead. Emits a :class:`DeprecationWarning`.
+        """
+        warnings.warn(
+            "EvaluationResult.expected_value() is deprecated and will be removed in a future milestone. "
+            "Use expected(index).values instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         arr = self._contract_ensemble(index)
         return self._layout.drop_stray_domain(arr, index.output_axes)
 
     def layout_of(self, index: GenericIndex) -> AxisLayout:
-        """Return the :class:`~simulation.axis_layout.AxisLayout` of :meth:`expected_value`'s array.
+        """Return the :class:`~simulation.axis_layout.AxisLayout` of :meth:`expected` for *index*.
 
         Mirrors :attr:`layout`, which describes the *raw* ``result[index]``
-        array — but ``expected_value`` returns a differently-shaped array
-        (ENSEMBLE axes contracted away, DOMAIN axes *index* does not carry
-        dropped as stray), so it needs its own layout: PARAMETER axes
-        unchanged, no ENSEMBLE axes, and only the DOMAIN axes present in
-        *index*'s :attr:`~model.index.GenericIndex.output_axes`.
-
-        With several DOMAIN axes in play, position alone no longer tells you
-        which dimension is which; this is how a caller finds out.
+        array: PARAMETER axes unchanged, no ENSEMBLE axes, and only the
+        DOMAIN axes present in *index*'s
+        :attr:`~model.index.GenericIndex.output_axes`, each at the full size
+        of :attr:`layout`.
         """
         entries = tuple(
             (ax, size)
@@ -260,14 +342,18 @@ class EvaluationResult:
         return AxisLayout(entries)
 
     def labeled(self, index: GenericIndex) -> LabeledArray:
-        """Return :meth:`expected_value` for *index* paired with :meth:`layout_of`.
+        """Return the expected value of *index* as a :class:`LabeledArray`.
 
-        Optional convenience for name-based access (``.dims``, ``.sel(...)``)
-        and interop with a labeled-array ecosystem (``.to_xarray()``).  Purely
-        additive: :meth:`expected_value` and ``result[index]`` keep returning
-        plain ``np.ndarray``, unaffected by this method's existence.
+        Deprecated, and staged for removal in a future milestone: use
+        :meth:`expected` instead. Emits a :class:`DeprecationWarning`.
         """
-        return LabeledArray(self.expected_value(index), self.layout_of(index))
+        warnings.warn(
+            "EvaluationResult.labeled() is deprecated and will be removed in a future milestone. "
+            "Use expected(index) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.expected(index)
 
 
 class Evaluation:

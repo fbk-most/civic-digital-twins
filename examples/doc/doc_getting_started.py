@@ -80,7 +80,7 @@ ensemble = DistributionEnsemble(scenario, size=1000)
 result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
 co2_samples = result[co2]          # np.ndarray, shape (1000,)
-co2_mean = result.expected_value(co2) # scalar
+co2_mean = result.expected(co2).values # scalar
 
 assert co2_samples.shape == (1000,)
 assert 0 < co2_mean < 200, f"Unexpected CO2 mean: {co2_mean:.1f}"

@@ -868,7 +868,7 @@ result = Evaluation(Scenario(mv_param)).evaluate(
     ensemble=None,
     parameters={mode_param: np.array(["bike", "train"])},
 )
-# result.expected_value(mv_param.outputs.emissions) → shape (2,)
+# result.expected(mv_param.outputs.emissions).values → shape (2,)
 # index 0 = bike emissions, index 1 = train emissions
 ```
 
@@ -900,7 +900,7 @@ result = Evaluation(Scenario(mv_grid)).evaluate(
         presence:   np.array([100.0, 200.0, 300.0]),
     },
 )
-# result.expected_value(mv_grid.outputs.emissions) → shape (2, 3)
+# result.expected(mv_grid.outputs.emissions).values → shape (2, 3)
 # row 0 = bike emissions for each presence level
 # row 1 = train emissions for each presence level
 ```
@@ -1396,11 +1396,11 @@ ensemble = DistributionEnsemble(scenario, size=500)
 result   = Evaluation(scenario).evaluate(ensemble=ensemble)
 
 # Read KPI outputs by name
-total_inflow_modified = result.expected_value(m.outputs.total_modified_inflow)
-total_emissions       = result.expected_value(m.outputs.total_emissions)
+total_inflow_modified = result.expected(m.outputs.total_modified_inflow).values
+total_emissions       = result.expected(m.outputs.total_emissions).values
 
 # Access raw timeseries through expose. `result[...]` returns the raw
-# broadcast array — it never drops axes, unlike `expected_value()`.
+# broadcast array — it never drops axes, unlike `expected()`.
 # modified_inflow depends on stochastic inputs → a full-size ENSEMBLE axis
 modified_inflow_ts = result[m.expose.modified_inflow]    # shape (S, T): S samples × T time-steps
 # ts_inflow is a ConstTimeseriesIndex (no stochastic dependency) → same value
@@ -1441,8 +1441,8 @@ scenario = Scenario(m)
 ensemble = DistributionEnsemble(scenario, size=500)
 result   = Evaluation(scenario).evaluate(ensemble=ensemble)
 
-total_inflow_modified = result.expected_value(m.outputs.total_modified_inflow)
-total_emissions       = result.expected_value(m.outputs.total_emissions)
+total_inflow_modified = result.expected(m.outputs.total_modified_inflow).values
+total_emissions       = result.expected(m.outputs.total_emissions).values
 ```
 
 ---

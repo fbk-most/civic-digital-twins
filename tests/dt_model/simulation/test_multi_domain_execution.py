@@ -407,7 +407,7 @@ def test_labelled_set_axis_results_can_be_read_by_label():
             return Zones.Outputs(load=Index("load", 500.0 / inputs.capacity, axes=(zone,)))
 
     m = Zones(inputs=Zones.Inputs(capacity=Index("capacity", np.array([1000.0, 800.0, 500.0]), axes=(zone,))))
-    load = Evaluation(Scenario(m)).evaluate().labeled(m.outputs.load)
+    load = Evaluation(Scenario(m)).evaluate().expected(m.outputs.load)
     assert load.labels == {"zone": ("centre", "north", "south")}
     assert float(load.sel(zone="north").values) == pytest.approx(0.625)
 
@@ -439,7 +439,7 @@ def test_same_name_axes_are_merged_across_unrelated_outputs(labelled_first):
     m = Zones(inputs=Zones.Inputs())
     result = _evaluate(m)
     assert result.layout.axes[0] is labelled
-    assert float(result.labeled(m.outputs.b).sel(zone="south").values) == 30.0
+    assert float(result.expected(m.outputs.b).sel(zone="south").values) == 30.0
 
 
 def test_conflicting_same_name_axes_across_unrelated_outputs_raise():
@@ -485,7 +485,7 @@ def test_labels_declared_on_a_formula_reach_the_result():
             return Declared.Outputs(load=Index("load", raw * 10.0, axes=(labelled,)))
 
     m = Declared(inputs=Declared.Inputs())
-    load = _evaluate(m).labeled(m.outputs.load)
+    load = _evaluate(m).expected(m.outputs.load)
     assert load.labels == {"zone": ("centre", "north", "south")}
     assert float(load.sel(zone="south").values) == 30.0
 

@@ -942,11 +942,11 @@ ensemble, `evaluate` operates in *grid mode*:
   with all PARAMETER dimensions.
 - Result arrays have canonical shape `(*PARAMETER, *ENSEMBLE)`.
 
-Use `result.expected_value(idx)` to contract all ENSEMBLE dimensions:
+Use `result.expected(idx).values` to contract all ENSEMBLE dimensions:
 
 ```python
 # shape (*PARAMETER, *ENSEMBLE) → (*PARAMETER)
-marginalised = result.expected_value(idx)
+marginalised = result.expected(idx).values
 ```
 
 Grid mode is the standard way to compute sustainability fields in
@@ -960,7 +960,7 @@ grid.
 | API | Description |
 | --- | ----------- |
 | `result[idx]` | Raw array for `idx` in canonical `(*PARAMETER, *ENSEMBLE)` shape prefix. |
-| `result.expected_value(idx)` | Contract all ENSEMBLE axes using factorized weights; result shape is `(*PARAMETER, *DOMAIN)`. |
+| `result.expected(idx).values` | Contract all ENSEMBLE axes using factorized weights; result shape is `(*PARAMETER, *DOMAIN)`. |
 | `result.weights` | Joint weight array (outer product of per-axis weights). |
 | `result.factorized_weights` | Per-ENSEMBLE-axis weight vectors, keyed by `Axis` (`result.weights` is their outer product). |
 | `result.parameter_values` | The `parameters=` dict passed to `evaluate`. |
@@ -1005,7 +1005,7 @@ ensemble = DistributionEnsemble(scenario, size=200)
 result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
 # Weighted mean of z across all scenarios
-print(result.expected_value(model.outputs.z))  # ≈ 10.0
+print(result.expected(model.outputs.z).values)  # ≈ 10.0
 ```
 
 ## Domain Modeling Pattern

@@ -245,7 +245,7 @@ def test_marginalize_contracts_both_ensemble_axes():
         rng=np.random.default_rng(42),
     )
     result = Evaluation(scenario).evaluate(ensemble=ens)
-    marginalised = result.expected_value(i_result)
+    marginalised = result.expected(i_result).values
     # Both a and b ~ Uniform(0,1); E[a+b] = 1.0
     assert marginalised.shape == ()
     assert float(marginalised) == pytest.approx(1.0, abs=0.1)
@@ -280,13 +280,13 @@ def test_marginalize_order_independence():
         ],
         rng=rng1,
     )
-    m_fwd = float(Evaluation(scenario).evaluate(ensemble=ens_fwd).expected_value(i_result))
-    m_rev = float(Evaluation(scenario).evaluate(ensemble=ens_rev).expected_value(i_result))
+    m_fwd = float(Evaluation(scenario).evaluate(ensemble=ens_fwd).expected(i_result).values)
+    m_rev = float(Evaluation(scenario).evaluate(ensemble=ens_rev).expected(i_result).values)
     assert m_fwd == pytest.approx(m_rev, rel=0.05)
 
 
 def test_shaped_distribution_index_end_to_end():
-    """A shaped DistributionIndex flows through PartitionedEnsemble → Evaluation → expected_value.
+    """A shaped DistributionIndex flows through PartitionedEnsemble → Evaluation → expected.
 
     Regression coverage for issue #247: both PartitionedEnsemble.assignments()
     (flat sampling) and the reshape step must account for idx.shape, so the
@@ -305,7 +305,7 @@ def test_shaped_distribution_index_end_to_end():
         rng=np.random.default_rng(0),
     )
     result = Evaluation(scenario).evaluate(ensemble=ens)
-    marginalised = result.expected_value(i_result)
+    marginalised = result.expected(i_result).values
     assert marginalised.shape == (3,)
     assert np.all((marginalised >= 0.0) & (marginalised <= 1.0))
 

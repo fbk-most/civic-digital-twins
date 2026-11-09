@@ -103,7 +103,7 @@ def test_abstract_no_override():
 
 
 def test_abstract_no_override_shaped():
-    """A shaped DistributionIndex flows through DistributionEnsemble → Evaluation → expected_value.
+    """A shaped DistributionIndex flows through DistributionEnsemble → Evaluation → expected.
 
     Regression coverage for issue #247: DistributionEnsemble.assignments() must
     request size=(S, *idx.shape) rather than a flat size=S, so the ensemble
@@ -118,7 +118,7 @@ def test_abstract_no_override_shaped():
     ens = DistributionEnsemble(scenario, size=100, rng=np.random.default_rng(42))
     ev = Evaluation(scenario).evaluate(ensemble=ens)
 
-    marginalised = ev.expected_value(result)
+    marginalised = ev.expected(result).values
     assert marginalised.shape == (3,)
     assert np.all((marginalised >= 0.0) & (marginalised <= 1.0))
 

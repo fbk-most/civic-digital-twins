@@ -121,7 +121,7 @@ def _demo_basic_eval() -> None:
         parameters={model.inputs.traffic_load: traffic_grid},
     )
 
-    mean_conc = result.expected_value(model.outputs.concentration)
+    mean_conc = result.expected(model.outputs.concentration).values
     assert mean_conc.shape == (3,)          # one value per traffic level
     assert np.all(mean_conc > 0)
 
@@ -141,24 +141,24 @@ def _demo_handle() -> None:
         ev, 100,
         parameters={model.inputs.traffic_load: traffic_grid},
     )
-    assert handle.result.expected_value(model.outputs.concentration).shape == (3,)
+    assert handle.result.expected(model.outputs.concentration).values.shape == (3,)
 
     # Extend: draw 50 more Monte Carlo samples (same parameter grid)
     handle.extend(50)
-    assert handle.result.expected_value(model.outputs.concentration).shape == (3,)
+    assert handle.result.expected(model.outputs.concentration).values.shape == (3,)
 
     # Extend parameter grid: two more traffic levels, same ensemble
     handle.extend(
         extra_parameters={model.inputs.traffic_load: np.array([300.0, 400.0])},
     )
-    assert handle.result.expected_value(model.outputs.concentration).shape == (5,)
+    assert handle.result.expected(model.outputs.concentration).values.shape == (5,)
 
     # Combined: grow both ensemble and parameter grid in one call
     handle.extend(
         20,
         extra_parameters={model.inputs.traffic_load: np.array([500.0])},
     )
-    assert handle.result.expected_value(model.outputs.concentration).shape == (6,)
+    assert handle.result.expected(model.outputs.concentration).values.shape == (6,)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def _demo_async_handle() -> None:
     poll_state = async_handle.poll()    # (True, result) if done; (False, None) still running
     assert isinstance(poll_state, tuple)
     result = async_handle.get()         # blocks until complete
-    assert result.expected_value(model.outputs.concentration).shape == (3,)
+    assert result.expected(model.outputs.concentration).values.shape == (3,)
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ class ConcentrationEvaluator(ModelEvaluator[ConcentrationModel, ConcentrationOut
     ) -> ConcentrationOutput:
         del scenario  # unused; concentration depends only on result
         return ConcentrationOutput(
-            mean_conc=result.expected_value(self._model.outputs.concentration),
+            mean_conc=result.expected(self._model.outputs.concentration).values,
         )
 
     def input_schema(self) -> dict[str, ParameterMeta]:

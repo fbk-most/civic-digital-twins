@@ -465,11 +465,11 @@ def _demo_14_15_end_to_end() -> None:
     result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
     # Weighted mean of z across all scenarios
-    print(result.expected_value(model.outputs.z))  # ≈ 10.0
+    print(result.expected(model.outputs.z).values)  # ≈ 10.0
 
     # shape (N₀, N₁, …, S) → (N₀, N₁, …)
     idx = model.outputs.z
-    marginalised = result.expected_value(idx)
+    marginalised = result.expected(idx).values
     assert 7.0 < marginalised < 13.0, f"Expected ~10, got {marginalised}"
 
 

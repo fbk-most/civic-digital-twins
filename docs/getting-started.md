@@ -116,7 +116,7 @@ result = Evaluation(scenario).evaluate(ensemble=ensemble)
 ```
 
 `result` is an `EvaluationResult`.  Use `result[idx]` for the raw array
-(shape `(S,)` here — `S` ENSEMBLE samples) and `result.expected_value(idx)`
+(shape `(S,)` here — `S` ENSEMBLE samples) and `result.expected(idx).values`
 for the weighted expectation:
 
 ```python
@@ -124,7 +124,7 @@ for the weighted expectation:
 co2_samples = result[co2]          # np.ndarray, shape (1000,)
 
 # Expected (mean) CO2
-co2_mean = result.expected_value(co2) # scalar
+co2_mean = result.expected(co2).values # scalar
 print(f"Expected CO2: {co2_mean:.1f} kg")
 ```
 
