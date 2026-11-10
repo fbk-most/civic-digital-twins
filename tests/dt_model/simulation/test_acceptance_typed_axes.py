@@ -93,7 +93,7 @@ def test_no_shape_heuristic_constant_node():
     ens = DistributionEnsemble(scenario, size=4, rng=np.random.default_rng(0))
     result = Evaluation(scenario).evaluate(ensemble=ens)
 
-    marginalised = result.expected_value(i_c)
+    marginalised = result.expected(i_c).values
     # Constant node: marginalize over ENSEMBLE should give scalar 42.0
     assert float(marginalised) == pytest.approx(42.0)
 
@@ -120,7 +120,7 @@ def test_s_equals_t_ensemble_contracted_not_time():
     result = Evaluation(scenario).evaluate(ensemble=ens)
 
     # ts is a constant timeseries — marginalize over ENSEMBLE should preserve (T,)
-    marginalised = result.expected_value(ts)
+    marginalised = result.expected(ts).values
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.arange(float(T)))
 
@@ -132,7 +132,7 @@ def test_deterministic_timeseries_no_ensemble_contraction():
     model = _make_model(ts)
 
     result = Evaluation(Scenario(model)).evaluate(ensemble=None)
-    marginalised = result.expected_value(ts)
+    marginalised = result.expected(ts).values
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.ones(T))
 
@@ -163,7 +163,7 @@ def test_two_ensemble_axes_one_equals_t():
     result = Evaluation(scenario).evaluate(ensemble=ens)
 
     # ts is constant — marginalize over both ENSEMBLE axes → shape (T,)
-    marginalised = result.expected_value(ts)
+    marginalised = result.expected(ts).values
     assert marginalised.shape == (T,)
     assert np.allclose(marginalised, np.arange(float(T)))
 
@@ -262,10 +262,10 @@ def test_grid_ensemble_constant_no_indexerror():
     ys = np.array([10.0, 20.0, 30.0])
 
     result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={i_x: xs, i_y: ys})
-    # Must not raise IndexError.  The constant has 2 PARAMETER singleton dims
-    # preserved after ENSEMBLE contraction → shape (1, 1).
-    marginalised = result.expected_value(i_c)
-    assert marginalised.shape == (1, 1)
+    # Must not raise IndexError.  The constant is read at the full size of
+    # both PARAMETER axes → shape (2, 3).
+    marginalised = result.expected(i_c).values
+    assert marginalised.shape == (2, 3)
     assert np.all(np.isclose(marginalised, 42.0))
 
 
@@ -296,7 +296,7 @@ def test_grid_ensemble_timeseries_broadcast_no_valueerror():
     # Shape: (N_p=3, S=4, T=7)
     assert arr.shape == (3, S, T)
     # marginalize() contracts the ENSEMBLE axis → (N_p, T) = (3, 7)
-    marginalised = result.expected_value(i_result)
+    marginalised = result.expected(i_result).values
     assert marginalised.shape == (3, T)
 
 
@@ -322,20 +322,19 @@ def test_grid_ensemble_constant_and_timeseries_both_normalised():
     ens = DistributionEnsemble(scenario, size=S, rng=np.random.default_rng(0))
 
     result = Evaluation(scenario).evaluate(ensemble=ens, parameters={i_p: pp})
-    # Constant scalar: PARAMETER singleton dim preserved after ENSEMBLE contraction
-    # → shape (1,).  All values equal 10.0.
-    marginalised_c = result.expected_value(i_c)
-    assert marginalised_c.shape == (1,)
+    # Constant scalar: read at the full PARAMETER size → shape (N,).  All values equal 10.0.
+    marginalised_c = result.expected(i_c).values
+    assert marginalised_c.shape == (N,)
     assert np.all(np.isclose(marginalised_c, 10.0))
-    # Timeseries: not downstream of any substitution → (1, 1, T) after normalisation.
-    # After squeezing ENSEMBLE singleton at pos 1 → (1, T); PARAMETER singleton preserved.
-    marginalised_ts = result.expected_value(ts)
-    assert marginalised_ts.shape == (1, T)
+    # Timeseries: not downstream of any substitution, stored (1, 1, T); read at the
+    # full PARAMETER size, ENSEMBLE contracted → (N, T).
+    marginalised_ts = result.expected(ts).values
+    assert marginalised_ts.shape == (N, T)
     assert np.allclose(marginalised_ts, np.arange(float(T))[None, :])
 
 
 # ---------------------------------------------------------------------------
-# Bug #157 — T=1 timeseries: expected_value() must preserve the time axis
+# Bug #157 — T=1 timeseries: expected() must preserve the time axis
 # ---------------------------------------------------------------------------
 
 
@@ -349,7 +348,7 @@ def test_value_t1_timeseries_with_ensemble():
     ens = DistributionEnsemble(scenario, size=4, rng=np.random.default_rng(0))
     result = Evaluation(scenario).evaluate(ensemble=ens)
 
-    v = result.expected_value(ts)
+    v = result.expected(ts).values
     assert v.shape == (1,), f"expected shape (1,), got {v.shape}"
     assert np.isclose(v[0], 5.0)
 
@@ -361,20 +360,20 @@ def test_value_t1_timeseries_no_ensemble():
 
     result = Evaluation(Scenario(model)).evaluate(ensemble=None)
 
-    v = result.expected_value(ts)
+    v = result.expected(ts).values
     assert v.shape == (1,), f"expected shape (1,), got {v.shape}"
     assert np.isclose(v[0], 42.0)
 
 
 def test_value_t1_scalar_not_squeezed_to_wrong_shape():
-    """Scalar index in T=1 timeseries model: expected_value() still returns (*P,), not (*P,1)."""
+    """Scalar index in T=1 timeseries model: expected() still returns (*P,), not (*P,1)."""
     ts = TimeseriesIndex("ts", np.array([42.0]))
     i_c = Index("c", 10.0)
     model = _make_model(ts, i_c)
 
     result = Evaluation(Scenario(model)).evaluate(ensemble=None)
 
-    v = result.expected_value(i_c)
+    v = result.expected(i_c).values
     assert v.ndim == 0, f"expected 0-d scalar, got shape {v.shape}"
     assert float(v) == pytest.approx(10.0)
 
@@ -383,7 +382,7 @@ def test_value_t1_with_parameter_sweep():
     """T=1 timeseries + PARAMETER sweep: output_axes inference preserves time axis.
 
     Bug #157 fix: i_result = i_p * ts inherits the time axis via output_axes
-    inference, so expected_value() correctly returns shape (N_p, T=1), not (N_p,).
+    inference, so expected() correctly returns shape (N_p, T=1), not (N_p,).
     """
     ts = TimeseriesIndex("ts", np.array([3.0]))
     i_p = Index("p", 1.0)
@@ -393,12 +392,12 @@ def test_value_t1_with_parameter_sweep():
     pp = np.array([1.0, 2.0, 4.0])
     result = Evaluation(Scenario(model)).evaluate(ensemble=None, parameters={i_p: pp})
 
-    # TimeseriesIndex preserves T: (N_p=1, T=1).
-    v = result.expected_value(ts)
-    assert v.shape == (1, 1), f"expected (1, 1), got {v.shape}"
+    # TimeseriesIndex preserves T, read at the full PARAMETER size: (N_p=3, T=1).
+    v = result.expected(ts).values
+    assert v.shape == (3, 1), f"expected (3, 1), got {v.shape}"
 
     # Index inheriting time axis from ts: output_axes = (Axis("time", DOMAIN),)
     # → time dim preserved; shape (N_p=3, T=1).
-    v_result = result.expected_value(i_result)
+    v_result = result.expected(i_result).values
     assert v_result.shape == (3, 1), f"expected (3, 1), got {v_result.shape}"
     assert np.allclose(v_result[:, 0], [3.0, 6.0, 12.0])

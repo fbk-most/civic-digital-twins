@@ -224,7 +224,7 @@ def test_regional_emissions_bike_only():
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
     regional_result = ev.execute_plan(regional_plan, ensemble)
-    assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(0.0)
+    assert float(regional_result.expected(mv.outputs.emissions).values) == pytest.approx(0.0)
 
 
 def test_regional_emissions_train_only():
@@ -238,7 +238,7 @@ def test_regional_emissions_train_only():
 
     regional_plan = ev.build_plan([mv.outputs.emissions], strategy="regional")
     regional_result = ev.execute_plan(regional_plan, ensemble)
-    assert float(regional_result.expected_value(mv.outputs.emissions)) == pytest.approx(50.0)
+    assert float(regional_result.expected(mv.outputs.emissions).values) == pytest.approx(50.0)
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ def test_regional_plan_with_parameter_axis_bike_only():
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     result = ev.execute_plan(regional_plan, ensemble, parameters={presence: xs})
 
-    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 1.0)
+    assert np.allclose(result.expected(mv.outputs.throughput).values, xs * 1.0)
 
 
 def test_regional_plan_with_parameter_axis_train_only():
@@ -276,7 +276,7 @@ def test_regional_plan_with_parameter_axis_train_only():
     regional_plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     result = ev.execute_plan(regional_plan, ensemble, parameters={presence: xs})
 
-    assert np.allclose(result.expected_value(mv.outputs.throughput), xs * 10.0)
+    assert np.allclose(result.expected(mv.outputs.throughput).values, xs * 10.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1087,7 +1087,7 @@ def test_nested_regional_matches_monolithic() -> None:
     )
 
 
-def test_nested_regional_expected_value() -> None:
+def test_nested_regional_expected() -> None:
     """Two-level nested: expected throughput = (100 + 200 + 300) / 3 = 200."""
     mode, policy, mv = _make_nested_mv()
     ev = Evaluation(Scenario(mv))
@@ -1097,7 +1097,7 @@ def test_nested_regional_expected_value() -> None:
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     result = ev.execute_plan(plan, ensemble)
 
-    assert float(result.expected_value(mv.outputs.throughput)) == pytest.approx(200.0)
+    assert float(result.expected(mv.outputs.throughput).values) == pytest.approx(200.0)
 
 
 # --- selective execution at two levels --------------------------------------
@@ -1971,7 +1971,7 @@ def test_triple_nested_guard_chain_depths() -> None:
     assert tuple(g.branch_key for g in bike_regions[0].guards) == ("bike",)
 
 
-def test_triple_nested_regional_matches_expected_value() -> None:
+def test_triple_nested_regional_matches_expected() -> None:
     """Three-level regional plan produces the analytically correct expected throughput."""
     *_, mv = _make_triple_nested_mv()
     scenario = Scenario(mv)
@@ -1979,7 +1979,7 @@ def test_triple_nested_regional_matches_expected_value() -> None:
     plan = ev.build_plan([mv.outputs.throughput], strategy="regional")
     ens = CrossProductEnsemble(scenario, rng=np.random.default_rng(0))
     result = ev.execute_plan(plan, ens)
-    ev_val = float(result.expected_value(mv.outputs.throughput))
+    ev_val = float(result.expected(mv.outputs.throughput).values)
     assert abs(ev_val - 232.0) < 1e-10, f"expected 232.0, got {ev_val}"
 
 
@@ -2098,7 +2098,7 @@ def test_scoped_ensemble_regional_execution_correct() -> None:
 
     assert np.all(np.isfinite(arr)), f"output contains NaN/inf at positions {np.where(~np.isfinite(arr))[0]}"
 
-    ev_val = float(result.expected_value(mv.outputs.throughput))
+    ev_val = float(result.expected(mv.outputs.throughput).values)
     # E[throughput] = 0.5*100*(1+0.01*0) + 0.5*100*(1+0.01*10) = 105.0
     # MC std-error ≈ 5/sqrt(500) ≈ 0.22; ±2 is effectively deterministic
     assert abs(ev_val - 105.0) < 2.0, f"expected ≈ 105.0, got {ev_val}"
@@ -2151,5 +2151,5 @@ def test_regional_list_str_override_restricts_active_branches() -> None:
     assert "train" not in set(ens.assignments()[mode].tolist()), "train should be absent from ensemble"
 
     result = ev.execute_plan(plan, ens)
-    ev_val = float(result.expected_value(mv.outputs.throughput))
+    ev_val = float(result.expected(mv.outputs.throughput).values)
     assert abs(ev_val - 550.0) < 1e-6, f"expected 550.0, got {ev_val}"

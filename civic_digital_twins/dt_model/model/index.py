@@ -9,12 +9,21 @@ be a constant, a distribution, or a symbolic expression.
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 import numpy as np
 
-from ..axes import DOMAIN, TIME_AXIS, Axis, SpaceType, filter_by_role
+from ..axes import (
+    DOMAIN,
+    TIME_AXIS,
+    Axis,
+    SpaceType,
+    filter_by_role,
+    refine_axis,
+    union_axes,
+    validate_value_shape,
+)
 from ..engine.frontend import graph
 
 
@@ -77,8 +86,8 @@ def _surprising_axes_reason(node: graph.Node) -> str | None:
     return None
 
 
-def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[Axis, ...]) -> None:
-    """Raise ``ValueError`` unless *declared* and *actual* hold the same axes.
+def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[Axis, ...]) -> tuple[Axis, ...]:
+    """Check that *declared* and *actual* hold the same, type-compatible axes; return them merged.
 
     Compared as **sets**: for a formula, the order of inferred ``output_axes``
     is an artifact of how ``union_axes`` walked the operands (``a * b`` and
@@ -86,12 +95,19 @@ def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[
     assert against. Contrast the injected-value modes, where *axes* is zipped
     positionally against the array's shape and order is load-bearing.
 
-    Shared by two call sites: :class:`Index`'s own construction-time check
-    (a formula's declared ``axes=`` against its graph-inferred
-    ``output_axes``), and ``model.contracts``' contract-boundary check (a
-    field's ``FIXED_AXES`` against the actual value's ``output_axes``).
+    Same-name axes must also have compatible domain types; the result is
+    *actual*'s axes, in *actual*'s order, each merged with its declared
+    counterpart (:func:`~..axes.refine_axis`). What a declaration more
+    specific than *actual* means is up to the caller: :class:`Index` attaches
+    it to a formula, a contract boundary (``model.contracts``, checking a
+    field's ``FIXED_AXES`` against a value it cannot modify) rejects it.
     Structural both times: it never asks what type produced *actual*, only
     what axes it carries.
+
+    Raises
+    ------
+    ValueError
+        If the axis sets differ, or same-name axes have conflicting types.
     """
     if set(declared) != set(actual):
         raise ValueError(
@@ -100,6 +116,38 @@ def _verify_declared_axes(owner: str, declared: tuple[Axis, ...], actual: tuple[
             f"Declaring axes verifies the shape, it cannot relabel it — fix whichever "
             f"of the two is wrong."
         )
+    return union_axes(actual, declared)
+
+
+def _check_concrete_value(
+    owner: str, value: "graph.Scalar | np.ndarray", axes: tuple[Axis, ...] | None
+) -> np.ndarray | None:
+    """Check a concrete value against its declared *axes* and return it as an array.
+
+    With *axes* declared, the value is converted to an array and validated by
+    :func:`~..axes.validate_value_shape` (one dimension per axis, each 1 or the
+    axis's declared length), and the array is returned. Without *axes* (``None``
+    or ``()``), the value must be a scalar: an array with dimensions would be
+    taken for a scalar placeholder and fail only at evaluation, so it is
+    rejected here; ``None`` is returned.
+
+    Raises
+    ------
+    ValueError
+        If the value's shape does not match *axes*, or a non-scalar value is
+        given without *axes*.
+    """
+    if axes:
+        arr = np.asarray(value)
+        validate_value_shape(owner, axes, arr.shape)
+        return arr
+    ndim = np.ndim(value)
+    if ndim > 0:
+        raise ValueError(
+            f"{owner}: the value is a {ndim}-D array of shape {np.shape(value)} but no axes= were given; "
+            f"pass axes= with one axis per dimension."
+        )
+    return None
 
 
 def _warn_if_axes_surprising(owner: str, node: graph.Node) -> None:
@@ -352,9 +400,17 @@ class GenericIndex(ABC):
             standalone = Index("standalone", ind_x, axes=(x, y))  # ValueError
 
         ``ind_x.broadcast(y)`` fixes this by making the node itself
-        reference ``y``, with implicit size-1 extent there::
+        reference ``y``, its value constant along it::
 
             standalone = Index("standalone", ind_x.broadcast(y), axes=(x, y))
+
+        The result ranges over the full length of ``y``: the length ``y``
+        declares (``length=`` or ``labels=``), or else the size of the other
+        values carrying ``y`` in the evaluation. Reductions and other
+        axis-aware operators along ``y`` see every position, so
+        ``ind_x.broadcast(y).sum(axis=y)`` is ``ind_x`` times that length. An
+        axis with neither a declared length nor a value carrying it cannot be
+        evaluated.
 
         This is *not* needed just to combine ``ind_x`` with an operand
         that already carries ``y`` — ``ind_x + ind_xy`` already infers
@@ -367,6 +423,36 @@ class GenericIndex(ABC):
         """
         return self.node.broadcast(*axes)
 
+    def replace_axis(self, old: Axis, new: Axis) -> graph.Node:
+        """Return a graph node with this index's value, carried by axis *new* in place of axis *old*.
+
+        The data along *old* becomes the data along *new*; nothing is
+        copied. This connects code written over different axes for the same
+        dimension: a function library over its own ``time`` axis, used by a
+        model over its ``local_time``::
+
+            on_library_time = load.replace_axis(LOCAL_TIME, lib.TIME)
+            smoothed = lib.smooth(on_library_time)            # over lib.TIME
+            back = Index("smoothed", smoothed.replace_axis(lib.TIME, LOCAL_TIME), axes=(LOCAL_TIME,))
+
+        The two axes must be DOMAIN axes with compatible types; the axis on
+        the result is *new*, refined with what *old* declares (e.g. its
+        length). They have the same length in an evaluation: if one of them
+        declares no length and no value carries it, it takes the other's.
+        The index must carry *old*, and must not already carry *new*.
+
+        See :class:`~..engine.frontend.graph.replace_axes`.
+        """
+        return self.node.replace_axis(old, new)
+
+    def replace_axes(self, mapping: Mapping[Axis, Axis]) -> graph.Node:
+        """Return a graph node with this index's value, each axis in *mapping* replaced by the axis it maps to.
+
+        All pairs apply at once, so ``{A: B, B: A}`` swaps two axes. See
+        :meth:`replace_axis`.
+        """
+        return self.node.replace_axes(mapping)
+
     # ------------------------------------------------------------------
     # Reduction and per-axis operators
     # ------------------------------------------------------------------
@@ -378,7 +464,10 @@ class GenericIndex(ABC):
         (``sum``, ``mean``, ...) and per-axis operators (``shift``, ``roll``,
         ``diff``, ``cumulative``) alike.
 
-        When *axis* is given it is used verbatim. When it is ``None``:
+        When *axis* is given it is merged with the same-name axis the index
+        carries, if any (:func:`~..axes.refine_axis`): the result has both
+        type declarations, so ``gradient`` reads the ``SpaceType`` whichever
+        side declares it, and conflicting types raise. When it is ``None``:
 
         * exactly one DOMAIN axis → that axis (a timeseries index has exactly
           one, time, so operations keep defaulting to time as before);
@@ -394,7 +483,7 @@ class GenericIndex(ABC):
         does not carry.
         """
         if axis is not None:
-            return axis
+            return self._refine_with_carried(axis)
         domain_axes = filter_by_role(self.node.output_axes, DOMAIN)
         if len(domain_axes) == 1:
             return domain_axes[0]
@@ -409,6 +498,13 @@ class GenericIndex(ABC):
             f"{len(domain_axes)} DOMAIN axes {[ax.name for ax in domain_axes]}, "
             f"so there is no unique default axis to operate over."
         )
+
+    def _refine_with_carried(self, axis: Axis) -> Axis:
+        """Merge *axis* with the same-name axis this index carries, if any."""
+        for carried in self.node.output_axes:
+            if carried == axis:
+                return refine_axis(carried, axis)
+        return axis
 
     def sum(self, axis: Axis | None = None) -> graph.Node:
         """Return a graph node that sums this index over the given axis.
@@ -618,7 +714,10 @@ class GenericIndex(ABC):
                 over. Defaults to every ``SpaceType`` DOMAIN axis this index
                 carries; raises if there are none and *axes* is not given.
         """
-        resolved_axes = axes if axes is not None else self._resolve_space_axes()
+        if axes is not None:
+            resolved_axes = tuple(self._refine_with_carried(ax) for ax in axes)
+        else:
+            resolved_axes = self._resolve_space_axes()
         space_types = [_require_space_type(ax) for ax in resolved_axes]
         spacings = tuple(st.spacing for st in space_types)
         boundaries = tuple(st.boundary for st in space_types)
@@ -660,8 +759,10 @@ class Index(GenericIndex):
       ``graph.placeholder``) or ``Index("field", arr, axes=(x, y))`` (node is
       an ``array_placeholder``, per-axis sizes deduced by zipping *axes*
       against the array's shape in declaration order, so the array's rank must
-      match the number of axes). The value is a default, injected by Scenario
-      at evaluation time.
+      match the number of axes, and each size must be 1 or the length the axis
+      declares, if any; both are checked here, and an array without ``axes=``
+      is rejected). The value is a default, injected by Scenario at evaluation
+      time.
     * **Placeholder** — ``Index("cost")`` / ``Index("field", axes=(x, y))``:
       no default; value must be supplied via Scenario or ``parameters=``
       before evaluation.
@@ -678,6 +779,13 @@ class Index(GenericIndex):
     formula's axis order is a traversal artifact rather than something the
     author chose (contrast the injected modes above, where order is zipped
     against the array's shape and does matter).
+
+    The declared axes' domain types must be compatible with the formula's
+    (:func:`~..axes.refine_axis`): a conflict raises ``ValueError``. A
+    declared type more specific than the formula's (labels, a length, a
+    ``SpaceType``) is attached to the index: its node is then
+    ``formula.broadcast(*axes)``, which carries the merged types, so later
+    formulas and the evaluation see the declaration.
 
     Declaring ``axes=`` on a formula is also how you state intent: an
     undeclared formula whose inferred axes look accidental — an outer product
@@ -719,23 +827,25 @@ class Index(GenericIndex):
                 f"Use DistributionIndex for distribution-backed indexes."
             )
 
-        # Formula node: reuse it directly as this index's node. Any declared
-        # *axes* is an assertion about its inferred output_axes, not an
-        # override — sizes come from the graph, never from the declaration.
+        # Formula node: reuse it as this index's node. Any declared *axes* is
+        # an assertion about its inferred output_axes, not an override — sizes
+        # come from the graph, never from the declaration. A declared type more
+        # specific than the formula's is attached through a broadcast_to node.
         if isinstance(value, graph.Node):
+            if axes is not None:
+                merged = _verify_declared_axes(f"{type(self).__name__} {name!r}", axes, value.output_axes)
+                value = value.broadcast(*merged)
             value.maybe_set_name(name)
             self._value = value
             self._node = value
             self._sizes = {}
-            if axes is not None:
-                _verify_declared_axes(f"{type(self).__name__} {name!r}", axes, value.output_axes)
-            else:
+            if axes is None:
                 _warn_if_axes_surprising(f"{type(self).__name__} {name!r}", value)
 
         # Concrete value: placeholder injected by Scenario at evaluation time.
         elif value is not None:
-            if axes:
-                arr = np.asarray(value)
+            arr = _check_concrete_value(f"{type(self).__name__} {name!r}", value, axes)
+            if arr is not None and axes:
                 self._value = arr
                 self._node = self._make_placeholder_node(name, axes)
                 self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
@@ -829,7 +939,8 @@ class ConstIndex(Index):
 
     Like :class:`Index`, it is scalar by default and domain-carrying when
     ``axes=`` is declared (``ConstIndex("field", arr, axes=(x, y))``, whose
-    array rank must match the number of axes). Immutable after construction.
+    array is checked like :class:`Index`'s: rank equal to the number of axes,
+    each size 1 or the axis's declared length). Immutable after construction.
     """
 
     def __init__(
@@ -842,8 +953,8 @@ class ConstIndex(Index):
         # Bypass Index.__init__: it would create a placeholder node first.
         self._name = name
         self._axes = axes
-        if axes:
-            arr = np.asarray(value)
+        arr = _check_concrete_value(f"{type(self).__name__} {name!r}", value, axes)
+        if arr is not None and axes:
             self._value = arr
             self._node = self._make_constant_node(arr, axes, name)
             self._sizes = dict(zip((ax.name for ax in axes), arr.shape, strict=True))
@@ -887,7 +998,9 @@ class TimeseriesIndex(Index):
       Node is an ``array_placeholder`` over ``axes=(TIME_AXIS,)``; value must
       be supplied via Scenario or ``parameters=`` before evaluation.
     * **Formula** — ``TimeseriesIndex(name, formula_node)``
-      Node is the formula node directly; value is computed by the engine.
+      Node is the formula node directly (wrapped in ``broadcast_to`` when
+      the formula's time axis is less specific than :data:`TIME_AXIS`);
+      value is computed by the engine.
       Another :class:`TimeseriesIndex` is also accepted here and coerced to
       its underlying ``.node`` (reusing the formula). A sibling type
       carrying a different shape — :class:`Index` — is deliberately *not*
@@ -902,7 +1015,8 @@ class TimeseriesIndex(Index):
     annotated with a class carrying ``FIXED_AXES`` is verified at
     construction time against the actual value's
     :attr:`~GenericIndex.output_axes` — structurally, by comparing axis sets,
-    never by ``isinstance``.  This is the general recipe for a named shape:
+    never by ``isinstance``. The value's axes must also carry the declared
+    domain types (or more specific ones).  This is the general recipe for a named shape:
     subclass :class:`Index`, set ``FIXED_AXES``, and pass it to ``axes=`` in
     your own ``__init__`` (mirror :class:`ConstIndex` too, via multiple
     inheritance, for a constant-valued variant — see
@@ -1038,6 +1152,8 @@ class DistributionIndex(Index):
     ) -> None:
         if (axes is None) != (shape is None):
             raise ValueError(f"DistributionIndex {name!r}: axes and shape must be given together.")
+        if axes is not None and shape is not None:
+            validate_value_shape(f"{type(self).__name__} {name!r}", axes, tuple(shape))
         self._distribution = distribution
         self._params = dict(params)
         self._frozen: Distribution = cast(Distribution, distribution(**params))

@@ -43,7 +43,7 @@ from typing import Any, Generic, Self, TypeVar
 import numpy as np
 from scipy import stats as scipy_stats
 
-from ..axes import Axis
+from ..axes import DOMAIN, Axis
 from ..engine.numpybackend.executor import Functor, NumpyBackend, State
 from ..model.index import DistributionIndex, GenericIndex, Index
 from ..model.model import Model
@@ -368,9 +368,14 @@ def _decode_result(data: dict[str, Any], indexes: Iterable[GenericIndex]) -> Eva
     for name, encoded in data["nodes"].items():
         if name in idx_by_name:
             state_values[idx_by_name[name].node] = _decode_array(encoded)
-    state = State(values=state_values)
-
     layout = AxisLayout.from_dict(data)
+    # The layout ends with every DOMAIN axis of the evaluation at its extent.
+    domain_axes = tuple(ax for ax, _ in layout.axes_by_role(DOMAIN))
+    state = State(
+        values=state_values,
+        domain_axes=domain_axes,
+        domain_extents=tuple(layout.size_of(ax) for ax in domain_axes),
+    )
     # factorized_weights is serialised keyed by axis name alone (it only ever holds
     # ENSEMBLE axes); recover each axis (and its role) from the reconstructed
     # layout.  This is unambiguous because axis names are globally unique within

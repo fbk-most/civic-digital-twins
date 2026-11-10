@@ -2,6 +2,8 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from civic_digital_twins.dt_model.axes import (
     DOMAIN,
     ENSEMBLE,
@@ -20,10 +22,14 @@ from civic_digital_twins.dt_model.axes import (
     SpaceType,
     TimeType,
     Wrap,
+    declared_labels,
+    declared_length,
     domain_axis_position,
     filter_by_role,
+    refine_axis,
     union_axes,
     validate_axis_extent,
+    validate_value_shape,
 )
 
 
@@ -67,6 +73,172 @@ class TestUnionAxes:
         ad = Axis("x", DOMAIN)
         ap = Axis("x", PARAMETER)
         assert union_axes((ad,), (ap,)) == (ad, ap)
+
+    def test_refines_repeated_axes_whatever_the_order(self):
+        """A repeated axis keeps its first position and carries both type declarations."""
+        a = Axis("a", PARAMETER)
+        untyped = DomainAxis("zone")
+        labelled = DomainAxis("zone", type=SetType(labels=("n", "s")))
+        assert union_axes((untyped, a), (labelled,)) == (untyped, a)
+        assert union_axes((untyped, a), (labelled,))[0] is labelled
+        assert union_axes((labelled,), (a, untyped))[0] is labelled
+
+    def test_conflicting_repeated_axes_raise(self):
+        """Same-name axes with conflicting types cannot be merged."""
+        with pytest.raises(ValueError, match=r"axis 't' is declared with conflicting types"):
+            union_axes((DomainAxis("t", type=TimeType(length=24)),), (DomainAxis("t", type=TimeType(length=168)),))
+
+
+class TestDomainTypeEquality:
+    """Domain types and boundary conditions compare by value."""
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: SetType(),
+            lambda: SetType(length=3),
+            lambda: SetType(labels=("a", "b")),
+            lambda: SequenceType(length=4),
+            lambda: TimeType(),
+            lambda: SpaceType(spacing=2.0, boundary=Constant(1.0), length=5),
+            lambda: Constant(1.0),
+            lambda: Neumann(0.5),
+            lambda: Nearest(),
+            lambda: Wrap(),
+            lambda: Linear(),
+        ],
+    )
+    def test_equal_declarations_are_equal_and_hash_equal(self, make):
+        """Two separately built equal declarations are equal, with equal hashes."""
+        assert make() == make()
+        assert hash(make()) == hash(make())
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            (SetType(length=2), SetType(labels=("a", "b"))),
+            (SetType(labels=("a", "b")), SetType(labels=("b", "a"))),
+            (SequenceType(length=4), SequenceType(length=5)),
+            (SequenceType(), TimeType()),
+            (SequenceType(), SetType()),
+            (SpaceType(spacing=1.0), SpaceType(spacing=2.0)),
+            (SpaceType(), SpaceType(boundary=Wrap())),
+            (SpaceType(), SequenceType()),
+            (Constant(0.0), Neumann(0.0)),
+            (Nearest(), Wrap()),
+        ],
+    )
+    def test_different_declarations_are_not_equal(self, left, right):
+        """A different class or a different field makes two declarations unequal."""
+        assert left != right
+
+    def test_types_do_not_equal_other_objects(self):
+        """Comparison with an unrelated object is False, not an error."""
+        assert SetType() != "SetType()"
+        assert SequenceType() != 0
+        assert SpaceType() != None  # noqa: E711
+        assert Constant() != 0.0
+        assert Nearest() != "Nearest()"
+        assert Linear() != "Linear()"
+
+
+def _type(axis):
+    return getattr(axis, "type", None)
+
+
+class TestRefineAxis:
+    """refine_axis(): merging the type declarations of two same-name axes."""
+
+    @pytest.mark.parametrize(
+        ("left", "right", "merged"),
+        [
+            (SequenceType(), SequenceType(length=24), SequenceType(length=24)),
+            (TimeType(), TimeType(length=24), TimeType(length=24)),
+            (SetType(), SetType(length=3), SetType(length=3)),
+            (SetType(length=3), SetType(labels=("c", "n", "s")), SetType(labels=("c", "n", "s"))),
+            (SetType(), SetType(labels=("c", "n")), SetType(labels=("c", "n"))),
+            (SpaceType(spacing=2.0), SpaceType(spacing=2.0, length=8), SpaceType(spacing=2.0, length=8)),
+        ],
+    )
+    def test_compatible_types_merge_whatever_the_order(self, left, right, merged):
+        """The merged axis carries every field either side specifies, in both argument orders."""
+        a, b = DomainAxis("ax", type=left), DomainAxis("ax", type=right)
+        assert _type(refine_axis(a, b)) == merged
+        assert _type(refine_axis(b, a)) == merged
+
+    def test_returns_an_input_when_it_already_carries_the_merge(self):
+        """No new object is built when one side already has every declaration."""
+        generic = DomainAxis("t", type=SequenceType())
+        specific = DomainAxis("t", type=SequenceType(length=24))
+        assert refine_axis(generic, specific) is specific
+        assert refine_axis(specific, generic) is specific
+        assert refine_axis(specific, specific) is specific
+
+    def test_labels_are_not_copied_on_merge(self):
+        """Merging with a labelled type keeps its labels object rather than validating them again."""
+        labelled = SetType(labels=("c", "n"))
+        a, b = DomainAxis("z", type=SetType(length=2)), DomainAxis("z", type=labelled)
+        assert _type(refine_axis(a, b)) is labelled
+        assert _type(refine_axis(b, a)) is labelled
+
+    def test_labels_carry_a_declared_length(self):
+        """A length on one side and matching labels on the other merge into the labelled axis."""
+        sized = DomainAxis("zone", type=SetType(length=2))
+        labelled = DomainAxis("zone", type=SetType(labels=("n", "s")))
+        assert refine_axis(sized, labelled) is labelled
+        assert refine_axis(labelled, sized) is labelled
+
+    def test_untyped_axes_take_the_other_type(self):
+        """A plain Axis or an untyped DomainAxis is compatible with any type."""
+        typed = DomainAxis("x", type=SpaceType(spacing=3.0))
+        for untyped in (Axis("x", DOMAIN), DomainAxis("x")):
+            assert refine_axis(untyped, typed) is typed
+            assert refine_axis(typed, untyped) is typed
+
+    def test_two_untyped_axes_prefer_the_domain_axis(self):
+        """Between a plain Axis and an untyped DomainAxis, the DomainAxis is kept, in either order."""
+        plain, domain = Axis("x", DOMAIN), DomainAxis("x")
+        assert refine_axis(plain, domain) is domain
+        assert refine_axis(domain, plain) is domain
+        assert refine_axis(plain, Axis("x", DOMAIN)) is plain
+
+    @pytest.mark.parametrize(
+        ("left", "right", "reason"),
+        [
+            (TimeType(length=24), TimeType(length=168), "length 24 against length 168"),
+            (SetType(length=4), SetType(labels=("c", "n", "s")), "length 4 against length 3"),
+            (SetType(labels=("c", "n", "s")), SetType(labels=("n", "c", "s")), "different labels"),
+            (SequenceType(), TimeType(), "different kinds of axis"),
+            (SetType(), SpaceType(), "different kinds of axis"),
+            (SpaceType(spacing=10.0), SpaceType(spacing=5.0), "different spacing or boundary"),
+            (SpaceType(), SpaceType(boundary=Wrap()), "different spacing or boundary"),
+        ],
+    )
+    def test_conflicting_types_raise(self, left, right, reason):
+        """Conflicts raise, naming the axis, both types and the reason."""
+        a, b = DomainAxis("ax", type=left), DomainAxis("ax", type=right)
+        with pytest.raises(ValueError, match=r"axis 'ax' is declared with conflicting types") as excinfo:
+            refine_axis(a, b)
+        assert repr(left) in str(excinfo.value)
+        assert repr(right) in str(excinfo.value)
+        assert reason in str(excinfo.value)
+
+    def test_unknown_type_classes_must_be_equal(self):
+        """A type outside the built-in vocabulary merges only with an equal declaration."""
+
+        class Custom:
+            def __repr__(self):
+                return "Custom()"
+
+        custom = Custom()
+        assert _type(refine_axis(DomainAxis("c", type=custom), DomainAxis("c", type=custom))) is custom  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match=r"different declarations"):
+            refine_axis(DomainAxis("c", type=custom), DomainAxis("c", type=Custom()))  # type: ignore[arg-type]
+
+    def test_different_axes_raise(self):
+        """refine_axis only merges equal axes."""
+        with pytest.raises(ValueError, match=r"are different axes"):
+            refine_axis(Axis("x", DOMAIN), Axis("y", DOMAIN))
 
 
 class TestFilterByRole:
@@ -158,8 +330,60 @@ class TestDomainTypeLattice:
     """DomainType concrete marker classes are metadata-only carriers."""
 
     def test_set_type_repr_roundtrip(self):
-        """SetType is a parameterless marker."""
+        """SetType's repr shows labels, else length, else nothing."""
         assert repr(SetType()) == "SetType()"
+        assert repr(SetType(length=3)) == "SetType(length=3)"
+        assert repr(SetType(labels=["a", "b"])) == "SetType(labels=('a', 'b'))"
+        assert repr(SetType(length=2, labels=("a", "b"))) == "SetType(labels=('a', 'b'))"
+
+    def test_set_type_defaults_to_no_length_and_no_labels(self):
+        """A bare SetType leaves the extent unconstrained."""
+        s = SetType()
+        assert s.length is None
+        assert s.labels is None
+
+    def test_set_type_length(self):
+        """SetType(length=n) declares a length without labels."""
+        s = SetType(length=3)
+        assert s.length == 3
+        assert s.labels is None
+
+    def test_set_type_labels_declare_the_length(self):
+        """Labels are stored as a tuple and their number is the length."""
+        s = SetType(labels=["centre", "north", "south"])
+        assert s.labels == ("centre", "north", "south")
+        assert s.length == 3
+
+    @pytest.mark.parametrize(
+        ("kwargs", "error", "message"),
+        [
+            pytest.param({"length": -1}, ValueError, r"length must not be negative; got -1", id="negative-length"),
+            pytest.param({"labels": ["a", 1]}, TypeError, r"labels must be strings; got \[1\]", id="non-str"),
+            pytest.param({"labels": ["a", "b", "a"]}, ValueError, r"distinct; duplicated: \['a'\]", id="duplicates"),
+            pytest.param({"labels": ["", "a"]}, ValueError, r"labels must be non-empty strings", id="empty-label"),
+            pytest.param(
+                {"length": 3, "labels": ["a", "b"]}, ValueError, r"length=3 does not match the 2 labels", id="mismatch"
+            ),
+        ],
+    )
+    def test_set_type_rejects_invalid_declarations(self, kwargs, error, message):
+        """Invalid lengths and labels are rejected when the type is built."""
+        with pytest.raises(error, match=message):
+            SetType(**kwargs)
+
+    @pytest.mark.parametrize("kwargs", [{"length": 0}, {"labels": []}, {"length": 0, "labels": ()}])
+    def test_set_type_accepts_length_0(self, kwargs):
+        """A set axis may be empty (e.g. no entities), by length or by an empty list of labels."""
+        assert SetType(**kwargs).length == 0
+
+    def test_set_type_validate_extent(self):
+        """A set axis with a declared length accepts that size or 1, like a sequence axis."""
+        s = SetType(labels=("a", "b", "c"))
+        s.validate_extent(size=3, axis_name="zone")
+        s.validate_extent(size=1, axis_name="zone")
+        SetType().validate_extent(size=7, axis_name="zone")
+        with pytest.raises(ValueError, match=r"axis 'zone' declares length=3, but got dimension size 2"):
+            s.validate_extent(size=2, axis_name="zone")
 
     def test_sequence_type_defaults_to_undefined_length(self):
         """SequenceType supports optional declared length and defaults to None."""
@@ -173,12 +397,18 @@ class TestDomainTypeLattice:
         assert s.length == 12
         assert repr(s) == "SequenceType(length=12)"
 
-    def test_sequence_type_rejects_non_positive_length(self):
-        """Declared lengths must be positive when provided."""
-        import pytest
+    def test_sequence_type_rejects_negative_length(self):
+        """Declared lengths must not be negative when provided."""
+        with pytest.raises(ValueError, match="must not be negative; got -1"):
+            SequenceType(length=-1)
 
-        with pytest.raises(ValueError, match="must be positive"):
-            SequenceType(length=0)
+    def test_sequence_type_accepts_length_0(self):
+        """A sequence axis may be empty; a value of size 1 along it is still accepted."""
+        axis = DomainAxis("t", type=SequenceType(length=0))
+        validate_axis_extent(axis, 0)
+        validate_axis_extent(axis, 1)
+        with pytest.raises(ValueError, match=r"declares length=0, but got dimension size 2"):
+            validate_axis_extent(axis, 2)
 
     def test_sequence_type_validates_extent(self):
         """SequenceType validates concrete extents via its declared length."""
@@ -306,3 +536,97 @@ class TestDomainAxisPosition:
 
         with pytest.raises(ValueError, match="not one of the DOMAIN axes"):
             domain_axis_position((), TIME_AXIS)
+
+
+class TestDeclaredLength:
+    """declared_length reads the length an axis declares through its type."""
+
+    def test_plain_axis_declares_none(self):
+        """A plain Axis has no type, hence no length."""
+        assert declared_length(Axis("x", DOMAIN)) is None
+
+    def test_untyped_and_length_less_axes_declare_none(self):
+        """An untyped DomainAxis and a type without length declare none."""
+        assert declared_length(DomainAxis("x")) is None
+        assert declared_length(DomainAxis("x", type=SetType())) is None
+        assert declared_length(DomainAxis("x", type=SequenceType())) is None
+
+    def test_sequence_like_types_declare_their_length(self):
+        """SequenceType, TimeType and SpaceType return their declared length."""
+        assert declared_length(DomainAxis("x", type=SequenceType(length=4))) == 4
+        assert declared_length(DomainAxis("t", type=TimeType(length=24))) == 24
+        assert declared_length(DomainAxis("s", type=SpaceType(length=7))) == 7
+
+
+class TestDeclaredLabels:
+    """declared_labels reads the labels an axis declares through its type."""
+
+    def test_only_labelled_set_axes_declare_labels(self):
+        """Plain, untyped, length-only and sequence axes declare none."""
+        assert declared_labels(Axis("x", DOMAIN)) is None
+        assert declared_labels(DomainAxis("x")) is None
+        assert declared_labels(DomainAxis("x", type=SetType(length=2))) is None
+        assert declared_labels(DomainAxis("x", type=SequenceType(length=2))) is None
+        assert declared_labels(DomainAxis("x", type=SetType(labels=("a", "b")))) == ("a", "b")
+
+    def test_set_axis_declares_its_length(self):
+        """declared_length covers set axes too, through length= or labels=."""
+        assert declared_length(DomainAxis("x", type=SetType(length=4))) == 4
+        assert declared_length(DomainAxis("x", type=SetType(labels=("a", "b")))) == 2
+
+
+class TestValidateValueShape:
+    """validate_value_shape checks a concrete value's shape against its declared axes."""
+
+    ZONE = DomainAxis("zone", type=SetType())
+    HOUR = DomainAxis("hour", type=TimeType(length=24))
+
+    def test_matching_shape_passes(self):
+        """One dimension per axis, sizes free or equal to the declared length."""
+        validate_value_shape("Index 'v'", (self.ZONE, self.HOUR), (3, 24))
+
+    def test_size_one_passes_against_a_declared_length(self):
+        """A value that does not vary along an axis has size 1 there."""
+        validate_value_shape("Index 'v'", (self.ZONE, self.HOUR), (3, 1))
+
+    def test_empty_axes_and_scalar_shape_pass(self):
+        """No axes and a scalar shape agree."""
+        validate_value_shape("Index 'v'", (), ())
+
+    @pytest.mark.parametrize(
+        ("axes", "shape", "message"),
+        [
+            pytest.param(
+                (ZONE,), (2, 3), r"axes=\(zone,\) declares 1 dimension but the value has shape \(2, 3\)", id="too-many"
+            ),
+            pytest.param(
+                (ZONE, HOUR),
+                (3,),
+                r"axes=\(zone, hour\) declares 2 dimensions but the value has shape \(3,\)",
+                id="too-few",
+            ),
+            pytest.param((ZONE,), (), r"axes=\(zone,\) declares 1 dimension but the value has shape \(\)", id="scalar"),
+        ],
+    )
+    def test_rank_mismatch_raises(self, axes, shape, message):
+        """The rank must equal the number of axes; the error names owner, axes and shape."""
+        with pytest.raises(ValueError, match=r"^Index 'v': " + message):
+            validate_value_shape("Index 'v'", axes, shape)
+
+    def test_size_other_than_one_or_declared_length_raises(self):
+        """A transposed table is caught when the swapped axes have different lengths."""
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"^Index 'inflow': axis 'hour' declares length=24, but the value has size 3 along it "
+                r"\(axes=\(zone, hour\) matched to value shape \(24, 3\)\)\.$"
+            ),
+        ):
+            validate_value_shape("Index 'inflow'", (self.ZONE, self.HOUR), (24, 3))
+
+    def test_set_axis_length_is_checked(self):
+        """A set axis with labels gets the same check as a sequence axis with a length."""
+        zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+        validate_value_shape("Index 'v'", (zone,), (3,))
+        with pytest.raises(ValueError, match=r"axis 'zone' declares length=3, but the value has size 4"):
+            validate_value_shape("Index 'v'", (zone,), (4,))

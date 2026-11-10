@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import inspect
-from collections.abc import Callable, Iterable
+import warnings
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import numpy as np
 
-from ..axes import DOMAIN, PARAMETER, Axis
+from ..axes import DOMAIN, PARAMETER, Axis, declared_length, filter_by_role, union_axes
 from ..engine.frontend import graph, linearize
 from ..engine.numpybackend import executor
 from ..model.index import GenericIndex
@@ -23,8 +24,12 @@ from .scenario import Scenario
 __all__ = ["EvaluationResult", "Evaluation"]
 
 
-def _canonical_domain_order(axes: set[Axis] | frozenset[Axis]) -> tuple[Axis, ...]:
+def _canonical_domain_order(axes: Iterable[Axis]) -> tuple[Axis, ...]:
     """Order DOMAIN axes canonically for the evaluation layout: by axis name.
+
+    Same-name axes are merged with :func:`~..axes.refine_axis` first, so the
+    layout carries every compatible type declaration (length, labels)
+    whichever node declared it, and conflicting declarations raise.
 
     The order has to come from somewhere stable, because callers read result
     dimensions through this layout.  Deriving it from graph traversal would tie
@@ -32,12 +37,116 @@ def _canonical_domain_order(axes: set[Axis] | frozenset[Axis]) -> tuple[Axis, ..
     multiplication would silently reshuffle a result's dimensions.  Axis names
     are stable identifiers the model author chose, so they order the layout.
     """
-    return tuple(sorted(axes, key=lambda ax: ax.name))
+    return tuple(sorted(union_axes(tuple(axes)), key=lambda ax: ax.name))
+
+
+def _resolve_domain_extents(
+    domain_axes: tuple[Axis, ...],
+    leaves: Iterable[tuple[graph.Node, np.ndarray]],
+    links: Iterable[tuple[Axis, Axis]] = (),
+) -> tuple[int, ...]:
+    """Return the length of each DOMAIN axis for one evaluation, before any node runs.
+
+    *leaves* are the array leaves of the evaluation (``array_constant`` and
+    ``array_placeholder`` nodes) with their values, aligned so that their
+    trailing dimensions follow *domain_axes*. *links* are the axis pairs of
+    the evaluation's ``replace_axes`` nodes: the data along one axis of a
+    pair becomes the data along the other, so they have one length. Linked
+    axes form groups (links chain), each resolved as one axis. A value has
+    size 1 along an axis it does not vary on, so the extent of each group
+    is, in order of precedence:
+
+    1. the length its axes declare (``length=``, or the number of
+       ``labels=``); every leaf must agree with it;
+    2. otherwise the common size other than 1 among the leaves carrying one
+       of its axes (0 included: an axis may be empty);
+    3. otherwise 1, if some leaf carries one of its axes.
+
+    Raises
+    ------
+    ValueError
+        If the leaves of a group disagree on its size or with its declared length,
+        or a group has no extent: no declared length and no leaf carrying it
+        (it is reached only through ``.broadcast()`` or a function's declared
+        output axes).
+    """
+    n_domain = len(domain_axes)
+    group = list(range(n_domain))
+
+    def root(i: int) -> int:
+        while group[i] != i:
+            i = group[i]
+        return i
+
+    for src, tgt in links:
+        group[root(domain_axes.index(src))] = root(domain_axes.index(tgt))
+    members: dict[int, list[int]] = {}
+    for i in range(n_domain):
+        members.setdefault(root(i), []).append(i)
+
+    sizes: list[dict[int, str]] = [{} for _ in domain_axes]
+    carried = [False] * n_domain
+    for node, value in leaves:
+        own = set(node.output_axes)
+        block = value.shape[value.ndim - n_domain :]
+        for i, (ax, size) in enumerate(zip(domain_axes, block, strict=True)):
+            if ax in own:
+                carried[i] = True
+            if size != 1:
+                sizes[i].setdefault(size, node.name or f"n{node.id}")
+
+    extents = [0] * n_domain
+    for indices in members.values():
+        axes = [domain_axes[i] for i in indices]
+        linked = len(axes) > 1
+        subject = (
+            f"DOMAIN axes {[ax.name for ax in axes]} (linked by replace_axes, so they have one length)"
+            if linked
+            else f"DOMAIN axis {axes[0].name!r}"
+        )
+        found: dict[int, list[str]] = {}
+        for i in indices:
+            for size, name in sizes[i].items():
+                found.setdefault(size, []).append(
+                    f"{name!r} has {size} along {domain_axes[i].name!r}" if linked else f"{name!r} has {size}"
+                )
+        declared = {length: ax.name for ax in axes if (length := declared_length(ax)) is not None}
+        if len(declared) > 1:
+            # A link refines its target with the source as the operand carries
+            # it, so another value may declare a different length for the source.
+            listed = ", ".join(f"{name!r} declares length {length}" for length, name in declared.items())
+            raise ValueError(f"{subject}: {listed}. Declare one length for all of them.")
+        if declared:
+            ((extent, declarer),) = declared.items()
+            disagreeing = [entry for size, entries in found.items() if size != extent for entry in entries]
+            if disagreeing:
+                raise ValueError(f"{subject}: {declarer!r} declares length {extent}, but {', '.join(disagreeing)}.")
+        elif len(found) > 1:
+            listed = ", ".join(entry for entries in found.values() for entry in entries)
+            raise ValueError(
+                f"{subject} has different sizes in different values ({listed}). "
+                f"An axis has one length per evaluation; fix the values, or use different axes."
+            )
+        elif found:
+            extent = next(iter(found))
+        elif any(carried[i] for i in indices):
+            extent = 1
+        else:
+            name = axes[0].name
+            raise ValueError(
+                f"{subject} has no length: no value carries it (it is reached only "
+                f"through .broadcast() or a function's declared output axes) and its type declares "
+                f"none. Declare one on the axis (e.g. DomainAxis({name!r}, type=SequenceType(length=...)) "
+                f"or SetType(labels=...)), or provide a value that carries it."
+            )
+        for i in indices:
+            extents[i] = extent
+    return tuple(extents)
 
 
 def _domain_axes_of(nodes: Iterable[graph.Node]) -> tuple[Axis, ...]:
     """Return the canonical DOMAIN axes carried by any of *nodes*."""
-    return _canonical_domain_order({ax for n in nodes for ax in n.output_axes if ax.role == DOMAIN})
+    return _canonical_domain_order(ax for n in nodes for ax in filter_by_role(n.output_axes, DOMAIN))
 
 
 class EvaluationResult:
@@ -156,38 +265,119 @@ class EvaluationResult:
         arr = np.asarray(self._state.values[index.node])
         return self._layout.contract_ensemble(arr, self._factorized_weights)
 
-    def expected_value(self, index: GenericIndex) -> np.ndarray:
-        """Return the typed result for *index* after contracting ENSEMBLE axes.
+    def expected(self, index: GenericIndex, *, axes: Sequence[Axis | str] | None = None) -> LabeledArray:
+        """Return the expected value of *index* over the ensemble, as a :class:`LabeledArray`.
 
-        Contracts all ENSEMBLE axes (weighted average or singleton squeeze),
-        then drops size-1 DOMAIN dimensions that *index* does not carry in its
-        :attr:`~model.index.GenericIndex.output_axes`:
+        ENSEMBLE axes are contracted (weighted average over the ensemble's
+        samples). The result has the PARAMETER axes and the DOMAIN axes
+        *index* carries in its :attr:`~model.index.GenericIndex.output_axes`
+        (:meth:`layout_of`), each at the full size of the result's layout:
+        a value constant along an axis is repeated along it. ``.values`` is
+        the array, a read-only view.
 
-        - A :class:`~dt_model.model.index.TimeseriesIndex` carries
-          ``Axis("time", DOMAIN)``; result shape is ``(*PARAMETER, T)``.
-        - A plain :class:`~dt_model.model.index.Index` formula carries no
-          DOMAIN axes; size-1 DOMAIN dims are squeezed away; result shape is
-          ``(*PARAMETER,)``.
+        Parameters
+        ----------
+        index:
+            The index to read.
+        axes:
+            The axes of the result, in the order wanted (axis objects or
+            names); all of them, each once. Without it, the layout order.
 
-        This is the primary result-extraction method for user code and
-        vertical applications.  Use :meth:`_contract_ensemble` directly if
-        you need the full ``(*PARAMETER, *DOMAIN)`` shape.
+        Raises
+        ------
+        ValueError
+            If *axes* misses, repeats or adds an axis; or if the value varies
+            along a DOMAIN axis *index* does not carry.
         """
+        arr = self._layout.drop_stray_domain(self._contract_ensemble(index), index.output_axes)
+        layout = self.layout_of(index)
+        return self._labeled(layout, arr, axes, "expected")
+
+    def samples(self, index: GenericIndex, *, axes: Sequence[Axis | str] | None = None) -> LabeledArray:
+        """Return the samples of *index* across the ensemble, as a :class:`LabeledArray`.
+
+        The result has the PARAMETER axes, the ENSEMBLE axes and the DOMAIN
+        axes *index* carries in its :attr:`~model.index.GenericIndex.output_axes`,
+        each at the full size of the result's layout: a deterministic index
+        is repeated along the ENSEMBLE axes, and a value constant along an
+        axis is repeated along it. ``.values`` is the array, a read-only view.
+
+        The samples of a weighted ensemble are not interchangeable: their
+        weights are :attr:`factorized_weights` (one vector per ENSEMBLE
+        axis). These are the samples this evaluation computed;
+        :func:`~simulation.ensemble.sample_across` draws new samples from
+        conditional distributions instead, in proportion to the weights.
+
+        Parameters
+        ----------
+        index:
+            The index to read.
+        axes:
+            The axes of the result, in the order wanted (axis objects or
+            names); all of them, each once. Without it, the layout order.
+
+        Raises
+        ------
+        ValueError
+            If *axes* misses, repeats or adds an axis; or if the value varies
+            along a DOMAIN axis *index* does not carry.
+        """
+        arr = np.asarray(self._state.values[index.node])
+        if not self._layout.compatible_with(arr.shape):
+            raise ValueError(
+                f"EvaluationResult.samples: shape {arr.shape} is incompatible with layout {self._layout!r}."
+            )
+        stray: list[int] = []
+        entries: list[tuple[Axis, int]] = []
+        for pos, (ax, size) in enumerate(self._layout.entries):
+            if ax.role == DOMAIN and ax not in index.output_axes:
+                if arr.shape[pos] != 1:
+                    raise ValueError(
+                        f"EvaluationResult.samples: DOMAIN axis {ax.name!r} is not carried by the node's "
+                        f"output_axes, but the value varies along it (size {arr.shape[pos]}); declared and "
+                        f"actual axes disagree."
+                    )
+                stray.append(pos)
+            else:
+                entries.append((ax, size))
+        arr = np.squeeze(arr, axis=tuple(stray)) if stray else arr
+        return self._labeled(AxisLayout(entries), arr, axes, "samples")
+
+    def _labeled(
+        self, layout: AxisLayout, arr: np.ndarray, axes: Sequence[Axis | str] | None, reader: str
+    ) -> LabeledArray:
+        """Expand *arr* to *layout*'s full shape (read-only view) and order it by *axes*."""
+        result = LabeledArray(np.broadcast_to(arr, layout.full_shape), layout)
+        if axes is None:
+            return result
+        try:
+            return result._reorder(list(axes))
+        except ValueError as exc:
+            raise ValueError(f"EvaluationResult.{reader}: axes=: {exc}") from None
+
+    def expected_value(self, index: GenericIndex) -> np.ndarray:
+        """Return the expected value of *index* as a plain array, at the size it is stored.
+
+        Deprecated, and staged for removal in a future milestone: use
+        ``expected(index).values`` instead. Emits a :class:`DeprecationWarning`.
+        """
+        warnings.warn(
+            "EvaluationResult.expected_value() is deprecated and will be removed in a future milestone. "
+            "Use expected(index).values instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         arr = self._contract_ensemble(index)
         return self._layout.drop_stray_domain(arr, index.output_axes)
 
     def layout_of(self, index: GenericIndex) -> AxisLayout:
-        """Return the :class:`~simulation.axis_layout.AxisLayout` of :meth:`expected_value`'s array.
+        """Return the :class:`~simulation.axis_layout.AxisLayout` of :meth:`expected` for *index*.
 
         Mirrors :attr:`layout`, which describes the *raw* ``result[index]``
-        array — but ``expected_value`` returns a differently-shaped array
-        (ENSEMBLE axes contracted away, DOMAIN axes *index* does not carry
-        dropped as stray), so it needs its own layout: PARAMETER axes
-        unchanged, no ENSEMBLE axes, and only the DOMAIN axes present in
-        *index*'s :attr:`~model.index.GenericIndex.output_axes`.
-
-        With several DOMAIN axes in play, position alone no longer tells you
-        which dimension is which; this is how a caller finds out.
+        array: PARAMETER axes unchanged, no ENSEMBLE axes, and only the
+        DOMAIN axes present in *index*'s
+        :attr:`~model.index.GenericIndex.output_axes`, each at the full size
+        of :attr:`layout`.
         """
         entries = tuple(
             (ax, size)
@@ -197,14 +387,18 @@ class EvaluationResult:
         return AxisLayout(entries)
 
     def labeled(self, index: GenericIndex) -> LabeledArray:
-        """Return :meth:`expected_value` for *index* paired with :meth:`layout_of`.
+        """Return the expected value of *index* as a :class:`LabeledArray`.
 
-        Optional convenience for name-based access (``.dims``, ``.sel(...)``)
-        and interop with a labeled-array ecosystem (``.to_xarray()``).  Purely
-        additive: :meth:`expected_value` and ``result[index]`` keep returning
-        plain ``np.ndarray``, unaffected by this method's existence.
+        Deprecated, and staged for removal in a future milestone: use
+        :meth:`expected` instead. Emits a :class:`DeprecationWarning`.
         """
-        return LabeledArray(self.expected_value(index), self.layout_of(index))
+        warnings.warn(
+            "EvaluationResult.labeled() is deprecated and will be removed in a future milestone. "
+            "Use expected(index) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.expected(index)
 
 
 class Evaluation:
@@ -546,7 +740,7 @@ class Evaluation:
             for node, val in _raw_scenario_subs.items()
             if not (isinstance(val, np.ndarray) and val.ndim == 0 and val.dtype.kind == "O")
         }
-        domain_axes = _canonical_domain_order({ax for r in plan.regions for ax in r.domain_axes})
+        domain_axes = _canonical_domain_order(ax for r in plan.regions for ax in r.domain_axes)
         n_domain = len(domain_axes)
 
         # Injected values arrive shaped by the index's *declared* axis order, which
@@ -759,11 +953,34 @@ class Evaluation:
             names_str = ", ".join(repr(getattr(idx, "name", repr(idx))) for idx in overlapping)
             raise ValueError(f"The following indexes appear in both parameters= and Scenario.overrides: {names_str}")
 
+        # DOMAIN extents: resolved from the leaves before any node runs, so
+        # that axis-aware operators can use the full length of an axis even
+        # where an operand stores size 1 along it.
+        initial_values = {**scenario_subs, **c_subs}
+        domain_extents: tuple[int, ...] = ()
+        if n_domain:
+            leaves: list[tuple[graph.Node, np.ndarray]] = []
+            for node in dict.fromkeys(n for r in plan.regions for n in r.nodes):
+                if isinstance(node, graph.array_constant):
+                    leaves.append(
+                        (node, executor.align_to_domain_block(np.asarray(node.values), node.output_axes, domain_axes))
+                    )
+                elif isinstance(node, graph.array_placeholder) and node in initial_values:
+                    leaves.append((node, np.asarray(initial_values[node])))
+            links = [
+                pair
+                for node in dict.fromkeys(n for r in plan.regions for n in r.nodes)
+                if isinstance(node, graph.replace_axes)
+                for pair in node.mapping
+            ]
+            domain_extents = _resolve_domain_extents(domain_axes, leaves, links)
+
         state = executor.State(
-            {**scenario_subs, **c_subs},
+            initial_values,
             functions=functions or {},
             node_functions=getattr(plan.model, "_node_functions", {}),
             domain_axes=domain_axes,
+            domain_extents=domain_extents,
         )
 
         # Execute regions in topological order.
@@ -806,6 +1023,7 @@ class Evaluation:
                     functions=functions or {},
                     node_functions=getattr(plan.model, "_node_functions", {}),
                     domain_axes=domain_axes,
+                    domain_extents=domain_extents,
                 )
                 executor.evaluate_nodes(branch_state, *region.nodes)
 
@@ -857,36 +1075,11 @@ class Evaluation:
                 n_inject = n_total - arr.ndim
                 state.values[node] = arr.reshape((1,) * n_inject + arr.shape)
 
-        # DOMAIN axis tracking: append each DOMAIN axis to the layout so that
-        # every result dimension is named.  Sizes are read post-execution
-        # because abstract domain-carrying nodes are filled at evaluate time.
-        # Assumption (unchanged, now per axis): a domain axis has one size
-        # across all PARAMETER configurations — it is a structural property of
-        # the model, not a function of parameter values.
+        # DOMAIN axes complete the layout, at the extents resolved before
+        # execution, so that every result dimension is named.
         result_layout = leading_layout
-        if n_domain:
-            domain_nodes = [
-                n
-                for r in plan.regions
-                for n in r.nodes
-                if isinstance(n, (graph.array_constant, graph.array_placeholder)) and n in state.values
-            ]
-            axis_sizes: dict[Axis, int] = {}
-            for dom_node in domain_nodes:
-                arr = np.asarray(state.values[dom_node])
-                block = arr.shape[arr.ndim - n_domain :]
-                for ax, size in zip(domain_axes, block, strict=True):
-                    if size == 1:
-                        continue  # a broadcast placeholder dimension carries no size
-                    previous = axis_sizes.setdefault(ax, size)
-                    assert previous == size, (
-                        f"Non-uniform size for DOMAIN axis {ax.name!r}: node "
-                        f"{getattr(dom_node, 'name', repr(dom_node))!r} has {size}, "
-                        f"expected {previous}. A domain axis must have one size across "
-                        f"all PARAMETER configurations (it is a structural model property)."
-                    )
-            for ax in domain_axes:
-                result_layout = result_layout.with_axis_appended(ax, axis_sizes.get(ax, 1))
+        for ax, extent in zip(domain_axes, domain_extents, strict=True):
+            result_layout = result_layout.with_axis_appended(ax, extent)
         if __debug__:
             for node in actual_nodes:
                 assert node in state.values, (

@@ -111,9 +111,8 @@ GenericIndex  (ABC)
     methods reading no axis metadata, matching xarray's own `shift`/`roll`
     split), `.diff(periods=1, *, axis=..., fill_value=0.0)`
     (`self - self.shift(...)`), and `.cumulative(*, axis=...)` (running sum).
-    `SequenceType` (and derived `TimeType`/`SpaceType`) may also declare an
-    optional static `length`; when present, evaluator alignment checks arrays
-    carrying that axis use extent `length` or broadcast singleton `1`.
+    Every domain type may declare a static `length` (a `SetType` also
+    through `labels=`); see [Axes](#axes).
   - A `SpaceType` DOMAIN axis additionally supports `.gradient(*, axis=...)`
     (first derivative, central differences) and `.laplacian(*, axes=...)`
     (sum of second derivatives over one or more `SpaceType` axes — the
@@ -131,8 +130,13 @@ GenericIndex  (ABC)
   (§ [Broadcasting](dd-cdt-engine.md#broadcasting)). Needed because `axes=`
   on `Index` only verifies a formula's inferred axes rather than declaring
   them — there is no other way to make a formula carry an axis it doesn't
-  already reference. Delegates to the same-named method on the underlying
+  already reference. The value is constant along each added axis, over the
+  axis's full length: `ind_x.broadcast(y).sum(axis=y)` is `ind_x` times the
+  length of `y`. Delegates to the same-named method on the underlying
   `graph.Node`, exactly like the axis reduction methods above.
+- **`.replace_axis(old, new)`** / **`.replace_axes({old: new, ...})`** —
+  returns a `graph.Node` with the same value, carried by other DOMAIN axes
+  (§ [Moving a value between axes](#moving-a-value-between-axes)).
 - **Identity-based `__hash__`** — because `__eq__` is overridden to
   return a graph node (lazy evaluation), `__hash__` must be kept
   identity-based so that `GenericIndex` objects can be used as
@@ -367,14 +371,118 @@ inheritance with `GridIndex` at all — satisfies a `field: GridIndex`
 annotation as long as its `output_axes` matches `GridIndex.FIXED_AXES`. This
 is deliberate: it is what lets independently-authored components interoperate
 around the same shape without agreeing on a common class hierarchy for it,
-the same way a plain `Axis("x", DOMAIN)` has always compared equal to a
-`DomainAxis("x", type=SpaceType(...))` sharing its name.
+the same way a plain `Axis("x", DOMAIN)` compares equal to a
+`DomainAxis("x", type=SpaceType(...))` sharing its name. The axes' types
+take part through refinement: a value whose axis is less specifically typed
+than `FIXED_AXES` is rejected (§ [Same-name axes](#same-name-axes)).
 
 **Extension point, not yet implemented**: a shape used in exactly one model
 does not necessarily deserve its own named class. An `Annotated[Index,
 Axes(...)]`-style inline declaration — verified the same structural way,
 without minting a type — is a natural addition if that need materializes; it
 has not been built because no concrete case has needed it yet.
+
+## Axes
+
+A DOMAIN axis is identified by its name and role. A `DomainAxis` also
+carries a domain `type` (see `axes.py`), which gates the per-axis operators
+and may declare the axis's length:
+
+| Type | Describes | Enables |
+| ---- | --------- | ------- |
+| `SetType(length=None, labels=None)` | an unordered set of members (zones, trees, cost items); `labels` names them, one per position, and sets the length | selection by label in results |
+| `SequenceType(length=None)` | an ordered axis (an untyped axis behaves as one) | `shift`, `roll`, `diff`, `cumulative` |
+| `TimeType(length=None)` | calendar time, a `SequenceType` | as `SequenceType` |
+| `SpaceType(spacing, boundary, length=None)` | a regular spatial grid, a `SequenceType` | as `SequenceType`, plus `gradient`, `laplacian` |
+
+### Lengths
+
+**One length per axis per evaluation.** A value that does not vary along an
+axis it carries may be stored with size 1 there (a constant, or a value
+added to the axis with `.broadcast()`); it still ranges over the axis's full
+length. Reductions and per-axis operators along the axis see every
+position: the sum of a constant 10 over an axis of length 4 is 40, its
+cumulative sum is `[10, 20, 30, 40]`. Results are read at the full length too
+(§ [Reading results](#reading-results)).
+
+The length of each DOMAIN axis is resolved before an evaluation runs, in
+this order:
+
+1. the length the axis declares (`length=`, or the number of `labels=`);
+2. otherwise the common size of the values carrying it, other than 1;
+3. otherwise 1, if some value carries it.
+
+Values carrying an axis with different sizes (other than 1) raise
+`ValueError` naming them. An axis reached only through `.broadcast()` (or a
+function's declared output axes), with no declared length, has no length and
+raises `ValueError` suggesting a declaration.
+
+**Checks at construction.** An array value (`Index`, `ConstIndex`, a
+`Scenario` override) needs `axes=` with one axis per dimension, and its size
+along each axis must be 1 or the axis's declared length; `ValueError`
+otherwise, naming the index, the axes and the shape.
+
+**Length 0.** A DOMAIN axis may be empty (`SequenceType(length=0)`,
+`SetType(labels=())`, or values of size 0): an entity axis with no entities.
+Reductions with an identity give it — `sum` and `count_nonzero` 0, `prod` 1,
+`any` `False`, `all` `True`; `mean`, `std`, `var` and `median` give NaN with
+NumPy's warning; `min`, `max` and `quantile` raise `ValueError` naming the
+axis. Shape-preserving operators give an empty result. PARAMETER and
+ENSEMBLE axes have a positive size.
+
+### Same-name axes
+
+Axes with the same name and role are one axis. When they come with different
+types — a library declaring a generic `TimeType()`, a model the same axis
+with `TimeType(length=24)` — they merge by refinement:
+
+- an untyped axis (a plain `Axis`, or `DomainAxis` without `type`) takes the
+  other side's type;
+- two types must be of the same class, and agree on every field both
+  declare; `length` and `labels` declared on one side only apply to the
+  merged axis (`SequenceType()` and `SequenceType(length=24)` give
+  `SequenceType(length=24)`); `SpaceType`'s `spacing` and `boundary` must be
+  equal.
+
+Merging happens wherever axes meet — operands of a formula, an operator's
+axis argument, `.broadcast()`, the axes of an evaluation — and does not
+depend on the order of the operands. Conflicting types raise `ValueError`
+naming the axis and both types.
+
+Declarations follow the same rule. A formula's `axes=` more specific than
+the formula (e.g. labels on an axis the formula carries untyped) is attached
+to the formula, so its value carries the declared type. A contract field
+whose `FIXED_AXES` is more specific than the value raises `ValueError`: a
+contract checks a value it cannot modify, so a value over a plain
+`Axis("time", DOMAIN)` does not satisfy a `TimeseriesIndex` field. A value
+more specific than the contract is accepted.
+
+### Moving a value between axes
+
+`.replace_axis(old, new)` returns the same value carried by another DOMAIN
+axis: the data along `old` becomes the data along `new`, with nothing
+copied. It connects code written over different axes for the same
+dimension, e.g. a model's `local_time` and a library's `time`:
+
+```python
+local_time = DomainAxis("local_time", type=TimeType(length=4))
+lib_time = DomainAxis("time", type=TimeType())
+
+load = ConstIndex("load", np.array([1.0, 2.0, 3.0, 4.0]), axes=(local_time,))
+running = load.replace_axis(local_time, lib_time).cumulative(axis=lib_time)
+running_load = Index("running load", running.replace_axis(lib_time, local_time), axes=(local_time,))
+```
+
+- The two axes must be DOMAIN axes with compatible types; the axis on the
+  result is `new` refined with what `old` declares (here `time` with length
+  4; a generic set axis would gain a labelled axis's labels).
+- The value must carry `old`, and must not already carry `new`;
+  `.broadcast()` is the way to add an axis.
+- `.replace_axes({a: b, c: d})` replaces several axes at once; all pairs
+  apply together, so `{a: b, b: a}` swaps two axes.
+- An axis and its replacement have one length in an evaluation: if one of
+  them declares none and no value carries it, it takes the other's; values
+  along the two must agree.
 
 ## Model
 
@@ -942,11 +1050,12 @@ ensemble, `evaluate` operates in *grid mode*:
   with all PARAMETER dimensions.
 - Result arrays have canonical shape `(*PARAMETER, *ENSEMBLE)`.
 
-Use `result.expected_value(idx)` to contract all ENSEMBLE dimensions:
+Use `result.expected(idx).values` to contract all ENSEMBLE dimensions
+(§ [Reading results](#reading-results)):
 
 ```python
 # shape (*PARAMETER, *ENSEMBLE) → (*PARAMETER)
-marginalised = result.expected_value(idx)
+marginalised = result.expected(idx).values
 ```
 
 Grid mode is the standard way to compute sustainability fields in
@@ -959,13 +1068,55 @@ grid.
 
 | API | Description |
 | --- | ----------- |
-| `result[idx]` | Raw array for `idx` in canonical `(*PARAMETER, *ENSEMBLE)` shape prefix. |
-| `result.expected_value(idx)` | Contract all ENSEMBLE axes using factorized weights; result shape is `(*PARAMETER, *DOMAIN)`. |
+| `result[idx]` | Raw array for `idx` as stored: canonical `(*PARAMETER, *ENSEMBLE, *DOMAIN)` layout, size 1 along the axes it does not vary on. |
+| `result.expected(idx, axes=None)` | Expected value over the ensemble, as a `LabeledArray` over PARAMETER axes and the DOMAIN axes `idx` carries, at full size (§ [Reading results](#reading-results)). |
+| `result.samples(idx, axes=None)` | The ensemble's samples, as a `LabeledArray` that also keeps the ENSEMBLE axes. |
+| `result.layout_of(idx)` | The `AxisLayout` of `result.expected(idx)`. |
 | `result.weights` | Joint weight array (outer product of per-axis weights). |
 | `result.factorized_weights` | Per-ENSEMBLE-axis weight vectors, keyed by `Axis` (`result.weights` is their outer product). |
 | `result.parameter_values` | The `parameters=` dict passed to `evaluate`. |
 | `result.full_shape` | `(*PARAMETER, *ENSEMBLE)` sizes in axis-layout order. |
 | `result.layout` | The `AxisLayout` mapping each `Axis` to its numpy dimension position and size. |
+
+`result.expected_value(idx)` (the expected value as a plain array, at the
+size it is stored) and `result.labeled(idx)` are deprecated in favour of
+`result.expected(idx).values` and `result.expected(idx)`.
+
+### Reading results
+
+`result.expected(idx)` and `result.samples(idx)` return a `LabeledArray`: the
+array (`.values`, a read-only view) with the axes naming its dimensions
+(`.axes`, `.sizes`). Every axis is at the full size of the evaluation — a
+value constant along an axis is repeated along it, and in `samples()` a
+deterministic index is repeated along the ENSEMBLE axes. DOMAIN axes the
+index does not carry are dropped. `samples()` returns the samples this
+evaluation computed; their weights are `result.factorized_weights`.
+
+```python
+load = result.expected(model.outputs.load, axes=("zone", "time"))
+print(load.sizes)  # (3, 4)
+print(load.sel(zone="north").values)  # the north zone, over time
+print(load.isel(time=0).values)  # every zone, at the first hour
+print(load.transpose("time", "zone").sizes)  # (4, 3)
+
+samples = result.samples(model.outputs.load)
+print([ax.name for ax in samples.axes])  # ['_ensemble', 'time', 'zone']
+```
+
+- `axes=` gives the result's axes in the order wanted (axis objects or
+  names), all of them, each once; without it, the result follows the
+  evaluation's layout, where DOMAIN axes are sorted by name.
+- `.isel(axis=position)` selects by position (an integer, including NumPy
+  integers such as `np.argmax`'s, or a slice); `.sel(axis=label)` by label,
+  on axes whose type declares labels, or a list of labels to keep several
+  members in the given order. An integer or a label drops the axis; a slice
+  or a list keeps it.
+- `.transpose(*axes)` changes the order of an existing array's axes.
+- `.labels` gives the labels of the labelled axes; `.to_xarray()` converts to
+  an `xarray.DataArray`, with labels as coordinates.
+
+`LabeledArray.dims` (the axis names) is deprecated in favour of `.axes`, and
+selecting by position through `.sel()` in favour of `.isel()`.
 
 ### End-to-End Example
 
@@ -1005,7 +1156,7 @@ ensemble = DistributionEnsemble(scenario, size=200)
 result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
 # Weighted mean of z across all scenarios
-print(result.expected_value(model.outputs.z))  # ≈ 10.0
+print(result.expected(model.outputs.z).values)  # ≈ 10.0
 ```
 
 ## Domain Modeling Pattern

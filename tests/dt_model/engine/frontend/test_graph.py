@@ -8,7 +8,7 @@ from collections.abc import Iterable
 
 import pytest
 
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, Reflect, SetType, TimeType
 from civic_digital_twins.dt_model.engine import compileflags
 from civic_digital_twins.dt_model.engine.frontend import graph
 
@@ -1157,3 +1157,50 @@ def test_node_broadcast_mixed_present_and_missing_axes():
     result = node.broadcast(x_axis, y_axis)
     assert isinstance(result, graph.broadcast_to)
     assert result.axes == (y_axis,)
+
+
+def test_operator_axis_conflicting_with_the_operand_raises():
+    """A reduction, axis operator or laplacian over a same-name axis of a conflicting type is rejected."""
+    zone = DomainAxis("zone", type=SetType(labels=("n", "s")))
+    other = DomainAxis("zone", type=SetType(labels=("s", "n")))
+    node = graph.array_placeholder("load", axes=(zone,))
+    with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types"):
+        node.sum(other)
+    with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types"):
+        node.cumulative(other)
+    with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types"):
+        graph.laplacian(node, (other,), (1.0,), (Reflect,))
+
+
+def test_operator_axis_compatible_with_the_operand_is_accepted():
+    """An untyped or less specific operator axis names the operand's axis."""
+    zone = DomainAxis("zone", type=SetType(labels=("n", "s")))
+    node = graph.array_placeholder("load", axes=(zone,))
+    assert node.sum(Axis("zone", DOMAIN)).output_axes == ()
+    assert node.shift(DomainAxis("zone", type=SetType(length=2))).output_axes == (zone,)
+
+
+def test_binary_op_merges_same_name_axis_types_whatever_the_order():
+    """Combining an untyped and a labelled same-name axis keeps the labelled one, in either operand order."""
+    labelled = DomainAxis("zone", type=SetType(labels=("n", "s")))
+    a = graph.array_placeholder("a", axes=(labelled,))
+    b = graph.array_placeholder("b", axes=(DomainAxis("zone"),))
+    assert (a + b).output_axes[0] is labelled
+    assert (b + a).output_axes[0] is labelled
+
+
+def test_node_broadcast_refines_a_carried_axis():
+    """Broadcasting over a carried axis with a more specific type wraps the node, so it carries that type."""
+    labelled = DomainAxis("zone", type=SetType(labels=("n", "s")))
+    node = graph.array_constant([1.0, 2.0], axes=(DomainAxis("zone"),), name="values")
+    result = node.broadcast(labelled)
+    assert isinstance(result, graph.broadcast_to)
+    assert result.output_axes[0] is labelled
+    assert result.broadcast(DomainAxis("zone")) is result
+
+
+def test_node_broadcast_conflicting_carried_axis_raises():
+    """Broadcasting over a carried axis of a conflicting type raises instead of being skipped."""
+    node = graph.array_constant([1.0, 2.0], axes=(DomainAxis("t", type=TimeType(length=2)),), name="values")
+    with pytest.raises(ValueError, match=r"axis 't' is declared with conflicting types"):
+        node.broadcast(DomainAxis("t", type=TimeType(length=3)))

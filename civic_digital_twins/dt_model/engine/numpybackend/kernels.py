@@ -13,6 +13,11 @@ reach without duplicating it — two independent copies would drift the first
 time either one got a bugfix or optimization the other didn't. This module is
 that one place.
 
+``expand_to_extent`` and ``replace_axes`` are shared for the same reason: the
+executor applies them (the first to the operand of every axis-aware
+operator), and the debug codegen must render those calls for the printed
+code to reproduce the evaluation.
+
 ``executor.py`` already imports ``numpy_ast`` (for trace printing), so
 ``numpy_ast`` importing back from ``executor`` would cycle; both instead
 import from here.
@@ -23,6 +28,82 @@ import from here.
 import numpy as np
 
 from ...axes import BoundaryCondition, Constant, Linear, Nearest, Neumann, Wrap
+
+
+def _align_to_domain(arr: np.ndarray, n_domain: int) -> np.ndarray:
+    """Return *arr* with size-1 dimensions prepended up to *n_domain* dimensions, as a view."""
+    if arr.ndim >= n_domain:
+        return arr
+    return arr.reshape((1,) * (n_domain - arr.ndim) + arr.shape)
+
+
+def expand_to_extent(x: np.ndarray, axes: tuple[int, ...], domain_extents: tuple[int, ...]) -> np.ndarray:
+    """Return *x* at full extent along the DOMAIN dimensions *axes*.
+
+    A value stores size 1 along an axis it does not vary on. An operator that
+    works along an axis (a reduction, ``shift``, ``cumulative``, ``gradient``,
+    ...) needs every position of it, so such a dimension is broadcast to the
+    axis's extent first, as a read-only view.
+
+    Args:
+        x: The operand. Its trailing dimensions are matched to the trailing
+            DOMAIN axes, as in NumPy broadcasting: a value with fewer
+            dimensions than the DOMAIN block (a 0-d constant, or a function
+            output over the last axes only) is given size 1 along the axes
+            it lacks first.
+        axes: The dimensions to expand, as negative offsets from the end
+            (as returned by :func:`~...axes.domain_axis_position`).
+        domain_extents: The extent of every DOMAIN axis, in DOMAIN order.
+
+    Returns
+    -------
+        *x* itself if already at full extent along *axes* and of full DOMAIN
+        rank, else a read-only view of it.
+    """
+    n_domain = len(domain_extents)
+    arr = _align_to_domain(np.asarray(x), n_domain)
+    shape = list(arr.shape)
+    for axis in axes:
+        if shape[axis] == 1:
+            shape[axis] = domain_extents[axis]
+    if tuple(shape) == arr.shape:
+        return arr
+    return np.broadcast_to(arr, tuple(shape))
+
+
+def replace_axes(x: np.ndarray, sources: tuple[int, ...], targets: tuple[int, ...], n_domain: int) -> np.ndarray:
+    """Move the data of *x* from the DOMAIN dimensions *sources* to *targets*, as a view.
+
+    The dimension at ``targets[i]`` of the result is the dimension at
+    ``sources[i]`` of *x*; all pairs apply at once, so a target may also be
+    a source (a swap). A source that is not also a target receives a
+    dimension of *x* at a target that is not also a source: *x* does not
+    vary along such an axis, so that dimension has size 1.
+
+    Args:
+        x: The operand. A 0-d value is returned unchanged; a value with
+            fewer dimensions than the DOMAIN block is matched to the
+            trailing DOMAIN axes, as in NumPy broadcasting.
+        sources: The DOMAIN dimensions to move from, as negative offsets
+            from the end (as returned by :func:`~...axes.domain_axis_position`).
+        targets: The DOMAIN dimensions to move to, in the same order.
+        n_domain: The number of DOMAIN dimensions.
+    """
+    arr = np.asarray(x)
+    if arr.ndim == 0:
+        return arr
+    arr = _align_to_domain(arr, n_domain)
+    src = [n_domain + p for p in sources]
+    tgt = [n_domain + p for p in targets]
+    order = list(range(n_domain))
+    for s, t in zip(src, tgt, strict=True):
+        order[t] = s
+    vacated = [s for s in src if s not in tgt]
+    unused = [t for t in tgt if t not in src]
+    for s, t in zip(vacated, unused, strict=True):
+        order[s] = t
+    lead = arr.ndim - n_domain
+    return np.transpose(arr, [*range(lead), *(lead + d for d in order)])
 
 
 def shift(x: np.ndarray, periods: int, *, axis: int, fill_value: float) -> np.ndarray:
@@ -130,8 +211,11 @@ def gradient(x: np.ndarray, axis: int, spacing: float, boundary: BoundaryConditi
         Array of the same shape as *x*: the discrete first derivative
         ``(x[i+1] - x[i-1]) / (2 * spacing)`` along *axis*, including at the
         two boundary positions (unlike ``np.gradient``, which falls back to
-        a one-sided formula there instead of honoring *boundary*).
+        a one-sided formula there instead of honoring *boundary*). An empty
+        *x* (e.g. along an axis of length 0) gives an empty result.
     """
+    if x.size == 0:
+        return np.zeros(x.shape, dtype=float)
     padded = _ghost_pad(x, axis, spacing, boundary)
     n = x.shape[axis]
     left = np.take(padded, range(0, n), axis=axis)
@@ -152,8 +236,11 @@ def _laplacian_1axis(x: np.ndarray, axis: int, spacing: float, boundary: Boundar
     Returns
     -------
         Array of the same shape as *x*: the discrete second derivative
-        ``(x[i-1] - 2*x[i] + x[i+1]) / spacing**2`` along *axis*.
+        ``(x[i-1] - 2*x[i] + x[i+1]) / spacing**2`` along *axis*. An empty
+        *x* (e.g. along an axis of length 0) gives an empty result.
     """
+    if x.size == 0:
+        return np.zeros(x.shape, dtype=float)
     padded = _ghost_pad(x, axis, spacing, boundary)
     n = x.shape[axis]
     left = np.take(padded, range(0, n), axis=axis)

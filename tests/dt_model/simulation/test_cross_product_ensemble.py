@@ -152,7 +152,7 @@ def test_cpe_mixed_categorical_and_distribution():
 
 
 def test_cpe_shaped_distribution_index_end_to_end():
-    """A shaped DistributionIndex flows through CrossProductEnsemble → Evaluation → expected_value.
+    """A shaped DistributionIndex flows through CrossProductEnsemble → Evaluation → expected.
 
     Regression coverage for issue #247: the non-conditional sampling branches
     in _draw_all/_draw_from_combos must request size=(S_total, *idx.shape)
@@ -171,7 +171,7 @@ def test_cpe_shaped_distribution_index_end_to_end():
     assert a[cap].shape == (ens.size, 3)
 
     ev = Evaluation(scenario).evaluate(ensemble=ens)
-    marginalised = ev.expected_value(result)
+    marginalised = ev.expected(result).values
     assert marginalised.shape == (3,)
     assert np.all((marginalised >= 0.0) & (marginalised <= 1.0))
 

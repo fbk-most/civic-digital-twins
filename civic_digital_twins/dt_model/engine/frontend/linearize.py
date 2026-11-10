@@ -177,7 +177,7 @@ def _get_dependencies(node: graph.Node) -> list[graph.Node]:
             deps.extend(branch_nodes)
         return deps
 
-    if isinstance(node, (graph.ProjectionOp, graph.AxisOp, graph.laplacian, graph.broadcast_to)):
+    if isinstance(node, (graph.ProjectionOp, graph.AxisOp, graph.laplacian, graph.broadcast_to, graph.replace_axes)):
         return [node.node]
 
     if isinstance(node, (graph.constant, graph.placeholder)):

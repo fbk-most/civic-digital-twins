@@ -18,8 +18,12 @@ import numpy as np
 
 from ...axes import BoundaryCondition, Constant, Neumann, domain_axis_position
 from ..frontend import graph
+from .kernels import (
+    expand_to_extent as _expand_to_extent,  # noqa: F401 (re-exported: generated code calls it by this name)
+)
 from .kernels import gradient as _gradient  # noqa: F401 (re-exported: generated code calls it by this name)
 from .kernels import laplacian as _laplacian  # noqa: F401 (re-exported: generated code calls it by this name)
+from .kernels import replace_axes as _replace_axes  # noqa: F401 (re-exported: generated code calls it by this name)
 from .kernels import shift as _shift  # noqa: F401 (re-exported: generated code calls it by this name)
 
 
@@ -96,19 +100,27 @@ _operation_names: dict[type[graph.Node], str] = {
     graph.laplacian: "laplacian",
     # broadcast (structural passthrough)
     graph.broadcast_to: "asarray",
+    graph.replace_axes: "replace_axes",
     # internal
     _InternalTestingNode: "_internal_testing",
 }
 
-_BARE_NAME_OPERATIONS: tuple[type[graph.Node], ...] = (graph.shift, graph.gradient, graph.laplacian)
+_BARE_NAME_OPERATIONS: tuple[type[graph.Node], ...] = (
+    graph.shift,
+    graph.gradient,
+    graph.laplacian,
+    graph.replace_axes,
+)
 """Node types whose generated call targets a bare, underscore-prefixed name
 (``_<name>``) rather than ``np.<name>``.
 
-``shift`` (fill-padded, unlike the circular ``roll``), ``gradient``, and
-``laplacian`` (finite-difference stencils honoring a boundary condition)
-have no single-call NumPy equivalent, so they render as calls to
-:func:`kernels.shift`/:func:`kernels.gradient`/:func:`kernels.laplacian`
-(imported above as ``_shift``/``_gradient``/``_laplacian``) instead —
+``shift`` (fill-padded, unlike the circular ``roll``), ``gradient``,
+``laplacian`` (finite-difference stencils honoring a boundary condition) and
+``replace_axes`` (a transposition computed from the axis pairs) have no
+single-call NumPy equivalent, so they render as calls to
+:func:`kernels.shift`/:func:`kernels.gradient`/:func:`kernels.laplacian`/
+:func:`kernels.replace_axes` (imported above as ``_shift``/``_gradient``/
+``_laplacian``/``_replace_axes``) instead —
 mirroring how :func:`_graph_function_to_ast_expr` already renders
 user-defined functions as bare-name calls. The leading underscore is added
 at the call site (see "create function call expr" below), not stored in
@@ -148,6 +160,27 @@ def _axis_as_tuple(axis: graph.Axis, domain_axes: Sequence[graph.Axis]) -> tuple
         ) from None
 
 
+def _operand_ast_expr(operand: graph.Node, positions: Sequence[int], domain_extents: Sequence[int]) -> ast.expr:
+    """Render the operand of an axis-aware operator.
+
+    With *domain_extents*, the operand is wrapped in a call to
+    :func:`kernels.expand_to_extent` (as ``_expand_to_extent``), as the
+    executor evaluates it, so that the generated code reproduces the
+    executor's result on an operand stored at size 1 along *positions*.
+    """
+    name = ast.Name(id=_node_name(operand), ctx=ast.Load())
+    if not domain_extents:
+        return name
+    return ast.Call(
+        func=ast.Name(id="_expand_to_extent", ctx=ast.Load()),
+        args=[name],
+        keywords=[
+            ast.keyword("axes", ast.Tuple(elts=[ast.Constant(value=p) for p in positions])),
+            ast.keyword("domain_extents", ast.Tuple(elts=[ast.Constant(value=e) for e in domain_extents])),
+        ],
+    )
+
+
 def _np_ndarray_to_ast_expr(value: graph.Scalar | list) -> ast.expr:
     if isinstance(value, list):
         return ast.List(elts=[_np_ndarray_to_ast_expr(v) for v in value], ctx=ast.Load())
@@ -160,6 +193,7 @@ def graph_node_to_ast_stmt(
     value: np.ndarray | None = None,
     *,
     domain_axes: Sequence[graph.Axis] = (),
+    domain_extents: Sequence[int] = (),
 ) -> ast.stmt:
     """Transform a graph.Node to a Python AST assignment statement.
 
@@ -168,6 +202,10 @@ def graph_node_to_ast_stmt(
     evaluation and is not embedded in the graph.  We verify this invariant
     at runtime.
 
+    With *domain_extents* (the extent of each of *domain_axes*), the
+    operand of an axis-aware operator is expanded to full extent along the
+    operator's axes, as the executor does.
+
     This function calls ast.fix_missing_locations before returning.
     """
     # 1. distinguish between user-defined functions and other nodes
@@ -175,7 +213,7 @@ def graph_node_to_ast_stmt(
         assert value is None
         expr = _graph_function_to_ast_expr(node)
     else:
-        expr = _simple_graph_node_to_ast_expr(node, value, domain_axes)
+        expr = _simple_graph_node_to_ast_expr(node, value, domain_axes, domain_extents)
 
     # 2. assign the result of the function call
     assign = ast.Assign(
@@ -212,6 +250,7 @@ def _simple_graph_node_to_ast_expr(
     node: graph.Node,
     value: np.ndarray | None = None,
     domain_axes: Sequence[graph.Axis] = (),
+    domain_extents: Sequence[int] = (),
 ) -> ast.expr:
     _placeholders = (graph.placeholder, graph.array_placeholder)
 
@@ -268,11 +307,11 @@ def _simple_graph_node_to_ast_expr(
 
     # 10. evaluate projection operations
     elif isinstance(node, graph.ProjectionOp):
-        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
-        if isinstance(node, graph.project_using_quantile):
-            # For quantile, the q parameter comes first
-            posargs.insert(0, ast.Constant(value=node.q))
         positions = _axis_as_tuple(node.axis, domain_axes)
+        posargs.append(_operand_ast_expr(node.node, positions, domain_extents))
+        if isinstance(node, graph.project_using_quantile):
+            # np.quantile(a, q, ...): the level follows the operand
+            posargs.append(ast.Constant(value=node.q))
         kwargs.append(ast.keyword("axis", ast.Tuple(elts=[ast.Constant(value=x) for x in positions])))
         if isinstance(
             node,
@@ -295,16 +334,16 @@ def _simple_graph_node_to_ast_expr(
 
     # 11. evaluate gradient (shape-preserving, boundary-aware)
     elif isinstance(node, graph.gradient):
-        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         (position,) = _axis_as_tuple(node.axis, domain_axes)
+        posargs.append(_operand_ast_expr(node.node, (position,), domain_extents))
         kwargs.append(ast.keyword("axis", ast.Constant(value=position)))
         kwargs.append(ast.keyword("spacing", ast.Constant(value=node.spacing)))
         kwargs.append(ast.keyword("boundary", _boundary_to_ast_expr(node.boundary)))
 
     # 12. evaluate axis operations (shape-preserving)
     elif isinstance(node, graph.AxisOp):
-        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         (position,) = _axis_as_tuple(node.axis, domain_axes)
+        posargs.append(_operand_ast_expr(node.node, (position,), domain_extents))
         if isinstance(node, (graph.shift, graph.roll)):
             posargs.append(ast.Constant(value=node.periods))
         kwargs.append(ast.keyword("axis", ast.Constant(value=position)))
@@ -313,21 +352,30 @@ def _simple_graph_node_to_ast_expr(
 
     # 13. evaluate laplacian (shape-preserving, multi-axis)
     elif isinstance(node, graph.laplacian):
-        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
         positions = tuple(_axis_as_tuple(ax, domain_axes)[0] for ax in node.axes)
+        posargs.append(_operand_ast_expr(node.node, positions, domain_extents))
         kwargs.append(ast.keyword("axes", ast.Tuple(elts=[ast.Constant(value=p) for p in positions])))
         kwargs.append(ast.keyword("spacings", ast.Tuple(elts=[ast.Constant(value=s) for s in node.spacings])))
         kwargs.append(ast.keyword("boundaries", ast.Tuple(elts=[_boundary_to_ast_expr(b) for b in node.boundaries])))
 
-    # 14. evaluate broadcast_to (structural passthrough, no reshape)
+    # 14. evaluate replace_axes (moves data between DOMAIN dimensions)
+    elif isinstance(node, graph.replace_axes):
+        posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
+        sources = tuple(_axis_as_tuple(src, domain_axes)[0] for src, _ in node.mapping)
+        targets = tuple(_axis_as_tuple(tgt, domain_axes)[0] for _, tgt in node.mapping)
+        kwargs.append(ast.keyword("sources", ast.Tuple(elts=[ast.Constant(value=p) for p in sources])))
+        kwargs.append(ast.keyword("targets", ast.Tuple(elts=[ast.Constant(value=p) for p in targets])))
+        kwargs.append(ast.keyword("n_domain", ast.Constant(value=len(domain_axes))))
+
+    # 15. evaluate broadcast_to (structural passthrough, no reshape)
     elif isinstance(node, graph.broadcast_to):
         posargs.append(ast.Name(id=_node_name(node.node), ctx=ast.Load()))
 
-    # 15. catch all for not implemented operations
+    # 16. catch all for not implemented operations
     else:
         raise UnsupportedNodeArguments(f"numpy_ast: unsupported node type: {type(node)}")
 
-    # 16. create function call expr
+    # 17. create function call expr
     is_bare_name = type(node) in _BARE_NAME_OPERATIONS
     func = ast.Name(id=f"_{opname}", ctx=ast.Load()) if is_bare_name else _np_attr_name(opname)
     return ast.Call(func=func, args=posargs, keywords=kwargs)
@@ -338,10 +386,13 @@ def graph_node_to_numpy_code(
     value: np.ndarray | None = None,
     *,
     domain_axes: Sequence[graph.Axis] = (),
+    domain_extents: Sequence[int] = (),
 ) -> str:
     """Transform a node to NumPy source code.
 
     This is mainly useful for debugging: the returned string shows the
-    exact NumPy call that would evaluate the given graph node.
+    exact NumPy call that would evaluate the given graph node. Pass the
+    evaluation's *domain_extents* for the code to expand operands as the
+    executor does (see :func:`graph_node_to_ast_stmt`).
     """
-    return ast.unparse(graph_node_to_ast_stmt(node, value, domain_axes=domain_axes))
+    return ast.unparse(graph_node_to_ast_stmt(node, value, domain_axes=domain_axes, domain_extents=domain_extents))

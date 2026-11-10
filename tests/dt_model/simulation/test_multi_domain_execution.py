@@ -15,7 +15,8 @@ from civic_digital_twins.dt_model import (
     inputs,
     outputs,
 )
-from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SpaceType
+from civic_digital_twins.dt_model.axes import DOMAIN, TIME_AXIS, Axis, DomainAxis, SequenceType, SetType, SpaceType
+from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import align_to_domain_block
 
 X = Axis("x", DOMAIN)
@@ -286,6 +287,34 @@ def test_override_rank_must_match_declared_axes(bad):
         Scenario(m, overrides={field: bad})
 
 
+def test_override_size_must_match_declared_length():
+    """An override is checked against the declared lengths of its axes, like a constructor value."""
+    zone = DomainAxis("zone")
+    hour = DomainAxis("hour", type=SequenceType(length=24))
+
+    @define("Hourly")
+    class Hourly(Model):
+        @inputs
+        class Inputs:
+            inflow: Index
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inputs):
+            return Hourly.Outputs(out=Index("out", inputs.inflow * 1.0))
+
+    inflow = Index("inflow", np.zeros((3, 24)), axes=(zone, hour))
+    m = Hourly(inputs=Hourly.Inputs(inflow=inflow))
+    Scenario(m, overrides={inflow: np.ones((3, 1))})  # size 1: constant along hour
+    with pytest.raises(
+        ValueError,
+        match=r"^Override for Index 'inflow': axis 'hour' declares length=24, but the value has size 3",
+    ):
+        Scenario(m, overrides={inflow: np.ones((24, 3))})
+
+
 def test_timeseries_override_message_still_describes_the_time_axis():
     """The generalized gate keeps naming the axis a TimeseriesIndex declares."""
 
@@ -358,3 +387,240 @@ def test_dropped_domain_carrying_index_is_reported_at_construction():
 
     with pytest.raises(ValueError, match="not declared|not de"):
         DroppedModel(inputs=DroppedModel.Inputs())
+
+
+def test_labelled_set_axis_results_can_be_read_by_label():
+    """A result over a SetType(labels=...) axis is selected by label, and the layout keeps the labels."""
+    zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+
+    @define("Zones")
+    class Zones(Model):
+        @inputs
+        class Inputs:
+            capacity: Index
+
+        @outputs
+        class Outputs:
+            load: Index
+
+        def compute(self, inputs):
+            return Zones.Outputs(load=Index("load", 500.0 / inputs.capacity, axes=(zone,)))
+
+    m = Zones(inputs=Zones.Inputs(capacity=Index("capacity", np.array([1000.0, 800.0, 500.0]), axes=(zone,))))
+    load = Evaluation(Scenario(m)).evaluate().expected(m.outputs.load)
+    assert load.labels == {"zone": ("centre", "north", "south")}
+    assert float(load.sel(zone="north").values) == pytest.approx(0.625)
+
+
+@pytest.mark.parametrize("labelled_first", [True, False])
+def test_same_name_axes_are_merged_across_unrelated_outputs(labelled_first):
+    """Two outputs over the same axis, one labelled and one untyped, both read labels, in either order."""
+    labelled = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+    untyped = DomainAxis("zone")
+    first, second = (labelled, untyped) if labelled_first else (untyped, labelled)
+
+    @define("Zones")
+    class Zones(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            a: Index
+            b: Index
+
+        def compute(self, inputs):
+            return Zones.Outputs(
+                a=Index("a", np.array([1.0, 2.0, 3.0]), axes=(first,)),
+                b=Index("b", np.array([10.0, 20.0, 30.0]), axes=(second,)),
+            )
+
+    m = Zones(inputs=Zones.Inputs())
+    result = _evaluate(m)
+    assert result.layout.axes[0] is labelled
+    assert float(result.expected(m.outputs.b).sel(zone="south").values) == 30.0
+
+
+def test_conflicting_same_name_axes_across_unrelated_outputs_raise():
+    """Unrelated outputs over same-name axes of conflicting types fail at evaluation."""
+
+    @define("Clash")
+    class Clash(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            a: Index
+            b: Index
+
+        def compute(self, inputs):
+            return Clash.Outputs(
+                a=Index("a", np.zeros(24), axes=(DomainAxis("t", type=SequenceType(length=24)),)),
+                b=Index("b", np.zeros(4), axes=(DomainAxis("t", type=SequenceType(length=4)),)),
+            )
+
+    with pytest.raises(ValueError, match=r"axis 't' is declared with conflicting types"):
+        _evaluate(Clash(inputs=Clash.Inputs()))
+
+
+def test_labels_declared_on_a_formula_reach_the_result():
+    """A formula over an untyped axis, declared over a labelled one, is read by label."""
+    labelled = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+
+    @define("Declared")
+    class Declared(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            load: Index
+
+        def compute(self, inputs):
+            raw = ConstIndex("raw", np.array([1.0, 2.0, 3.0]), axes=(DomainAxis("zone"),))
+            return Declared.Outputs(load=Index("load", raw * 10.0, axes=(labelled,)))
+
+    m = Declared(inputs=Declared.Inputs())
+    load = _evaluate(m).expected(m.outputs.load)
+    assert load.labels == {"zone": ("centre", "north", "south")}
+    assert float(load.sel(zone="south").values) == 30.0
+
+
+def test_conflicting_declarations_on_one_formula_fail_at_evaluation():
+    """Two outputs declaring conflicting labels over one untyped formula fail when evaluated together."""
+
+    @define("TwoViews")
+    class TwoViews(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            ns: Index
+            sn: Index
+
+        def compute(self, inputs):
+            raw = ConstIndex("raw", np.array([1.0, 2.0]), axes=(DomainAxis("zone"),))
+            return TwoViews.Outputs(
+                ns=Index("ns", raw * 1.0, axes=(DomainAxis("zone", type=SetType(labels=("n", "s"))),)),
+                sn=Index("sn", raw * 1.0, axes=(DomainAxis("zone", type=SetType(labels=("s", "n"))),)),
+            )
+
+    with pytest.raises(ValueError, match=r"axis 'zone' is declared with conflicting types .*different labels"):
+        _evaluate(TwoViews(inputs=TwoViews.Inputs()))
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN extents, resolved before execution
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_output(build):
+    """Evaluate a one-output model whose output *build()* returns; return (model, result)."""
+
+    @define("Probe")
+    class Probe(Model):
+        @inputs
+        class Inputs:
+            pass
+
+        @outputs
+        class Outputs:
+            out: Index
+
+        def compute(self, inputs):
+            return Probe.Outputs(out=build())
+
+    m = Probe(inputs=Probe.Inputs())
+    return m, _evaluate(m)
+
+
+def test_extent_comes_from_the_declared_length_when_no_value_varies():
+    """An axis declaring length=4, carried by size-1 values only, has extent 4."""
+    hour = DomainAxis("hour", type=SequenceType(length=4))
+    _, result = _evaluate_output(lambda: Index("out", ConstIndex("c", 10.0).node.broadcast(hour), axes=(hour,)))
+    assert result.layout.entries == ((hour, 4),)
+    assert result._state.domain_extents == (4,)
+
+
+def test_extent_comes_from_the_labels():
+    """A labelled set axis has as many positions as labels."""
+    zone = DomainAxis("zone", type=SetType(labels=("centre", "north", "south")))
+    _, result = _evaluate_output(lambda: Index("out", ConstIndex("c", np.array([1.0]), axes=(zone,)) * 2.0))
+    assert result.layout.entries == ((zone, 3),)
+
+
+def test_extent_is_inferred_from_the_values_carrying_the_axis():
+    """Without a declaration, the extent is the common size other than 1 among the values."""
+    x = DomainAxis("x")
+    _, result = _evaluate_output(
+        lambda: Index("out", ConstIndex("a", np.array([1.0]), axes=(x,)) + ConstIndex("b", np.arange(5.0), axes=(x,)))
+    )
+    assert result.layout.entries == ((x, 5),)
+
+
+def test_extent_is_one_when_every_value_has_size_one():
+    """Without a declaration, an axis carried only at size 1 has extent 1."""
+    x = DomainAxis("x")
+    _, result = _evaluate_output(lambda: Index("out", ConstIndex("a", np.array([7.0]), axes=(x,)) * 1.0))
+    assert result.layout.entries == ((x, 1),)
+
+
+def test_axis_without_extent_raises():
+    """An axis reached only through .broadcast(), declaring no length, cannot be evaluated."""
+    hour = DomainAxis("hour")
+    with pytest.raises(ValueError, match=r"DOMAIN axis 'hour' has no length: no value carries it"):
+        _evaluate_output(lambda: Index("out", ConstIndex("c", 10.0).node.broadcast(hour), axes=(hour,)))
+
+
+def test_values_disagreeing_on_an_axis_size_raise():
+    """Two values carrying one axis at different sizes (other than 1) are rejected before execution."""
+    x = DomainAxis("x")
+    with pytest.raises(
+        ValueError, match=r"DOMAIN axis 'x' has different sizes in different values \('a' has 3, 'b' has 4\)"
+    ):
+        _evaluate_output(
+            lambda: Index("out", ConstIndex("a", np.zeros(3), axes=(x,)) + ConstIndex("b", np.zeros(4), axes=(x,)))
+        )
+
+
+def test_size_disagreement_names_unnamed_values_by_node_id():
+    """A value without a name is identified by its node id."""
+    x = DomainAxis("x")
+    anonymous = graph.array_constant(np.zeros(4), axes=(x,))
+    with pytest.raises(ValueError, match=rf"'a' has 3, 'n{anonymous.id}' has 4"):
+        _evaluate_output(lambda: Index("out", ConstIndex("a", np.zeros(3), axes=(x,)) + anonymous))
+
+
+def test_reduction_over_a_broadcast_axis_uses_the_declared_length():
+    """Summing a constant broadcast over an axis declaring length=4 counts four positions (#296)."""
+    hour = DomainAxis("hour", type=SequenceType(length=4))
+    m, result = _evaluate_output(lambda: Index("out", ConstIndex("c", 10.0).node.broadcast(hour).sum(hour)))
+    assert float(np.squeeze(result[m.outputs.out])) == 40.0
+
+
+def test_reduction_over_a_broadcast_axis_uses_the_inferred_length():
+    """Without a declaration, the length comes from another value carrying the axis (#296)."""
+    hour = DomainAxis("hour")
+
+    def build():
+        constant = ConstIndex("c", 10.0).node.broadcast(hour).sum(hour)
+        hourly = ConstIndex("h", np.zeros(3), axes=(hour,)).node.sum(hour)
+        return Index("out", constant + hourly)
+
+    m, result = _evaluate_output(build)
+    assert float(np.squeeze(result[m.outputs.out])) == 30.0
+
+
+def test_shift_of_a_compressed_value_fills_only_the_exposed_position():
+    """A value constant along an axis, shifted by one, keeps its value everywhere but the first position."""
+    hour = DomainAxis("hour", type=SequenceType(length=4))
+    m, result = _evaluate_output(
+        lambda: Index("out", ConstIndex("c", np.array([10.0]), axes=(hour,)).shift(1, axis=hour))
+    )
+    np.testing.assert_array_equal(result[m.outputs.out], [0.0, 10.0, 10.0, 10.0])

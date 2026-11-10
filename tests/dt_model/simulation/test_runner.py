@@ -24,6 +24,7 @@ from scipy import stats
 from civic_digital_twins.dt_model import (
     AsyncEvaluationHandle,
     CategoricalIndex,
+    ConstIndex,
     DistributionEnsemble,
     Evaluation,
     EvaluationConfig,
@@ -41,6 +42,7 @@ from civic_digital_twins.dt_model import (
     inputs,
     outputs,
 )
+from civic_digital_twins.dt_model.axes import DomainAxis
 from civic_digital_twins.dt_model.engine.frontend import graph
 from civic_digital_twins.dt_model.engine.numpybackend.executor import NumpyBackend
 from civic_digital_twins.dt_model.model.index import Distribution, DistributionIndex, GenericIndex, Index
@@ -949,6 +951,31 @@ class TestDecodeResultRoundtrip:
         decoded = _decode_result(encoded, model.indexes)
         # Output y should have shape (15,) after decoding.
         assert decoded[model.outputs.y].shape == result[model.outputs.y].shape
+
+    def test_decode_result_restores_the_domain_axes_and_lengths(self) -> None:
+        """The decoded result has the evaluation's DOMAIN axes and lengths, so it can be merged with new ones."""
+        from civic_digital_twins.dt_model.simulation.runner import _decode_result  # noqa: PLC0415
+
+        zone, hour = DomainAxis("zone"), DomainAxis("hour")
+
+        @define("Grid")
+        class Grid(Model):
+            @inputs
+            class Inputs:
+                pass
+
+            @outputs
+            class Outputs:
+                load: Index
+
+            def compute(self, inputs):
+                return Grid.Outputs(load=Index("load", ConstIndex("base", np.ones((3, 4)), axes=(zone, hour))))
+
+        model = Grid(inputs=Grid.Inputs())
+        result = Evaluation(Scenario(model)).evaluate()
+        decoded = _decode_result(_encode_result(result, model.indexes), model.indexes)
+        assert decoded._state.domain_axes == (hour, zone)
+        assert decoded._state.domain_extents == (4, 3)
 
 
 # ---------------------------------------------------------------------------

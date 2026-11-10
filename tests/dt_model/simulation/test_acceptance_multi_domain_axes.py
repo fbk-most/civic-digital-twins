@@ -136,7 +136,7 @@ def test_shaped_distribution_index_axis_order_independence_in_addition():
     ensemble = FrozenEnsemble((ens_axis,), (np.array([1.0]),), {a: a_vals, b: b_vals})
     result = Evaluation(scenario).evaluate(ensemble=ensemble)
 
-    marginalised = result.expected_value(m.outputs.total)
+    marginalised = result.expected(m.outputs.total).values
     # b's own array is (y, x)-ordered; transpose it to (x, y) before adding,
     # to compute the expected value the way a correctly-aligned engine would
     # under an (x, y) canonical order.  expected_yx is the same computation
@@ -262,13 +262,13 @@ def test_lower_rank_operand_broadcasts_against_full_spacetime_block():
 
 
 def test_layout_of_matches_the_marginalized_array_two_outputs_carry_different_axes():
-    """result.layout_of(idx) names every dimension of expected_value(idx), per output.
+    """result.layout_of(idx) names every dimension of expected(idx), per output.
 
     One model, one ENSEMBLE axis, two outputs that carry different DOMAIN
     axes: "field" keeps (time, x, y), "col_mean" drops y. result.layout (the
     *raw*, pre-marginalization layout) is the same object for both — it
     cannot tell them apart. result.layout_of(idx) can: it always drops the
-    ENSEMBLE axis (contracted by expected_value) and keeps only the DOMAIN
+    ENSEMBLE axis (contracted by expected) and keeps only the DOMAIN
     axes the given index actually carries.
     """
 
@@ -301,13 +301,13 @@ def test_layout_of_matches_the_marginalized_array_two_outputs_carry_different_ax
     assert result.layout_of(m.outputs.field).entries == ((TIME_AXIS, 2), (X, 3), (Y, 4))
     assert result.layout_of(m.outputs.col_mean).entries == ((TIME_AXIS, 2), (X, 3))
 
-    # The per-output layout always matches the array expected_value actually returns.
-    assert result.layout_of(m.outputs.field).full_shape == result.expected_value(m.outputs.field).shape
-    assert result.layout_of(m.outputs.col_mean).full_shape == result.expected_value(m.outputs.col_mean).shape
+    # The per-output layout always matches the array expected actually returns.
+    assert result.layout_of(m.outputs.field).full_shape == result.expected(m.outputs.field).values.shape
+    assert result.layout_of(m.outputs.col_mean).full_shape == result.expected(m.outputs.col_mean).values.shape
 
 
-def test_labeled_pairs_expected_value_with_its_layout_for_name_based_selection():
-    """result.labeled(idx) gives a LabeledArray usable without knowing dimension positions."""
+def test_expected_gives_a_labeled_array_for_name_based_selection():
+    """result.expected(idx) gives a LabeledArray usable without knowing dimension positions."""
 
     @define("Labeled")
     class LabeledModel(Model):
@@ -326,11 +326,11 @@ def test_labeled_pairs_expected_value_with_its_layout_for_name_based_selection()
     m = LabeledModel(inputs=LabeledModel.Inputs())
     result = _evaluate(m)
 
-    labeled = result.labeled(m.outputs.field)
-    assert labeled.dims == ("x", "y")
-    np.testing.assert_array_equal(labeled.values, result.expected_value(m.outputs.field))
+    labeled = result.expected(m.outputs.field)
+    assert labeled.axes == (X, Y)
+    assert labeled.layout == result.layout_of(m.outputs.field)
 
     # Select by axis name, not by remembering which position "x" landed in.
-    row = labeled.sel(x=1)
-    assert row.dims == ("y",)
+    row = labeled.isel(x=1)
+    assert row.axes == (Y,)
     np.testing.assert_array_equal(row.values, np.arange(6.0).reshape(2, 3)[1, :])

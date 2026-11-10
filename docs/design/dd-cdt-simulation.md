@@ -68,7 +68,7 @@ result = Evaluation(scenario).evaluate(
     parameters={model.inputs.traffic_load: traffic_grid},
 )
 
-mean_conc = result.expected_value(model.outputs.concentration)
+mean_conc = result.expected(model.outputs.concentration).values
 ```
 
 `mean_conc` has shape `(3,)` — one expected concentration per traffic level, marginalising
@@ -138,7 +138,7 @@ result = Evaluation(scenario).evaluate(
 )
 ```
 
-The result has an additional PARAMETER dimension: `result.expected_value(idx)` returns a
+The result has an additional PARAMETER dimension: `result.expected(idx).values` returns a
 `(len(traffic_grid),)` array, one entry per traffic level.
 
 ### Combining overrides and parameter axes
@@ -192,7 +192,7 @@ handle.extend(
 )
 ```
 
-After this call `handle.result.expected_value(model.outputs.concentration)` has shape `(5,)`.
+After this call `handle.result.expected(model.outputs.concentration).values` has shape `(5,)`.
 
 ### Combined extension
 
@@ -327,7 +327,7 @@ class ConcentrationEvaluator(ModelEvaluator[ConcentrationModel, ConcentrationOut
         result: EvaluationResult,
     ) -> ConcentrationOutput:
         return ConcentrationOutput(
-            mean_conc=result.expected_value(self._model.outputs.concentration),
+            mean_conc=result.expected(self._model.outputs.concentration).values,
         )
 
     def input_schema(self) -> dict[str, ParameterMeta]:
@@ -491,7 +491,7 @@ class Scenario:
 Returned by `Evaluation.evaluate()` / `Evaluation.execute_plan()`, and exposed as
 `EvaluationHandle.result` / `IncrementalRun.result`.  See
 [`EvaluationResult`](dd-cdt-model.md#evaluationresult) in dd-cdt-model.md for the full
-reference (`result[idx]`, `expected_value()`, `weights`, `factorized_weights`,
+reference (`result[idx]`, `expected()`, `samples()`, `weights`, `factorized_weights`,
 `parameter_values`, `full_shape`, `layout`).  `layout` exposes the `AxisLayout` that
 enforces the canonical `(*PARAMETER, *ENSEMBLE, *DOMAIN)` dimension ordering used
 throughout this document — see the

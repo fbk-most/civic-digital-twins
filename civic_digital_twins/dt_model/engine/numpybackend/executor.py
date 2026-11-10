@@ -15,7 +15,7 @@ state and evaluates each node exactly once, storing results for later reuse.
 """
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import (
     Protocol,
@@ -25,7 +25,7 @@ from typing import (
 
 import numpy as np
 
-from ...axes import DOMAIN, Axis, domain_axis_position, validate_axis_extent
+from ...axes import DOMAIN, Axis, domain_axis_position, filter_by_role, validate_axis_extent
 from .. import compileflags
 from ..frontend import graph
 from . import kernels, numpy_ast
@@ -275,7 +275,24 @@ dimension is resolved per node from the op's *named* axis (see
 Add entries to this table to support more projection operations."""
 
 
-def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = ()) -> None:
+_UNDEFINED_ON_EMPTY_NAMES: dict[type[graph.Node], str] = {
+    graph.project_using_min: "the minimum",
+    graph.project_using_max: "the maximum",
+    graph.project_using_quantile: "a quantile",
+}
+"""Reductions with no value over an axis of length 0, which have no identity to return.
+
+The other reductions follow NumPy over an empty axis: ``sum``,
+``count_nonzero`` give 0, ``prod`` 1, ``any`` False, ``all`` True (their
+identities); ``mean``, ``std``, ``var``, ``median`` give NaN, with NumPy's
+warning."""
+
+_UNDEFINED_ON_EMPTY = tuple(_UNDEFINED_ON_EMPTY_NAMES)
+
+
+def _print_graph_node(
+    node: graph.Node, domain_axes: tuple[Axis, ...] = (), domain_extents: tuple[int, ...] = ()
+) -> None:
     """Print a node before evaluation."""
     # 1. print the original DAG node as a comment so we can always
     # understand what is the specific node leading to this.
@@ -284,7 +301,7 @@ def _print_graph_node(node: graph.Node, domain_axes: tuple[Axis, ...] = ()) -> N
     # 2. print the numpy equivalent for non-immediate nodes such
     # that we can round-trip the representation.
     if not isinstance(node, (graph.constant, graph.placeholder, graph.array_constant, graph.array_placeholder)):
-        print(numpy_ast.graph_node_to_numpy_code(node, domain_axes=domain_axes))
+        print(numpy_ast.graph_node_to_numpy_code(node, domain_axes=domain_axes, domain_extents=domain_extents))
 
 
 def _print_evaluated_node(node: graph.Node, value: np.ndarray) -> None:
@@ -429,9 +446,9 @@ class State:
     Make sure to provide values for placeholder nodes ahead of the evaluation
     by initializing the `values` dictionary accordingly.
 
-    Note that, if compileflags.TRACE is set, the State will print the
-    nodes provided to the constructor in its __post_init__ method using
-    the `=== begin/end placeholder ===' markers.
+    Note that, if compileflags.TRACE is set, the State prints the nodes
+    provided to the constructor in its __post_init__ method, each as a
+    ``# <node>`` comment followed by its value as NumPy code.
 
     Attributes
     ----------
@@ -449,6 +466,10 @@ class State:
             (layout) order.  They occupy the trailing numpy dimensions, and
             projections resolve their named axis against this tuple.  Defaults
             to empty (no DOMAIN axes); a time-only model passes ``(TIME_AXIS,)``.
+        domain_extents: the length of each of *domain_axes*, positionally,
+            resolved by the caller before execution (a value may store size 1
+            along an axis it does not vary on; the extent is the axis's full
+            length). Empty when the caller resolves none.
 
     Notes
     -----
@@ -467,13 +488,29 @@ class State:
     functions: dict[str, Functor] = field(default_factory=dict)
     node_functions: dict[graph.Node, Functor] = field(default_factory=dict)
     domain_axes: tuple[Axis, ...] = ()
+    domain_extents: tuple[int, ...] = ()
 
     def __post_init__(self):
-        """Print the placeholder values provided to the constructor."""
+        """Validate the extents and, when tracing, print the initial values.
+
+        Two independent steps. First, ``domain_extents`` is paired with
+        ``domain_axes`` by position, so it must be empty or have one entry
+        per axis; otherwise ``ValueError`` is raised. Second, if the
+        ``compileflags.TRACE`` flag is set, every value provided to the
+        constructor (the placeholder inputs) is printed, in node-id order,
+        as a ``# <node>`` comment followed by its value as NumPy code.
+        """
+        # Extents are positional: a missing entry would shift every later axis.
+        if self.domain_extents and len(self.domain_extents) != len(self.domain_axes):
+            raise ValueError(
+                f"executor: {len(self.domain_extents)} domain_extents given for "
+                f"{len(self.domain_axes)} domain_axes {[ax.name for ax in self.domain_axes]}."
+            )
+        # Debug tracing of the initial values.
         if self.flags & compileflags.TRACE != 0:
             nodes = sorted(self.values.keys(), key=lambda n: n.id)
             for node in nodes:
-                _print_graph_node(node, self.domain_axes)
+                _print_graph_node(node, self.domain_axes, self.domain_extents)
                 _print_evaluated_node(node, self.values[node])
 
     def get_node_value(self, node: graph.Node) -> np.ndarray:
@@ -554,7 +591,7 @@ def evaluate_single_node(state: State, node: graph.Node) -> np.ndarray:
     flags = node.flags | state.flags
     tracing = flags & compileflags.TRACE
     if tracing:
-        _print_graph_node(node, state.domain_axes)
+        _print_graph_node(node, state.domain_axes, state.domain_extents)
 
     # 3. evaluate the node
     result = _evaluate(state, node)
@@ -613,7 +650,7 @@ def align_to_domain_block(
     *arr* reshaped so its trailing ``len(domain_axes)`` dimensions correspond
     to *domain_axes* positionally.
     """
-    own = [ax for ax in node_axes if ax.role == DOMAIN]
+    own = list(filter_by_role(node_axes, DOMAIN))
     unknown = [ax for ax in own if ax not in domain_axes]
     if unknown:
         raise UnsupportedOperation(
@@ -711,6 +748,18 @@ def _eval_multi_clause_where_op(state: State, node: graph.Node) -> np.ndarray:
     return np.select(conditions, values, default=default)
 
 
+def _expand_to_extent(state: State, operand: np.ndarray, positions: Sequence[int]) -> np.ndarray:
+    """Return *operand* at full extent along the DOMAIN dimensions at *positions*.
+
+    Applies :func:`kernels.expand_to_extent` with :attr:`State.domain_extents`.
+    Without extents (a caller that resolves none) the operand is returned
+    unchanged.
+    """
+    if not state.domain_extents:
+        return operand
+    return kernels.expand_to_extent(operand, tuple(positions), state.domain_extents)
+
+
 def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a ProjectionOp node, reducing along the node's named axis.
 
@@ -718,7 +767,10 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
     :func:`~...axes.domain_axis_position`, against the DOMAIN axes this
     evaluation declares (:attr:`State.domain_axes`).  Reducing an axis the
     evaluation does not carry raises rather than silently reducing the wrong
-    dimension.
+    dimension.  An operand stored at size 1 along the axis is reduced over
+    the axis's full extent (:func:`_expand_to_extent`). Over an axis of
+    length 0, a reduction with no identity (:data:`_UNDEFINED_ON_EMPTY_NAMES`)
+    raises; the others follow NumPy.
     """
     node = cast(graph.ProjectionOp, node)
     try:
@@ -728,7 +780,12 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
             f"executor: numpybackend only supports projection along this evaluation's DOMAIN axes "
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
-    operand = state.get_node_value(node.node)
+    operand = _expand_to_extent(state, state.get_node_value(node.node), (position,))
+    if operand.shape[position] == 0 and isinstance(node, _UNDEFINED_ON_EMPTY):
+        raise ValueError(
+            f"executor: {type(node).__name__} {node.name!r}: axis {node.axis.name!r} has length 0, and "
+            f"{_UNDEFINED_ON_EMPTY_NAMES[type(node)]} of no values is undefined."
+        )
     if isinstance(node, graph.project_using_quantile):
         return _reduce_quantile(operand, position, node.q)
     try:
@@ -740,8 +797,9 @@ def _eval_projection_op(state: State, node: graph.Node) -> np.ndarray:
 def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate an AxisOp node, operating along the node's named axis.
 
-    Resolves the axis to a numpy dimension exactly as :func:`_eval_projection_op`
-    does, but the operation is shape-preserving rather than reducing.
+    Resolves the axis to a numpy dimension, and expands an operand stored at
+    size 1 along it, exactly as :func:`_eval_projection_op` does, but the
+    operation is shape-preserving rather than reducing.
     """
     node = cast(graph.AxisOp, node)
     try:
@@ -751,7 +809,7 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
             f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
-    operand = state.get_node_value(node.node)
+    operand = _expand_to_extent(state, state.get_node_value(node.node), (position,))
     if isinstance(node, graph.shift):
         return kernels.shift(operand, node.periods, axis=position, fill_value=node.fill_value)
     if isinstance(node, graph.roll):
@@ -764,8 +822,8 @@ def _eval_axis_op(state: State, node: graph.Node) -> np.ndarray:
 def _eval_gradient(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a gradient node, honoring its declared boundary condition at the axis's two ends.
 
-    Resolves the axis to a numpy dimension exactly as :func:`_eval_axis_op`
-    does.
+    Resolves the axis to a numpy dimension, and expands an operand stored at
+    size 1 along it, exactly as :func:`_eval_axis_op` does.
     """
     node = cast(graph.gradient, node)
     try:
@@ -775,15 +833,16 @@ def _eval_gradient(state: State, node: graph.Node) -> np.ndarray:
             f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
             f"{[ax.name for ax in state.domain_axes]}; got {node.axis!r}"
         ) from None
-    operand = state.get_node_value(node.node)
+    operand = _expand_to_extent(state, state.get_node_value(node.node), (position,))
     return kernels.gradient(operand, position, node.spacing, node.boundary)
 
 
 def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
     """Evaluate a laplacian node, summing second derivatives along the node's named axes.
 
-    Each axis is resolved to a numpy dimension exactly as :func:`_eval_projection_op`
-    does; the operation is shape-preserving, like :func:`_eval_axis_op`.
+    Each axis is resolved to a numpy dimension, and an operand stored at size 1
+    along it expanded, exactly as :func:`_eval_projection_op` does; the
+    operation is shape-preserving, like :func:`_eval_axis_op`.
     """
     node = cast(graph.laplacian, node)
     positions: list[int] = []
@@ -795,8 +854,21 @@ def _eval_laplacian(state: State, node: graph.Node) -> np.ndarray:
                 f"executor: numpybackend only supports axis operations along this evaluation's DOMAIN axes "
                 f"{[ax.name for ax in state.domain_axes]}; got {axis!r}"
             ) from None
-    operand = state.get_node_value(node.node)
+    operand = _expand_to_extent(state, state.get_node_value(node.node), positions)
     return kernels.laplacian(operand, tuple(positions), node.spacings, node.boundaries)
+
+
+def _eval_replace_axes(state: State, node: graph.Node) -> np.ndarray:
+    """Evaluate a replace_axes node: move the value's data from each source axis to its target.
+
+    A transposed view of the operand (:func:`kernels.replace_axes`): both
+    axes of each pair are among this evaluation's DOMAIN axes, and have the
+    same extent.
+    """
+    node = cast(graph.replace_axes, node)
+    sources = tuple(domain_axis_position(state.domain_axes, src) for src, _ in node.mapping)
+    targets = tuple(domain_axis_position(state.domain_axes, tgt) for _, tgt in node.mapping)
+    return kernels.replace_axes(state.get_node_value(node.node), sources, targets, len(state.domain_axes))
 
 
 def _eval_broadcast_to(state: State, node: graph.Node) -> np.ndarray:
@@ -869,6 +941,7 @@ _evaluators: tuple[tuple[type[graph.Node], _EvaluatorFunc], ...] = (
     (graph.AxisOp, _eval_axis_op),
     (graph.laplacian, _eval_laplacian),
     (graph.broadcast_to, _eval_broadcast_to),
+    (graph.replace_axes, _eval_replace_axes),
     (graph.function_call, _eval_function),
 )
 

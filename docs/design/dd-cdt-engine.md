@@ -429,9 +429,17 @@ All axis reduction operators reduce `node` along a semantic
 [`Axis`](../../civic_digital_twins/dt_model/axes.py),
 with the reduced axis *preserved* as size 1 (keepdims
 semantics). There is no default; callers always pass `axis=` explicitly,
-e.g. `axis=TIME_AXIS`. The NumPy backend currently only supports
-reducing along `TIME_AXIS` — passing any other `Axis` raises
-`UnsupportedOperation` at evaluation time.
+e.g. `axis=TIME_AXIS`. The axis must be one of the DOMAIN axes of the
+evaluation; the NumPy backend raises `UnsupportedOperation` otherwise.
+
+A reduction ranges over the axis's full length, including where the operand
+is stored with size 1 along it (a value constant along the axis): the sum of
+a constant 10 over an axis of length 4 is 40. The same holds for the
+per-axis operators (`shift`, `roll`, `cumulative`, `diff`, `gradient`,
+`laplacian`). Over an axis of length 0, `sum` and `count_nonzero` give 0,
+`prod` 1, `any` `False`, `all` `True`; `mean`, `std`, `var` and `median`
+give NaN (NumPy's behaviour); `min`, `max` and `quantile` raise
+`ValueError`.
 
 Each operator is also available as a same-named method directly on
 `graph.Node` — `node.sum(axis=TIME_AXIS)` is equivalent to
@@ -475,9 +483,9 @@ applies to the per-axis operators `shift()`, `roll()`, `diff()`, and
 #### Broadcasting
 
 `node.broadcast(*axes)` returns a node considered to also carry each axis
-in *axes* not already present in `node.output_axes`, with implicit size-1
-extent along the new ones — `graph.broadcast_to` under the hood, or `node`
-itself unchanged if every axis is already there. It exists because a
+in *axes* not already present in `node.output_axes`, its value constant
+along the new ones, each over its full length — `graph.broadcast_to` under
+the hood, or `node` itself unchanged if every axis is already there. It exists because a
 formula's `output_axes` is *inferred*, not declared: `Index(..., axes=...)`
 only *verifies* the inference (see [`Index`](dd-cdt-model.md#index)), so
 there is no way to make a node carry an axis it doesn't structurally
@@ -497,12 +505,28 @@ leaf-padding convention it implements (every `array_constant`/
 `array_placeholder` is padded to the full domain block when read, and
 ordinary numpy broadcasting preserves that padding through every
 downstream computed node) — so `_eval_broadcast_to` is a pure passthrough
-there. A different backend without that convention would be free to
+there, and the axis-aware operators expand an operand stored at size 1 to
+the axis's length (resolved for each evaluation before it runs) as a
+read-only view. A different backend without that convention would be free to
 implement `broadcast_to` as an actual reshape instead; nothing in the
 frontend's contract rules that out.
 
 `GenericIndex.broadcast(*axes)` delegates to the same-named `graph.Node`
 method, exactly like the axis reduction methods above.
+
+#### Replacing axes
+
+`node.replace_axis(old, new)` and `node.replace_axes({old: new, ...})`
+return a `graph.replace_axes` node: the same value, carried by other DOMAIN
+axes. Each target takes its source's place in `output_axes`, refined with
+what the source declares (`axes.replaced_axis`); all pairs apply at once, so
+`{a: b, b: a}` swaps two axes. The node must carry every source, and no
+target that is not also a source; types must merge by refinement. A source
+and its target have one length in an evaluation. The NumPy backend
+evaluates the node as a transposed view of the DOMAIN block
+(`kernels.replace_axes`). `GenericIndex.replace_axis`/`replace_axes`
+delegate to these methods; see
+[Moving a value between axes](dd-cdt-model.md#moving-a-value-between-axes).
 
 #### Accepting Index-Like Objects: the `HasNode` Protocol
 

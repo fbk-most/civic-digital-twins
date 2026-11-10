@@ -55,6 +55,21 @@ def _get_default_executor() -> concurrent.futures.ThreadPoolExecutor:
 __all__ = ["AsyncEvaluationHandle", "EvaluationHandle"]
 
 
+def _check_same_domain(caller: str, r1: EvaluationResult, r2: EvaluationResult) -> None:
+    """Raise if *r1* and *r2* differ in DOMAIN axes or their lengths: their values cannot be joined."""
+    d1 = (r1._state.domain_axes, r1._state.domain_extents)
+    d2 = (r2._state.domain_axes, r2._state.domain_extents)
+    if d1 != d2:
+        raise ValueError(
+            f"{caller}: the results have different DOMAIN axes or lengths "
+            f"({_describe_domain(*d1)} in r1, {_describe_domain(*d2)} in r2)."
+        )
+
+
+def _describe_domain(axes: tuple[Axis, ...], extents: tuple[int, ...]) -> str:
+    return "{" + ", ".join(f"{ax.name!r}: {n}" for ax, n in zip(axes, extents, strict=False)) + "}"
+
+
 def _merge_results(
     r1: EvaluationResult,
     r2: EvaluationResult,
@@ -100,8 +115,11 @@ def _merge_results(
         If either result has no ENSEMBLE axis, if *merge_axis_name* is absent
         when multiple ENSEMBLE axes are present, if the named axis is missing
         or at different positions in the two results, if the fixed ENSEMBLE
-        axes differ, or if the PARAMETER axis layouts are incompatible.
+        axes differ, if the PARAMETER axis layouts are incompatible, or if
+        the DOMAIN axes or their lengths differ.
     """
+    _check_same_domain("_merge_results", r1, r2)
+
     # --- Collect ENSEMBLE axes ---
     ens_1 = r1.layout.axes_by_role(ENSEMBLE)
     ens_2 = r2.layout.axes_by_role(ENSEMBLE)
@@ -197,7 +215,9 @@ def _merge_results(
     merged_factorized_weights: dict[Axis, np.ndarray] = dict(r1.factorized_weights)
     merged_factorized_weights[grow_ax_1] = np.concatenate([w1 * alpha, w2 * (1.0 - alpha)])
 
-    merged_state = executor.State(merged_values, domain_axes=r1._state.domain_axes)
+    merged_state = executor.State(
+        merged_values, domain_axes=r1._state.domain_axes, domain_extents=r1._state.domain_extents
+    )
     # named_axis_values is taken from r1 unchanged.  This is sound because the
     # parameter-signature check above already proved r1 and r2 share identical
     # PARAMETER axes (name, role, position, size); and _merge_results only ever
@@ -245,9 +265,11 @@ def _merge_results_param_extend(
     ------
     ValueError
         If either result lacks an ENSEMBLE axis, if the ENSEMBLE sizes differ,
-        if *param_idx* has no PARAMETER axis in *r1*, or if the fixed
-        PARAMETER axes do not match.
+        if *param_idx* has no PARAMETER axis in *r1*, if the fixed
+        PARAMETER axes do not match, or if the DOMAIN axes or their lengths
+        differ.
     """
+    _check_same_domain("_merge_results_param_extend", r1, r2)
     param_name: str = getattr(param_idx, "name", repr(param_idx))
 
     # --- Validate ENSEMBLE axes ---
@@ -329,7 +351,9 @@ def _merge_results_param_extend(
         [r1.parameter_values[param_idx], r2.parameter_values[param_idx]]
     )
 
-    merged_state = executor.State(merged_values, domain_axes=r1._state.domain_axes)
+    merged_state = executor.State(
+        merged_values, domain_axes=r1._state.domain_axes, domain_extents=r1._state.domain_extents
+    )
     return EvaluationResult(
         merged_state,
         merged_layout,

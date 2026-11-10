@@ -607,9 +607,9 @@ def _demo_catidx_param_axis_1d() -> None:
         ensemble=None,
         parameters={mode_param: np.array(["bike", "train"])},
     )
-    # result.expected_value(mv_param.outputs.emissions) → shape (2,)
+    # result.expected(mv_param.outputs.emissions).values → shape (2,)
     # index 0 = bike emissions, index 1 = train emissions
-    arr = result.expected_value(mv_param.outputs.emissions)
+    arr = result.expected(mv_param.outputs.emissions).values
     assert arr.shape == (2,)
     assert np.isclose(arr[0], 100.0 * 3.0)  # BikeModel: capacity=100, factor=3
     assert np.isclose(arr[1], 500.0 * 1.0)  # TrainModel: capacity=500, factor=1
@@ -640,10 +640,10 @@ def _demo_catidx_param_axis_2d() -> None:
             presence:   np.array([100.0, 200.0, 300.0]),
         },
     )
-    # result.expected_value(mv_grid.outputs.emissions) → shape (2, 3)
+    # result.expected(mv_grid.outputs.emissions).values → shape (2, 3)
     # row 0 = bike emissions for each presence level
     # row 1 = train emissions for each presence level
-    arr = result.expected_value(mv_grid.outputs.emissions)
+    arr = result.expected(mv_grid.outputs.emissions).values
     assert arr.shape == (2, 3)
     assert np.allclose(arr[0], [100.0 * 3, 200.0 * 3, 300.0 * 3])  # bike: presence * 3
     assert np.allclose(arr[1], [100.0 * 1, 200.0 * 1, 300.0 * 1])  # train: presence * 1

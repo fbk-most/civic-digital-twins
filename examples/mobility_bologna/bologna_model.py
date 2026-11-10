@@ -696,16 +696,16 @@ def compute_kpis(m: BolognaModel, result: EvaluationResult) -> dict:
         Mapping of KPI label strings to integer values.
     """
     return {
-        "Base inflow [veh/day]": int(result.expected_value(m.outputs.total_base_inflow)),
-        "Modified inflow [veh/day]": int(result.expected_value(m.outputs.total_modified_inflow)),
-        "Shifted inflow [veh/day]": int(result.expected_value(m.outputs.total_shifted)),
+        "Base inflow [veh/day]": int(result.expected(m.outputs.total_base_inflow).values),
+        "Modified inflow [veh/day]": int(result.expected(m.outputs.total_modified_inflow).values),
+        "Shifted inflow [veh/day]": int(result.expected(m.outputs.total_shifted).values),
         "Paying inflow [veh/day]": (
-            int(result.expected_value(m.outputs.total_paying)) if result.expected_value(m.outputs.avg_cost) > 0 else 0
+            int(result.expected(m.outputs.total_paying).values) if result.expected(m.outputs.avg_cost).values > 0 else 0
         ),
-        "Collected fees [€/day]": int(result.expected_value(m.outputs.total_paid)),
-        "Emissions [NOx gr/day]": int(result.expected_value(m.outputs.total_modified_emissions)),
-        "Modified emissions [NOx gr/day]": int(result.expected_value(m.outputs.total_emissions))
-        - int(result.expected_value(m.outputs.total_modified_emissions)),
+        "Collected fees [€/day]": int(result.expected(m.outputs.total_paid).values),
+        "Emissions [NOx gr/day]": int(result.expected(m.outputs.total_modified_emissions).values),
+        "Modified emissions [NOx gr/day]": int(result.expected(m.outputs.total_emissions).values)
+        - int(result.expected(m.outputs.total_modified_emissions).values),
     }
 
 
@@ -780,12 +780,12 @@ class BolognaEvaluator(ModelEvaluator[BolognaModel, BolognaOutput]):
         kpis = compute_kpis(m, result)
         expose = m.expose
         timeseries = {
-            "ts_inflow": result.expected_value(expose.ts_inflow),
-            "modified_inflow": result.expected_value(expose.modified_inflow),
-            "traffic": result.expected_value(expose.traffic),
-            "modified_traffic": result.expected_value(expose.modified_traffic),
-            "emissions": result.expected_value(expose.emissions),
-            "modified_emissions": result.expected_value(expose.modified_emissions),
+            "ts_inflow": result.expected(expose.ts_inflow).values,
+            "modified_inflow": result.expected(expose.modified_inflow).values,
+            "traffic": result.expected(expose.traffic).values,
+            "modified_traffic": result.expected(expose.modified_traffic).values,
+            "emissions": result.expected(expose.emissions).values,
+            "modified_emissions": result.expected(expose.modified_emissions).values,
         }
         fields = {
             "modified_inflow": result[expose.modified_inflow],

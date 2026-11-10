@@ -339,25 +339,49 @@ def _declared_axes(annotation: Any) -> tuple[Axis, ...] | None:
 
 
 def _verify_index_field_shape(cls_name: str, field_name: str, declared: tuple[Axis, ...], val: Any) -> None:
-    """Verify *val* (or each of its elements) carries exactly *declared* axes.
+    """Verify *val* (or each of its elements) carries exactly *declared* axes, with their types.
 
     Structural, never nominal (see :func:`~.index._verify_declared_axes`):
     compares ``output_axes`` as a set, regardless of which ``Index``
-    subclass produced the value. Only applies where *val* is (or contains) a
+    subclass produced the value. Each axis must also carry the declared
+    domain type or a more specific one (see :func:`_verify_contract_axes`).
+    Only applies where *val* is (or contains) a
     :class:`~.index.GenericIndex` — nested ``@expose``/``@outputs``
     dataclasses and ``IOProxy`` fields carry no ``output_axes`` and are left
     to :func:`_validate_index_field`'s own checks.
     """
     if isinstance(val, GenericIndex):
-        _verify_declared_axes(f"{cls_name}.{field_name}", declared, val.output_axes)
+        _verify_contract_axes(f"{cls_name}.{field_name}", declared, val)
     elif isinstance(val, list):
         for i, item in enumerate(val):
             if isinstance(item, GenericIndex):
-                _verify_declared_axes(f"{cls_name}.{field_name}[{i}]", declared, item.output_axes)
+                _verify_contract_axes(f"{cls_name}.{field_name}[{i}]", declared, item)
     elif isinstance(val, dict):
         for k, item in val.items():
             if isinstance(item, GenericIndex):
-                _verify_declared_axes(f"{cls_name}.{field_name}[{k!r}]", declared, item.output_axes)
+                _verify_contract_axes(f"{cls_name}.{field_name}[{k!r}]", declared, item)
+
+
+def _verify_contract_axes(owner: str, declared: tuple[Axis, ...], index: GenericIndex) -> None:
+    """Verify *index* carries the contract's *declared* axes, each typed at least as specifically.
+
+    A contract checks a value built elsewhere and cannot attach types to it,
+    so a declared type the value does not carry (e.g. ``SpaceType(spacing=10.0)``
+    against an untyped ``x``, or labels against an unlabelled set axis) is an
+    error. A value more specific than the contract is accepted.
+    """
+    actual = index.output_axes
+    merged = _verify_declared_axes(owner, declared, actual)
+    declared_by_axis = {ax: ax for ax in declared}
+    for value_axis, merged_axis in zip(actual, merged, strict=True):
+        value_type = getattr(value_axis, "type", None)
+        if getattr(merged_axis, "type", None) != value_type:
+            declared_type = getattr(declared_by_axis[value_axis], "type", None)
+            value_desc = "untyped" if value_type is None else f"typed {value_type!r}"
+            raise ValueError(
+                f"{owner}: requires axis {value_axis.name!r} typed {declared_type!r}, but the value's axis is "
+                f"{value_desc}. Declare the axis type on the value (e.g. pass axes= when building it)."
+            )
 
 
 def _make_io_decorator(marker: str):

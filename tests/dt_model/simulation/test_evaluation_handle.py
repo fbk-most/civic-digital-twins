@@ -8,7 +8,7 @@ import pytest
 from scipy import stats
 
 from civic_digital_twins.dt_model import define, inputs, outputs
-from civic_digital_twins.dt_model.axes import ENSEMBLE, Axis
+from civic_digital_twins.dt_model.axes import DOMAIN, ENSEMBLE, Axis
 from civic_digital_twins.dt_model.engine.numpybackend import executor as _executor
 from civic_digital_twins.dt_model.model.index import DistributionIndex, GenericIndex, Index
 from civic_digital_twins.dt_model.model.model import Model
@@ -499,16 +499,39 @@ def _make_fake_result(
     plan,
     ens_axes: tuple[Axis, ...],
     ens_sizes: tuple[int, ...],
+    domain_extents: tuple[int, ...] = (),
 ) -> EvaluationResult:
-    """Build a minimal EvaluationResult with the given ENSEMBLE axes (no real evaluation)."""
+    """Build a minimal EvaluationResult with the given ENSEMBLE axes (no real evaluation).
+
+    With *domain_extents*, the result has DOMAIN axes ``d0``, ``d1``, ... of those lengths.
+    """
     layout = AxisLayout.build(ensemble=list(zip(ens_axes, ens_sizes)))
     factorized_weights: dict[Axis, np.ndarray] = {ax: np.full(sz, 1.0 / sz) for ax, sz in zip(ens_axes, ens_sizes)}
     # Populate values for every node of interest with a zero array of the right shape.
     values: dict = {}
     for idx in plan.nodes_of_interest:
         values[idx.node] = np.zeros(ens_sizes)
-    state = _executor.State(values)
+    domain_axes = tuple(Axis(f"d{i}", DOMAIN) for i in range(len(domain_extents)))
+    state = _executor.State(values, domain_axes=domain_axes, domain_extents=domain_extents)
     return EvaluationResult(state, layout, {}, factorized_weights=factorized_weights)
+
+
+@pytest.mark.parametrize("merge", ["ensemble", "parameter"])
+def test_merge_results_with_different_domain_lengths_raises(merge) -> None:
+    """Results over DOMAIN axes of different lengths cannot be joined."""
+    from civic_digital_twins.dt_model.simulation.handle import _merge_results_param_extend  # noqa: PLC0415
+
+    speed, _, ev, _ = _make_param_handle(np.array([1.0, 2.0]), ensemble_size=10)
+    plan = ev.build_plan()
+    ens = (Axis("ens", ENSEMBLE),)
+    r1 = _make_fake_result(plan, ens, (2,), domain_extents=(3,))
+    r2 = _make_fake_result(plan, ens, (2,), domain_extents=(4,))
+    match = r"the results have different DOMAIN axes or lengths \(\{'d0': 3\} in r1, \{'d0': 4\} in r2\)"
+    with pytest.raises(ValueError, match=match):
+        if merge == "ensemble":
+            _merge_results(r1, r2, plan)
+        else:
+            _merge_results_param_extend(r1, r2, plan, speed)
 
 
 def test_merge_results_multi_axis_no_name_raises() -> None:

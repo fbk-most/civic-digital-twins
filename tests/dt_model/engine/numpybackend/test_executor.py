@@ -875,3 +875,11 @@ def test_broadcast_to_combines_correctly_with_a_partner_over_the_new_axis():
     executor.evaluate_nodes(state, *linearize.forest(combined))
 
     assert np.array_equal(state.values[combined], [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
+
+
+def test_state_rejects_extents_not_matching_the_axes():
+    """domain_extents, when given, has one entry per domain axis."""
+    x, y = Axis("x", DOMAIN), Axis("y", DOMAIN)
+    with pytest.raises(ValueError, match=r"1 domain_extents given for 2 domain_axes \['x', 'y'\]"):
+        executor.State({}, domain_axes=(x, y), domain_extents=(3,))
+    assert executor.State({}, domain_axes=(x, y), domain_extents=(3, 4)).domain_extents == (3, 4)
